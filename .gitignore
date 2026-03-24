@@ -1,0 +1,33 @@
+# Rust
+target/
+Cargo.lock
+
+# Node
+node_modules/
+dist/
+
+# pnpm
+.pnpm-store/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tooling
+.mise.local.toml
+mise.lock
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Implementation plans (generated, not source-controlled)
+docs/implementation-plans/
