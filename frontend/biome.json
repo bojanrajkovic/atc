@@ -30,5 +30,13 @@
   "files": {
     "ignoreUnknown": true,
     "includes": ["**/*", "!!**/*.svelte", "!!**/node_modules", "!!**/dist", "!!**/pnpm-lock.yaml"]
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   }
 }

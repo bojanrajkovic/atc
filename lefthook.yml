@@ -13,11 +13,11 @@ pre-commit:
       glob: "backend/**/*.rs"
       run: "cd backend && mise exec -- cargo fmt --check"
     biome:
-      glob: "*.{ts,js}"
-      run: pnpm exec biome check {staged_files}
+      glob: "frontend/**/*.{ts,js}"
+      run: "cd frontend && mise exec -- pnpm exec biome check $(echo {staged_files} | sed 's|frontend/||g')"
     eslint-svelte:
-      glob: "*.svelte"
-      run: pnpm exec eslint {staged_files}
+      glob: "frontend/**/*.svelte"
+      run: "cd frontend && mise exec -- pnpm exec eslint $(echo {staged_files} | sed 's|frontend/||g')"
 
 commit-msg:
   commands:
