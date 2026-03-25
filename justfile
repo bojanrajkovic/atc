@@ -23,7 +23,11 @@ lint:
 	pid2=$!
 	cd frontend && pnpm exec eslint '**/*.svelte' &
 	pid3=$!
-	wait $pid1 $pid2 $pid3
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	exit $fail
 
 # Format all code (parallel)
 fmt:
@@ -35,7 +39,11 @@ fmt:
 	pid2=$!
 	cd frontend && pnpm exec prettier --write '**/*.svelte' &
 	pid3=$!
-	wait $pid1 $pid2 $pid3
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	exit $fail
 
 # Type-check / compile-check all code (parallel)
 check:
@@ -45,7 +53,10 @@ check:
 	pid1=$!
 	cd frontend && pnpm build &
 	pid2=$!
-	wait $pid1 $pid2
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	exit $fail
 
 # Run all tests (parallel)
 test:
@@ -55,7 +66,10 @@ test:
 	pid1=$!
 	(cd frontend && pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)') &
 	pid2=$!
-	wait $pid1 $pid2
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	exit $fail
 
 # Start development servers (parallel — both run in foreground)
 dev:
