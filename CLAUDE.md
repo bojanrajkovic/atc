@@ -1,20 +1,20 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-03-23
+Last verified: 2026-03-24
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
 ## Project
 
 **ATC — Actions Traffic Control**
-Real-time GitHub Actions dashboard. Rust backend (Axum) + SvelteKit frontend.
+Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite frontend.
 
-**Status:** Bootstrapped. Tooling, conventions, and documentation in place. No application code yet.
+**Status:** Skeleton. Both stacks compile and lint. No application features yet.
 
 ## Tech Stack
 
-- **Backend:** Rust 1.94.0 with Axum (planned)
-- **Frontend:** SvelteKit with TypeScript (planned)
+- **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates (atc-core, atc-github, atc-server)
+- **Frontend:** Svelte 5 + Vite + Tailwind v4 — standalone SPA at `frontend/` with OKLCH design system
 - **Package manager:** pnpm (via Corepack)
 - **Task runner:** just (see `justfile` for all commands)
 - **Git hooks:** lefthook (pre-commit linting, commit-msg validation, pre-push tests)
@@ -32,14 +32,14 @@ just dev      # Start dev servers
 just build    # Production build
 ```
 
-> All recipes except `setup` are stubs until application code exists.
-
 ## Project Structure
 
 - `.mise.toml` — Pinned tool versions (Rust, Node, just, lefthook)
 - `.commitlintrc.mjs` — Conventional Commits config (free-form scopes)
 - `lefthook.yml` — Three-tier git hook definitions
 - `justfile` — Task runner recipes
+- `backend/` — Rust workspace: atc-core (domain), atc-github (GitHub API), atc-server (Axum HTTP)
+- `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
 - `scripts/doc-mapping.sh` — Source-to-architecture-doc mappings
 - `scripts/check-docs-lefthook.sh` — Pre-push doc-staleness gate
 - `docs/architecture/` — Architecture docs (created as features ship)
