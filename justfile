@@ -8,7 +8,6 @@ default:
 # Bootstrap the development environment
 setup:
 	mise install
-	corepack enable
 	pnpm install
 	cd frontend && pnpm install
 	lefthook install
