@@ -7,17 +7,21 @@ pre-commit:
   parallel: true
   commands:
     clippy:
-      glob: "backend/**/*.rs"
-      run: "cd backend && mise exec -- cargo clippy --all-targets --all-features -- -D warnings"
+      glob: "*.rs"
+      root: "backend/"
+      run: cargo clippy --all-targets --all-features -- -D warnings
     rustfmt:
-      glob: "backend/**/*.rs"
-      run: "cd backend && mise exec -- cargo fmt --check"
+      glob: "*.rs"
+      root: "backend/"
+      run: cargo fmt --check
     biome:
-      glob: "frontend/**/*.{ts,js}"
-      run: "cd frontend && mise exec -- pnpm exec biome check $(echo {staged_files} | sed 's|frontend/||g')"
+      glob: "*.{ts,js}"
+      root: "frontend/"
+      run: pnpm exec biome check .
     eslint-svelte:
-      glob: "frontend/**/*.svelte"
-      run: "cd frontend && mise exec -- pnpm exec eslint $(echo {staged_files} | sed 's|frontend/||g')"
+      glob: "*.svelte"
+      root: "frontend/"
+      run: pnpm exec eslint '**/*.svelte'
 
 commit-msg:
   commands:
@@ -27,13 +31,13 @@ commit-msg:
 pre-push:
   commands:
     cargo-test:
-      # PHASE 2+ UPDATE REQUIRED: Remove condition when Cargo.toml exists
-      run: "if [ -f Cargo.toml ]; then cargo test --all; else echo 'cargo test: no Rust project yet (skipped)'; fi"
+      root: "backend/"
+      run: cargo test --workspace
     vitest:
-      # PHASE 2+ UPDATE REQUIRED: Remove condition when vitest is configured
-      run: "if pnpm exec vitest --version >/dev/null 2>&1; then pnpm exec vitest run; else echo 'vitest: not configured yet (skipped)'; fi"
+      root: "frontend/"
+      run: "pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)'"
     playwright:
-      # PHASE 2+ UPDATE REQUIRED: Remove condition when playwright is configured
+      # Not configured yet — keep conditional until playwright is set up
       run: "if pnpm exec playwright --version >/dev/null 2>&1; then pnpm exec playwright test; else echo 'playwright: not configured yet (skipped)'; fi"
     doc-staleness:
       run: scripts/check-docs-lefthook.sh
