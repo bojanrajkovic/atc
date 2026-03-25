@@ -7,11 +7,11 @@ pre-commit:
   parallel: true
   commands:
     clippy:
-      glob: "*.rs"
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      glob: "backend/**/*.rs"
+      run: "cd backend && mise exec -- cargo clippy --all-targets --all-features -- -D warnings"
     rustfmt:
-      glob: "*.rs"
-      run: cargo fmt --check
+      glob: "backend/**/*.rs"
+      run: "cd backend && mise exec -- cargo fmt --check"
     biome:
       glob: "*.{ts,js}"
       run: pnpm exec biome check {staged_files}
