@@ -17,16 +17,16 @@ pre-commit:
     biome:
       glob: "*.{ts,js}"
       root: "frontend/"
-      run: pnpm exec biome check .
+      run: mise exec -- pnpm exec biome check .
     eslint-svelte:
       glob: "*.svelte"
       root: "frontend/"
-      run: pnpm exec eslint '**/*.svelte'
+      run: mise exec -- pnpm exec eslint '**/*.svelte'
 
 commit-msg:
   commands:
     commitlint:
-      run: pnpm exec commitlint --edit {1}
+      run: mise exec -- pnpm exec commitlint --edit {1}
 
 pre-push:
   commands:
@@ -35,9 +35,9 @@ pre-push:
       run: mise exec -- cargo test --workspace
     vitest:
       root: "frontend/"
-      run: "pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)'"
+      run: "mise exec -- pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)'"
     playwright:
       # Not configured yet — keep conditional until playwright is set up
-      run: "if pnpm exec playwright --version >/dev/null 2>&1; then pnpm exec playwright test; else echo 'playwright: not configured yet (skipped)'; fi"
+      run: "if mise exec -- pnpm exec playwright --version >/dev/null 2>&1; then mise exec -- pnpm exec playwright test; else echo 'playwright: not configured yet (skipped)'; fi"
     doc-staleness:
       run: scripts/check-docs-lefthook.sh
