@@ -26,9 +26,9 @@ The server runs on port 8080 and is the only executable crate in the backend wor
 **Alternatives considered:** hyper client, tower Layer-based proxy
 **Rationale:** reqwest provides a higher-level API that simplifies the proxy implementation. The dev proxy is not performance-critical (only used during development), so the slight overhead of reqwest over raw hyper is acceptable.
 
-**Decision:** API routes use `/health` and future `/api/*` prefix convention
-**Alternatives considered:** No prefix, `/v1/` versioning
-**Rationale:** The `/api/` prefix creates a clear boundary between API requests and frontend asset requests. This boundary is used by the dev proxy to decide what to forward to Vite. No versioning yet — will be added when the API stabilizes.
+**Decision:** API routes use `/v1/` prefix; `/health` stays at root
+**Alternatives considered:** `/api/v1/` prefix, no prefix, no versioning until stable
+**Rationale:** Version prefix from the start avoids a breaking retrofit later. No `/api/` prefix needed — the router structure already separates API routes (explicit) from asset serving (fallback). `/health` stays at root because load balancers and monitoring tools expect infrastructure endpoints at a fixed path.
 
 ## Boundaries
 
