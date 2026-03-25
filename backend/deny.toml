@@ -3,8 +3,10 @@
 
 [graph]
 targets = [
-    "x86_64-unknown-linux-musl",   # Container / CI (x86_64)
-    "aarch64-unknown-linux-musl",  # Container / CI (arm64)
+    "x86_64-unknown-linux-gnu",    # Linux dev (x86_64)
+    "aarch64-unknown-linux-gnu",   # Linux dev (arm64)
+    "x86_64-unknown-linux-musl",   # Container / release (x86_64)
+    "aarch64-unknown-linux-musl",  # Container / release (arm64)
     "aarch64-apple-darwin",        # macOS dev (Apple Silicon)
     "x86_64-apple-darwin",         # macOS dev (Intel)
 ]
