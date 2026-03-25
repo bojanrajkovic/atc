@@ -2,7 +2,12 @@
 # Run: cargo deny check (from backend/)
 
 [graph]
-targets = ["x86_64-unknown-linux-gnu"]
+targets = [
+    "x86_64-unknown-linux-musl",   # Container / CI (x86_64)
+    "aarch64-unknown-linux-musl",  # Container / CI (arm64)
+    "aarch64-apple-darwin",        # macOS dev (Apple Silicon)
+    "x86_64-apple-darwin",         # macOS dev (Intel)
+]
 all-features = true
 
 [advisories]
