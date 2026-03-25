@@ -22,10 +22,13 @@ lint:
 	pid2=$!
 	cd frontend && pnpm exec eslint '**/*.svelte' &
 	pid3=$!
+	cd frontend && pnpm check &
+	pid4=$!
 	fail=0
 	wait $pid1 || fail=1
 	wait $pid2 || fail=1
 	wait $pid3 || fail=1
+	wait $pid4 || fail=1
 	exit $fail
 
 # Format all code (parallel)
@@ -52,9 +55,12 @@ check:
 	pid1=$!
 	cd frontend && pnpm build &
 	pid2=$!
+	cd frontend && pnpm check &
+	pid3=$!
 	fail=0
 	wait $pid1 || fail=1
 	wait $pid2 || fail=1
+	wait $pid3 || fail=1
 	exit $fail
 
 # Run all tests (parallel)
