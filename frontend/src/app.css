@@ -99,33 +99,6 @@
   --color-status-info: oklch(0.65 0.13 240);
 }
 
-/* System preference dark mode — applies only when no explicit data-mode is set */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-mode="light"]):not([data-mode="dark"]) {
-    color-scheme: dark;
-
-    --color-surface-base: oklch(0.15 0.01 var(--hue));
-    --color-surface-raised: oklch(0.2 0.015 var(--hue));
-    --color-surface-overlay: oklch(0.25 0.02 var(--hue));
-
-    --color-text-primary: oklch(0.92 0.01 var(--hue));
-    --color-text-secondary: oklch(0.75 0.015 var(--hue));
-    --color-text-muted: oklch(0.55 0.01 var(--hue));
-
-    --color-border-default: oklch(0.3 0.02 var(--hue));
-    --color-border-strong: oklch(0.45 0.03 var(--hue));
-
-    --color-accent: oklch(0.65 0.18 var(--hue));
-    --color-accent-hover: oklch(0.72 0.2 var(--hue));
-    --color-accent-subtle: oklch(0.25 0.05 var(--hue));
-
-    --color-status-success: oklch(0.65 0.16 145);
-    --color-status-warning: oklch(0.8 0.13 80);
-    --color-status-error: oklch(0.6 0.2 25);
-    --color-status-info: oklch(0.65 0.13 240);
-  }
-}
-
 /* ── Tailwind theme integration ───────────────────────────────────────── */
 
 @theme {

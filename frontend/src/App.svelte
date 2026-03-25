@@ -1,7 +1,14 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+
   const themes = ['warm', 'radar', 'violet', 'pink'] as const
   let currentTheme = $state<string>('warm')
   let isDark = $state(false)
+
+  onMount(() => {
+    isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    document.documentElement.setAttribute('data-mode', isDark ? 'dark' : 'light')
+  })
 
   function setTheme(theme: string) {
     currentTheme = theme
