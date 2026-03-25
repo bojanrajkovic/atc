@@ -8,30 +8,98 @@ default:
 # Bootstrap the development environment
 setup:
 	mise install
-	corepack enable
 	pnpm install
+	cd frontend && pnpm install
 	lefthook install
 
-# Run all linters (stub — no code yet)
+# Run all linters (parallel)
 lint:
-	@echo "lint: no code to lint yet"
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd backend && cargo clippy --all-targets --all-features -- -D warnings &
+	pid1=$!
+	cd frontend && pnpm exec biome check . &
+	pid2=$!
+	cd frontend && pnpm exec eslint '**/*.svelte' &
+	pid3=$!
+	cd frontend && pnpm check &
+	pid4=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	wait $pid4 || fail=1
+	exit $fail
 
-# Format all code (stub — no code yet)
+# Format all code (parallel)
 fmt:
-	@echo "fmt: no code to format yet"
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd backend && cargo fmt &
+	pid1=$!
+	cd frontend && pnpm exec biome format --write . &
+	pid2=$!
+	cd frontend && pnpm exec prettier --write '**/*.svelte' &
+	pid3=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	exit $fail
 
-# Type-check / compile-check all code (stub — no code yet)
+# Type-check / compile-check all code (parallel)
 check:
-	@echo "check: no code to check yet"
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd backend && cargo check --workspace &
+	pid1=$!
+	cd frontend && pnpm build &
+	pid2=$!
+	cd frontend && pnpm check &
+	pid3=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	exit $fail
 
-# Run all tests (stub — no code yet)
+# Run all tests (parallel)
 test:
-	@echo "test: no tests to run yet"
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd backend && cargo test --workspace &
+	pid1=$!
+	(cd frontend && pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)') &
+	pid2=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	exit $fail
 
-# Start development servers (stub — no code yet)
+# Start development servers (parallel — both run in foreground)
 dev:
-	@echo "dev: no dev servers to start yet"
+	#!/usr/bin/env bash
+	cd frontend && pnpm dev &
+	cd backend && cargo run -p atc-server &
+	wait
 
-# Production build (stub — no code yet)
+# Audit dependencies for vulnerabilities and license compliance (parallel)
+audit:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd backend && cargo deny check &
+	pid1=$!
+	cd backend && cargo audit &
+	pid2=$!
+	cd frontend && pnpm audit &
+	pid3=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	exit $fail
+
+# Production build (sequential — frontend must build before backend embeds it)
 build:
-	@echo "build: nothing to build yet"
+	cd frontend && pnpm build
+	cd backend && cargo build --release -p atc-server

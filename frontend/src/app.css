@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+/*
+ * OKLCH Design System
+ *
+ * Four themes, each driven by a single --hue value:
+ *   Warm:   70  (amber/orange)
+ *   Radar:  155 (teal/green)
+ *   Violet: 280 (purple)
+ *   Pink:   310 (magenta/pink)
+ *
+ * Dark/light mode adjusts lightness and chroma for each semantic role.
+ */
+
+/* ── Default theme (Warm) ─────────────────────────────────────────────── */
+
+:root {
+  --hue: 70;
+  color-scheme: light;
+}
+
+/* ── Theme hue overrides ──────────────────────────────────────────────── */
+
+[data-theme="warm"] {
+  --hue: 70;
+}
+
+[data-theme="radar"] {
+  --hue: 155;
+}
+
+[data-theme="violet"] {
+  --hue: 280;
+}
+
+[data-theme="pink"] {
+  --hue: 310;
+}
+
+/* ── Light mode semantic tokens ───────────────────────────────────────── */
+
+:root,
+[data-mode="light"] {
+  /* Surfaces */
+  --color-surface-base: oklch(0.98 0.005 var(--hue));
+  --color-surface-raised: oklch(0.96 0.01 var(--hue));
+  --color-surface-overlay: oklch(0.94 0.015 var(--hue));
+
+  /* Text */
+  --color-text-primary: oklch(0.2 0.02 var(--hue));
+  --color-text-secondary: oklch(0.4 0.02 var(--hue));
+  --color-text-muted: oklch(0.6 0.015 var(--hue));
+
+  /* Borders */
+  --color-border-default: oklch(0.85 0.02 var(--hue));
+  --color-border-strong: oklch(0.7 0.03 var(--hue));
+
+  /* Accent / interactive */
+  --color-accent: oklch(0.55 0.2 var(--hue));
+  --color-accent-hover: oklch(0.48 0.22 var(--hue));
+  --color-accent-subtle: oklch(0.92 0.04 var(--hue));
+
+  /* Status colors (fixed hues, not theme-dependent) */
+  --color-status-success: oklch(0.6 0.18 145);
+  --color-status-warning: oklch(0.75 0.15 80);
+  --color-status-error: oklch(0.55 0.22 25);
+  --color-status-info: oklch(0.6 0.15 240);
+}
+
+/* ── Dark mode semantic tokens ────────────────────────────────────────── */
+
+/* Explicit dark mode via data-mode attribute */
+[data-mode="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces — darker, lower chroma */
+  --color-surface-base: oklch(0.15 0.01 var(--hue));
+  --color-surface-raised: oklch(0.2 0.015 var(--hue));
+  --color-surface-overlay: oklch(0.25 0.02 var(--hue));
+
+  /* Text — lighter in dark mode */
+  --color-text-primary: oklch(0.92 0.01 var(--hue));
+  --color-text-secondary: oklch(0.75 0.015 var(--hue));
+  --color-text-muted: oklch(0.55 0.01 var(--hue));
+
+  /* Borders */
+  --color-border-default: oklch(0.3 0.02 var(--hue));
+  --color-border-strong: oklch(0.45 0.03 var(--hue));
+
+  /* Accent */
+  --color-accent: oklch(0.65 0.18 var(--hue));
+  --color-accent-hover: oklch(0.72 0.2 var(--hue));
+  --color-accent-subtle: oklch(0.25 0.05 var(--hue));
+
+  /* Status colors — slightly lighter for dark backgrounds */
+  --color-status-success: oklch(0.65 0.16 145);
+  --color-status-warning: oklch(0.8 0.13 80);
+  --color-status-error: oklch(0.6 0.2 25);
+  --color-status-info: oklch(0.65 0.13 240);
+}
+
+/* ── Tailwind theme integration ───────────────────────────────────────── */
+
+@theme {
+  /* Type scale */
+  --font-family-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: 1.875rem;
+  --font-size-4xl: 2.25rem;
+}
+
+/* ── Base styles ──────────────────────────────────────────────────────── */
+
+body {
+  background-color: var(--color-surface-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-sans);
+  line-height: 1.6;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
