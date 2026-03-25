@@ -1,6 +1,8 @@
 # Rust
 target/
+# Cargo — ignore root, track backend workspace lock
 Cargo.lock
+!backend/Cargo.lock
 
 # Node
 node_modules/
