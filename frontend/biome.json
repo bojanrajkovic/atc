@@ -3,7 +3,49 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "complexity": {
+        "noForEach": "warn",
+        "noUselessCatch": "error",
+        "noUselessStringConcat": "error",
+        "noUselessUndefined": "error",
+        "noVoid": "error",
+        "useArrowFunction": "error"
+      },
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "warn",
+        "useExhaustiveDependencies": "error"
+      },
+      "style": {
+        "noNegationElse": "error",
+        "noNonNullAssertion": "warn",
+        "noParameterAssign": "error",
+        "noUselessElse": "error",
+        "useCollapsedElseIf": "error",
+        "useCollapsedIf": "error",
+        "useConst": "error",
+        "useDefaultParameterLast": "error",
+        "useExplicitLengthCheck": "error",
+        "useExportType": "error",
+        "useForOf": "error",
+        "useImportType": "error",
+        "useNumberNamespace": "error",
+        "useShorthandAssign": "error",
+        "useTemplate": "error",
+        "useThrowNewError": "error",
+        "useThrowOnlyError": "error"
+      },
+      "suspicious": {
+        "noConsole": "warn",
+        "noDoubleEquals": "error",
+        "noEvolvingTypes": "error",
+        "noExplicitAny": "warn",
+        "noImplicitAnyLet": "error",
+        "noShadowRestrictedNames": "error",
+        "useAwait": "error"
+      }
     }
   },
   "formatter": {

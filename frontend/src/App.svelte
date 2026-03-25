@@ -33,6 +33,7 @@
   <div class="flex gap-3">
     {#each themes as theme (theme)}
       <button
+        type="button"
         class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         style="
           background-color: {currentTheme === theme
@@ -51,6 +52,7 @@
   </div>
 
   <button
+    type="button"
     class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
     style="
       background-color: var(--color-surface-raised);

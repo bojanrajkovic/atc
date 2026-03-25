@@ -15,5 +15,16 @@ export default [
         parser: tsParser,
       },
     },
+    rules: {
+      // Strict rules beyond recommended
+      'svelte/button-has-type': 'error',
+      'svelte/no-at-debug-tags': 'error',
+      'svelte/no-reactive-reassign': 'error',
+      'svelte/no-target-blank': 'error',
+      'svelte/no-useless-mustaches': 'error',
+      'svelte/require-each-key': 'error',
+      'svelte/require-event-dispatcher-types': 'error',
+      'svelte/valid-each-key': 'error',
+    },
   },
 ]
