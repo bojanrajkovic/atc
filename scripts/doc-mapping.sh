@@ -13,19 +13,20 @@
 get_doc_for_file() {
     local file="$1"
 
-    # Phase 1: No mappings yet. Add entries as architecture docs are created.
-    # Example mapping (uncomment and adapt when adding first architecture doc):
-    #
-    # case "$file" in
-    #     backend/src/*)
-    #         echo "docs/architecture/backend-api.md"
-    #         return
-    #         ;;
-    #     frontend/src/*)
-    #         echo "docs/architecture/frontend-ui.md"
-    #         return
-    #         ;;
-    # esac
+    case "$file" in
+        backend/crates/atc-server/src/*)
+            echo "docs/architecture/backend-server.md"
+            return
+            ;;
+        frontend/src/*)
+            echo "docs/architecture/frontend-app.md"
+            return
+            ;;
+        frontend/vite.config.ts|frontend/svelte.config.js|frontend/biome.json|frontend/eslint.config.mjs|frontend/.prettierrc)
+            echo "docs/architecture/frontend-app.md"
+            return
+            ;;
+    esac
 
     # No mapping found
     echo ""
