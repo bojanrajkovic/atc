@@ -9,11 +9,11 @@ pre-commit:
     clippy:
       glob: "*.rs"
       root: "backend/"
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: mise exec -- cargo clippy --all-targets --all-features -- -D warnings
     rustfmt:
       glob: "*.rs"
       root: "backend/"
-      run: cargo fmt --check
+      run: mise exec -- cargo fmt --check
     biome:
       glob: "*.{ts,js}"
       root: "frontend/"
@@ -32,7 +32,7 @@ pre-push:
   commands:
     cargo-test:
       root: "backend/"
-      run: cargo test --workspace
+      run: mise exec -- cargo test --workspace
     vitest:
       root: "frontend/"
       run: "pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)'"
