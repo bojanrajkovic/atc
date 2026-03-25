@@ -83,6 +83,22 @@ dev:
 	cd backend && cargo run -p atc-server &
 	wait
 
+# Audit dependencies for vulnerabilities and license compliance (parallel)
+audit:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	cd backend && cargo deny check &
+	pid1=$!
+	cd backend && cargo audit &
+	pid2=$!
+	cd frontend && pnpm audit &
+	pid3=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	wait $pid3 || fail=1
+	exit $fail
+
 # Production build (sequential — frontend must build before backend embeds it)
 build:
 	cd frontend && pnpm build

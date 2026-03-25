@@ -1,3 +1,6 @@
+#![deny(clippy::all)]
+#![warn(clippy::pedantic)]
+
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 

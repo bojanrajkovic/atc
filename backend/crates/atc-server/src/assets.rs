@@ -71,7 +71,8 @@ async fn dev_proxy(req: Request) -> Response {
     let uri = req.uri();
     let vite_url = format!(
         "http://localhost:5173{}",
-        uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/")
+        uri.path_and_query()
+            .map_or("/", axum::http::uri::PathAndQuery::as_str)
     );
 
     match HTTP_CLIENT.get(&vite_url).send().await {
