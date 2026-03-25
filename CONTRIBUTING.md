@@ -89,6 +89,8 @@ The strongest gate — runs before code reaches the remote:
 - Push — pre-push hooks run tests and doc-staleness checks
 - Open a PR against `main`
 - PRs require passing CI checks
+- **Squash merges**: This repo uses squash merges. The PR description becomes the squashed commit body, so keep it clean — summary and context only.
+- **Test plans**: Put the test plan in the **first comment** on the PR, not in the PR description.
 
 ---
 

@@ -74,3 +74,7 @@ This project uses a five-layer documentation model with a strict non-duplication
 ## Commit Format
 
 Conventional Commits required. See `CONTRIBUTING.md` section "Commit Conventions".
+
+## Pull Requests
+
+This repo uses **squash merges** — the PR description becomes the squashed commit body. Do **not** put test plans in the PR description. Post the test plan as the **first comment** on the PR instead.
