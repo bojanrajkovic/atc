@@ -192,6 +192,7 @@ jobs:
           persist-credentials: false
 
       - name: Dependency review
+        continue-on-error: true # requires GHAS; remove once repo is public
         uses: actions/dependency-review-action@3c4e3dcb1aa7874d2c16be7d79418e9b7efd6261 # v4
         with:
           fail-on-severity: moderate
