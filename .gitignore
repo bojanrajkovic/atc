@@ -26,6 +26,9 @@ Thumbs.db
 .mise.local.toml
 mise.lock
 
+# Claude Code — track .claude/ config but ignore runtime state
+.remember/
+
 # Environment
 .env
 .env.*

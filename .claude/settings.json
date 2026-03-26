@@ -1,0 +1,45 @@
+{
+  "enabledPlugins": {
+    "elements-of-style@superpowers-marketplace": true,
+    "agent-browser@agent-browser": true,
+    "remember@claude-plugins-official": true,
+    "ed3d-hook-security-hardening@ed3d-plugins": true,
+    "code-simplifier@claude-plugins-official": true,
+    "ed3d-hook-claudemd-reminder@ed3d-plugins": true,
+    "ed3d-hook-skill-reinforcement@ed3d-plugins": true,
+    "ed3d-plan-and-execute@ed3d-plugins": true,
+    "impeccable@impeccable": true
+  },
+  "extraKnownMarketplaces": {
+    "agent-browser": {
+      "source": {
+        "repo": "vercel-labs/agent-browser",
+        "source": "github"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "repo": "anthropics/claude-plugins-official",
+        "source": "github"
+      }
+    },
+    "ed3d-plugins": {
+      "source": {
+        "repo": "ed3dai/ed3d-plugins",
+        "source": "github"
+      }
+    },
+    "impeccable": {
+      "source": {
+        "repo": "pbakaus/impeccable",
+        "source": "github"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "repo": "obra/superpowers-marketplace",
+        "source": "github"
+      }
+    }
+  }
+}
