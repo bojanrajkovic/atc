@@ -67,6 +67,9 @@ jobs:
         with:
           workspaces: backend
 
+      - name: Create frontend dist stub
+        run: mkdir -p frontend/dist && echo '<!doctype html>' > frontend/dist/index.html
+
       - name: Check formatting
         working-directory: backend
         run: cargo fmt --check
