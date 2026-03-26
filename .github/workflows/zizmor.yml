@@ -32,3 +32,4 @@ jobs:
         with:
           persona: regular
           online-audits: true
+          advanced-security: false # requires GHAS; set to true once repo is public
