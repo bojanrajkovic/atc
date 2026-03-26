@@ -111,11 +111,21 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
-      - name: Verify frontend setup
-        run: |
-          node --version
-          pnpm --version
-          cd frontend && pnpm exec svelte-check --version
+      - name: Check formatting (Biome)
+        working-directory: frontend
+        run: pnpm exec biome check .
+
+      - name: Check formatting (Prettier — Svelte files)
+        working-directory: frontend
+        run: pnpm exec prettier --check '**/*.svelte'
+
+      - name: Lint (ESLint — Svelte files)
+        working-directory: frontend
+        run: pnpm exec eslint '**/*.svelte'
+
+      - name: Type check (svelte-check)
+        working-directory: frontend
+        run: pnpm check
 
   pr-checks:
     name: PR Checks
