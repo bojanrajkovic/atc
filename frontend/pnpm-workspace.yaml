@@ -4,6 +4,7 @@ catalog:
   '@sveltejs/vite-plugin-svelte': ^7.0.0
   '@tailwindcss/vite': ^4.2.2
   '@typescript-eslint/parser': ^8.57.2
+  '@vitest/coverage-v8': ^4.1.1
   eslint: ^10.1.0
   eslint-plugin-svelte: ^3.16.0
   prettier: ^3.8.1

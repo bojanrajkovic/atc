@@ -1,26 +1,6 @@
 {
   "private": true,
   "packageManager": "pnpm@10.32.1",
-  "catalogs": {
-    "default": {
-      "@biomejs/biome": "2.4.9",
-      "@sveltejs/vite-plugin-svelte": "7.0.0",
-      "@tailwindcss/vite": "4.2.2",
-      "@typescript-eslint/parser": "8.57.2",
-      "@vitest/coverage-v8": "4.1.1",
-      "eslint": "10.1.0",
-      "eslint-plugin-svelte": "3.16.0",
-      "prettier": "3.8.1",
-      "prettier-plugin-svelte": "3.5.1",
-      "svelte": "5.55.0",
-      "svelte-check": "4.4.5",
-      "svelte-eslint-parser": "1.6.0",
-      "tailwindcss": "4.2.2",
-      "typescript": "6.0.2",
-      "vite": "8.0.2",
-      "vitest": "4.1.1"
-    }
-  },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0"
