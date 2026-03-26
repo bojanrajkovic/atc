@@ -26,6 +26,10 @@ get_doc_for_file() {
             echo "docs/architecture/frontend-app.md"
             return
             ;;
+        .github/workflows/*)
+            echo "docs/architecture/ci-pipeline.md"
+            return
+            ;;
     esac
 
     # No mapping found

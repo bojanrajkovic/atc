@@ -36,6 +36,7 @@ just build    # Production build
 
 - `.mise.toml` — Pinned tool versions (Rust, Node, just, lefthook)
 - `.commitlintrc.mjs` — Conventional Commits config (free-form scopes)
+- `.github/workflows/` — CI workflows (ci.yml, zizmor.yml)
 - `lefthook.yml` — Three-tier git hook definitions
 - `justfile` — Task runner recipes
 - `backend/` — Rust workspace: atc-core (domain), atc-github (GitHub API), atc-server (Axum HTTP)

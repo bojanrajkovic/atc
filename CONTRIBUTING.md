@@ -82,6 +82,22 @@ The strongest gate — runs before code reaches the remote:
 - E2E tests (playwright)
 - Documentation staleness check
 
+## Continuous Integration
+
+This project maintains two GitHub Actions workflows:
+
+### CI Workflow (ci.yml)
+Runs quality checks on every pull request and push to main:
+- **On pull requests:** Path-filtered backend/frontend checks run only for modified stacks. Backend tests, lints, and build checks run for `.rs` changes. Frontend tests, lints, and build checks run for `.svelte`, `.ts`, `.js` changes. Always-run checks: dependency review (PRs only), PR title validation (conventional commit format).
+- **On pushes to main:** Both backend and frontend checks always run (no path filtering).
+- **Results:** Check the "Backend Result" and "Frontend Result" status checks to see detailed results for each stack.
+
+### Workflow Security (zizmor.yml)
+Lints all workflow files (`.github/workflows/**`) for security and correctness issues:
+- **Trigger:** Activates only when workflow files change (not on every commit).
+- **Results:** Findings appear in the repository's Security tab under "Code scanning" as security advisories. Not a required status check — use for proactive security improvement.
+- **Coverage:** Scans for hardcoded secrets, unsafe ref pinning, overly permissive permissions, and other GitHub Actions best practices.
+
 ## Pull Requests
 
 - Create a branch from `main`
