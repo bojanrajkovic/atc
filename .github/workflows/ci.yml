@@ -61,7 +61,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
-          components: clippy, llvm-tools-preview
+          components: rustfmt, clippy, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -94,7 +94,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: backend/lcov.info
           flags: backend
-          fail_ci_if_error: true
+          fail_ci_if_error: false # set to true once CODECOV_TOKEN secret is configured
 
       - name: Upload test artifacts
         if: always()
@@ -167,7 +167,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: frontend/coverage/lcov.info
           flags: frontend
-          fail_ci_if_error: true
+          fail_ci_if_error: false # set to true once CODECOV_TOKEN secret is configured
 
       - name: Upload test artifacts
         if: always()
