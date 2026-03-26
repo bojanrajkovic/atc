@@ -67,11 +67,17 @@ jobs:
         with:
           workspaces: backend
 
-      - name: Verify Rust toolchain
-        run: |
-          rustc --version
-          cargo --version
-          cargo clippy --version
+      - name: Check formatting
+        working-directory: backend
+        run: cargo fmt --check
+
+      - name: Lint (clippy)
+        working-directory: backend
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Compile check
+        working-directory: backend
+        run: cargo check --workspace
 
   frontend:
     name: Frontend
