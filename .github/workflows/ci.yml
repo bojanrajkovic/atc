@@ -105,6 +105,10 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      - name: Release build
+        working-directory: backend
+        run: cargo build --release -p atc-server
+
   frontend:
     name: Frontend
     needs: changes
