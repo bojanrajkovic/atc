@@ -40,12 +40,13 @@ just build    # Production build
 - `justfile` — Task runner recipes
 - `backend/` — Rust workspace: atc-core (domain), atc-github (GitHub API), atc-server (Axum HTTP)
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
+- `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
 - `scripts/doc-mapping.sh` — Source-to-architecture-doc mappings
 - `scripts/check-docs-lefthook.sh` — Pre-push doc-staleness gate
 - `docs/architecture/` — Architecture docs (created as features ship)
 - `docs/architecture-decisions/` — ADRs
 - `docs/design-plans/` — Feature design plans
-- `docs/ideation/` — Living ideation docs for unbuilt features
+- `docs/ideation/` — Pre-code design artifacts, research, and prototype
 
 ## Documentation Map
 
@@ -54,7 +55,8 @@ just build    # Production build
 | Architecture docs | `docs/architecture/` (created per feature) |
 | Architecture decisions (ADRs) | `docs/architecture-decisions/` |
 | Design plans | `docs/design-plans/` |
-| Feature ideation | `docs/ideation/` |
+| Pre-code design & research | `docs/ideation/` (architecture research, UI design, prototype, competitive analysis) |
+| Design system config | `.impeccable.md` |
 | Human workflows & conventions | `CONTRIBUTING.md` |
 | Doc enforcement mappings | `scripts/doc-mapping.sh` |
 
