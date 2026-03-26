@@ -79,6 +79,32 @@ jobs:
         working-directory: backend
         run: cargo check --workspace
 
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@735e5933943122c5ac182e3a644c997efb4b14ff # v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Run tests with coverage
+        working-directory: backend
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/lcov.info
+          flags: backend
+          fail_ci_if_error: true
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: test-results-backend
+          path: backend/lcov.info
+          retention-days: 7
+          if-no-files-found: ignore
+
   frontend:
     name: Frontend
     needs: changes
