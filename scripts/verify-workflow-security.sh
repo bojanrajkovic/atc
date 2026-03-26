@@ -52,7 +52,7 @@ echo
 echo "AC8.1: Checking all 'uses:' references are SHA-pinned with version comments..."
 for file in "${workflow_files[@]}"; do
     # Extract all uses: lines
-    uses_lines=$(grep "^\s*-\s*uses:" "$file" || true)
+    uses_lines=$(grep -E "^\s*(- )?uses:" "$file" || true)
     if [[ -z "$uses_lines" ]]; then
         continue
     fi
