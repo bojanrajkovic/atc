@@ -153,6 +153,28 @@ jobs:
         working-directory: frontend
         run: pnpm check
 
+      - name: Run tests with coverage
+        working-directory: frontend
+        run: pnpm exec vitest run --coverage --coverage.reporter=lcov --passWithNoTests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: true
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: test-results-frontend
+          path: |
+            frontend/coverage/lcov.info
+          retention-days: 7
+          if-no-files-found: ignore
+
   pr-checks:
     name: PR Checks
     if: github.event_name == 'pull_request'
