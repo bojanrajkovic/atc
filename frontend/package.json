@@ -17,6 +17,7 @@
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@typescript-eslint/parser": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-svelte": "catalog:",
     "prettier": "catalog:",
