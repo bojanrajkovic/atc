@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+              - 'justfile'
+              - '.mise.toml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+              - 'justfile'
+              - '.mise.toml'
+
+  backend:
+    name: Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: ci
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+
+      - name: Read Rust version from mise.toml
+        id: rust-version
+        run: echo "version=$(mise config get tools.rust)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
+        with:
+          toolchain: ${{ steps.rust-version.outputs.version }}
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: backend
+
+      - name: Create frontend dist stub
+        run: mkdir -p frontend/dist && echo '<!doctype html>' > frontend/dist/index.html
+
+      - name: Check formatting
+        working-directory: backend
+        run: cargo fmt --check
+
+      - name: Lint (clippy)
+        working-directory: backend
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Compile check
+        working-directory: backend
+        run: cargo check --workspace
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@7627fb428e65e78e2ec9a24ae5c5bd5f8553f182 # v2.69.10
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Run tests with coverage
+        working-directory: backend
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        if: github.repository == 'bojanrajkovic/atc'
+        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: backend/lcov.info
+          flags: backend
+          fail_ci_if_error: true
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: test-results-backend
+          path: backend/lcov.info
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Release build
+        working-directory: backend
+        run: cargo build --release -p atc-server
+
+  frontend:
+    name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: ci
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+
+      - name: Read Node and pnpm versions from mise.toml
+        id: versions
+        run: |
+          echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$(mise config get tools.pnpm)" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: ${{ steps.versions.outputs.pnpm }}
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting (Biome)
+        working-directory: frontend
+        run: pnpm exec biome check .
+
+      - name: Check formatting (Prettier — Svelte files)
+        working-directory: frontend
+        run: pnpm exec prettier --check '**/*.svelte'
+
+      - name: Lint (ESLint — Svelte files)
+        working-directory: frontend
+        run: pnpm exec eslint '**/*.svelte'
+
+      - name: Type check (svelte-check)
+        working-directory: frontend
+        run: pnpm check
+
+      - name: Run tests with coverage
+        working-directory: frontend
+        run: pnpm exec vitest run --coverage --coverage.reporter=lcov --passWithNoTests
+
+      - name: Upload coverage to Codecov
+        if: github.repository == 'bojanrajkovic/atc'
+        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: true
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: test-results-frontend
+          path: |
+            frontend/coverage/lcov.info
+          retention-days: 7
+          if-no-files-found: ignore
+
+  pr-checks:
+    name: PR Checks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Dependency review
+        continue-on-error: true # requires GHAS; remove once repo is public
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: always
+
+      - name: Validate PR title
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # zizmor: ignore[secrets-outside-env]
+
+  backend-result:
+    name: Backend Result
+    needs: [changes, backend]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          BACKEND_CHANGED: ${{ needs.changes.outputs.backend }}
+          EVENT_NAME: ${{ github.event_name }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: |
+          if [[ "$BACKEND_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
+            echo "No backend changes, skipping"
+            exit 0
+          fi
+          if [[ "$BACKEND_RESULT" != "success" ]]; then
+            echo "Backend checks failed: $BACKEND_RESULT"
+            exit 1
+          fi
+          echo "All backend checks passed"
+
+  frontend-result:
+    name: Frontend Result
+    needs: [changes, frontend]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+          EVENT_NAME: ${{ github.event_name }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          if [[ "$FRONTEND_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
+            echo "No frontend changes, skipping"
+            exit 0
+          fi
+          if [[ "$FRONTEND_RESULT" != "success" ]]; then
+            echo "Frontend checks failed: $FRONTEND_RESULT"
+            exit 1
+          fi
+          echo "All frontend checks passed"
