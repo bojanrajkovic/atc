@@ -47,6 +47,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    environment: ci
     permissions:
       contents: read
     steps:
@@ -97,7 +98,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: backend/lcov.info
           flags: backend
-          fail_ci_if_error: false # set to true once CODECOV_TOKEN secret is configured
+          fail_ci_if_error: true
 
       - name: Upload test artifacts
         if: always()
@@ -117,6 +118,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
+    environment: ci
     permissions:
       contents: read
     steps:
@@ -170,7 +172,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: frontend/coverage/lcov.info
           flags: frontend
-          fail_ci_if_error: false # set to true once CODECOV_TOKEN secret is configured
+          fail_ci_if_error: true
 
       - name: Upload test artifacts
         if: always()
