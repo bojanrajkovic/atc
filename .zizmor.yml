@@ -1,11 +1,10 @@
 rules:
-  template-injection:
+  superfluous-actions:
     ignore:
-      # Gate jobs use only GitHub-controlled context values in shell:
-      # needs.changes.outputs.*, github.event_name, needs.*.result
-      # These are not user-controllable and cannot be injected.
-      - ci.yml:backend-result
-      - ci.yml:frontend-result
+      # dtolnay/rust-toolchain declaratively installs a specific toolchain
+      # version with components (rustfmt, clippy, llvm-tools-preview).
+      # Replacing with raw rustup commands adds verbosity for no benefit.
+      - ci.yml:backend
 
   secrets-outside-env:
     ignore:

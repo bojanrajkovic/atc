@@ -215,13 +215,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check results
+        env:
+          BACKEND_CHANGED: ${{ needs.changes.outputs.backend }}
+          EVENT_NAME: ${{ github.event_name }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
         run: |
-          if [[ "${{ needs.changes.outputs.backend }}" != "true" && "${{ github.event_name }}" != "push" ]]; then
+          if [[ "$BACKEND_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
             echo "No backend changes, skipping"
             exit 0
           fi
-          if [[ "${{ needs.backend.result }}" != "success" ]]; then
-            echo "Backend checks failed: ${{ needs.backend.result }}"
+          if [[ "$BACKEND_RESULT" != "success" ]]; then
+            echo "Backend checks failed: $BACKEND_RESULT"
             exit 1
           fi
           echo "All backend checks passed"
@@ -233,13 +237,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check results
+        env:
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+          EVENT_NAME: ${{ github.event_name }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
         run: |
-          if [[ "${{ needs.changes.outputs.frontend }}" != "true" && "${{ github.event_name }}" != "push" ]]; then
+          if [[ "$FRONTEND_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
             echo "No frontend changes, skipping"
             exit 0
           fi
-          if [[ "${{ needs.frontend.result }}" != "success" ]]; then
-            echo "Frontend checks failed: ${{ needs.frontend.result }}"
+          if [[ "$FRONTEND_RESULT" != "success" ]]; then
+            echo "Frontend checks failed: $FRONTEND_RESULT"
             exit 1
           fi
           echo "All frontend checks passed"
