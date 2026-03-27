@@ -63,7 +63,7 @@ jobs:
         id: rust-version
         run: echo "version=$(mise config get tools.rust)" >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
           components: rustfmt, clippy, llvm-tools-preview
@@ -216,7 +216,7 @@ jobs:
       - name: Validate PR title
         uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # zizmor: ignore[secrets-outside-env]
 
   backend-result:
     name: Backend Result
