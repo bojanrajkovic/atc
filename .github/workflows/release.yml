@@ -20,7 +20,7 @@ jobs:
 
       - uses: taiki-e/create-gh-release-action@f67cf7b2dadd83d36b981e674a6b08063997ce68 # v1.10.0
         with:
-          changelog: CHANGELOG.md
+          changelog: backend/crates/atc-server/CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
 
   build-binaries:
@@ -46,10 +46,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
-        with:
-          install: false
 
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
