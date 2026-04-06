@@ -98,6 +98,43 @@ Lints all workflow files (`.github/workflows/**`) for security and correctness i
 - **Results:** Findings appear in the repository's Security tab under "Code scanning" as security advisories. Not a required status check — use for proactive security improvement.
 - **Coverage:** Scans for hardcoded secrets, unsafe ref pinning, overly permissive permissions, and other GitHub Actions best practices.
 
+## Releases
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please) and a tag-triggered release workflow.
+
+**How it works:**
+
+1. Merge commits to `main` using [Conventional Commits](#commit-conventions) format
+2. release-please automatically creates/updates a release PR that bumps versions and updates CHANGELOGs
+3. When the release PR is merged, a `v*` git tag is created
+4. The tag triggers the release workflow which:
+   - Creates a GitHub Release from the CHANGELOG
+   - Builds `atc-server` binaries for Linux (x86_64, aarch64) and macOS (Apple Silicon)
+   - Builds and pushes a multi-arch Docker image to `ghcr.io/bojanrajkovic/atc`
+   - Attests all artifacts via Sigstore
+
+**Version bumping rules:**
+
+| Commit prefix | Version bump | Example |
+|--------------|-------------|---------|
+| `feat:` | Minor (0.x.0) | New feature |
+| `fix:` | Patch (0.0.x) | Bug fix |
+| `feat!:` or `BREAKING CHANGE:` | Major (x.0.0) | Breaking change |
+
+All packages (3 Rust crates + frontend) version in lockstep via the `linked-versions` plugin.
+
+**Container image:** `docker pull ghcr.io/bojanrajkovic/atc:latest`
+
+**Verifying artifacts:**
+
+```bash
+# Verify a downloaded binary
+gh attestation verify ./atc-server-x86_64-unknown-linux-musl.tar.gz -R bojanrajkovic/atc
+
+# Verify the container image
+gh attestation verify oci://ghcr.io/bojanrajkovic/atc:latest -R bojanrajkovic/atc
+```
+
 ## Pull Requests
 
 - Create a branch from `main`
