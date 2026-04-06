@@ -169,12 +169,13 @@ jobs:
           IMAGE="ghcr.io/${{ github.repository }}"
 
           # Build --tag flags from metadata output (one per semver tag).
-          # Uses awk in command substitution to avoid subshell variable scoping issue with pipe.
-          TAG_FLAGS=$(echo "${STEPS_META_OUTPUTS_TAGS}" | awk 'NF{printf " --tag %s", $0}')
+          # Uses bash array to safely handle multi-line input without word-splitting fragility.
+          args=()
+          while IFS= read -r t; do [ -n "$t" ] && args+=(--tag "$t"); done <<< "${STEPS_META_OUTPUTS_TAGS}"
 
           # Single invocation merges platform images into all semver tags
           docker buildx imagetools create \
-            ${TAG_FLAGS} \
+            "${args[@]}" \
             "${IMAGE}:${VERSION}-amd64" \
             "${IMAGE}:${VERSION}-arm64"
         env:

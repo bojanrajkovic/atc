@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-03-26
+Last verified: 2026-04-06
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
