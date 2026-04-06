@@ -165,26 +165,31 @@ jobs:
 
       - name: Create multi-arch manifest
         run: |
-          VERSION="${{ steps.meta.outputs.version }}"
+          VERSION="${STEPS_META_OUTPUTS_VERSION}"
           IMAGE="ghcr.io/${{ github.repository }}"
 
           # Build --tag flags from metadata output (one per semver tag).
           # Uses awk in command substitution to avoid subshell variable scoping issue with pipe.
-          TAG_FLAGS=$(echo "${{ steps.meta.outputs.tags }}" | awk 'NF{printf " --tag %s", $0}')
+          TAG_FLAGS=$(echo "${STEPS_META_OUTPUTS_TAGS}" | awk 'NF{printf " --tag %s", $0}')
 
           # Single invocation merges platform images into all semver tags
           docker buildx imagetools create \
             ${TAG_FLAGS} \
             "${IMAGE}:${VERSION}-amd64" \
             "${IMAGE}:${VERSION}-arm64"
+        env:
+          STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
+          STEPS_META_OUTPUTS_TAGS: ${{ steps.meta.outputs.tags }}
 
       - name: Get manifest digest
         id: digest
         run: |
           IMAGE="ghcr.io/${{ github.repository }}"
-          VERSION="${{ steps.meta.outputs.version }}"
+          VERSION="${STEPS_META_OUTPUTS_VERSION}"
           DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+        env:
+          STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
 
       - name: Attest container image
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
