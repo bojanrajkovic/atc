@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-03-26
+Last verified: 2026-04-07
 
 ## Purpose
 
@@ -24,6 +24,10 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 **Decision:** Zizmor findings are security advisories, not required status checks
 **Alternatives considered:** Required status check, blocking gate, optional warning
 **Rationale:** Zizmor findings are security improvement opportunities, not build blockers. Displaying them in the Security tab allows teams to triage and fix them as part of the security review process without blocking PRs on first occurrence.
+
+**Decision:** All cargo build/check/test invocations use `--locked`
+**Alternatives considered:** No lockfile enforcement; only enforce in release builds
+**Rationale:** `--locked` makes CI fail loudly when `Cargo.toml` is edited without committing the regenerated `Cargo.lock`, preventing dependency drift between developer machines, CI, and the released artifacts. Pairs with the release pipeline's bot-driven `Cargo.lock` refresh on release PRs (see release-pipeline.md), so the release PR's own CI passes under the same `--locked` rule. Applied to clippy, check, llvm-cov, and the release build; `cargo fmt` is exempt because it is not a build command.
 
 ## Boundaries
 

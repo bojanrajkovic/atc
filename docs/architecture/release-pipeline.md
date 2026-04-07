@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-04-06
+Last verified: 2026-04-07
 
 ## Purpose
 
@@ -70,11 +70,19 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
-**Decision:** GITHUB_TOKEN only for ghcr.io authentication
+**Decision:** GITHUB_TOKEN for ghcr.io and binary upload; GitHub App installation token for release-please
 
-**Alternatives considered:** Personal access tokens (PATs); GITHUB_TOKEN with broader scopes
+**Alternatives considered:** GITHUB_TOKEN everywhere; personal access token (PAT) for release-please
 
-**Rationale:** GITHUB_TOKEN is generated per-job with minimal scopes and automatically revoked. PATs are long-lived and easier to misuse. GITHUB_TOKEN cannot write to other repos, reducing blast radius of any workflow compromise.
+**Rationale:** GITHUB_TOKEN is generated per-job with minimal scopes and auto-revoked, making it the right choice for ghcr.io pushes and binary uploads where the bearer only needs short-lived write to the current repo. **However**, commits and PR events created by GITHUB_TOKEN do not trigger downstream workflows (GitHub's loop-prevention rule), which would leave the release PR with no CI status checks. release-please.yml therefore mints an installation token for the org-wide releaser GitHub App via `actions/create-github-app-token` (`vars.RELEASER_BOT_CLIENT_ID` + `secrets.RELEASER_BOT_PRIVATE_KEY`) and passes it to the release-please action, so the release PR is opened under the bot identity and PR-level workflows actually run on it. The bot is preferred over a PAT because installation tokens are short-lived (1 hour), are not tied to any individual user, and are scoped per-installation rather than per-account.
+
+---
+
+**Decision:** Bot-driven `Cargo.lock` refresh on release PRs, paired with `--locked` everywhere
+
+**Alternatives considered:** Skip `--locked` and let lockfiles self-heal on next build; keep the `cargo-workspace` plugin (which would update `Cargo.lock` automatically); refresh the lockfile manually before merging release PRs
+
+**Rationale:** Reproducible release artifacts require `--locked` builds, but release-please bumps crate versions in `Cargo.toml` without touching `Cargo.lock` (we dropped the `cargo-workspace` plugin because of release-please issue #2589 — the plugin hardcodes `Cargo.toml` at the repo root and our workspace lives at `backend/Cargo.toml`, with no flag to override). Without intervention, every release PR would fail its own `--locked` CI. The `refresh-lockfile` job in release-please.yml runs after release-please, mints its own installation token, checks out the release PR branch under the bot identity, runs `cargo update --workspace` in `backend/` (which only rewrites workspace member entries — not transitive deps), and pushes the refreshed lockfile back. The bot-attributed push triggers downstream CI, so the release PR ends up with green `--locked` status checks. `--locked` is enforced in ci.yml, release.yml's binary build, and the Dockerfile.
 
 ## Boundaries
 
@@ -99,8 +107,10 @@ Both workflows integrate with the conventional commits framework to provide full
 
 - Never create a GitHub Release from release-please (use `skip-github-release: true`; the release.yml workflow creates releases instead)
 - Never use QEMU emulation for multi-arch builds (use native GitHub Actions runners only)
-- Never use personal access tokens (PATs) for ghcr.io authentication (GITHUB_TOKEN only)
+- Never use personal access tokens (PATs) anywhere in the release pipeline — use GITHUB_TOKEN for ghcr.io/binary upload, and the releaser GitHub App installation token (via `actions/create-github-app-token`) for any operation that needs to trigger downstream workflows
 - Never commit release-please config without ensuring the `linked-versions` plugin is enabled (enforces lockstep versioning)
+- Never re-add the `cargo-workspace` plugin to `release-please-config.json` without first verifying release-please issue #2589 is fixed; the plugin hardcodes `Cargo.toml` at the repo root and will fail because our workspace lives at `backend/Cargo.toml`
+- Never remove `--locked` from CI, release.yml, or the Dockerfile without also removing the bot-driven `Cargo.lock` refresh job (the two are paired — one without the other booby-traps release PRs)
 
 ## Files
 
