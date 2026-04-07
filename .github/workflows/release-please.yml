@@ -14,6 +14,7 @@ jobs:
   release-please:
     name: Release Please
     runs-on: ubuntu-24.04
+    environment: release
     permissions: {}
     outputs:
       prs_created: ${{ steps.release.outputs.prs_created }}
@@ -42,6 +43,7 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.prs_created == 'true'
     runs-on: ubuntu-24.04
+    environment: release
     permissions: {}
     steps:
       # Mint a fresh app token (job-scoped, can't reuse the previous one).
