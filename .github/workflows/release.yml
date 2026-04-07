@@ -58,6 +58,7 @@ jobs:
           bin: atc-server
           target: ${{ matrix.target }}
           manifest-path: backend/Cargo.toml
+          locked: true
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}

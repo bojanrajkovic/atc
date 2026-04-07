@@ -37,7 +37,7 @@ WORKDIR /app/backend
 COPY --from=planner /app/recipe.json /app/recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git/db \
-    cargo chef cook --release --recipe-path /app/recipe.json
+    cargo chef cook --release --locked --recipe-path /app/recipe.json
 
 # ---- Stage 4: Builder ----
 # Copy real source + frontend assets, compile the server binary.
@@ -49,7 +49,7 @@ COPY backend/ backend/
 COPY --from=frontend /app/frontend/dist frontend/dist/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git/db \
-    cd backend && cargo build --release --bin atc-server
+    cd backend && cargo build --release --locked --bin atc-server
 
 # ---- Stage 5: Runtime ----
 # Distroless minimal image (~32 MB). No shell, no package manager.
