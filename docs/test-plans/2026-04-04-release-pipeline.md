@@ -28,7 +28,7 @@
 | 0.5 | `grep -A3 'docker/login-action' .github/workflows/release.yml \| grep 'secrets.GITHUB_TOKEN'` | Two matches | AC7.4 |
 | 0.6 | `grep 'mount=type=cache' Dockerfile \| wc -l` | `4` | AC8.2 |
 | 0.7 | `grep 'type=gha' .github/workflows/release.yml` | Shows `scope=linux/amd64` and `scope=linux/arm64` | AC8.1 |
-| 0.8 | `grep 'FROM gcr.io/distroless/cc-debian12' Dockerfile` | `FROM gcr.io/distroless/cc-debian12:nonroot` | AC5.1 |
+| 0.8 | `grep 'FROM gcr.io/distroless/cc-debian13' Dockerfile` | `FROM gcr.io/distroless/cc-debian13:nonroot` | AC5.1 |
 | 0.9 | `grep -n 'pnpm build' Dockerfile` | Line hit in frontend stage | AC5.3 |
 | 0.10 | `docker build -t atc-server-local .` | Exit 0 | AC5.4 |
 | 0.11 | `docker run --rm -d --name atc-test -p 8080:8080 atc-server-local && sleep 2 && curl -sf http://localhost:8080/health; docker stop atc-test` | curl returns `{"status":"ok"}` | AC4.4 (local) |
