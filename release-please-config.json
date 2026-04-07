@@ -23,10 +23,6 @@
   },
   "plugins": [
     {
-      "type": "cargo-workspace",
-      "merge": false
-    },
-    {
       "type": "linked-versions",
       "groupName": "atc",
       "components": ["atc-core", "atc-github", "atc-server", "frontend"]
