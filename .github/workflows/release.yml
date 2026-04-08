@@ -23,9 +23,60 @@ jobs:
           changelog: backend/crates/atc-server/CHANGELOG.md
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Build the frontend once and share `frontend/dist` with every binary build
+  # in the matrix below. The atc-server binary embeds frontend/dist at compile
+  # time via rust-embed (see backend/crates/atc-server/src/assets.rs), so the
+  # binary build cannot run from a clean checkout — it would either fail to
+  # compile or ship an empty SPA. Doing this once and fanning out via artifact
+  # is cheaper than building the frontend three times in the matrix.
+  build-frontend:
+    name: Build Frontend
+    needs: create-release
+    runs-on: ubuntu-24.04
+    permissions: {}
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+
+      - name: Read Node version from mise.toml
+        id: versions
+        run: echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+
+      # Corepack reads the pnpm version from frontend/package.json's
+      # "packageManager" field and auto-downloads the pinned version on first
+      # invocation. No pnpm/action-setup needed.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm build
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          if-no-files-found: error
+          retention-days: 1
+
   build-binaries:
     name: Build Binary (${{ matrix.target }})
-    needs: create-release
+    needs: [create-release, build-frontend]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
@@ -52,6 +103,14 @@ jobs:
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      # rust-embed (in atc-server) reads ../../../frontend/dist at compile time
+      # in release mode. Pull the artifact built once by build-frontend so the
+      # cargo build below has real assets to embed.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frontend-dist
+          path: frontend/dist
 
       - uses: taiki-e/upload-rust-binary-action@10c1cf6a3da113ad4e60018e386570529aa5f1d3 # v1.30.0
         with:

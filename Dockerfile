@@ -6,7 +6,13 @@ ARG NODE_VERSION=25
 
 # ---- Stage 1: Frontend ----
 # Build Svelte SPA with Vite. Output: /app/frontend/dist/
+#
+# pnpm version is pinned via the "packageManager" field in frontend/package.json.
+# Corepack auto-downloads and activates that exact version on first pnpm
+# invocation, so the container build uses the same pnpm as local dev and CI.
+# COREPACK_ENABLE_DOWNLOAD_PROMPT=0 suppresses the interactive consent prompt.
 FROM node:${NODE_VERSION}-slim AS frontend
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN npm install -g corepack --force && corepack enable
 WORKDIR /app/frontend
 COPY frontend/pnpm-lock.yaml frontend/package.json frontend/pnpm-workspace.yaml ./

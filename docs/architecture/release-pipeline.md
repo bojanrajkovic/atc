@@ -78,6 +78,22 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
+**Decision:** Frontend is built once and shared with the binary matrix via artifact
+
+**Alternatives considered:** Build the frontend inline in each binary matrix job; ship a stub `frontend/dist` (as `ci.yml` does); restructure rust-embed to be optional
+
+**Rationale:** `atc-server` embeds `frontend/dist` at compile time via `rust-embed` (see `backend/crates/atc-server/src/assets.rs`), so any release build from a clean checkout fails or ships an empty SPA. Rather than building the frontend three times in the binary matrix (one per target triple), `release.yml` has a dedicated `build-frontend` job that runs once on `ubuntu-24.04`, uploads `frontend/dist` as a workflow artifact, and is added as a `needs:` of `build-binaries`. Each matrix job downloads the artifact into `frontend/dist/` before invoking `cargo build`. The `build-container` job is unaffected — its Dockerfile has its own frontend stage that builds from source.
+
+---
+
+**Decision:** pnpm version is pinned via the `packageManager` field in `frontend/package.json`
+
+**Alternatives considered:** Pass `PNPM_VERSION` as a Docker build arg sourced from `.mise.toml`; rely on Corepack's default pnpm (whatever the active Node release ships); add `pnpm/action-setup` everywhere
+
+**Rationale:** Setting `"packageManager": "pnpm@<version>"` in `frontend/package.json` gives every Corepack-enabled environment a single source of truth for the pnpm version: the Dockerfile frontend stage (which already copies `frontend/package.json` into the build context), the `build-frontend` job in `release.yml`, and any local dev that uses Corepack. Renovate's npm manager auto-bumps this field with no additional configuration, so the pin stays current without manual maintenance. `.mise.toml` retains its own `pnpm` pin for local-dev tool provisioning; Renovate's mise manager keeps that one in sync independently. The version part of the field updates reliably; integrity hashes (`pnpm@x.y.z+sha512.…`) are an open issue in Renovate, so we deliberately don't include one.
+
+---
+
 **Decision:** Bot-driven `Cargo.lock` refresh on release PRs, paired with `--locked` everywhere
 
 **Alternatives considered:** Skip `--locked` and let lockfiles self-heal on next build; keep the `cargo-workspace` plugin (which would update `Cargo.lock` automatically); refresh the lockfile manually before merging release PRs
