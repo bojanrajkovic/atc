@@ -44,12 +44,13 @@ jobs:
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
           install: false
+          cache: false
 
       - name: Read Node version from mise.toml
         id: versions
         run: echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6 # zizmor: ignore[cache-poisoning]
         with:
           node-version: ${{ steps.versions.outputs.node }}
 
