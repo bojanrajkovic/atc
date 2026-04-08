@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-03-26
+Last verified: 2026-04-06
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -36,12 +36,16 @@ just build    # Production build
 
 - `.mise.toml` — Pinned tool versions (Rust, Node, just, lefthook)
 - `.commitlintrc.mjs` — Conventional Commits config (free-form scopes)
-- `.github/workflows/` — CI workflows (ci.yml, zizmor.yml)
+- `.github/workflows/` — CI and release workflows (ci.yml, zizmor.yml, release-please.yml, release.yml)
 - `lefthook.yml` — Three-tier git hook definitions
 - `justfile` — Task runner recipes
 - `backend/` — Rust workspace: atc-core (domain), atc-github (GitHub API), atc-server (Axum HTTP)
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
 - `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
+- `Dockerfile` — Multi-stage container build (cargo-chef caching, distroless runtime)
+- `.dockerignore` — Docker build context filter
+- `release-please-config.json` — release-please manifest config (version sync, changelog)
+- `.release-please-manifest.json` — Version tracker for release-please
 - `scripts/doc-mapping.sh` — Source-to-architecture-doc mappings
 - `scripts/check-docs-lefthook.sh` — Pre-push doc-staleness gate
 - `docs/architecture/` — Architecture docs (created as features ship)

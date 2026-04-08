@@ -26,6 +26,18 @@ get_doc_for_file() {
             echo "docs/architecture/frontend-app.md"
             return
             ;;
+        .github/workflows/release-please.yml|.github/workflows/release.yml)
+            echo "docs/architecture/release-pipeline.md"
+            return
+            ;;
+        Dockerfile|.dockerignore)
+            echo "docs/architecture/release-pipeline.md"
+            return
+            ;;
+        release-please-config.json|.release-please-manifest.json)
+            echo "docs/architecture/release-pipeline.md"
+            return
+            ;;
         .github/workflows/*)
             echo "docs/architecture/ci-pipeline.md"
             return
