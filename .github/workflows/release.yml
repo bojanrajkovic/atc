@@ -50,9 +50,13 @@ jobs:
         id: versions
         run: echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6 # zizmor: ignore[cache-poisoning]
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
           node-version: ${{ steps.versions.outputs.node }}
+          # Disable setup-node v6's automatic package-manager caching.
+          # In a tag-triggered release workflow, a poisoned cache from an earlier
+          # feature-branch run could end up baked into the published binary.
+          package-manager-cache: false
 
       # Corepack reads the pnpm version from frontend/package.json's
       # "packageManager" field and auto-downloads the pinned version on first
