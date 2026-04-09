@@ -24,12 +24,55 @@ lint:
 	pid3=$!
 	cd frontend && pnpm check &
 	pid4=$!
+	helm lint deploy/helm/atc &
+	pid5=$!
 	fail=0
 	wait $pid1 || fail=1
 	wait $pid2 || fail=1
 	wait $pid3 || fail=1
 	wait $pid4 || fail=1
+	wait $pid5 || fail=1
 	exit $fail
+
+# Lint Helm chart
+helm-lint:
+	helm lint deploy/helm/atc
+
+# Render Helm chart with test values (sanity check)
+helm-template:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	for f in deploy/helm/atc/tests/values-*.yaml; do
+		echo "==> helm template with $f"
+		helm template atc deploy/helm/atc --values "$f" > /dev/null
+	done
+
+# Validate Helm chart with kubeconform
+helm-check kube_version="1.29.0":
+	#!/usr/bin/env bash
+	set -euo pipefail
+	kube_version="{{kube_version}}"
+	# Build the schema URL - first part
+	schema_base="https://raw.githubusercontent.com/datreeio/CRDs-catalog/main"
+	# Build the schema URL using sed to add template placeholders
+	schema_url=$(echo "$schema_base" | sed "s|main|main/\[.Group\]/\[.ResourceKind\]_\[.ResourceAPIVersion\].json|")
+	# Replace square brackets with curly braces
+	schema_url=$(echo "$schema_url" | sed 's/\[/{/g; s/\]/}/g')
+	for f in deploy/helm/atc/tests/values-*.yaml; do
+		echo "==> helm template + kubeconform ($f, k8s $kube_version)"
+		helm template atc deploy/helm/atc --values "$f" \
+			| kubeconform \
+				-strict \
+				-schema-location default \
+				-schema-location "$schema_url" \
+				-kubernetes-version "$kube_version" \
+				-summary -
+	done
+
+# Package Helm chart
+helm-package:
+	mkdir -p dist
+	helm package deploy/helm/atc --destination ./dist
 
 # Format all code (parallel)
 fmt:
@@ -57,10 +100,13 @@ check:
 	pid2=$!
 	cd frontend && pnpm check &
 	pid3=$!
+	just helm-check &
+	pid4=$!
 	fail=0
 	wait $pid1 || fail=1
 	wait $pid2 || fail=1
 	wait $pid3 || fail=1
+	wait $pid4 || fail=1
 	exit $fail
 
 # Run all tests (parallel)
