@@ -35,26 +35,6 @@ podAnnotations: {}
 # -- Extra labels to apply to the Pod (merged with the standard selector labels).
 podLabels: {}
 
-# -- Pod-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
-# These values match the distroless :nonroot image's baked-in UID/GID (65532).
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 65532
-  runAsGroup: 65532
-  fsGroup: 65532
-  seccompProfile:
-    type: RuntimeDefault
-
-# -- Container-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
-securityContext:
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  capabilities:
-    drop:
-      - ALL
-  seccompProfile:
-    type: RuntimeDefault
-
 service:
   # -- Kubernetes Service type.
   type: ClusterIP
@@ -103,6 +83,13 @@ config:
   #   NOTE: Setting databaseUrl to a sqlite:// path outside /tmp without
   #   persistence.enabled=true is a configuration error — the chart will fail at
   #   render time with an explicit message.
+  #
+  # Mode 2b — Ephemeral SQLite (/tmp):
+  #   Set databaseUrl: "sqlite:////tmp/atc.db" (NO persistence.enabled needed).
+  #   ATC stores state in a SQLite file on the ephemeral emptyDir at /tmp.
+  #   Use case: temporary demos or integration tests where state is expected to be lost on pod restart.
+  #   Update strategy: RollingUpdate (zero downtime; state not preserved across restarts).
+  #   This mode runs without a PersistentVolume — the database file is lost when the pod is deleted.
   #
   # Mode 3 — External Postgres:
   #   Set databaseUrl: "postgres://user:pass@host:5432/atc" (or use existingSecret).

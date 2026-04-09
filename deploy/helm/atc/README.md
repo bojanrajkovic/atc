@@ -50,6 +50,19 @@ helm install atc oci://ghcr.io/bojanrajkovic/charts/atc \
 
 **Note:** Setting `persistence.enabled=false` with a `sqlite://` database URL outside `/tmp` will fail at render time with an explicit error message.
 
+### Ephemeral SQLite (/tmp)
+
+For temporary deployments like demos or integration tests, you can use an ephemeral SQLite database stored on the `/tmp` emptyDir volume. State is lost when the pod restarts.
+
+```bash
+helm install atc oci://ghcr.io/bojanrajkovic/charts/atc \
+  --set config.databaseUrl=sqlite:////tmp/atc.db
+```
+
+**Update strategy:** RollingUpdate (zero downtime; state not preserved)
+
+**Note:** This mode requires no PersistentVolume and is useful for temporary environments where state loss on restart is acceptable.
+
 ### External Postgres
 
 ATC connects to an operator-managed Postgres instance. Ideal for work cluster with an operated Postgres service.
@@ -87,7 +100,6 @@ Key sections:
 - `persistence` — PersistentVolumeClaim settings (enabled, storage class, size, mount path)
 - `metrics` — Whether to expose the metrics port (9090) on the Service
 - `serviceAccount` — ServiceAccount creation and annotations
-- `podSecurityContext` / `securityContext` — Pod and container security settings
 - `service` — Service type and port configuration
 - `ingress` / `gateway` — Optional routing configuration
 

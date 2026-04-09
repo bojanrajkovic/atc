@@ -44,22 +44,22 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "atc.serviceAccountName" . }}
       securityContext:
-        runAsNonRoot: {{ .Values.podSecurityContext.runAsNonRoot }}
-        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
-        runAsGroup: {{ .Values.podSecurityContext.runAsGroup }}
-        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
-          type: {{ .Values.podSecurityContext.seccompProfile.type }}
+          type: RuntimeDefault
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
-            allowPrivilegeEscalation: {{ .Values.securityContext.allowPrivilegeEscalation }}
-            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
-                {{- toYaml .Values.securityContext.capabilities.drop | nindent 16 }}
+                - ALL
             seccompProfile:
-              type: {{ .Values.securityContext.seccompProfile.type }}
+              type: RuntimeDefault
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:

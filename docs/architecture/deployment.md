@@ -15,9 +15,30 @@ the tag-triggered release workflow, alongside the container image and binary art
 
 ## Key Decisions
 
-**Decision:** Restricted Pod Security Standards enforced by default
+**Decision:** Restricted Pod Security Standards hardcoded in the deployment template and cannot be overridden by operators
 **Alternatives considered:** Permissive defaults with a "hardened" values preset; let operators opt in to restricted contexts
-**Rationale:** The distroless `:nonroot` base image already asserts UID 65532; the chart's security context merely declares what the image already guarantees. Shipping secure defaults means operators never need to remember to enable them, and the chart works out of the box in namespaces with `pod-security.kubernetes.io/enforce: restricted`. The only cost is the mandatory `/tmp` emptyDir — a well-understood requirement for read-only root filesystems.
+**Rationale:** Pod and container securityContext blocks are hardcoded in `templates/deployment.yaml` to enforce restricted Pod Security Standards BY DEFAULT and prevent accidental or deliberate regression to a permissive profile. The distroless `:nonroot` base image already asserts UID 65532; the chart's security context merely declares what the image already guarantees. Shipping secure-by-default means operators never need to remember to enable them, and the chart works out of the box in namespaces with `pod-security.kubernetes.io/enforce: restricted`. The fields are not exposed in `values.yaml` or `values.schema.json` — attempting to override them via `--set podSecurityContext.*` is ignored by the schema.
+
+The hardcoded Pod-level security context enforces:
+```yaml
+runAsNonRoot: true
+runAsUser: 65532
+runAsGroup: 65532
+fsGroup: 65532
+seccompProfile:
+  type: RuntimeDefault
+```
+
+The hardcoded container-level security context enforces:
+```yaml
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+capabilities:
+  drop:
+    - ALL
+seccompProfile:
+  type: RuntimeDefault
+```
 
 **Decision:** Three storage modes (ephemeral, local SQLite, external Postgres) with `{{ fail }}` guards for cross-field misconfigurations
 **Alternatives considered:** Single mode with external database required; separate chart variants per mode
