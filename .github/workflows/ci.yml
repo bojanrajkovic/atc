@@ -22,6 +22,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      helm: ${{ steps.filter.outputs.helm }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -41,6 +42,11 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'justfile'
               - '.mise.toml'
+            helm:
+              - 'deploy/helm/**'
+              - '.github/workflows/ci.yml'
+              - '.mise.toml'
+              - 'justfile'
 
   backend:
     name: Backend
@@ -194,6 +200,46 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  helm:
+    name: Helm
+    if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
+    needs: changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        k8s: ["1.29.0", "1.32.0"]
+        values:
+          - values-defaults.yaml
+          - values-ingress.yaml
+          - values-gateway.yaml
+          - values-persistence.yaml
+          - values-metrics.yaml
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+
+      - name: Lint chart
+        run: helm lint deploy/helm/atc
+
+      - name: Render and validate
+        run: |
+          schema_base="https://raw.githubusercontent.com/datreeio/CRDs-catalog/main"
+          schema_url=$(echo "$schema_base" | sed "s|main|main/\[.Group\]/\[.ResourceKind\]_\[.ResourceAPIVersion\].json|")
+          schema_url=$(echo "$schema_url" | sed 's/\[/{/g; s/\]/}/g')
+          helm template atc deploy/helm/atc \
+            --values deploy/helm/atc/tests/${{ matrix.values }} \
+            | kubeconform \
+                -strict \
+                -schema-location default \
+                -schema-location "$schema_url" \
+                -kubernetes-version ${{ matrix.k8s }} \
+                -summary -
+
   pr-checks:
     name: PR Checks
     if: github.event_name == 'pull_request'
@@ -261,3 +307,25 @@ jobs:
             exit 1
           fi
           echo "All frontend checks passed"
+
+  helm-result:
+    name: Helm Result
+    needs: [changes, helm]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          HELM_CHANGED: ${{ needs.changes.outputs.helm }}
+          EVENT_NAME: ${{ github.event_name }}
+          HELM_RESULT: ${{ needs.helm.result }}
+        run: |
+          if [[ "$HELM_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
+            echo "No helm changes, skipping"
+            exit 0
+          fi
+          if [[ "$HELM_RESULT" != "success" ]]; then
+            echo "Helm checks failed: $HELM_RESULT"
+            exit 1
+          fi
+          echo "All helm checks passed"
