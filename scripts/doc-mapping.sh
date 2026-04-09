@@ -42,6 +42,10 @@ get_doc_for_file() {
             echo "docs/architecture/release-pipeline.md"
             return
             ;;
+        deploy/helm/atc/*|deploy/helm/atc/templates/*|deploy/helm/atc/tests/*)
+            echo "docs/architecture/deployment.md"
+            return
+            ;;
         .github/workflows/*)
             echo "docs/architecture/ci-pipeline.md"
             return

@@ -1,0 +1,131 @@
+{{- $dbUrl := .Values.config.databaseUrl | default "" -}}
+{{- if and (hasPrefix "sqlite://" $dbUrl) (not (hasPrefix "sqlite:////tmp/" $dbUrl)) (not .Values.persistence.enabled) -}}
+{{- fail "sqlite:// database URL requires persistence.enabled=true (path outside /tmp requires a PersistentVolume). Either set persistence.enabled=true or use a database URL pointing inside /tmp." -}}
+{{- end -}}
+{{- if and .Values.persistence.enabled (gt (int .Values.replicaCount) 1) -}}
+{{- fail "persistence.enabled=true requires replicaCount=1 because ReadWriteOnce PersistentVolumes cannot be mounted by multiple Pods simultaneously. Disable persistence or reduce replicaCount to 1." -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atc.fullname" . }}
+  labels:
+    {{- include "atc.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.persistence.enabled }}
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  {{- end }}
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "atc.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "atc.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "atc.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: {{ .Values.podSecurityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
+        runAsGroup: {{ .Values.podSecurityContext.runAsGroup }}
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        seccompProfile:
+          type: {{ .Values.podSecurityContext.seccompProfile.type }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            allowPrivilegeEscalation: {{ .Values.securityContext.allowPrivilegeEscalation }}
+            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+            capabilities:
+              drop:
+                {{- toYaml .Values.securityContext.capabilities.drop | nindent 16 }}
+            seccompProfile:
+              type: {{ .Values.securityContext.seccompProfile.type }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ATC_HTTP_ADDR
+              value: {{ .Values.config.httpAddr | quote }}
+            - name: ATC_METRICS_ADDR
+              value: {{ .Values.config.metricsAddr | quote }}
+            - name: ATC_LOG_FILTER
+              value: {{ .Values.config.logFilter | quote }}
+            {{- if .Values.config.logFormat }}
+            - name: ATC_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+            {{- end }}
+            {{- if .Values.existingSecret.name }}
+            - name: ATC_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name | quote }}
+                  key: {{ .Values.existingSecret.databaseUrlKey | quote }}
+            {{- else if .Values.config.databaseUrl }}
+            - name: ATC_DATABASE_URL
+              value: {{ .Values.config.databaseUrl | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "atc.fullname" .)) | quote }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

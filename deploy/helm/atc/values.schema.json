@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of replicas. Values greater than 1 are incompatible with persistence.enabled=true."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Container image repository."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Container image tag. Defaults to the chart appVersion when empty."
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy."
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "List of image pull secret references."
+    },
+    "nameOverride": {
+      "type": "string",
+      "description": "Override the chart name component of generated resource names."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Override the full generated resource name."
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Whether to create a dedicated ServiceAccount."
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations to apply to the ServiceAccount."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the ServiceAccount. Defaults to the fullname when empty and create=true."
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "description": "Annotations to apply to the Pod."
+    },
+    "podLabels": {
+      "type": "object",
+      "description": "Extra labels to apply to the Pod."
+    },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level security context."
+    },
+    "securityContext": {
+      "type": "object",
+      "description": "Container-level security context."
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "description": "Kubernetes Service type."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Service port for the HTTP listener."
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Resource requests and limits for the ATC container."
+    },
+    "nodeSelector": {
+      "type": "object",
+      "description": "Node selector for pod scheduling."
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Tolerations for pod scheduling."
+    },
+    "affinity": {
+      "type": "object",
+      "description": "Affinity rules for pod scheduling."
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "httpAddr": {
+          "type": "string",
+          "description": "Address and port the HTTP listener binds to (ATC_HTTP_ADDR)."
+        },
+        "metricsAddr": {
+          "type": "string",
+          "description": "Address and port the metrics listener binds to (ATC_METRICS_ADDR)."
+        },
+        "databaseUrl": {
+          "type": ["string", "null"],
+          "description": "Database connection URL (ATC_DATABASE_URL). See values.yaml for the three storage modes."
+        },
+        "logFilter": {
+          "type": "string",
+          "description": "Tracing filter string in RUST_LOG syntax (ATC_LOG_FILTER)."
+        },
+        "logFormat": {
+          "type": ["string", "null"],
+          "description": "Log output format: 'pretty', 'json', or null to let the binary decide by build type (ATC_LOG_FORMAT)."
+        }
+      }
+    },
+    "existingSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": ["string", "null"],
+          "description": "Name of an existing Secret containing the database URL."
+        },
+        "databaseUrlKey": {
+          "type": "string",
+          "description": "Key inside the Secret whose value is the database URL."
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to expose the metrics port on the Service."
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to mount a PersistentVolumeClaim."
+        },
+        "storageClass": {
+          "type": "string",
+          "description": "Storage class for the PVC. Empty string uses the cluster default."
+        },
+        "accessModes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Access modes for the PVC."
+        },
+        "size": {
+          "type": "string",
+          "description": "Storage size for the PVC (e.g. '1Gi')."
+        },
+        "existingClaim": {
+          "type": "string",
+          "description": "Name of an existing PVC to use. When set, no PVC is created."
+        },
+        "mountPath": {
+          "type": "string",
+          "description": "Mount path for the persistence volume inside the container."
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to create an Ingress resource."
+        },
+        "className": {
+          "type": "string",
+          "description": "Ingress class name."
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations to apply to the Ingress."
+        },
+        "hosts": {
+          "type": "array",
+          "description": "Ingress host rules.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "tls": {
+          "type": "array",
+          "description": "TLS configuration for the Ingress.",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to create a Gateway API HTTPRoute resource."
+        },
+        "parentRefs": {
+          "type": "array",
+          "description": "parentRefs pointing at the Gateway(s) that should serve this HTTPRoute.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "hostnames": {
+          "type": "array",
+          "description": "Optional hostnames for the HTTPRoute.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rules": {
+          "type": "array",
+          "description": "Custom HTTPRoute rules. Empty generates a default catch-all rule.",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to include the helm test hook Pod."
+        }
+      }
+    }
+  }
+}

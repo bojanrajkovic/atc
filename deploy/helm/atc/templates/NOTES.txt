@@ -1,0 +1,27 @@
+ATC has been deployed.
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+Access ATC at: http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else if .Values.gateway.enabled }}
+{{- range .Values.gateway.hostnames }}
+Access ATC at: https://{{ . }}
+{{- end }}
+{{- if not .Values.gateway.hostnames }}
+Access ATC via the Gateway defined by your parentRefs configuration.
+{{- end }}
+{{- else }}
+Access ATC by running these commands:
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "atc.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  echo "Visit http://127.0.0.1:8080 to access ATC"
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+{{- end }}
+
+{{- if and .Values.config.databaseUrl (not .Values.existingSecret.name) }}
+
+WARNING: The database URL is set in plain text in values.yaml (config.databaseUrl).
+For production deployments, store the connection string in a Kubernetes Secret and
+reference it via existingSecret.name / existingSecret.databaseUrlKey instead.
+{{- end }}

@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-04-06
+Last verified: 2026-04-08
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -41,6 +41,7 @@ just build    # Production build
 - `justfile` — Task runner recipes
 - `backend/` — Rust workspace: atc-core (domain), atc-github (GitHub API), atc-server (Axum HTTP)
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
+- `deploy/helm/` — Helm chart at `deploy/helm/atc/`
 - `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
 - `Dockerfile` — Multi-stage container build (cargo-chef caching, distroless runtime)
 - `.dockerignore` — Docker build context filter
@@ -58,6 +59,7 @@ just build    # Production build
 | What | Where |
 |------|-------|
 | Architecture docs | `docs/architecture/` (created per feature) |
+| Deployment | `docs/architecture/deployment.md` |
 | Architecture decisions (ADRs) | `docs/architecture-decisions/` |
 | Design plans | `docs/design-plans/` |
 | Pre-code design & research | `docs/ideation/` (architecture research, UI design, prototype, competitive analysis) |
