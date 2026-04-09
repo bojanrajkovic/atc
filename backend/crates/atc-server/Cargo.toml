@@ -9,7 +9,10 @@ rust-version.workspace = true
 atc-core = { path = "../atc-core" }
 atc-github = { path = "../atc-github" }
 axum = "0.8.8"
+axum-prometheus = "0.10.0"
 figment = { version = "0.10.19", features = ["env", "toml"] }
+metrics = "0.24.3"
+metrics-process = "2.4.3"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
 rust-embed = "8.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -22,3 +25,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 [dev-dependencies]
 serial_test = "3.4.0"
 tower = "0.5.3"
+
+[build-dependencies]
+vergen-gix = { version = "9.1.0", features = ["build", "cargo", "si", "rustc"] }
