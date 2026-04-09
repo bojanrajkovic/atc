@@ -38,6 +38,10 @@ lint:
 helm-lint:
 	helm lint deploy/helm/atc
 
+# Run helm-unittest suites
+helm-unittest:
+	helm unittest -f 'deploy/helm/atc/tests/unit/*.yaml' deploy/helm/atc
+
 # Render Helm chart with test values (sanity check)
 helm-template:
 	#!/usr/bin/env bash
@@ -87,11 +91,14 @@ check:
 	pid3=$!
 	just helm-check &
 	pid4=$!
+	just helm-unittest &
+	pid5=$!
 	fail=0
 	wait $pid1 || fail=1
 	wait $pid2 || fail=1
 	wait $pid3 || fail=1
 	wait $pid4 || fail=1
+	wait $pid5 || fail=1
 	exit $fail
 
 # Run all tests (parallel)

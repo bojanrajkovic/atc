@@ -223,8 +223,14 @@ jobs:
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
 
+      - name: Install helm-unittest plugin
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version 0.8.2
+
       - name: Lint chart
         run: helm lint deploy/helm/atc
+
+      - name: Run helm unit tests
+        run: helm unittest -f 'deploy/helm/atc/tests/unit/*.yaml' deploy/helm/atc
 
       - name: Render and validate
         env:
