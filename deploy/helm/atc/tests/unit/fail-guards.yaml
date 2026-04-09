@@ -1,0 +1,22 @@
+suite: Fail guards — constraint violations (AC4.5, AC4.6)
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: fails when sqlite:// database URL is set without persistence enabled
+    set:
+      config.databaseUrl: "sqlite:///var/lib/atc/atc.db"
+      persistence.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "sqlite:// database URL requires persistence.enabled=true"
+
+  - it: fails when persistence is enabled with replicaCount > 1
+    set:
+      persistence.enabled: true
+      replicaCount: 3
+      config.databaseUrl: "sqlite:///var/lib/atc/atc.db"
+    asserts:
+      - failedTemplate:
+          errorPattern: "persistence.enabled=true requires replicaCount=1"

@@ -1,0 +1,30 @@
+suite: Deployment strategy — flips with persistence (AC4.3, AC4.4)
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: defaults to RollingUpdate with maxSurge=1 and maxUnavailable=0
+    set:
+      persistence.enabled: false
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+
+  - it: switches to Recreate when persistence is enabled
+    set:
+      persistence.enabled: true
+      config.databaseUrl: "sqlite:///var/lib/atc/atc.db"
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - isNull:
+          path: spec.strategy.rollingUpdate
