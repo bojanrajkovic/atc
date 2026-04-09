@@ -1,4 +1,7 @@
 {{- if .Values.gateway.enabled -}}
+{{- if empty .Values.gateway.parentRefs -}}
+{{- fail "gateway.enabled=true requires at least one entry in gateway.parentRefs (the Gateway your HTTPRoute attaches to)" -}}
+{{- end -}}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

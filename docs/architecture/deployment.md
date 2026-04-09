@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-04-08
+Last verified: 2026-04-09
 
 ## Purpose
 
@@ -78,3 +78,9 @@ seccompProfile:
 - `deploy/helm/atc/templates/service.yaml` — ClusterIP Service with `http` port always present and `metrics` port gated on `metrics.enabled`
 - `deploy/helm/atc/templates/serviceaccount.yaml` — ServiceAccount gated on `serviceAccount.create`; `automountServiceAccountToken: false`
 - `deploy/helm/atc/templates/NOTES.txt` — Post-install guidance with conditional ingress/gateway/port-forward branches and plain-credentials warning
+- `deploy/helm/atc/templates/ingress.yaml` — Optional Ingress (`networking.k8s.io/v1`), gated on `ingress.enabled`; supports TLS, hosts, and custom annotations
+- `deploy/helm/atc/templates/httproute.yaml` — Optional HTTPRoute (`gateway.networking.k8s.io/v1`), gated on `gateway.enabled`; validates non-empty `parentRefs` via `{{ fail }}` guard
+- `deploy/helm/atc/templates/pvc.yaml` — Optional PersistentVolumeClaim, gated on `persistence.enabled && !persistence.existingClaim`; supports custom storage class and access modes
+- `deploy/helm/atc/templates/servicemonitor.yaml` — Optional ServiceMonitor (`monitoring.coreos.com/v1`), gated on `metrics.enabled && metrics.serviceMonitor.enabled`; includes label selector for Prometheus discovery
+- `deploy/helm/atc/templates/tests/test-connection.yaml` — Helm test hook Pod with restricted Pod Security Standards; validates Service connectivity; excluded from charts via `helm.sh/hook: test` annotation
+- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix for Phase 5 (persistence, gateway, metrics, ingress, and combinations); excluded from chart tarball by `.helmignore /tests/` anchor

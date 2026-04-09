@@ -8,7 +8,7 @@
 *.bak
 
 # CI test fixtures — not shipped in the chart tarball
-tests/
+/tests/
 
 # Helm-docs source template — rendered README is committed separately
 README.md.gotmpl
