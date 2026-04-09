@@ -131,8 +131,8 @@ jobs:
         id: bot
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
-          APP_SLUG=$(gh api /app --jq .slug)
           USER_ID=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
           echo "user-id=${USER_ID}" >> "$GITHUB_OUTPUT"
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
