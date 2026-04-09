@@ -48,6 +48,9 @@ helm-template:
 	done
 
 # Validate Helm chart with kubeconform across every tests/values-*.yaml fixture.
+# Invoke with a positional Kubernetes version (just's standard convention):
+#   just helm-check            # defaults to 1.29.0
+#   just helm-check 1.32.0
 helm-check kube_version="1.29.0":
 	scripts/helm-kubeconform.sh {{kube_version}}
 
