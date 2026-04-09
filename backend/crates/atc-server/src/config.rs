@@ -1,5 +1,10 @@
 use std::net::SocketAddr;
 
+use figment::{
+    Figment,
+    providers::{Env, Serialized},
+};
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -37,5 +42,15 @@ impl Default for Config {
             log_filter: "info".to_string(),
             log_format: LogFormat::default(),
         }
+    }
+}
+
+impl Config {
+    #[allow(dead_code)]
+    pub fn load() -> Result<Self, Box<figment::Error>> {
+        Figment::from(Serialized::defaults(Config::default()))
+            .merge(Env::prefixed("ATC_").split("__"))
+            .extract()
+            .map_err(Box::new)
     }
 }
