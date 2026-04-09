@@ -41,6 +41,8 @@ podLabels: {}
 # UID constraints, sidecars needing elevated privileges). Organizations wanting to enforce the
 # restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
 # cluster level, not chart-level immutability.
+# NOTE: Setting this to null omits the pod-level securityContext entirely (not the same as
+# "reset to Kubernetes defaults"). To keep restricted PSS, override individual fields instead.
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532
@@ -54,6 +56,8 @@ podSecurityContext:
 # rootfs requirements, profilers needing elevated capabilities). Organizations wanting to enforce
 # the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
 # cluster level, not chart-level immutability.
+# NOTE: Setting this to null omits the container-level securityContext entirely (not the same
+# as "reset to Kubernetes defaults"). To keep restricted PSS, override individual fields instead.
 securityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
