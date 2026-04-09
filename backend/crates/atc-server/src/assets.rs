@@ -52,6 +52,7 @@ async fn serve_embedded(req: Request) -> Response {
     }
 
     // SPA fallback: non-file paths get index.html.
+    // API routes that should return 404 are handled explicitly in routes.rs.
     match FrontendAssets::get("index.html") {
         Some(index) => (
             StatusCode::OK,

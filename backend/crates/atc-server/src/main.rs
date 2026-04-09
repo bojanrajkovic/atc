@@ -20,7 +20,7 @@ async fn main() {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
             .json()
-            .flatten_event(true)
+            .with_span_list(true)
             .init();
     } else {
         tracing_subscriber::fmt()
