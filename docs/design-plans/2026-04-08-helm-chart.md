@@ -356,10 +356,12 @@ Codebase investigation (Phase 1 of brainstorming) confirmed this design follows,
 <!-- START_PHASE_6 -->
 ### Phase 6: Dockerfile :nonroot flip + release.yml chart publishing
 
-**Goal:** Flip the container runtime base to `:nonroot` so the image asserts its own identity, and wire chart packaging + OCI publishing into the tag-triggered release workflow with Sigstore attestation.
+> **Revised 2026-04-08:** The Dockerfile flip was already completed during Phase 5 work; Phase 6 verifies rather than modifies the runtime base image. See docs/architecture/release-pipeline.md for the decision record.
+
+**Goal:** Verify the container runtime base is already `:nonroot` (landed in Phase 5) and wire chart packaging + OCI publishing into the tag-triggered release workflow with Sigstore attestation.
 
 **Components:**
-- `Dockerfile` — final `FROM` stage changes from `gcr.io/distroless/cc-debian13` to `gcr.io/distroless/cc-debian13:nonroot`; verify the existing binary runs as UID 65532 without needing any `USER` directive override
+- `Dockerfile` — verify the existing final `FROM` stage is already `gcr.io/distroless/cc-debian13:nonroot` with `USER 65532:65532` (landed in Phase 5, revised here for alignment); add `EXPOSE 9090` for the metrics side port
 - `.github/workflows/release.yml` — new `publish-helm-chart` job gated on `needs: [create-release, build-container, merge-manifest]`; installs helm via mise-action; reads the chart version via `helm show chart | yq '.version'`; runs `helm package deploy/helm/atc --destination ./dist`; authenticates to ghcr.io via `GITHUB_TOKEN`; runs `helm push ./dist/atc-${VERSION}.tgz oci://ghcr.io/bojanrajkovic/charts`; runs `actions/attest-build-provenance` on the packaged chart; workflow permissions updated (`contents: read`, `packages: write`, `id-token: write` on that job); `persist-credentials: false` on checkout
 - `docs/architecture/release-pipeline.md` — two new Decision entries: "Runtime base is `gcr.io/distroless/cc-debian13:nonroot` (UID 65532)" with rationale about dev/prod identity consistency; "Helm chart published to `oci://ghcr.io/bojanrajkovic/charts/atc` via tag-triggered `release.yml` with Sigstore attestation" with rationale about matching the existing binary/container provenance pattern; Last verified date bumped
 - `scripts/doc-mapping.sh` — ensure `Dockerfile` is mapped to `release-pipeline.md` (may have been missing since Phase 5)
@@ -367,7 +369,7 @@ Codebase investigation (Phase 1 of brainstorming) confirmed this design follows,
 **Dependencies:** Phase 5 (chart must pass CI validation before we start publishing it)
 
 **Done when:**
-- `docker run --rm ghcr.io/bojanrajkovic/atc:dev id` reports `uid=65532` (not root)
+- `docker run --rm ghcr.io/bojanrajkovic/atc:dev id` reports `uid=65532` (not root) *(Dockerfile :nonroot flip already merged in Phase 5; this phase verifies the image still satisfies AC9 after Phase 1–2 backend changes land)*
 - `docker run --rm ghcr.io/bojanrajkovic/atc:dev` starts, binds both listeners, and responds to `/healthz` and `/readyz` without any PodSecurityContext overrides
 - A tag-triggered run of `release.yml` in a test fork produces an OCI chart artifact at `oci://ghcr.io/<test-fork>/charts/atc:<version>`
 - The Sigstore attestation for the chart is verifiable via `gh attestation verify`

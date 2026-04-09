@@ -5,6 +5,7 @@ use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
 mod assets;
+mod config;
 mod routes;
 
 #[tokio::main]
