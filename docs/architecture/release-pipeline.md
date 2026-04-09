@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-04-09
+Last verified: 2026-04-08
 
 ## Purpose
 
@@ -91,6 +91,19 @@ Both workflows integrate with the conventional commits framework to provide full
 **Alternatives considered:** Pass `PNPM_VERSION` as a Docker build arg sourced from `.mise.toml`; rely on Corepack's default pnpm (whatever the active Node release ships); add `pnpm/action-setup` everywhere
 
 **Rationale:** Setting `"packageManager": "pnpm@<version>"` in `frontend/package.json` gives every Corepack-enabled environment a single source of truth for the pnpm version: the Dockerfile frontend stage (which already copies `frontend/package.json` into the build context), the `build-frontend` job in `release.yml`, and any local dev that uses Corepack. Renovate's npm manager auto-bumps this field with no additional configuration, so the pin stays current without manual maintenance. `.mise.toml` retains its own `pnpm` pin for local-dev tool provisioning; Renovate's mise manager keeps that one in sync independently. The version part of the field updates reliably; integrity hashes (`pnpm@x.y.z+sha512.…`) are an open issue in Renovate, so we deliberately don't include one.
+
+---
+
+**Decision:** Helm chart release-please integration (2026-04-08)
+
+**Rationale:** The Helm chart at `deploy/helm/atc` is registered as a fifth release-please package with `release-type: helm`. It is deliberately excluded from the `linked-versions` plugin so that its version can evolve independently (chart-only fixes, template improvements, and values schema changes should not force an app version bump, and vice versa).
+
+`Chart.yaml`'s `appVersion` field is kept in sync with the linked app version via the `sync-helm-app-version` bot job in `release-please.yml`. The job runs after `refresh-lockfile`, reads the current `backend/crates/atc-server` value from `.release-please-manifest.json` using `jq`, and rewrites `appVersion` via `sed`. It is idempotent — a `git diff --quiet` guard skips the commit when the value is already correct.
+
+**Rejected alternatives:**
+- *Chart in linked-versions group:* Rejected. Chart version must evolve independently per the Definition of Done. Coupling the chart version to the app version would force chart-only releases to match app semver, defeating the purpose of a separately versioned chart.
+- *`extra-files` JSONPath for appVersion:* Rejected. release-please's `extra-files` with a JSONPath expression can only write a static version string — it cannot dynamically resolve "the current linked app version." The bot job reads the actual resolved value from the manifest at runtime.
+- *Manual appVersion edits:* Rejected. Operator error surface — a reviewer could merge a release PR where `appVersion` is stale and the chart would advertise the wrong app version to Helm users.
 
 ---
 

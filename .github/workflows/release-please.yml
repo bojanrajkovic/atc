@@ -110,3 +110,54 @@ jobs:
           git add backend/Cargo.lock
           git commit -m "chore(release): refresh Cargo.lock"
           git push
+
+  sync-helm-app-version:
+    needs: [release-please, refresh-lockfile]
+    if: always() && needs.refresh-lockfile.result != 'failure' && (needs.release-please.outputs.prs_created == 'true' || needs.release-please.outputs.pr != '')
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ vars.RELEASER_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASER_BOT_PRIVATE_KEY }}
+
+      - name: Resolve bot identity
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          APP_SLUG=$(gh api /app --jq .slug)
+          USER_ID=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          echo "user-id=${USER_ID}" >> "$GITHUB_OUTPUT"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: true
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+
+      - name: Sync appVersion
+        env:
+          GIT_AUTHOR_NAME: ${{ steps.bot.outputs.name }}
+          GIT_AUTHOR_EMAIL: ${{ steps.bot.outputs.email }}
+          GIT_COMMITTER_NAME: ${{ steps.bot.outputs.name }}
+          GIT_COMMITTER_EMAIL: ${{ steps.bot.outputs.email }}
+        run: |
+          APP_VERSION=$(jq -r '."backend/crates/atc-server"' .release-please-manifest.json)
+          sed -i "s/^appVersion: .*/appVersion: \"${APP_VERSION}\"/" deploy/helm/atc/Chart.yaml
+          if git diff --quiet deploy/helm/atc/Chart.yaml; then
+            echo "appVersion already in sync; skipping commit"
+            exit 0
+          fi
+          git add deploy/helm/atc/Chart.yaml
+          git commit -m "chore(helm): sync appVersion to ${APP_VERSION}"
+          git push
