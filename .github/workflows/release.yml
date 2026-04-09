@@ -263,3 +263,57 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
+
+  publish-helm-chart:
+    name: Publish Helm Chart
+    needs: [create-release, build-container, merge-manifest]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      chart-version: ${{ steps.chart-version.outputs.chart-version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          cache: false
+
+      - name: Read chart version
+        id: chart-version
+        run: |
+          if command -v yq &>/dev/null; then
+            CHART_VERSION=$(helm show chart deploy/helm/atc | yq '.version')
+          else
+            CHART_VERSION=$(grep '^version:' deploy/helm/atc/Chart.yaml | awk '{print $2}')
+          fi
+          echo "chart-version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io \
+                -u "${GITHUB_ACTOR}" \
+                --password-stdin
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+
+      - name: Package Helm chart
+        run: helm package deploy/helm/atc --destination ./dist
+
+      - name: Push Helm chart
+        run: |
+          helm push \
+            "./dist/atc-${CHART_VERSION}.tgz" \
+            "oci://ghcr.io/bojanrajkovic/charts"
+        env:
+          CHART_VERSION: ${{ steps.chart-version.outputs.chart-version }}
+
+      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ./dist/atc-*.tgz

@@ -63,4 +63,5 @@ FROM gcr.io/distroless/cc-debian13:nonroot
 COPY --from=builder /app/backend/target/release/atc-server /atc-server
 USER 65532:65532
 EXPOSE 8080
+EXPOSE 9090
 ENTRYPOINT ["/atc-server"]
