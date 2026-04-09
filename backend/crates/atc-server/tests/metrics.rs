@@ -62,8 +62,11 @@ async fn metrics_endpoint_contains_expected_families() {
     let metrics_url = format!("http://{metrics_addr}/metrics");
     let resp = client.get(&metrics_url).send().await.unwrap();
 
-    // AC2.2 — Content-Type (should be text/plain)
-    // Note: axum-prometheus returns "text/plain; charset=utf-8" rather than "text/plain; version=0.0.4"
+    // AC2.2 — Content-Type must match the Prometheus text exposition format
+    // spec exactly: `text/plain; version=0.0.4; charset=utf-8`. axum-prometheus
+    // emits only `text/plain; charset=utf-8` by default, so `metrics::build()`
+    // wraps the render in an explicit header tuple — if this assertion ever
+    // regresses, the wrapper has been undone.
     let content_type = resp
         .headers()
         .get("content-type")
@@ -72,6 +75,14 @@ async fn metrics_endpoint_contains_expected_families() {
     assert!(
         content_type.starts_with("text/plain"),
         "expected text/plain content-type, got: {content_type}"
+    );
+    assert!(
+        content_type.contains("version=0.0.4"),
+        "expected Prometheus exposition format version=0.0.4 in content-type, got: {content_type}"
+    );
+    assert!(
+        content_type.contains("charset=utf-8"),
+        "expected charset=utf-8 in content-type, got: {content_type}"
     );
 
     let body = resp.text().await.unwrap();

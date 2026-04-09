@@ -1,13 +1,24 @@
 use std::time::Duration;
 
+use axum::http::header;
 use axum::{Router, routing::get};
 use axum_prometheus::PrometheusMetricLayer;
+
+/// Prometheus text exposition format Content-Type.
+///
+/// Axum's default `IntoResponse` for a bare `String` emits
+/// `text/plain; charset=utf-8`, which is missing the `version` parameter that
+/// the Prometheus exposition format v0.0.4 spec requires. Real scrapers fall
+/// back to defaults when the header is missing, but we set it explicitly so
+/// the `/metrics` response matches the spec and the design plan's AC2.2.
+const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 
 /// Build the metrics layer (for the main router) and the metrics side-port router.
 ///
 /// Returns `(layer, side_router)` where:
 /// - `layer` is applied to the main API router via `.layer()`
-/// - `side_router` exposes `GET /metrics` in Prometheus text format
+/// - `side_router` exposes `GET /metrics` in Prometheus text format with the
+///   canonical `text/plain; version=0.0.4; charset=utf-8` Content-Type.
 ///
 /// # Panics
 ///
@@ -19,7 +30,12 @@ pub fn build() -> (PrometheusMetricLayer<'static>, Router) {
 
     let metrics_router = Router::new().route(
         "/metrics",
-        get(move || async move { metric_handle.render() }),
+        get(move || async move {
+            (
+                [(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)],
+                metric_handle.render(),
+            )
+        }),
     );
 
     (prometheus_layer, metrics_router)
