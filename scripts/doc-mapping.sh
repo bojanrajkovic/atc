@@ -18,6 +18,10 @@ get_doc_for_file() {
             echo "docs/architecture/backend-server.md"
             return
             ;;
+        backend/crates/atc-server/build.rs)
+            echo "docs/architecture/backend-server.md"
+            return
+            ;;
         frontend/src/*)
             echo "docs/architecture/frontend-app.md"
             return

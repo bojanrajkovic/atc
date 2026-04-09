@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-08
+Last verified: 2026-04-08 (updated 2026-04-08 for Metrics phase)
 
 ## Purpose
 
@@ -52,11 +52,65 @@ Config fields and their `ATC_*` env var overrides:
 **Does not own:** Domain logic (atc-core), GitHub API integration (atc-github), frontend build process, authentication (future phase)
 **Prohibitions:** Do not put business logic in route handlers — extract to atc-core. Do not call GitHub API directly from handlers — use atc-github. Do not serve assets from filesystem in release mode — always use rust-embed.
 
+## Metrics
+
+The server binds a second TCP listener (default `0.0.0.0:9090`, overridden via
+`ATC_METRICS_ADDR`) exclusively for the Prometheus scrape endpoint. Serving
+metrics on a separate port keeps the metrics surface out of the application
+ingress and allows Kubernetes `NetworkPolicy` rules to grant scrape access to
+Prometheus without exposing the full API.
+
+### axum-prometheus placement
+
+`PrometheusMetricLayer` wraps the main API router (not the metrics router).
+Every request to `http_addr` is counted in `axum_http_requests_total` and timed
+in `axum_http_requests_duration_seconds`. The metrics router itself is never
+wrapped — scrape requests do not appear in request metrics.
+
+`axum-prometheus` installs the global `metrics` recorder via
+`PrometheusMetricLayer::pair()`. Do not install `PrometheusBuilder` separately;
+doing so will panic with a duplicate-recorder error.
+
+### atc_build_info labels
+
+`register_build_info()` (called once at startup) sets a gauge always equal to
+`1.0` with these labels:
+
+| Label | Source | Example |
+|---|---|---|
+| `version` | `CARGO_PKG_VERSION` | `0.2.0` |
+| `git_sha` | `VERGEN_GIT_SHA` (via `build.rs`) | `a1b2c3d...` |
+| `rustc_version` | `VERGEN_RUSTC_SEMVER` (via `build.rs`) | `1.94.0` |
+| `build_timestamp` | `VERGEN_BUILD_TIMESTAMP` (via `build.rs`) | `2026-04-08T...` |
+| `target_triple` | `VERGEN_CARGO_TARGET_TRIPLE` (via `build.rs`) | `x86_64-unknown-linux-gnu` |
+
+`build.rs` uses the `vergen-gix` crate (pure-Rust gix backend; no libgit2
+dependency) and emits all five vars as `cargo:rustc-env=` instructions.
+
+### Process collector
+
+`spawn_process_collector()` starts a detached tokio task that calls
+`metrics_process::Collector::default().collect()` every 10 seconds. It uses the
+same global recorder installed by axum-prometheus. Emitted families include
+`process_cpu_seconds_total`, `process_resident_memory_bytes`,
+`process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`,
+`process_start_time_seconds`, and `process_threads`.
+
+### Listener always binds
+
+The metrics listener binds unconditionally at startup regardless of the chart's
+`metrics.enabled` value. This is intentional: the chart flag controls whether
+Prometheus discovers the endpoint (via ServiceMonitor or pod annotations); the
+port is always open so that `kubectl port-forward` and ad-hoc `curl` work
+without chart-level changes.
+
 ## Files
 
 - `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, Config::load()
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz endpoints)
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
+- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector
+- `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars
 - `backend/Cargo.toml` — Workspace definition with shared dependency versions
 - `backend/crates/atc-server/Cargo.toml` — Server crate dependencies
