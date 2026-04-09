@@ -5,7 +5,6 @@ use figment::{
     providers::{Env, Serialized},
 };
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
@@ -23,7 +22,6 @@ impl Default for LogFormat {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Config {
     pub http_addr: SocketAddr,
@@ -46,7 +44,6 @@ impl Default for Config {
 }
 
 impl Config {
-    #[allow(dead_code)]
     pub fn load() -> Result<Self, Box<figment::Error>> {
         Figment::from(Serialized::defaults(Config::default()))
             .merge(Env::prefixed("ATC_").split("__"))

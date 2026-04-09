@@ -5,8 +5,7 @@ use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
 mod assets;
-mod config;
-mod routes;
+use atc_server::routes;
 
 #[tokio::main]
 async fn main() {
