@@ -3,11 +3,14 @@
 
 mod assets;
 
+use std::process;
+
 use atc_server::config;
 use atc_server::metrics;
 use atc_server::routes;
+use tokio_util::sync::CancellationToken;
 
-async fn shutdown_signal() {
+async fn shutdown_signal(shutdown: CancellationToken) {
     use tokio::signal::unix::{SignalKind, signal};
 
     let ctrl_c = async {
@@ -27,13 +30,15 @@ async fn shutdown_signal() {
         () = ctrl_c => {},
         () = sigterm => {},
     }
+
+    shutdown.cancel();
 }
 
 #[tokio::main]
 async fn main() {
     let cfg = config::Config::load().unwrap_or_else(|e| {
         eprintln!("configuration error: {e}");
-        std::process::exit(1);
+        process::exit(1);
     });
 
     let filter = tracing_subscriber::EnvFilter::try_new(&cfg.log_filter)
@@ -70,7 +75,7 @@ async fn main() {
                 "failed to bind metrics listener to {}: {e}",
                 cfg.metrics_addr
             );
-            std::process::exit(1);
+            process::exit(1);
         });
     tracing::info!("metrics listening on http://{}", cfg.metrics_addr);
 
@@ -78,16 +83,39 @@ async fn main() {
         .await
         .unwrap_or_else(|e| {
             tracing::error!("failed to bind to {}: {e}", cfg.http_addr);
-            std::process::exit(1);
+            process::exit(1);
         });
     tracing::info!("listening on http://{}", cfg.http_addr);
 
-    let main_serve = axum::serve(main_listener, app).with_graceful_shutdown(shutdown_signal());
-    let metrics_serve =
-        axum::serve(metrics_listener, metrics_router).with_graceful_shutdown(shutdown_signal());
+    // Create a shared cancellation token for both servers
+    let shutdown = CancellationToken::new();
+
+    // Spawn the signal handler task that will cancel the token
+    let shutdown_clone = shutdown.clone();
+    tokio::spawn(shutdown_signal(shutdown_clone));
+
+    // Both servers observe the same cancellation token
+    let shutdown_main = shutdown.clone();
+    let shutdown_metrics = shutdown.clone();
+    let main_serve =
+        axum::serve(main_listener, app).with_graceful_shutdown(shutdown_main.cancelled_owned());
+    let metrics_serve = axum::serve(metrics_listener, metrics_router)
+        .with_graceful_shutdown(shutdown_metrics.cancelled_owned());
 
     tokio::select! {
-        res = main_serve => res.expect("main server error"),
-        res = metrics_serve => res.expect("metrics server error"),
+        res = main_serve => {
+            if let Err(e) = res {
+                tracing::error!("main server error: {e}");
+                shutdown.cancel();
+                process::exit(1);
+            }
+        }
+        res = metrics_serve => {
+            if let Err(e) = res {
+                tracing::error!("metrics server error: {e}");
+                shutdown.cancel();
+                process::exit(1);
+            }
+        }
     }
 }

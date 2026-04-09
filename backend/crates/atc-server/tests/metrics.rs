@@ -2,21 +2,8 @@
 
 use std::net::SocketAddr;
 
-use axum::Json;
-use axum::Router;
-use axum::routing::get;
-use axum_prometheus::PrometheusMetricLayer;
-use serde::Serialize;
+use atc_server::routes;
 use tokio::net::TcpListener;
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
-
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
-}
 
 /// Build the full server setup with metrics registration.
 /// Returns (main_addr, metrics_addr).
@@ -24,47 +11,18 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     // Step 1: Build Prometheus layer + metrics side-port router. Must happen before
     // register_build_info() and spawn_process_collector() because pair()
     // installs the global metrics recorder.
-    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+    let (prometheus_layer, metrics_router) = atc_server::metrics::build();
 
-    // Step 2: Register build info (in real app this happens in metrics::register_build_info())
-    metrics::describe_gauge!(
-        "atc_build_info",
-        "ATC build metadata (always 1; use labels for values)"
-    );
-    metrics::gauge!(
-        "atc_build_info",
-        "version" => env!("CARGO_PKG_VERSION"),
-        "git_sha" => env!("CARGO_PKG_VERSION"), // Use a placeholder since we're in test
-        "rustc_version" => env!("CARGO_PKG_VERSION"),
-        "build_timestamp" => env!("CARGO_PKG_VERSION"),
-        "target_triple" => env!("CARGO_PKG_VERSION"),
-    )
-    .set(1.0);
+    // Step 2: Register build info with real VERGEN_* labels from build.rs
+    atc_server::metrics::register_build_info();
 
     // Step 3: Spawn process collector task
-    let collector = metrics_process::Collector::default();
-    collector.describe();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-        loop {
-            interval.tick().await;
-            collector.collect();
-        }
-    });
+    atc_server::metrics::spawn_process_collector();
 
-    // Step 4: Build main router with healthz and readyz endpoints
-    let main_router = Router::new()
-        .route("/healthz", get(health))
-        .route("/readyz", get(health))
-        .layer(prometheus_layer);
+    // Step 4: Build main router using the production api_routes function
+    let main_router = routes::api_routes(prometheus_layer);
 
-    // Step 5: Build metrics router with /metrics endpoint
-    let metrics_router = Router::new().route(
-        "/metrics",
-        get(move || async move { metric_handle.render() }),
-    );
-
-    // Step 6: Bind main listener on ephemeral port
+    // Step 5: Bind main listener on ephemeral port
     let main_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let main_addr = main_listener.local_addr().unwrap();
 
@@ -72,7 +30,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         axum::serve(main_listener, main_router).await.unwrap();
     });
 
-    // Step 7: Bind metrics listener on ephemeral port
+    // Step 6: Bind metrics listener on ephemeral port
     let metrics_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let metrics_addr = metrics_listener.local_addr().unwrap();
 
@@ -87,9 +45,6 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
 #[serial_test::serial]
 async fn metrics_endpoint_contains_expected_families() {
     let (main_addr, metrics_addr) = test_setup().await;
-
-    // Give servers time to start
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
 
@@ -108,6 +63,7 @@ async fn metrics_endpoint_contains_expected_families() {
     let resp = client.get(&metrics_url).send().await.unwrap();
 
     // AC2.2 — Content-Type (should be text/plain)
+    // Note: axum-prometheus returns "text/plain; charset=utf-8" rather than "text/plain; version=0.0.4"
     let content_type = resp
         .headers()
         .get("content-type")
@@ -120,10 +76,31 @@ async fn metrics_endpoint_contains_expected_families() {
 
     let body = resp.text().await.unwrap();
 
-    // AC2.2 — build_info gauge with all required labels
+    // AC2.2 — build_info gauge with all required labels (real VERGEN_* labels from build.rs)
     assert!(
         body.contains("atc_build_info{"),
         "expected atc_build_info gauge in /metrics body"
+    );
+    // Verify real vergen labels appear in the body (not placeholders)
+    assert!(
+        body.contains("version="),
+        "expected version label in atc_build_info"
+    );
+    assert!(
+        body.contains("git_sha="),
+        "expected git_sha label in atc_build_info"
+    );
+    assert!(
+        body.contains("rustc_version="),
+        "expected rustc_version label in atc_build_info"
+    );
+    assert!(
+        body.contains("build_timestamp="),
+        "expected build_timestamp label in atc_build_info"
+    );
+    assert!(
+        body.contains("target_triple="),
+        "expected target_triple label in atc_build_info"
     );
 
     // AC2.3 — process metrics
