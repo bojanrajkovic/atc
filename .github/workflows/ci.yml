@@ -227,18 +227,10 @@ jobs:
         run: helm lint deploy/helm/atc
 
       - name: Render and validate
-        run: |
-          schema_base="https://raw.githubusercontent.com/datreeio/CRDs-catalog/main"
-          schema_url=$(echo "$schema_base" | sed "s|main|main/\[.Group\]/\[.ResourceKind\]_\[.ResourceAPIVersion\].json|")
-          schema_url=$(echo "$schema_url" | sed 's/\[/{/g; s/\]/}/g')
-          helm template atc deploy/helm/atc \
-            --values deploy/helm/atc/tests/${{ matrix.values }} \
-            | kubeconform \
-                -strict \
-                -schema-location default \
-                -schema-location "$schema_url" \
-                -kubernetes-version ${{ matrix.k8s }} \
-                -summary -
+        env:
+          VALUES_FILE: deploy/helm/atc/tests/${{ matrix.values }}
+          KUBE_VERSION: ${{ matrix.k8s }}
+        run: scripts/helm-kubeconform-one.sh "${KUBE_VERSION}" "${VALUES_FILE}"
 
   pr-checks:
     name: PR Checks

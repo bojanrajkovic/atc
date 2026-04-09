@@ -47,27 +47,9 @@ helm-template:
 		helm template atc deploy/helm/atc --values "$f" > /dev/null
 	done
 
-# Validate Helm chart with kubeconform
+# Validate Helm chart with kubeconform across every tests/values-*.yaml fixture.
 helm-check kube_version="1.29.0":
-	#!/usr/bin/env bash
-	set -euo pipefail
-	kube_version="{{kube_version}}"
-	# Build the schema URL - first part
-	schema_base="https://raw.githubusercontent.com/datreeio/CRDs-catalog/main"
-	# Build the schema URL using sed to add template placeholders
-	schema_url=$(echo "$schema_base" | sed "s|main|main/\[.Group\]/\[.ResourceKind\]_\[.ResourceAPIVersion\].json|")
-	# Replace square brackets with curly braces
-	schema_url=$(echo "$schema_url" | sed 's/\[/{/g; s/\]/}/g')
-	for f in deploy/helm/atc/tests/values-*.yaml; do
-		echo "==> helm template + kubeconform ($f, k8s $kube_version)"
-		helm template atc deploy/helm/atc --values "$f" \
-			| kubeconform \
-				-strict \
-				-schema-location default \
-				-schema-location "$schema_url" \
-				-kubernetes-version "$kube_version" \
-				-summary -
-	done
+	scripts/helm-kubeconform.sh {{kube_version}}
 
 # Package Helm chart
 helm-package:
