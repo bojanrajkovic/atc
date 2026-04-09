@@ -35,6 +35,34 @@ podAnnotations: {}
 # -- Extra labels to apply to the Pod (merged with the standard selector labels).
 podLabels: {}
 
+# -- Pod-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
+# These values match the distroless :nonroot image's baked-in UID/GID (65532).
+# Operators may override these values for legitimate edge cases (e.g., storage CSI drivers with
+# UID constraints, sidecars needing elevated privileges). Organizations wanting to enforce the
+# restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
+# cluster level, not chart-level immutability.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
+# Operators may override these values for legitimate edge cases (e.g., sidecars with writable
+# rootfs requirements, profilers needing elevated capabilities). Organizations wanting to enforce
+# the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
+# cluster level, not chart-level immutability.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
 service:
   # -- Kubernetes Service type.
   type: ClusterIP

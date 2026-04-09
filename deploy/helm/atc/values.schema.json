@@ -68,6 +68,14 @@
       "type": "object",
       "description": "Extra labels to apply to the Pod."
     },
+    "podSecurityContext": {
+      "type": "object",
+      "description": "Pod-level security context."
+    },
+    "securityContext": {
+      "type": "object",
+      "description": "Container-level security context."
+    },
     "service": {
       "type": "object",
       "additionalProperties": false,

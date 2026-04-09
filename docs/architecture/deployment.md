@@ -15,11 +15,11 @@ the tag-triggered release workflow, alongside the container image and binary art
 
 ## Key Decisions
 
-**Decision:** Restricted Pod Security Standards hardcoded in the deployment template and cannot be overridden by operators
-**Alternatives considered:** Permissive defaults with a "hardened" values preset; let operators opt in to restricted contexts
-**Rationale:** Pod and container securityContext blocks are hardcoded in `templates/deployment.yaml` to enforce restricted Pod Security Standards BY DEFAULT and prevent accidental or deliberate regression to a permissive profile. The distroless `:nonroot` base image already asserts UID 65532; the chart's security context merely declares what the image already guarantees. Shipping secure-by-default means operators never need to remember to enable them, and the chart works out of the box in namespaces with `pod-security.kubernetes.io/enforce: restricted`. The fields are not exposed in `values.yaml` or `values.schema.json` — attempting to override them via `--set podSecurityContext.*` is ignored by the schema.
+**Decision:** Restricted Pod Security Standards by default, overridable via values for legitimate operator edge cases
+**Alternatives considered:** Hardcoded immutable security context; permissive defaults with a "hardened" values preset; let operators opt in to restricted contexts
+**Rationale:** The chart ships with restricted Pod Security Standards as the default values in `values.yaml` (`podSecurityContext` and `securityContext`). These defaults satisfy AC5.1/AC5.2/AC5.3 security controls and match what the distroless `:nonroot` image already guarantees at UID 65532. The fields are exposed in `values.yaml` and `values.schema.json`, allowing operators to override them via `--set` for legitimate edge cases: storage CSI drivers with non-standard UID constraints, sidecars requiring writable root filesystems, profilers needing elevated capabilities, etc. Organizations wanting to enforce the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the cluster level, not chart-level immutability. This approach balances secure-by-default with operational flexibility.
 
-The hardcoded Pod-level security context enforces:
+The default Pod-level security context enforces:
 ```yaml
 runAsNonRoot: true
 runAsUser: 65532
@@ -29,7 +29,7 @@ seccompProfile:
   type: RuntimeDefault
 ```
 
-The hardcoded container-level security context enforces:
+The default container-level security context enforces:
 ```yaml
 allowPrivilegeEscalation: false
 readOnlyRootFilesystem: true
