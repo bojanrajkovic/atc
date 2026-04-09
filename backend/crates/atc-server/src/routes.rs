@@ -1,4 +1,5 @@
 use axum::{Json, Router, http::StatusCode, routing::get};
+use axum_prometheus::PrometheusMetricLayer;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -21,10 +22,14 @@ async fn removed_endpoint_404() -> StatusCode {
 }
 
 /// API routes. Mount these before the asset fallback.
-pub fn api_routes() -> Router {
+///
+/// `prometheus_layer` is applied here so that every request to the main router
+/// is counted in `axum_http_requests_total`.
+pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         // Removed endpoints: explicitly return 404 instead of falling through to SPA
         .route("/health", get(removed_endpoint_404))
+        .layer(prometheus_layer)
 }
