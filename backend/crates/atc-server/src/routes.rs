@@ -6,11 +6,17 @@ struct HealthResponse {
     status: &'static str,
 }
 
-async fn health() -> Json<HealthResponse> {
+async fn healthz() -> Json<HealthResponse> {
+    Json(HealthResponse { status: "ok" })
+}
+
+async fn readyz() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
 /// API routes. Mount these before the asset fallback.
 pub fn api_routes() -> Router {
-    Router::new().route("/health", get(health))
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
 }
