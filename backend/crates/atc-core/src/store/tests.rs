@@ -1363,7 +1363,10 @@ async fn test_ac5_5_ttl_configurable() {
 
     // Setup store with 1-hour TTL
     let run_envelope_one_hour = make_run_event(run_id_one_hour, RunEvent::Requested);
-    store_one_hour.apply_run_event(run_envelope_one_hour).await.unwrap();
+    store_one_hour
+        .apply_run_event(run_envelope_one_hour)
+        .await
+        .unwrap();
 
     let runner = RunnerInfo {
         id: 1,
@@ -1384,11 +1387,17 @@ async fn test_ac5_5_ttl_configurable() {
         },
         Some(start_time),
     );
-    store_one_hour.apply_job_event(job_envelope_one_hour).await.unwrap();
+    store_one_hour
+        .apply_job_event(job_envelope_one_hour)
+        .await
+        .unwrap();
 
     // Setup store with 5-minute TTL
     let run_envelope_five_min = make_run_event(run_id_five_min, RunEvent::Requested);
-    store_five_min.apply_run_event(run_envelope_five_min).await.unwrap();
+    store_five_min
+        .apply_run_event(run_envelope_five_min)
+        .await
+        .unwrap();
 
     let job_envelope_five_min = make_job_event_with_completed_at(
         job_id_five_min,
@@ -1403,7 +1412,10 @@ async fn test_ac5_5_ttl_configurable() {
         },
         Some(start_time),
     );
-    store_five_min.apply_job_event(job_envelope_five_min).await.unwrap();
+    store_five_min
+        .apply_job_event(job_envelope_five_min)
+        .await
+        .unwrap();
 
     // Advance both clocks to t0 + 30 minutes
     one_hour_clock.advance(TimeDelta::minutes(30));
@@ -1415,10 +1427,16 @@ async fn test_ac5_5_ttl_configurable() {
 
     // Verify: 1-hour store retains job, 5-minute store evicts it
     let job_one_hour = store_one_hour.get_job(&job_id_one_hour).await;
-    assert!(job_one_hour.is_some(), "Job in 1-hour store should be retained");
+    assert!(
+        job_one_hour.is_some(),
+        "Job in 1-hour store should be retained"
+    );
 
     let job_five_min = store_five_min.get_job(&job_id_five_min).await;
-    assert!(job_five_min.is_none(), "Job in 5-minute store should be evicted");
+    assert!(
+        job_five_min.is_none(),
+        "Job in 5-minute store should be evicted"
+    );
 }
 
 // Edge case tests for AC6.5 — out-of-order, duplicate, and unknown-ID events
@@ -1635,7 +1653,6 @@ async fn test_ac6_5_unknown_run_id_on_job() {
 
 #[tokio::test]
 async fn test_ac6_5_rapid_status_cycling() {
-
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = StateStore::new(clock, Duration::from_secs(3600));
@@ -1716,7 +1733,6 @@ async fn test_ac6_5_rapid_status_cycling() {
 
 #[tokio::test]
 async fn test_ac6_5_interleaved_multi_job() {
-
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = StateStore::new(clock, Duration::from_secs(3600));
@@ -1803,7 +1819,6 @@ async fn test_ac6_5_interleaved_multi_job() {
 
 #[tokio::test]
 async fn test_ac6_5_eviction_with_mixed_state() {
-
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
