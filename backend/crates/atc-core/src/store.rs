@@ -1931,3 +1931,321 @@ mod tests {
         assert!(job_5m.is_none(), "Job in 5-minute store should be evicted");
     }
 }
+
+#[cfg(test)]
+impl StateStore {
+    /// Assert all store invariants hold. Panics with a descriptive
+    /// message if any invariant is violated.
+    pub(crate) async fn assert_invariants(&self) {
+        let state = self.state.read().await;
+
+        // AC6.1: Every job in jobs_by_repo exists in jobs map
+        for (repo, job_ids) in &state.jobs_by_repo {
+            for job_id in job_ids {
+                assert!(
+                    state.jobs.contains_key(job_id),
+                    "jobs_by_repo[{repo}] contains {job_id:?} not in jobs map"
+                );
+            }
+        }
+
+        // AC6.1: Every job in jobs map exists in exactly one jobs_by_repo set
+        for job_id in state.jobs.keys() {
+            let count = state
+                .jobs_by_repo
+                .values()
+                .filter(|set| set.contains(job_id))
+                .count();
+            assert!(
+                count == 1,
+                "job {job_id:?} appears in {count} jobs_by_repo sets (expected 1)"
+            );
+        }
+
+        // AC6.1: Every job in jobs_by_run exists in jobs map
+        for (run_id, job_ids) in &state.jobs_by_run {
+            for job_id in job_ids {
+                assert!(
+                    state.jobs.contains_key(job_id),
+                    "jobs_by_run[{run_id:?}] contains {job_id:?} not in jobs map"
+                );
+            }
+        }
+
+        // AC6.1: Every job in jobs map exists in jobs_by_run under its run_id
+        for (job_id, job) in &state.jobs {
+            let in_run_index = state
+                .jobs_by_run
+                .get(&job.run_id)
+                .is_some_and(|set| set.contains(job_id));
+            assert!(
+                in_run_index,
+                "job {job_id:?} not in jobs_by_run[{:?}]",
+                job.run_id
+            );
+        }
+
+        // AC6.3: No job has a "backward" status relative to its conclusion.
+        // If conclusion is set, status must be Completed.
+        for (job_id, job) in &state.jobs {
+            if job.conclusion.is_some() {
+                assert!(
+                    job.status == JobStatus::Completed,
+                    "job {job_id:?} has conclusion but status {:?}",
+                    job.status
+                );
+            }
+        }
+
+        // AC6.4: Active jobs are never evicted — if a job exists,
+        // and has an active status, it must be in the primary map.
+        // (This is tautological from the map, but we verify it
+        // symmetrically with the indexes.)
+        for (job_id, job) in &state.jobs {
+            if matches!(
+                job.status,
+                JobStatus::Queued | JobStatus::Waiting | JobStatus::InProgress
+            ) {
+                // Active job must be in both indexes
+                let in_run = state
+                    .jobs_by_run
+                    .get(&job.run_id)
+                    .is_some_and(|set| set.contains(job_id));
+                let in_repo = state
+                    .jobs_by_repo
+                    .values()
+                    .any(|set| set.contains(job_id));
+                assert!(in_run, "active job {job_id:?} missing from jobs_by_run");
+                assert!(in_repo, "active job {job_id:?} missing from jobs_by_repo");
+            }
+        }
+
+        // No empty index entries (cleanup correctness)
+        for (key, set) in &state.jobs_by_repo {
+            assert!(!set.is_empty(), "empty jobs_by_repo entry for {key}");
+        }
+        for (key, set) in &state.jobs_by_run {
+            assert!(!set.is_empty(), "empty jobs_by_run entry for {key:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::job::RunnerInfo;
+    use proptest::prelude::*;
+    use chrono::Utc;
+
+    /// All possible test actions that can be applied to the store.
+    #[derive(Debug, Clone)]
+    enum TestAction {
+        RequestRun(i64),
+        StartRun(i64),
+        CompleteRun(i64),
+        QueueJob(i64, i64),
+        StartJob(i64),
+        CompleteJob(i64),
+        AdvanceTimeAndEvict,
+    }
+
+    /// Generate a strategy for test actions.
+    fn test_action_strategy() -> impl Strategy<Value = TestAction> {
+        prop_oneof![
+            (1i64..=3).prop_map(TestAction::RequestRun),
+            (1i64..=3).prop_map(TestAction::StartRun),
+            (1i64..=3).prop_map(TestAction::CompleteRun),
+            (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::QueueJob(run_id, job_id)),
+            (1i64..=10).prop_map(TestAction::StartJob),
+            (1i64..=10).prop_map(TestAction::CompleteJob),
+            Just(TestAction::AdvanceTimeAndEvict),
+        ]
+    }
+
+    /// Apply a test action to the store, silently ignoring errors.
+    async fn apply_action(
+        store: &StateStore,
+        clock: &Arc<crate::clock::TestClock>,
+        action: &TestAction,
+    ) {
+        match action {
+            TestAction::RequestRun(run_id) => {
+                let run_id = RunId(*run_id);
+                let now = Utc::now();
+                let envelope = RunEventEnvelope {
+                    run_id,
+                    org: "test-org".to_string(),
+                    repo: "test-repo".to_string(),
+                    workflow_name: "test-workflow".to_string(),
+                    workflow_path: ".github/workflows/test.yml".to_string(),
+                    branch: Some("main".to_string()),
+                    head_sha: "abc123".to_string(),
+                    commit_message: Some("test commit".to_string()),
+                    trigger_event: "push".to_string(),
+                    display_title: "Test Run".to_string(),
+                    html_url: "https://example.com/run".to_string(),
+                    created_at: now,
+                    run_started_at: None,
+                    updated_at: now,
+                    action: RunEvent::Requested,
+                };
+                let _ = store.apply_run_event(envelope).await;
+            }
+            TestAction::StartRun(run_id) => {
+                let run_id = RunId(*run_id);
+                let now = Utc::now();
+                let envelope = RunEventEnvelope {
+                    run_id,
+                    org: "test-org".to_string(),
+                    repo: "test-repo".to_string(),
+                    workflow_name: "test-workflow".to_string(),
+                    workflow_path: ".github/workflows/test.yml".to_string(),
+                    branch: Some("main".to_string()),
+                    head_sha: "abc123".to_string(),
+                    commit_message: Some("test commit".to_string()),
+                    trigger_event: "push".to_string(),
+                    display_title: "Test Run".to_string(),
+                    html_url: "https://example.com/run".to_string(),
+                    created_at: now,
+                    run_started_at: None,
+                    updated_at: now,
+                    action: RunEvent::InProgress,
+                };
+                let _ = store.apply_run_event(envelope).await;
+            }
+            TestAction::CompleteRun(run_id) => {
+                let run_id = RunId(*run_id);
+                let now = Utc::now();
+                let envelope = RunEventEnvelope {
+                    run_id,
+                    org: "test-org".to_string(),
+                    repo: "test-repo".to_string(),
+                    workflow_name: "test-workflow".to_string(),
+                    workflow_path: ".github/workflows/test.yml".to_string(),
+                    branch: Some("main".to_string()),
+                    head_sha: "abc123".to_string(),
+                    commit_message: Some("test commit".to_string()),
+                    trigger_event: "push".to_string(),
+                    display_title: "Test Run".to_string(),
+                    html_url: "https://example.com/run".to_string(),
+                    created_at: now,
+                    run_started_at: None,
+                    updated_at: now,
+                    action: RunEvent::Completed {
+                        conclusion: crate::run::RunConclusion::Success,
+                    },
+                };
+                let _ = store.apply_run_event(envelope).await;
+            }
+            TestAction::QueueJob(run_id, job_id) => {
+                let run_id = RunId(*run_id);
+                let job_id = JobId(*job_id);
+                let now = Utc::now();
+                let envelope = JobEventEnvelope {
+                    job_id,
+                    run_id,
+                    org: "test-org".to_string(),
+                    repo: "test-repo".to_string(),
+                    name: "test-job".to_string(),
+                    created_at: now,
+                    started_at: None,
+                    completed_at: None,
+                    action: JobEvent::Queued {
+                        labels: vec!["linux".to_string()],
+                        steps: vec![],
+                    },
+                };
+                let _ = store.apply_job_event(envelope).await;
+            }
+            TestAction::StartJob(job_id) => {
+                let job_id = JobId(*job_id);
+                let now = Utc::now();
+                let runner = RunnerInfo {
+                    id: 1,
+                    name: "runner-1".to_string(),
+                    group_id: None,
+                    group_name: None,
+                };
+                // We need to get the run_id from the existing job
+                // For simplicity in property tests, use run_id = 1
+                let run_id = RunId(1);
+                let envelope = JobEventEnvelope {
+                    job_id,
+                    run_id,
+                    org: "test-org".to_string(),
+                    repo: "test-repo".to_string(),
+                    name: "test-job".to_string(),
+                    created_at: now,
+                    started_at: None,
+                    completed_at: None,
+                    action: JobEvent::InProgress {
+                        runner,
+                        labels: vec!["linux".to_string()],
+                        steps: vec![],
+                    },
+                };
+                let _ = store.apply_job_event(envelope).await;
+            }
+            TestAction::CompleteJob(job_id) => {
+                let job_id = JobId(*job_id);
+                let now = Utc::now();
+                let runner = RunnerInfo {
+                    id: 1,
+                    name: "runner-1".to_string(),
+                    group_id: None,
+                    group_name: None,
+                };
+                // Same simplification: use run_id = 1
+                let run_id = RunId(1);
+                let envelope = JobEventEnvelope {
+                    job_id,
+                    run_id,
+                    org: "test-org".to_string(),
+                    repo: "test-repo".to_string(),
+                    name: "test-job".to_string(),
+                    created_at: now,
+                    started_at: None,
+                    completed_at: Some(now),
+                    action: JobEvent::Completed {
+                        conclusion: crate::job::JobConclusion::Success,
+                        runner: Some(runner),
+                        labels: vec!["linux".to_string()],
+                        steps: vec![],
+                    },
+                };
+                let _ = store.apply_job_event(envelope).await;
+            }
+            TestAction::AdvanceTimeAndEvict => {
+                clock.advance(chrono::TimeDelta::hours(2));
+                store.evict_expired().await;
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn store_invariants_hold(
+            actions in prop::collection::vec(test_action_strategy(), 10..100)
+        ) {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let clock = Arc::new(crate::clock::TestClock::new(Utc::now()));
+                let store = StateStore::new(
+                    clock.clone(),
+                    Duration::from_secs(3600),
+                );
+
+                for action in &actions {
+                    // Apply action, ignore errors (invalid transitions expected)
+                    apply_action(&store, &clock, action).await;
+                }
+
+                // After all actions, invariants must hold
+                store.assert_invariants().await;
+            });
+        }
+    }
+}
