@@ -1,7 +1,10 @@
 #![deny(missing_docs)]
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
+#![allow(clippy::module_name_repetitions)]
 
-//! ATC core domain logic.
-//!
-//! Placeholder — domain types and business rules will be added in future phases.
+//! Core domain types and business logic for ATC.
+
+pub mod types;
+
+pub use types::{JobId, LabelSet, RepoKey, RunId};
