@@ -2,5 +2,6 @@
   "backend/crates/atc-core": "0.1.0",
   "backend/crates/atc-github": "0.1.0",
   "backend/crates/atc-server": "0.1.0",
-  "frontend": "0.1.0"
+  "frontend": "0.1.0",
+  "deploy/helm/atc": "0.1.0"
 }

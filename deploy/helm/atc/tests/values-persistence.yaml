@@ -1,0 +1,9 @@
+persistence:
+  enabled: true
+  size: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClass: ""
+
+config:
+  databaseUrl: "sqlite:///var/lib/atc/atc.db"

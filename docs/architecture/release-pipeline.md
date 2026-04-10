@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-04-08
+Last verified: 2026-04-09
 
 ## Purpose
 
@@ -94,11 +94,40 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
+**Decision:** Helm chart release-please integration (2026-04-08)
+
+**Rationale:** The Helm chart at `deploy/helm/atc` is registered as a fifth release-please package with `release-type: helm`. It is deliberately excluded from the `linked-versions` plugin so that its version can evolve independently (chart-only fixes, template improvements, and values schema changes should not force an app version bump, and vice versa).
+
+`Chart.yaml`'s `appVersion` field is kept in sync with the linked app version via the `sync-helm-app-version` bot job in `release-please.yml`. The job runs after `refresh-lockfile`, reads the current `backend/crates/atc-server` value from `.release-please-manifest.json` using `jq`, and rewrites `appVersion` via `sed`. It is idempotent — a `git diff --quiet` guard skips the commit when the value is already correct.
+
+**Rejected alternatives:**
+- *Chart in linked-versions group:* Rejected. Chart version must evolve independently per the Definition of Done. Coupling the chart version to the app version would force chart-only releases to match app semver, defeating the purpose of a separately versioned chart.
+- *`extra-files` JSONPath for appVersion:* Rejected. release-please's `extra-files` with a JSONPath expression can only write a static version string — it cannot dynamically resolve "the current linked app version." The bot job reads the actual resolved value from the manifest at runtime.
+- *Manual appVersion edits:* Rejected. Operator error surface — a reviewer could merge a release PR where `appVersion` is stale and the chart would advertise the wrong app version to Helm users.
+
+---
+
 **Decision:** Bot-driven `Cargo.lock` refresh on release PRs, paired with `--locked` everywhere
 
 **Alternatives considered:** Skip `--locked` and let lockfiles self-heal on next build; keep the `cargo-workspace` plugin (which would update `Cargo.lock` automatically); refresh the lockfile manually before merging release PRs
 
 **Rationale:** Reproducible release artifacts require `--locked` builds, but release-please bumps crate versions in `Cargo.toml` without touching `Cargo.lock` (we dropped the `cargo-workspace` plugin because of release-please issue #2589 — the plugin hardcodes `Cargo.toml` at the repo root and our workspace lives at `backend/Cargo.toml`, with no flag to override). Without intervention, every release PR would fail its own `--locked` CI. The `refresh-lockfile` job in release-please.yml runs after release-please, mints its own installation token, checks out the release PR branch under the bot identity, runs `cargo update --workspace` in `backend/` (which only rewrites workspace member entries — not transitive deps), and pushes the refreshed lockfile back. The bot-attributed push triggers downstream CI, so the release PR ends up with green `--locked` status checks. `--locked` is enforced in ci.yml, release.yml's binary build, and the Dockerfile.
+
+---
+
+**Decision:** Dockerfile runtime is `gcr.io/distroless/cc-debian13:nonroot` (UID 65532)
+
+**Alternatives considered:** root image + chart-level runAsUser override; Alpine slim image with explicit USER directive
+
+**Rationale:** The Dockerfile uses `gcr.io/distroless/cc-debian13:nonroot` with an explicit `USER 65532:65532` directive. The design plan for Phase 6 (written 2026-04-08) assumed the Dockerfile was still on the root `cc-debian13` tag and that Phase 6 would flip it to `:nonroot`. This assumption was out of date: the Dockerfile was already on `:nonroot` with an explicit `USER 65532:65532` directive prior to Phase 6 landing. Phase 6 treats this as verified-correct rather than a change. The `USER 65532:65532` line is redundant with the `:nonroot` tag's baked-in identity but is harmless and is left in place. Removing it would be a cosmetic change with no security benefit. The rejected alternative of setting `runAsUser: 65532` only in the Helm chart's `podSecurityContext` would achieve runtime non-root behavior but would create drift between the image's declared identity and its Kubernetes-enforced identity. If the image is ever run outside Kubernetes (e.g., bare Docker), it would run as root. The `:nonroot` tag eliminates this class of misconfiguration entirely.
+
+---
+
+**Decision:** Helm chart published to `oci://ghcr.io/<owner>/charts/atc` via tag-triggered `release.yml` with Sigstore attestation
+
+**Alternatives considered:** GitHub Pages + chart-releaser; publish on every push to main; unsigned artifacts
+
+**Rationale:** The `publish-helm-chart` job added to `release.yml` packages the chart with `helm package`, pushes to ghcr.io OCI with `helm push`, and generates a Sigstore build-provenance attestation via `actions/attest-build-provenance`. The job is gated on `needs: [create-release, build-container, merge-manifest]`, ensuring a chart artifact is never published unless the corresponding container image succeeded. Publishing is tag-triggered (matching the rest of `release.yml`) rather than on every push to main, which guarantees chart versions correspond to tagged application releases. The rejected alternative of `helm/chart-releaser-action` publishes to a GitHub Pages branch and maintains a classic HTTP chart index — this is valid and may be added in a future issue, but it requires additional workflow and branch setup. OCI publishing is sufficient for Phase 6 and integrates cleanly with the existing ghcr.io registry used for container images. The chart tarball is attested via Sigstore, providing SLSA provenance records verifiable by consumers.
 
 ## Boundaries
 

@@ -1,16 +1,17 @@
 # Backend Server — Architecture
 
-Last verified: 2026-03-25
+Last verified: 2026-04-08 (updated 2026-04-08 for Metrics phase)
 
 ## Purpose
 
 The backend server (`atc-server` crate) is an Axum HTTP server that serves as the single entry point for the ATC application. It provides:
 
-- A REST API surface (currently just `/health`, expanded in future phases)
+- A REST API surface with liveness (`/healthz`) and readiness (`/readyz`) probes, expanded in future phases
 - Frontend asset serving in release mode via rust-embed
 - Development proxy to Vite dev server in debug mode via reqwest
+- Configurable address binding and logging format via environment variables
 
-The server runs on port 8080 and is the only executable crate in the backend workspace. The other two crates (`atc-core` for domain logic, `atc-github` for GitHub API integration) are placeholder libraries that the server will depend on as features are added.
+The server binds to `http_addr` (default `0.0.0.0:8080`) configured via `ATC_HTTP_ADDR` environment variable and is the only executable crate in the backend workspace. The other two crates (`atc-core` for domain logic, `atc-github` for GitHub API integration) are placeholder libraries that the server will depend on as features are added.
 
 ## Key Decisions
 
@@ -26,9 +27,24 @@ The server runs on port 8080 and is the only executable crate in the backend wor
 **Alternatives considered:** hyper client, tower Layer-based proxy
 **Rationale:** reqwest provides a higher-level API that simplifies the proxy implementation. The dev proxy is not performance-critical (only used during development), so the slight overhead of reqwest over raw hyper is acceptable.
 
-**Decision:** API routes use `/v1/` prefix; `/health` stays at root
-**Alternatives considered:** `/api/v1/` prefix, no prefix, no versioning until stable
-**Rationale:** Version prefix from the start avoids a breaking retrofit later. No `/api/` prefix needed — the router structure already separates API routes (explicit) from asset serving (fallback). `/health` stays at root because load balancers and monitoring tools expect infrastructure endpoints at a fixed path.
+**Decision:** `/healthz` and `/readyz` stay at root; no backward-compat `/health` alias
+**Alternatives considered:** Deprecation shim for `/health`, versioned health endpoints under `/v1/`
+**Rationale:** No consumers of `/health` exist yet, so a no-alias rename is safe. Kubernetes conventions (kubelet probes) favor the `-z` suffix. Separate endpoints allow `/healthz` to signal liveness and `/readyz` to signal readiness independently in future phases.
+
+**Decision:** Use figment with `ATC_*` environment variable prefix for all server configuration
+**Alternatives considered:** clap for CLI flags, hand-rolled `std::env::var` reads, config file only
+**Rationale:** figment's layered model (struct defaults → env vars) requires zero boilerplate and the nested `__` convention (`ATC_GITHUB__WEBHOOK_SECRET` → `config.github.webhook_secret`) sets up future GitHub configuration without rework. SocketAddr deserializes from string directly via serde, so no custom parsing is needed. Env-var-only configuration fits the container deployment model where chart values become env vars.
+
+Config fields and their `ATC_*` env var overrides:
+- `http_addr` (`ATC_HTTP_ADDR`) — default `0.0.0.0:8080`
+- `metrics_addr` (`ATC_METRICS_ADDR`) — default `0.0.0.0:9090` (used from Phase 2)
+- `database_url` (`ATC_DATABASE_URL`) — default `None`
+- `log_filter` (`ATC_LOG_FILTER`) — default `"info"` (passed to `EnvFilter`)
+- `log_format` (`ATC_LOG_FORMAT`) — default `pretty` in debug builds, `json` in release builds
+
+**Decision:** Branch tracing format on `LogFormat` (debug → pretty, release → JSON)
+**Alternatives considered:** Always JSON, always pretty, runtime-only env var
+**Rationale:** Developer builds benefit from ANSI-colored pretty output without any configuration. Production/container builds default to structured JSON for log aggregators. Both can be overridden via `ATC_LOG_FORMAT`, satisfying the override ACs without special-casing in code. The `cfg!(debug_assertions)` default mirrors the existing assets.rs pattern for compile-time branching.
 
 ## Boundaries
 
@@ -36,10 +52,65 @@ The server runs on port 8080 and is the only executable crate in the backend wor
 **Does not own:** Domain logic (atc-core), GitHub API integration (atc-github), frontend build process, authentication (future phase)
 **Prohibitions:** Do not put business logic in route handlers — extract to atc-core. Do not call GitHub API directly from handlers — use atc-github. Do not serve assets from filesystem in release mode — always use rust-embed.
 
+## Metrics
+
+The server binds a second TCP listener (default `0.0.0.0:9090`, overridden via
+`ATC_METRICS_ADDR`) exclusively for the Prometheus scrape endpoint. Serving
+metrics on a separate port keeps the metrics surface out of the application
+ingress and allows Kubernetes `NetworkPolicy` rules to grant scrape access to
+Prometheus without exposing the full API.
+
+### axum-prometheus placement
+
+`PrometheusMetricLayer` wraps the main API router (not the metrics router).
+Every request to `http_addr` is counted in `axum_http_requests_total` and timed
+in `axum_http_requests_duration_seconds`. The metrics router itself is never
+wrapped — scrape requests do not appear in request metrics.
+
+`axum-prometheus` installs the global `metrics` recorder via
+`PrometheusMetricLayer::pair()`. Do not install `PrometheusBuilder` separately;
+doing so will panic with a duplicate-recorder error.
+
+### atc_build_info labels
+
+`register_build_info()` (called once at startup) sets a gauge always equal to
+`1.0` with these labels:
+
+| Label | Source | Example |
+|---|---|---|
+| `version` | `CARGO_PKG_VERSION` | `0.2.0` |
+| `git_sha` | `VERGEN_GIT_SHA` (via `build.rs`) | `a1b2c3d...` |
+| `rustc_version` | `VERGEN_RUSTC_SEMVER` (via `build.rs`) | `1.94.0` |
+| `build_timestamp` | `VERGEN_BUILD_TIMESTAMP` (via `build.rs`) | `2026-04-08T...` |
+| `target_triple` | `VERGEN_CARGO_TARGET_TRIPLE` (via `build.rs`) | `x86_64-unknown-linux-gnu` |
+
+`build.rs` uses the `vergen-gix` crate (pure-Rust gix backend; no libgit2
+dependency) and emits all five vars as `cargo:rustc-env=` instructions.
+
+### Process collector
+
+`spawn_process_collector()` starts a detached tokio task that calls
+`metrics_process::Collector::default().collect()` every 10 seconds. It uses the
+same global recorder installed by axum-prometheus. Emitted families include
+`process_cpu_seconds_total`, `process_resident_memory_bytes`,
+`process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`,
+`process_start_time_seconds`, and `process_threads`.
+
+### Listener always binds
+
+The metrics listener binds unconditionally at startup regardless of the chart's
+`metrics.enabled` value. This is intentional: the chart flag controls whether
+Prometheus discovers the endpoint (via ServiceMonitor or pod annotations); the
+port is always open so that `kubectl port-forward` and ad-hoc `curl` work
+without chart-level changes.
+
 ## Files
 
-- `backend/crates/atc-server/src/main.rs` — Server entry point, tracing setup, router composition
-- `backend/crates/atc-server/src/routes.rs` — API route definitions (health endpoint)
+- `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition
+- `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, Config::load()
+- `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz endpoints)
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
+- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector
+- `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars
 - `backend/Cargo.toml` — Workspace definition with shared dependency versions
 - `backend/crates/atc-server/Cargo.toml` — Server crate dependencies

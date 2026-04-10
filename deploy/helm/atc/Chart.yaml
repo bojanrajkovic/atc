@@ -1,0 +1,10 @@
+apiVersion: v2
+name: atc
+description: Real-time GitHub Actions dashboard
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+maintainers:
+  - name: Bojan Rajkovic
+    email: brajkovic@coderinserepeat.com

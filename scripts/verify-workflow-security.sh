@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # Workflow Security Verification Script
-# Verifies AC8.1, AC8.2, AC8.3 from test-requirements.md
-# AC8.1: All `uses:` references are SHA-pinned with version comments
-# AC8.2: All checkouts use `persist-credentials: false`
-# AC8.3: Workflow-level permissions are `{}`
+# Enforces three workflow invariants:
+#   - All `uses:` references are SHA-pinned with version comments
+#   - All checkouts use `persist-credentials: false`
+#   - Workflow-level permissions default to `{}`
 
 failed=0
 error_details=""

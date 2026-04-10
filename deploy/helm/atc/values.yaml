@@ -1,0 +1,216 @@
+# -- Number of replicas.
+# NOTE: replicaCount > 1 is incompatible with persistence.enabled=true because most
+# StorageClasses provide ReadWriteOnce volumes that block pod handoff during rolling
+# updates. The chart enforces this constraint with a {{ fail }} guard.
+replicaCount: 1
+
+image:
+  # -- Container image repository.
+  repository: ghcr.io/bojanrajkovic/atc
+  # -- Container image tag. Defaults to the chart's appVersion when left empty.
+  tag: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- List of image pull secret names for private registries.
+imagePullSecrets: []
+
+# -- Override the chart name component of generated resource names.
+nameOverride: ""
+
+# -- Override the full generated resource name (release-name + chart-name).
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Whether to create a dedicated ServiceAccount for ATC.
+  create: true
+  # -- Annotations to apply to the ServiceAccount (e.g., for IRSA / Workload Identity).
+  annotations: {}
+  # -- Name of the ServiceAccount. If empty and create=true, defaults to the fullname.
+  name: ""
+
+# -- Annotations to apply to the Pod.
+podAnnotations: {}
+
+# -- Extra labels to apply to the Pod (merged with the standard selector labels).
+podLabels: {}
+
+# -- Pod-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
+# These values match the distroless :nonroot image's baked-in UID/GID (65532).
+# Operators may override these values for legitimate edge cases (e.g., storage CSI drivers with
+# UID constraints, sidecars needing elevated privileges). Organizations wanting to enforce the
+# restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
+# cluster level, not chart-level immutability.
+# NOTE: Setting this to null omits the pod-level securityContext entirely (not the same as
+# "reset to Kubernetes defaults"). To keep restricted PSS, override individual fields instead.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
+# Operators may override these values for legitimate edge cases (e.g., sidecars with writable
+# rootfs requirements, profilers needing elevated capabilities). Organizations wanting to enforce
+# the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
+# cluster level, not chart-level immutability.
+# NOTE: Setting this to null omits the container-level securityContext entirely (not the same
+# as "reset to Kubernetes defaults"). To keep restricted PSS, override individual fields instead.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  # -- Kubernetes Service type.
+  type: ClusterIP
+  # -- Service port for the HTTP listener.
+  port: 80
+
+# -- Resource requests and limits for the ATC container.
+# Not set by default — operators should tune for their environment.
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 64Mi
+
+# -- Node selector for pod scheduling.
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling.
+tolerations: []
+
+# -- Affinity rules for pod scheduling.
+affinity: {}
+
+# -- ATC application configuration. All values map to ATC_* environment variables.
+config:
+  # -- Address and port the HTTP listener binds to inside the container.
+  httpAddr: "0.0.0.0:8080"
+  # -- Address and port the Prometheus metrics listener binds to inside the container.
+  metricsAddr: "0.0.0.0:9090"
+  # -- Database connection URL.
+  #
+  # Three storage modes are supported:
+  #
+  # Mode 1 — Ephemeral / demo (default):
+  #   Leave databaseUrl unset. No database is configured; ATC runs stateless.
+  #   Use case: first-touch homelab, demos, testing.
+  #   Update strategy: RollingUpdate (zero downtime).
+  #
+  # Mode 2 — Local SQLite:
+  #   Set databaseUrl: "sqlite:///var/lib/atc/atc.db" AND persistence.enabled: true.
+  #   ATC stores state in a SQLite file on a PersistentVolume.
+  #   Use case: single-instance homelab or work cluster without an external database.
+  #   Update strategy: Recreate (brief downtime; ReadWriteOnce volume constraint).
+  #   NOTE: Setting databaseUrl to a sqlite:// path outside /tmp without
+  #   persistence.enabled=true is a configuration error — the chart will fail at
+  #   render time with an explicit message.
+  #
+  # Mode 2b — Ephemeral SQLite (/tmp):
+  #   Set databaseUrl: "sqlite:////tmp/atc.db" (NO persistence.enabled needed).
+  #   ATC stores state in a SQLite file on the ephemeral emptyDir at /tmp.
+  #   Use case: temporary demos or integration tests where state is expected to be lost on pod restart.
+  #   Update strategy: RollingUpdate (zero downtime; state not preserved across restarts).
+  #   This mode runs without a PersistentVolume — the database file is lost when the pod is deleted.
+  #
+  # Mode 3 — External Postgres:
+  #   Set databaseUrl: "postgres://user:pass@host:5432/atc" (or use existingSecret).
+  #   ATC connects to an operator-managed Postgres instance.
+  #   Use case: work cluster with an operated Postgres service.
+  #   Update strategy: RollingUpdate (zero downtime; no local volume).
+  #
+  databaseUrl: null
+  # -- Tracing filter string (RUST_LOG syntax). Examples: "info", "atc=debug", "warn,atc=trace".
+  logFilter: "info"
+  # -- Log output format. Null means the binary decides based on build type
+  # (pretty in debug builds, JSON in release builds). Override with "pretty" or "json".
+  logFormat: null
+
+# -- Reference an existing Kubernetes Secret for the database URL instead of
+# providing it in plain text in values. When set, config.databaseUrl is ignored
+# and the connection string is sourced from the named Secret key.
+existingSecret:
+  # -- Name of the existing Secret. Set to use secret-based DB credential injection.
+  name: null
+  # -- Key inside the Secret whose value is the database URL.
+  databaseUrlKey: "database_url"
+
+metrics:
+  # -- Whether to expose the metrics port on the Service (named port "metrics" targeting 9090).
+  # The container always binds the metrics listener regardless of this flag; this flag
+  # only controls Service-level exposure.
+  enabled: false
+  serviceMonitor:
+    # -- Set to true to create a Prometheus Operator ServiceMonitor.
+    # Requires both metrics.enabled=true AND metrics.serviceMonitor.enabled=true.
+    enabled: false
+    # -- interval: how often Prometheus scrapes the metrics endpoint.
+    interval: "30s"
+    # -- scrapeTimeout: how long Prometheus waits for a scrape to complete.
+    scrapeTimeout: "10s"
+    # -- additionalLabels: extra labels added to the ServiceMonitor metadata.
+    # Use these to match the label selector of your Prometheus Operator installation.
+    additionalLabels: {}
+
+persistence:
+  # -- Whether to mount a PersistentVolumeClaim for database storage.
+  # Required when config.databaseUrl uses a sqlite:// path outside /tmp.
+  # Enabling persistence automatically switches the Deployment strategy to Recreate.
+  enabled: false
+  # -- Storage class for the PVC. Leave empty to use the cluster default.
+  storageClass: ""
+  # -- Access modes for the PVC.
+  accessModes:
+    - ReadWriteOnce
+  # -- Storage size for the PVC.
+  size: 1Gi
+  # -- Name of an existing PVC to use instead of creating a new one.
+  # When set, the chart does not create a PVC; the Deployment volume references this claim directly.
+  existingClaim: ""
+  # -- Mount path for the persistence volume inside the container.
+  mountPath: "/var/lib/atc"
+
+ingress:
+  # -- Whether to create an Ingress resource.
+  enabled: false
+  # -- Ingress class name (selects the ingress controller).
+  className: ""
+  # -- Annotations to apply to the Ingress.
+  annotations: {}
+  # -- Ingress host rules.
+  hosts:
+    - host: atc.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration for the Ingress.
+  tls: []
+  #  - secretName: atc-tls
+  #    hosts:
+  #      - atc.example.com
+
+gateway:
+  # -- Whether to create a Gateway API HTTPRoute resource.
+  enabled: false
+  # -- parentRefs pointing at the Gateway(s) that should serve this HTTPRoute.
+  parentRefs: []
+  #  - name: my-gateway
+  #    namespace: gateway-system
+  # -- Optional hostnames for the HTTPRoute.
+  hostnames: []
+  # -- Custom HTTPRoute rules. When empty, a default rule routing all traffic to the Service is generated.
+  rules: []
+
+tests:
+  # -- Whether to include the helm test hook Pod (test-connection).
+  enabled: true

@@ -1,12 +1,12 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-04-07
+Last verified: 2026-04-08
 
 ## Purpose
 
 The CI pipeline ensures code quality and security across the ATC project through two specialized workflows:
 
-1. **Quality pipeline (ci.yml)** — Lints, type-checks, tests, and builds both the Rust backend and Svelte frontend. Runs on every pull request and push to main, with path-based filtering to only run affected stacks on PRs.
+1. **Quality pipeline (ci.yml)** — Lints, type-checks, tests, and builds the Rust backend, Svelte frontend, and Helm chart. Runs on every pull request and push to main, with path-based filtering to only run affected stacks on PRs.
 2. **Workflow security linter (zizmor.yml)** — Scans GitHub Actions workflow files for security violations, hardcoded secrets, unsafe ref pinning, and permission creep. Runs only when workflow files change.
 
 Both workflows are gated by lefthook pre-push hooks at development time, preventing broken or insecure code from reaching the remote.
@@ -20,6 +20,18 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 **Decision:** Path-based filtering on pull requests
 **Alternatives considered:** Always run all checks, run on label, run based on file extensions
 **Rationale:** PRs often touch only one stack (frontend or backend). Running only the affected stack's tests reduces CI time and feedback latency. Pushes to main always run both stacks to catch integration issues.
+
+**Decision:** Helm job uses a 2 × 5 matrix (Kubernetes versions × test values files) for `helm template | kubeconform`
+**Alternatives considered:** Single k8s version; inline bash loop instead of matrix; separate `helm lint` job
+**Rationale:** A two-endpoint matrix (oldest supported, latest stable) catches API deprecations and removals without the combinatorial overhead of testing every minor version. Five values files correspond to the five distinct feature surfaces defined in Phase 4 (defaults, ingress, gateway, persistence, metrics) — exhaustive coverage without duplication. `helm lint` runs inside the matrix job rather than a separate pre-requisite job because it is fast (<1s) and the workflow complexity of a separate job outweighs the marginal redundancy of 10 lint runs.
+
+**Decision:** kubeconform uses datreeio/CRDs-catalog as a supplemental schema location
+**Alternatives considered:** Skip CRD validation; vendor CRD schemas into the repo; use kubeconform's built-in `--ignore-missing-schemas`
+**Rationale:** The chart includes a `ServiceMonitor` (monitoring.coreos.com/v1) and an `HTTPRoute` (gateway.networking.k8s.io/v1) — both are CRDs absent from the upstream Kubernetes JSON schema repository. The datreeio/CRDs-catalog provides community-maintained schemas for these CRDs, enabling `-strict` mode without false negatives on custom resources. Vendoring schemas into the repo would require manual maintenance on each CRD version bump; the catalog URL is resolved at CI time and kept current by the catalog maintainers.
+
+**Decision:** `helm-result` gate job translates skipped-to-passed for branch protection
+**Alternatives considered:** No gate job (use the matrix job directly as required check); GitHub's "required checks can be skipped" setting
+**Rationale:** GitHub branch protection does not distinguish between "job skipped" and "job failed" — both cause a required status check to block the PR. The `helm-result` gate pattern (already used for `backend-result` and `frontend-result`) reads the `changes` output and emits success when the job was intentionally skipped due to no path-filter match. This allows a Rust-only PR to pass all required checks without triggering helm validation.
 
 **Decision:** Zizmor findings are security advisories, not required status checks
 **Alternatives considered:** Required status check, blocking gate, optional warning
@@ -37,6 +49,6 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 
 ## Files
 
-- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building)
+- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building); includes `helm` job with 2×5 kubeconform matrix and `helm-result` gate
 - `.github/workflows/zizmor.yml` — Workflow security linter
 - `scripts/doc-mapping.sh` — Maps workflow file changes to this architecture doc
