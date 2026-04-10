@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::clock::TestClock;
 use crate::job::JobConclusion;
