@@ -18,5 +18,5 @@ pub use clock::TestClock;
 pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
 pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
-pub use store::{StateStore, StoreError};
+pub use store::{QueryResult, StateStore, StoreError};
 pub use types::{JobId, LabelSet, RepoKey, RunId};

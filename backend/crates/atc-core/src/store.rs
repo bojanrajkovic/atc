@@ -11,6 +11,8 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
+use serde::{Deserialize, Serialize};
+
 use crate::clock::Clock;
 use crate::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use crate::job::{InvalidJobTransition, Job, JobStatus};
@@ -81,6 +83,18 @@ struct StateData {
     jobs_by_run: HashMap<RunId, HashSet<JobId>>,
     /// Jobs grouped by repository.
     jobs_by_repo: HashMap<RepoKey, HashSet<JobId>>,
+}
+
+/// Result of a repository-scoped query.
+///
+/// Contains owned snapshots — callers can hold these without
+/// blocking the store's `RwLock`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResult {
+    /// Workflow runs that have jobs in the queried repositories.
+    pub runs: Vec<WorkflowRun>,
+    /// Jobs in the queried repositories.
+    pub jobs: Vec<Job>,
 }
 
 impl StateStore {
@@ -282,6 +296,38 @@ impl StateStore {
             .get(repo_key)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Query jobs and their parent runs, filtered by repository.
+    ///
+    /// Returns owned snapshots that can be held independently of the
+    /// store's lock. Only jobs belonging to the provided repositories
+    /// are included; their parent runs are collected automatically.
+    ///
+    /// An empty `repos` slice returns an empty result.
+    pub async fn query_by_repos(&self, repos: &[RepoKey]) -> QueryResult {
+        let state = self.state.read().await;
+
+        let mut jobs = Vec::new();
+        let mut run_ids = HashSet::new();
+
+        for repo in repos {
+            if let Some(job_ids) = state.jobs_by_repo.get(repo) {
+                for job_id in job_ids {
+                    if let Some(job) = state.jobs.get(job_id) {
+                        run_ids.insert(job.run_id);
+                        jobs.push(job.clone());
+                    }
+                }
+            }
+        }
+
+        let runs: Vec<WorkflowRun> = run_ids
+            .iter()
+            .filter_map(|id| state.runs.get(id).cloned())
+            .collect();
+
+        QueryResult { runs, jobs }
     }
 }
 
@@ -785,5 +831,267 @@ mod tests {
         let job = store.get_job(&job_id).await.expect("job should exist");
         assert_eq!(job.status, JobStatus::Queued);
         assert_eq!(job.id, job_id);
+    }
+
+    // ===== Task 1: Repository-Scoped Queries =====
+
+    #[tokio::test]
+    async fn test_ac4_1_query_returns_only_queried_repos() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        // Create a run
+        let run_id = RunId(700);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create jobs in two different repos
+        let job_id_alpha = JobId(701);
+        let job_id_beta = JobId(702);
+
+        let alpha_envelope = make_job_event(
+            job_id_alpha,
+            run_id,
+            "org",
+            "alpha",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(alpha_envelope).await.unwrap();
+
+        let beta_envelope = make_job_event(
+            job_id_beta,
+            run_id,
+            "org",
+            "beta",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(beta_envelope).await.unwrap();
+
+        // Query only alpha repo
+        let alpha_repo = RepoKey::new("org", "alpha");
+        let result = store.query_by_repos(&[alpha_repo]).await;
+
+        // Verify only alpha's job is returned
+        assert_eq!(result.jobs.len(), 1);
+        assert_eq!(result.jobs[0].id, job_id_alpha);
+        assert_eq!(result.runs.len(), 1);
+        assert_eq!(result.runs[0].id, run_id);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_2_query_returns_owned_snapshots() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        // Create a run and job
+        let run_id = RunId(800);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        let job_id = JobId(801);
+        let job_envelope = make_job_event(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(job_envelope).await.unwrap();
+
+        // Query and hold the result
+        let repo = RepoKey::new("org", "repo");
+        let result = store.query_by_repos(&[repo]).await;
+
+        // Verify we can use the result without holding the store lock
+        // (This is implicitly tested by the API returning owned types,
+        // but we verify the data is present and usable)
+        assert_eq!(result.jobs.len(), 1);
+        assert_eq!(result.runs.len(), 1);
+        assert_eq!(result.jobs[0].id, job_id);
+        assert_eq!(result.runs[0].id, run_id);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_5_empty_repos_returns_empty_result() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        // Create a run and job
+        let run_id = RunId(900);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        let job_id = JobId(901);
+        let job_envelope = make_job_event(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(job_envelope).await.unwrap();
+
+        // Query with empty repos slice
+        let result = store.query_by_repos(&[]).await;
+
+        // Verify empty result
+        assert_eq!(result.jobs.len(), 0);
+        assert_eq!(result.runs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_6_multi_repo_query_isolation() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        // Create a run
+        let run_id = RunId(1000);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create jobs in repo A
+        let job_a1 = JobId(1001);
+        let job_a2 = JobId(1002);
+
+        let envelope_a1 = make_job_event(
+            job_a1,
+            run_id,
+            "org",
+            "repoA",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_a1).await.unwrap();
+
+        let envelope_a2 = make_job_event(
+            job_a2,
+            run_id,
+            "org",
+            "repoA",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_a2).await.unwrap();
+
+        // Create jobs in repo B
+        let job_b1 = JobId(1003);
+        let job_b2 = JobId(1004);
+
+        let envelope_b1 = make_job_event(
+            job_b1,
+            run_id,
+            "org",
+            "repoB",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_b1).await.unwrap();
+
+        let envelope_b2 = make_job_event(
+            job_b2,
+            run_id,
+            "org",
+            "repoB",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_b2).await.unwrap();
+
+        // Query both repos
+        let repo_a = RepoKey::new("org", "repoA");
+        let repo_b = RepoKey::new("org", "repoB");
+        let result = store.query_by_repos(&[repo_a.clone(), repo_b.clone()]).await;
+
+        // Verify both repos' jobs are returned (4 jobs total)
+        assert_eq!(result.jobs.len(), 4);
+
+        // Verify all expected job IDs are present
+        let job_ids: HashSet<JobId> = result.jobs.iter().map(|job| job.id).collect();
+        assert!(job_ids.contains(&job_a1), "Job A1 should be in result");
+        assert!(job_ids.contains(&job_a2), "Job A2 should be in result");
+        assert!(job_ids.contains(&job_b1), "Job B1 should be in result");
+        assert!(job_ids.contains(&job_b2), "Job B2 should be in result");
+
+        // Verify repo A query alone returns only repo A's jobs
+        let result_a = store.query_by_repos(&[repo_a]).await;
+        assert_eq!(result_a.jobs.len(), 2);
+        let job_ids_a: HashSet<JobId> = result_a.jobs.iter().map(|job| job.id).collect();
+        assert!(job_ids_a.contains(&job_a1));
+        assert!(job_ids_a.contains(&job_a2));
+        assert!(!job_ids_a.contains(&job_b1));
+        assert!(!job_ids_a.contains(&job_b2));
+
+        // Verify repo B query alone returns only repo B's jobs
+        let result_b = store.query_by_repos(&[repo_b]).await;
+        assert_eq!(result_b.jobs.len(), 2);
+        let job_ids_b: HashSet<JobId> = result_b.jobs.iter().map(|job| job.id).collect();
+        assert!(!job_ids_b.contains(&job_a1));
+        assert!(!job_ids_b.contains(&job_a2));
+        assert!(job_ids_b.contains(&job_b1));
+        assert!(job_ids_b.contains(&job_b2));
+
+        // Verify run is included
+        assert_eq!(result.runs.len(), 1);
+        assert_eq!(result.runs[0].id, run_id);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_query_includes_parent_runs() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        // Create a run
+        let run_id = RunId(1100);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Add a job to the run
+        let job_id = JobId(1101);
+        let job_envelope = make_job_event(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(job_envelope).await.unwrap();
+
+        // Query by repo
+        let repo = RepoKey::new("org", "repo");
+        let result = store.query_by_repos(&[repo]).await;
+
+        // Verify both job and run are present
+        assert_eq!(result.jobs.len(), 1);
+        assert_eq!(result.runs.len(), 1);
+        assert_eq!(result.jobs[0].run_id, run_id);
+        assert_eq!(result.runs[0].id, run_id);
     }
 }
