@@ -17,7 +17,7 @@ use crate::clock::Clock;
 use crate::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use crate::job::{InvalidJobTransition, Job, JobStatus};
 use crate::run::{InvalidRunTransition, RunStatus, WorkflowRun};
-use crate::types::{JobId, RepoKey, RunId};
+use crate::types::{JobId, LabelSet, RepoKey, RunId};
 
 /// Errors that can occur during state store operations.
 #[derive(Debug)]
@@ -95,6 +95,23 @@ pub struct QueryResult {
     pub runs: Vec<WorkflowRun>,
     /// Jobs in the queried repositories.
     pub jobs: Vec<Job>,
+}
+
+/// Derived runner pool statistics.
+///
+/// Computed on read from live job state — not stored separately.
+/// Each entry represents a unique label set with aggregated counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerPoolStats {
+    /// The set of labels identifying this pool.
+    pub labels: LabelSet,
+    /// Number of jobs queued for this label set.
+    pub queued: usize,
+    /// Number of jobs running on runners with this label set.
+    pub running: usize,
+    /// Runner group name from the most recently observed `RunnerInfo`
+    /// for this label set, if available.
+    pub group_name: Option<String>,
 }
 
 impl StateStore {
@@ -328,6 +345,53 @@ impl StateStore {
             .collect();
 
         QueryResult { runs, jobs }
+    }
+
+    /// Compute runner pool statistics from current job state.
+    ///
+    /// Groups all queued and in-progress jobs by their `LabelSet` to
+    /// produce per-pool counts. The `group_name` is taken from the most
+    /// recently observed `RunnerInfo` for each label set.
+    ///
+    /// Completed and waiting jobs are excluded from pool stats.
+    pub async fn pool_stats(&self) -> Vec<RunnerPoolStats> {
+        let state = self.state.read().await;
+
+        let mut stats_map: HashMap<LabelSet, RunnerPoolStats> = HashMap::new();
+
+        for job in state.jobs.values() {
+            if matches!(job.status, JobStatus::Waiting | JobStatus::Completed) {
+                continue;
+            }
+
+            let label_set = LabelSet::new(job.labels.iter().cloned());
+            let entry = stats_map
+                .entry(label_set.clone())
+                .or_insert_with(|| RunnerPoolStats {
+                    labels: label_set,
+                    queued: 0,
+                    running: 0,
+                    group_name: None,
+                });
+
+            match job.status {
+                JobStatus::Queued => {
+                    entry.queued += 1;
+                }
+                JobStatus::InProgress => {
+                    entry.running += 1;
+                    // Track group_name from most recently observed runner (AC4.4)
+                    if let Some(ref runner) = job.runner
+                        && runner.group_name.is_some()
+                    {
+                        entry.group_name.clone_from(&runner.group_name);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        stats_map.into_values().collect()
     }
 }
 
@@ -1093,5 +1157,273 @@ mod tests {
         assert_eq!(result.runs.len(), 1);
         assert_eq!(result.jobs[0].run_id, run_id);
         assert_eq!(result.runs[0].id, run_id);
+    }
+
+    // ===== Task 2: Runner Pool Stats Derivation =====
+
+    #[tokio::test]
+    async fn test_ac4_3_basic_pool_counts() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        let run_id = RunId(1200);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create 2 queued jobs with labels ["linux", "self-hosted"]
+        let labels = vec!["linux".to_string(), "self-hosted".to_string()];
+        let job_id_1 = JobId(1201);
+        let envelope_1 = make_job_event(
+            job_id_1,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: labels.clone(),
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_1).await.unwrap();
+
+        let job_id_2 = JobId(1202);
+        let envelope_2 = make_job_event(
+            job_id_2,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: labels.clone(),
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_2).await.unwrap();
+
+        // Create 1 running job with same labels
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let job_id_3 = JobId(1203);
+        let envelope_3 = make_job_event(
+            job_id_3,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::InProgress {
+                runner,
+                labels: labels.clone(),
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_3).await.unwrap();
+
+        // Get pool stats
+        let stats = store.pool_stats().await;
+
+        // Verify one entry with correct counts
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].queued, 2);
+        assert_eq!(stats[0].running, 1);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_3_multiple_pools() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        let run_id = RunId(1300);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create queued jobs with labels ["linux"]
+        let job_id_1 = JobId(1301);
+        let envelope_1 = make_job_event(
+            job_id_1,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec!["linux".to_string()],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_1).await.unwrap();
+
+        // Create queued jobs with labels ["macos"]
+        let job_id_2 = JobId(1302);
+        let envelope_2 = make_job_event(
+            job_id_2,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec!["macos".to_string()],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_2).await.unwrap();
+
+        // Get pool stats
+        let stats = store.pool_stats().await;
+
+        // Verify two entries
+        assert_eq!(stats.len(), 2);
+        let mut counts: Vec<(usize, usize)> = stats
+            .iter()
+            .map(|s| (s.queued, s.running))
+            .collect();
+        counts.sort();
+        assert_eq!(counts, vec![(1, 0), (1, 0)]);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_3_label_normalization() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        let run_id = RunId(1400);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create job with ["self-hosted", "linux"]
+        let job_id_1 = JobId(1401);
+        let envelope_1 = make_job_event(
+            job_id_1,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec!["self-hosted".to_string(), "linux".to_string()],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_1).await.unwrap();
+
+        // Create job with ["linux", "self-hosted"] (different order)
+        let job_id_2 = JobId(1402);
+        let envelope_2 = make_job_event(
+            job_id_2,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec!["linux".to_string(), "self-hosted".to_string()],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_2).await.unwrap();
+
+        // Get pool stats
+        let stats = store.pool_stats().await;
+
+        // Verify single entry (same label set regardless of order)
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].queued, 2);
+        assert_eq!(stats[0].running, 0);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_3_excludes_completed() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        let run_id = RunId(1500);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        let labels = vec!["linux".to_string()];
+
+        // Create a queued job
+        let job_id_1 = JobId(1501);
+        let envelope_1 = make_job_event(
+            job_id_1,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: labels.clone(),
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_1).await.unwrap();
+
+        // Create a completed job
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let job_id_2 = JobId(1502);
+        let envelope_2 = make_job_event(
+            job_id_2,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner),
+                labels: labels.clone(),
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope_2).await.unwrap();
+
+        // Get pool stats
+        let stats = store.pool_stats().await;
+
+        // Verify completed job is not counted
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].queued, 1);
+        assert_eq!(stats[0].running, 0);
+    }
+
+    #[tokio::test]
+    async fn test_ac4_4_group_name_from_runner_info() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock, Duration::from_secs(3600));
+
+        let run_id = RunId(1600);
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create a running job with group_name
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: Some(42),
+            group_name: Some("default".to_string()),
+        };
+        let job_id = JobId(1601);
+        let labels = vec!["linux".to_string()];
+        let envelope = make_job_event(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::InProgress {
+                runner,
+                labels,
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(envelope).await.unwrap();
+
+        // Get pool stats
+        let stats = store.pool_stats().await;
+
+        // Verify group_name is captured
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].group_name, Some("default".to_string()));
     }
 }
