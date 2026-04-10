@@ -65,12 +65,9 @@ impl From<InvalidJobTransition> for StoreError {
 /// across async tasks and Axum handlers.
 pub struct StateStore {
     state: RwLock<StateData>,
-    /// Used in Phase 5 for TTL eviction.
-    #[allow(dead_code)]
+    /// Clock for determining current time during eviction.
     clock: Arc<dyn Clock>,
     /// How long to retain completed jobs before eviction.
-    /// Used in Phase 5 for TTL eviction.
-    #[allow(dead_code)]
     completed_ttl: Duration,
 }
 
