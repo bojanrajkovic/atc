@@ -58,7 +58,7 @@ impl TestClock {
     /// Panics if the internal mutex is poisoned.
     pub fn advance(&self, delta: TimeDelta) {
         let mut now = self.now.lock().expect("test clock mutex poisoned");
-        *now = *now + delta;
+        *now += delta;
     }
 }
 

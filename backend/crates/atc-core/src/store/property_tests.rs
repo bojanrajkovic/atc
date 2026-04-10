@@ -51,6 +51,7 @@ fn make_run_envelope(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
 }
 
 /// Apply a test action to the store, silently ignoring errors.
+#[allow(clippy::too_many_lines)]
 async fn apply_action(
     store: &StateStore,
     clock: &Arc<crate::clock::TestClock>,

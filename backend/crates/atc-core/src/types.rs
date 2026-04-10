@@ -163,13 +163,13 @@ mod tests {
     #[test]
     fn test_run_id_display() {
         let run_id = RunId(42);
-        assert_eq!(format!("{}", run_id), "42");
+        assert_eq!(format!("{run_id}"), "42");
     }
 
     #[test]
     fn test_job_id_display() {
         let job_id = JobId(42);
-        assert_eq!(format!("{}", job_id), "42");
+        assert_eq!(format!("{job_id}"), "42");
     }
 
     // ============================================================================
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn test_repo_key_display() {
         let repo_key = RepoKey::new("myorg", "myrepo");
-        assert_eq!(format!("{}", repo_key), "myorg/myrepo");
+        assert_eq!(format!("{repo_key}"), "myorg/myrepo");
     }
 
     #[test]

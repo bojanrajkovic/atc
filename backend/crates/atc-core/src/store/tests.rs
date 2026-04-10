@@ -1,10 +1,10 @@
 use super::*;
 use crate::clock::TestClock;
-use crate::job::JobConclusion;
+use crate::job::{JobConclusion, RunnerInfo, Step, StepStatus};
 use crate::run::RunConclusion;
 use chrono::{DateTime, Utc};
 
-/// Helper to build a RunEventEnvelope with sensible defaults.
+/// Helper to build a `RunEventEnvelope` with sensible defaults.
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
     let now = Utc::now();
     RunEventEnvelope {
@@ -26,7 +26,7 @@ fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
     }
 }
 
-/// Helper to build a JobEventEnvelope with sensible defaults.
+/// Helper to build a `JobEventEnvelope` with sensible defaults.
 fn make_job_event(
     job_id: JobId,
     run_id: RunId,
@@ -48,7 +48,7 @@ fn make_job_event(
     }
 }
 
-/// Helper to build a JobEventEnvelope with custom completed_at timestamp.
+/// Helper to build a `JobEventEnvelope` with custom `completed_at` timestamp.
 fn make_job_event_with_completed_at(
     job_id: JobId,
     run_id: RunId,
@@ -216,7 +216,6 @@ async fn test_ac3_2_update_job_to_in_progress() {
     store.apply_job_event(envelope1).await.unwrap();
 
     // Update to InProgress with runner
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -315,7 +314,7 @@ async fn test_ac3_3_jobs_by_repo() {
 
     // Create jobs for different repos
     let job_id_1 = JobId(301);
-    let repo_a_key = RepoKey::new("octocat", "repo-a");
+    let repo_alpha_key = RepoKey::new("octocat", "repo-a");
     let envelope1 = make_job_event(
         job_id_1,
         run_id,
@@ -329,7 +328,7 @@ async fn test_ac3_3_jobs_by_repo() {
     store.apply_job_event(envelope1).await.unwrap();
 
     let job_id_2 = JobId(302);
-    let repo_b_key = RepoKey::new("octocat", "repo-b");
+    let repo_beta_key = RepoKey::new("octocat", "repo-b");
     let envelope2 = make_job_event(
         job_id_2,
         run_id,
@@ -343,8 +342,8 @@ async fn test_ac3_3_jobs_by_repo() {
     store.apply_job_event(envelope2).await.unwrap();
 
     // Verify jobs are separated by repo
-    let jobs_a = store.jobs_for_repo(&repo_a_key).await;
-    let jobs_b = store.jobs_for_repo(&repo_b_key).await;
+    let jobs_a = store.jobs_for_repo(&repo_alpha_key).await;
+    let jobs_b = store.jobs_for_repo(&repo_beta_key).await;
 
     assert_eq!(jobs_a.len(), 1);
     assert!(jobs_a.contains(&job_id_1));
@@ -355,8 +354,6 @@ async fn test_ac3_3_jobs_by_repo() {
 
 #[tokio::test]
 async fn test_ac3_4_steps_snapshot_replacement() {
-    use crate::job::{Step, StepStatus};
-
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = StateStore::new(clock, Duration::from_secs(3600));
@@ -426,7 +423,6 @@ async fn test_ac3_4_steps_snapshot_replacement() {
         },
     ];
 
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -463,7 +459,6 @@ async fn test_ac3_5_first_sight_completed_job() {
     let run_id = RunId(50);
 
     // Send a Completed event for an unknown job (out-of-order delivery)
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -651,11 +646,11 @@ async fn test_ac4_6_multi_repo_query_isolation() {
     store.apply_run_event(run_envelope).await.unwrap();
 
     // Create jobs in repo A
-    let job_a1 = JobId(1001);
-    let job_a2 = JobId(1002);
+    let job_alpha_1 = JobId(1001);
+    let job_alpha_2 = JobId(1002);
 
-    let envelope_a1 = make_job_event(
-        job_a1,
+    let envelope_alpha_1 = make_job_event(
+        job_alpha_1,
         run_id,
         "org",
         "repoA",
@@ -664,10 +659,10 @@ async fn test_ac4_6_multi_repo_query_isolation() {
             steps: vec![],
         },
     );
-    store.apply_job_event(envelope_a1).await.unwrap();
+    store.apply_job_event(envelope_alpha_1).await.unwrap();
 
-    let envelope_a2 = make_job_event(
-        job_a2,
+    let envelope_alpha_2 = make_job_event(
+        job_alpha_2,
         run_id,
         "org",
         "repoA",
@@ -676,14 +671,14 @@ async fn test_ac4_6_multi_repo_query_isolation() {
             steps: vec![],
         },
     );
-    store.apply_job_event(envelope_a2).await.unwrap();
+    store.apply_job_event(envelope_alpha_2).await.unwrap();
 
     // Create jobs in repo B
-    let job_b1 = JobId(1003);
-    let job_b2 = JobId(1004);
+    let job_beta_1 = JobId(1003);
+    let job_beta_2 = JobId(1004);
 
-    let envelope_b1 = make_job_event(
-        job_b1,
+    let envelope_beta_1 = make_job_event(
+        job_beta_1,
         run_id,
         "org",
         "repoB",
@@ -692,10 +687,10 @@ async fn test_ac4_6_multi_repo_query_isolation() {
             steps: vec![],
         },
     );
-    store.apply_job_event(envelope_b1).await.unwrap();
+    store.apply_job_event(envelope_beta_1).await.unwrap();
 
-    let envelope_b2 = make_job_event(
-        job_b2,
+    let envelope_beta_2 = make_job_event(
+        job_beta_2,
         run_id,
         "org",
         "repoB",
@@ -704,7 +699,7 @@ async fn test_ac4_6_multi_repo_query_isolation() {
             steps: vec![],
         },
     );
-    store.apply_job_event(envelope_b2).await.unwrap();
+    store.apply_job_event(envelope_beta_2).await.unwrap();
 
     // Query both repos
     let repo_a = RepoKey::new("org", "repoA");
@@ -718,28 +713,28 @@ async fn test_ac4_6_multi_repo_query_isolation() {
 
     // Verify all expected job IDs are present
     let job_ids: HashSet<JobId> = result.jobs.iter().map(|job| job.id).collect();
-    assert!(job_ids.contains(&job_a1), "Job A1 should be in result");
-    assert!(job_ids.contains(&job_a2), "Job A2 should be in result");
-    assert!(job_ids.contains(&job_b1), "Job B1 should be in result");
-    assert!(job_ids.contains(&job_b2), "Job B2 should be in result");
+    assert!(job_ids.contains(&job_alpha_1), "Job A1 should be in result");
+    assert!(job_ids.contains(&job_alpha_2), "Job A2 should be in result");
+    assert!(job_ids.contains(&job_beta_1), "Job B1 should be in result");
+    assert!(job_ids.contains(&job_beta_2), "Job B2 should be in result");
 
     // Verify repo A query alone returns only repo A's jobs
     let result_a = store.query_by_repos(&[repo_a]).await;
     assert_eq!(result_a.jobs.len(), 2);
     let job_ids_a: HashSet<JobId> = result_a.jobs.iter().map(|job| job.id).collect();
-    assert!(job_ids_a.contains(&job_a1));
-    assert!(job_ids_a.contains(&job_a2));
-    assert!(!job_ids_a.contains(&job_b1));
-    assert!(!job_ids_a.contains(&job_b2));
+    assert!(job_ids_a.contains(&job_alpha_1));
+    assert!(job_ids_a.contains(&job_alpha_2));
+    assert!(!job_ids_a.contains(&job_beta_1));
+    assert!(!job_ids_a.contains(&job_beta_2));
 
     // Verify repo B query alone returns only repo B's jobs
     let result_b = store.query_by_repos(&[repo_b]).await;
     assert_eq!(result_b.jobs.len(), 2);
     let job_ids_b: HashSet<JobId> = result_b.jobs.iter().map(|job| job.id).collect();
-    assert!(!job_ids_b.contains(&job_a1));
-    assert!(!job_ids_b.contains(&job_a2));
-    assert!(job_ids_b.contains(&job_b1));
-    assert!(job_ids_b.contains(&job_b2));
+    assert!(!job_ids_b.contains(&job_alpha_1));
+    assert!(!job_ids_b.contains(&job_alpha_2));
+    assert!(job_ids_b.contains(&job_beta_1));
+    assert!(job_ids_b.contains(&job_beta_2));
 
     // Verify run is included
     assert_eq!(result.runs.len(), 1);
@@ -823,7 +818,6 @@ async fn test_ac4_3_basic_pool_counts() {
     store.apply_job_event(envelope_2).await.unwrap();
 
     // Create 1 running job with same labels
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -897,7 +891,7 @@ async fn test_ac4_3_multiple_pools() {
     // Verify two entries
     assert_eq!(stats.len(), 2);
     let mut counts: Vec<(usize, usize)> = stats.iter().map(|s| (s.queued, s.running)).collect();
-    counts.sort();
+    counts.sort_unstable();
     assert_eq!(counts, vec![(1, 0), (1, 0)]);
 }
 
@@ -975,7 +969,6 @@ async fn test_ac4_3_excludes_completed() {
     store.apply_job_event(envelope_1).await.unwrap();
 
     // Create a completed job
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1017,7 +1010,6 @@ async fn test_ac4_4_group_name_from_runner_info() {
     store.apply_run_event(run_envelope).await.unwrap();
 
     // Create a running job with group_name
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1062,7 +1054,6 @@ async fn test_ac5_1_completed_job_within_ttl_retained() {
     let run_envelope = make_run_event(run_id, RunEvent::Requested);
     store.apply_run_event(run_envelope).await.unwrap();
 
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1108,7 +1099,6 @@ async fn test_ac5_2_completed_job_past_ttl_evicted() {
     let run_envelope = make_run_event(run_id, RunEvent::Requested);
     store.apply_run_event(run_envelope).await.unwrap();
 
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1172,7 +1162,6 @@ async fn test_ac5_3_run_with_no_jobs_evicted() {
     let run_envelope = make_run_event(run_id, RunEvent::Requested);
     store.apply_run_event(run_envelope).await.unwrap();
 
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1222,7 +1211,6 @@ async fn test_ac5_3_run_with_active_job_retained() {
     let run_envelope = make_run_event(run_id, RunEvent::Requested);
     store.apply_run_event(run_envelope).await.unwrap();
 
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1310,7 +1298,6 @@ async fn test_ac5_4_active_jobs_never_evicted() {
     store.apply_job_event(queued_envelope).await.unwrap();
 
     // Create running job
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -1361,33 +1348,32 @@ async fn test_ac5_4_active_jobs_never_evicted() {
 #[tokio::test]
 async fn test_ac5_5_ttl_configurable() {
     let start_time = Utc::now();
-    let clock_1h = Arc::new(TestClock::new(start_time));
-    let clock_5m = Arc::new(TestClock::new(start_time));
+    let one_hour_clock = Arc::new(TestClock::new(start_time));
+    let five_min_clock = Arc::new(TestClock::new(start_time));
 
     // Store with 1-hour TTL
-    let store_1h = StateStore::new(clock_1h.clone(), Duration::from_secs(3600));
+    let store_one_hour = StateStore::new(one_hour_clock.clone(), Duration::from_secs(3600));
     // Store with 5-minute TTL
-    let store_5m = StateStore::new(clock_5m.clone(), Duration::from_secs(300));
+    let store_five_min = StateStore::new(five_min_clock.clone(), Duration::from_secs(300));
 
-    let run_id_1h = RunId(2200);
-    let job_id_1h = JobId(2201);
-    let run_id_5m = RunId(2300);
-    let job_id_5m = JobId(2301);
+    let run_id_one_hour = RunId(2200);
+    let job_id_one_hour = JobId(2201);
+    let run_id_five_min = RunId(2300);
+    let job_id_five_min = JobId(2301);
 
     // Setup store with 1-hour TTL
-    let run_envelope_1h = make_run_event(run_id_1h, RunEvent::Requested);
-    store_1h.apply_run_event(run_envelope_1h).await.unwrap();
+    let run_envelope_one_hour = make_run_event(run_id_one_hour, RunEvent::Requested);
+    store_one_hour.apply_run_event(run_envelope_one_hour).await.unwrap();
 
-    use crate::job::RunnerInfo;
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
         group_id: None,
         group_name: None,
     };
-    let job_envelope_1h = make_job_event_with_completed_at(
-        job_id_1h,
-        run_id_1h,
+    let job_envelope_one_hour = make_job_event_with_completed_at(
+        job_id_one_hour,
+        run_id_one_hour,
         "org",
         "repo",
         JobEvent::Completed {
@@ -1398,15 +1384,15 @@ async fn test_ac5_5_ttl_configurable() {
         },
         Some(start_time),
     );
-    store_1h.apply_job_event(job_envelope_1h).await.unwrap();
+    store_one_hour.apply_job_event(job_envelope_one_hour).await.unwrap();
 
     // Setup store with 5-minute TTL
-    let run_envelope_5m = make_run_event(run_id_5m, RunEvent::Requested);
-    store_5m.apply_run_event(run_envelope_5m).await.unwrap();
+    let run_envelope_five_min = make_run_event(run_id_five_min, RunEvent::Requested);
+    store_five_min.apply_run_event(run_envelope_five_min).await.unwrap();
 
-    let job_envelope_5m = make_job_event_with_completed_at(
-        job_id_5m,
-        run_id_5m,
+    let job_envelope_five_min = make_job_event_with_completed_at(
+        job_id_five_min,
+        run_id_five_min,
         "org",
         "repo",
         JobEvent::Completed {
@@ -1417,22 +1403,22 @@ async fn test_ac5_5_ttl_configurable() {
         },
         Some(start_time),
     );
-    store_5m.apply_job_event(job_envelope_5m).await.unwrap();
+    store_five_min.apply_job_event(job_envelope_five_min).await.unwrap();
 
     // Advance both clocks to t0 + 30 minutes
-    clock_1h.advance(TimeDelta::minutes(30));
-    clock_5m.advance(TimeDelta::minutes(30));
+    one_hour_clock.advance(TimeDelta::minutes(30));
+    five_min_clock.advance(TimeDelta::minutes(30));
 
     // Evict from both stores
-    store_1h.evict_expired().await;
-    store_5m.evict_expired().await;
+    store_one_hour.evict_expired().await;
+    store_five_min.evict_expired().await;
 
     // Verify: 1-hour store retains job, 5-minute store evicts it
-    let job_1h = store_1h.get_job(&job_id_1h).await;
-    assert!(job_1h.is_some(), "Job in 1-hour store should be retained");
+    let job_one_hour = store_one_hour.get_job(&job_id_one_hour).await;
+    assert!(job_one_hour.is_some(), "Job in 1-hour store should be retained");
 
-    let job_5m = store_5m.get_job(&job_id_5m).await;
-    assert!(job_5m.is_none(), "Job in 5-minute store should be evicted");
+    let job_five_min = store_five_min.get_job(&job_id_five_min).await;
+    assert!(job_five_min.is_none(), "Job in 5-minute store should be evicted");
 }
 
 // Edge case tests for AC6.5 — out-of-order, duplicate, and unknown-ID events
@@ -1649,7 +1635,6 @@ async fn test_ac6_5_unknown_run_id_on_job() {
 
 #[tokio::test]
 async fn test_ac6_5_rapid_status_cycling() {
-    use crate::job::RunnerInfo;
 
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
@@ -1731,7 +1716,6 @@ async fn test_ac6_5_rapid_status_cycling() {
 
 #[tokio::test]
 async fn test_ac6_5_interleaved_multi_job() {
-    use crate::job::RunnerInfo;
 
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
@@ -1819,7 +1803,6 @@ async fn test_ac6_5_interleaved_multi_job() {
 
 #[tokio::test]
 async fn test_ac6_5_eviction_with_mixed_state() {
-    use crate::job::RunnerInfo;
 
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
