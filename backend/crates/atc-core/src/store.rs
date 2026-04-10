@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::TimeDelta;
 use tokio::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
@@ -393,6 +394,96 @@ impl StateStore {
 
         stats_map.into_values().collect()
     }
+
+    /// Evict completed jobs that have exceeded the configured TTL.
+    ///
+    /// Scans for completed jobs where `completed_at + ttl < now`,
+    /// removes them from the primary map and all secondary indexes,
+    /// then evicts any runs that have no remaining jobs.
+    ///
+    /// Active jobs (queued, waiting, in-progress) are never evicted
+    /// regardless of age.
+    pub async fn evict_expired(&self) {
+        tracing::debug!("starting eviction sweep");
+        let start = std::time::Instant::now();
+
+        let now = self.clock.now();
+        let mut state = self.state.write().await;
+        let ttl = TimeDelta::from_std(self.completed_ttl)
+            .unwrap_or(TimeDelta::MAX);
+
+        // Find expired completed job IDs
+        let expired_job_ids: Vec<JobId> = state
+            .jobs
+            .iter()
+            .filter(|(_, job)| {
+                job.status == JobStatus::Completed
+                    && job
+                        .completed_at
+                        .is_some_and(|t| now.signed_duration_since(t) > ttl)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        if expired_job_ids.is_empty() {
+            #[allow(clippy::cast_possible_truncation)]
+            let elapsed_us = start.elapsed().as_micros() as u64;
+            tracing::debug!(
+                elapsed_us,
+                "eviction sweep complete, nothing to evict"
+            );
+            return;
+        }
+
+        // Remove expired jobs from primary map, collect affected run IDs
+        let mut affected_run_ids = HashSet::new();
+        for job_id in &expired_job_ids {
+            if let Some(job) = state.jobs.remove(job_id) {
+                affected_run_ids.insert(job.run_id);
+            }
+        }
+
+        // Remove from jobs_by_run index
+        for run_id in &affected_run_ids {
+            if let Some(set) = state.jobs_by_run.get_mut(run_id) {
+                for job_id in &expired_job_ids {
+                    set.remove(job_id);
+                }
+            }
+        }
+
+        // Remove from jobs_by_repo index
+        for set in state.jobs_by_repo.values_mut() {
+            for job_id in &expired_job_ids {
+                set.remove(job_id);
+            }
+        }
+        state.jobs_by_repo.retain(|_, set| !set.is_empty());
+        state.jobs_by_run.retain(|_, set| !set.is_empty());
+
+        // Evict runs with no remaining jobs (AC5.3)
+        let mut runs_evicted: u64 = 0;
+        for run_id in &affected_run_ids {
+            let has_jobs = state
+                .jobs_by_run
+                .get(run_id)
+                .is_some_and(|set| !set.is_empty());
+            if !has_jobs {
+                state.runs.remove(run_id);
+                state.jobs_by_run.remove(run_id);
+                runs_evicted += 1;
+            }
+        }
+
+        #[allow(clippy::cast_possible_truncation)]
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        tracing::info!(
+            jobs_evicted = expired_job_ids.len(),
+            runs_evicted,
+            elapsed_us,
+            "eviction sweep complete"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -401,7 +492,7 @@ mod tests {
     use crate::clock::TestClock;
     use crate::job::JobConclusion;
     use crate::run::RunConclusion;
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
 
     /// Helper to build a RunEventEnvelope with sensible defaults.
     fn make_run_event(
@@ -446,6 +537,29 @@ mod tests {
             created_at: now,
             started_at: None,
             completed_at: None,
+            action,
+        }
+    }
+
+    /// Helper to build a JobEventEnvelope with custom completed_at timestamp.
+    fn make_job_event_with_completed_at(
+        job_id: JobId,
+        run_id: RunId,
+        org: &str,
+        repo: &str,
+        action: JobEvent,
+        completed_at: Option<DateTime<Utc>>,
+    ) -> JobEventEnvelope {
+        let now = Utc::now();
+        JobEventEnvelope {
+            job_id,
+            run_id,
+            org: org.to_string(),
+            repo: repo.to_string(),
+            name: "Test Job".to_string(),
+            created_at: now,
+            started_at: None,
+            completed_at,
             action,
         }
     }
@@ -1425,5 +1539,375 @@ mod tests {
         // Verify group_name is captured
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].group_name, Some("default".to_string()));
+    }
+
+    // ===== Task 1: TTL Eviction =====
+
+    #[tokio::test]
+    async fn test_ac5_1_completed_job_within_ttl_retained() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+
+        let run_id = RunId(1700);
+        let job_id = JobId(1701);
+
+        // Create and complete a job at t0
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let job_envelope = make_job_event_with_completed_at(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner),
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(start_time),
+        );
+        store.apply_job_event(job_envelope).await.unwrap();
+
+        // Advance clock to t0 + 30 minutes (within 1-hour TTL)
+        clock.advance(TimeDelta::minutes(30));
+
+        // Call evict_expired()
+        store.evict_expired().await;
+
+        // Verify job still exists
+        let job = store.get_job(&job_id).await;
+        assert!(job.is_some(), "Job should be retained within TTL");
+    }
+
+    #[tokio::test]
+    async fn test_ac5_2_completed_job_past_ttl_evicted() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+
+        let run_id = RunId(1800);
+        let job_id = JobId(1801);
+
+        // Create and complete a job at t0
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let job_envelope = make_job_event_with_completed_at(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner),
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(start_time),
+        );
+        store.apply_job_event(job_envelope).await.unwrap();
+
+        // Advance clock to t0 + 2 hours (past 1-hour TTL)
+        clock.advance(TimeDelta::hours(2));
+
+        // Call evict_expired()
+        store.evict_expired().await;
+
+        // Verify job is removed from primary map
+        let job = store.get_job(&job_id).await;
+        assert!(job.is_none(), "Completed job past TTL should be evicted from primary map");
+
+        // Verify job is removed from jobs_for_run
+        let jobs = store.jobs_for_run(&run_id).await;
+        assert!(!jobs.contains(&job_id), "Evicted job should not be in jobs_for_run");
+
+        // Verify job is removed from jobs_for_repo
+        let repo = RepoKey::new("org", "repo");
+        let jobs = store.jobs_for_repo(&repo).await;
+        assert!(!jobs.contains(&job_id), "Evicted job should not be in jobs_for_repo");
+    }
+
+    #[tokio::test]
+    async fn test_ac5_3_run_with_no_jobs_evicted() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+
+        let run_id = RunId(1900);
+        let job_id = JobId(1901);
+
+        // Create a run with one job
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let job_envelope = make_job_event_with_completed_at(
+            job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner),
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(start_time),
+        );
+        store.apply_job_event(job_envelope).await.unwrap();
+
+        // Advance clock past TTL and evict
+        clock.advance(TimeDelta::hours(2));
+        store.evict_expired().await;
+
+        // Verify both job and run are evicted
+        let job = store.get_job(&job_id).await;
+        assert!(job.is_none(), "Job should be evicted");
+        let run = store.get_run(&run_id).await;
+        assert!(run.is_none(), "Run with no remaining jobs should be evicted");
+    }
+
+    #[tokio::test]
+    async fn test_ac5_3_run_with_active_job_retained() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+
+        let run_id = RunId(2000);
+        let completed_job_id = JobId(2001);
+        let active_job_id = JobId(2002);
+
+        // Create a run with two jobs
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+
+        // Complete one job
+        let completed_envelope = make_job_event_with_completed_at(
+            completed_job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner.clone()),
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(start_time),
+        );
+        store.apply_job_event(completed_envelope).await.unwrap();
+
+        // Create an active (running) job
+        let active_envelope = make_job_event(
+            active_job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::InProgress {
+                runner,
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(active_envelope).await.unwrap();
+
+        // Advance clock past TTL and evict
+        clock.advance(TimeDelta::hours(2));
+        store.evict_expired().await;
+
+        // Verify completed job is evicted but run and active job remain
+        let completed_job = store.get_job(&completed_job_id).await;
+        assert!(completed_job.is_none(), "Completed job past TTL should be evicted");
+
+        let active_job = store.get_job(&active_job_id).await;
+        assert!(active_job.is_some(), "Active job should be retained");
+
+        let run = store.get_run(&run_id).await;
+        assert!(run.is_some(), "Run should be retained because it still has an active job");
+    }
+
+    #[tokio::test]
+    async fn test_ac5_4_active_jobs_never_evicted() {
+        let start_time = Utc::now();
+        let clock = Arc::new(TestClock::new(start_time));
+        let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+
+        let run_id = RunId(2100);
+        let queued_job_id = JobId(2101);
+        let running_job_id = JobId(2102);
+        let waiting_job_id = JobId(2103);
+
+        // Create a run
+        let run_envelope = make_run_event(run_id, RunEvent::Requested);
+        store.apply_run_event(run_envelope).await.unwrap();
+
+        // Create queued job
+        let queued_envelope = make_job_event(
+            queued_job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(queued_envelope).await.unwrap();
+
+        // Create running job
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let running_envelope = make_job_event(
+            running_job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::InProgress {
+                runner,
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(running_envelope).await.unwrap();
+
+        // Create waiting job
+        let waiting_envelope = make_job_event(
+            waiting_job_id,
+            run_id,
+            "org",
+            "repo",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        );
+        store.apply_job_event(waiting_envelope).await.unwrap();
+
+        // Advance clock well past TTL and evict
+        clock.advance(TimeDelta::days(10));
+        store.evict_expired().await;
+
+        // Verify all active jobs are retained
+        let queued_job = store.get_job(&queued_job_id).await;
+        assert!(queued_job.is_some(), "Queued job should never be evicted");
+
+        let running_job = store.get_job(&running_job_id).await;
+        assert!(running_job.is_some(), "Running job should never be evicted");
+
+        let waiting_job = store.get_job(&waiting_job_id).await;
+        assert!(waiting_job.is_some(), "Waiting job should never be evicted");
+    }
+
+    #[tokio::test]
+    async fn test_ac5_5_ttl_configurable() {
+        let start_time = Utc::now();
+        let clock_1h = Arc::new(TestClock::new(start_time));
+        let clock_5m = Arc::new(TestClock::new(start_time));
+
+        // Store with 1-hour TTL
+        let store_1h = StateStore::new(clock_1h.clone(), Duration::from_secs(3600));
+        // Store with 5-minute TTL
+        let store_5m = StateStore::new(clock_5m.clone(), Duration::from_secs(300));
+
+        let run_id_1h = RunId(2200);
+        let job_id_1h = JobId(2201);
+        let run_id_5m = RunId(2300);
+        let job_id_5m = JobId(2301);
+
+        // Setup store with 1-hour TTL
+        let run_envelope_1h = make_run_event(run_id_1h, RunEvent::Requested);
+        store_1h.apply_run_event(run_envelope_1h).await.unwrap();
+
+        use crate::job::RunnerInfo;
+        let runner = RunnerInfo {
+            id: 1,
+            name: "runner-1".to_string(),
+            group_id: None,
+            group_name: None,
+        };
+        let job_envelope_1h = make_job_event_with_completed_at(
+            job_id_1h,
+            run_id_1h,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner.clone()),
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(start_time),
+        );
+        store_1h.apply_job_event(job_envelope_1h).await.unwrap();
+
+        // Setup store with 5-minute TTL
+        let run_envelope_5m = make_run_event(run_id_5m, RunEvent::Requested);
+        store_5m.apply_run_event(run_envelope_5m).await.unwrap();
+
+        let job_envelope_5m = make_job_event_with_completed_at(
+            job_id_5m,
+            run_id_5m,
+            "org",
+            "repo",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: Some(runner),
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(start_time),
+        );
+        store_5m.apply_job_event(job_envelope_5m).await.unwrap();
+
+        // Advance both clocks to t0 + 30 minutes
+        clock_1h.advance(TimeDelta::minutes(30));
+        clock_5m.advance(TimeDelta::minutes(30));
+
+        // Evict from both stores
+        store_1h.evict_expired().await;
+        store_5m.evict_expired().await;
+
+        // Verify: 1-hour store retains job, 5-minute store evicts it
+        let job_1h = store_1h.get_job(&job_id_1h).await;
+        assert!(job_1h.is_some(), "Job in 1-hour store should be retained");
+
+        let job_5m = store_5m.get_job(&job_id_5m).await;
+        assert!(job_5m.is_none(), "Job in 5-minute store should be evicted");
     }
 }
