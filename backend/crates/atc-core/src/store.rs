@@ -484,6 +484,29 @@ impl StateStore {
             "eviction sweep complete"
         );
     }
+
+    /// Start a background task that periodically evicts expired entries.
+    ///
+    /// Must be called on an `Arc<StateStore>`. Returns a
+    /// [`JoinHandle`](tokio::task::JoinHandle) — drop or abort it to
+    /// stop the eviction loop.
+    ///
+    /// The first eviction runs after `interval` elapses (not immediately).
+    pub fn start_eviction_task(
+        self: &Arc<Self>,
+        interval: Duration,
+    ) -> tokio::task::JoinHandle<()> {
+        let store = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            // First tick completes immediately — consume it
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                store.evict_expired().await;
+            }
+        })
+    }
 }
 
 #[cfg(test)]
