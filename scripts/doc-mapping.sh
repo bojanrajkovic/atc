@@ -14,6 +14,10 @@ get_doc_for_file() {
     local file="$1"
 
     case "$file" in
+        backend/crates/atc-core/src/*)
+            echo "docs/architecture/backend-server.md"
+            return
+            ;;
         backend/crates/atc-server/src/*)
             echo "docs/architecture/backend-server.md"
             return

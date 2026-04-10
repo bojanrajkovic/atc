@@ -13,7 +13,10 @@ Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite fronte
 
 ## Tech Stack
 
-- **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates (atc-core, atc-github, atc-server)
+- **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates:
+  - `atc-core` — Domain model (WorkflowRun, Job, Step types; StateStore with event-driven mutations; TTL eviction)
+  - `atc-github` — GitHub API integration (webhook parsing, event translation)
+  - `atc-server` — Axum HTTP server (routes, config, assets, metrics)
 - **Frontend:** Svelte 5 + Vite + Tailwind v4 — standalone SPA at `frontend/` with OKLCH design system
 - **Package manager:** pnpm (via Corepack)
 - **Task runner:** just (see `justfile` for all commands)
@@ -39,7 +42,10 @@ just build    # Production build
 - `.github/workflows/` — CI and release workflows (ci.yml, zizmor.yml, release-please.yml, release.yml)
 - `lefthook.yml` — Three-tier git hook definitions
 - `justfile` — Task runner recipes
-- `backend/` — Rust workspace: atc-core (domain), atc-github (GitHub API), atc-server (Axum HTTP)
+- `backend/` — Rust workspace with three crates:
+  - `backend/crates/atc-core/` — Domain model and state store (types: RunId, JobId, StepId; events: RunEvent, JobEvent; StateStore with RwLock and TTL eviction; Clock trait)
+  - `backend/crates/atc-github/` — GitHub API integration (placeholder; future: webhook parsing and event translation)
+  - `backend/crates/atc-server/` — Axum HTTP server (routes, config, asset serving, metrics, dev proxy)
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
 - `deploy/helm/` — Helm chart at `deploy/helm/atc/`
 - `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
