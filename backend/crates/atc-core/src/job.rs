@@ -119,6 +119,62 @@ pub struct Job {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
+use std::fmt;
+
+/// Error returned when an invalid job status transition is attempted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidJobTransition {
+    /// The current status.
+    pub from: JobStatus,
+    /// The attempted target status.
+    pub to: JobStatus,
+}
+
+impl fmt::Display for InvalidJobTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid job transition: {:?} -> {:?}", self.from, self.to)
+    }
+}
+
+impl std::error::Error for InvalidJobTransition {}
+
+impl JobStatus {
+    /// Attempt to transition to the target status.
+    ///
+    /// Returns the new status on success, or `InvalidJobTransition` if
+    /// the transition is not allowed. Same-status transitions are
+    /// idempotent and always succeed.
+    ///
+    /// # Valid transitions
+    ///
+    /// - `Queued` -> `Waiting` | `InProgress`
+    /// - `Waiting` -> `InProgress`
+    /// - `InProgress` -> `Completed`
+    ///
+    /// Note: `Waiting` transitions are not in design AC2.1 but are
+    /// included to match GitHub's `workflow_job` model where jobs
+    /// can enter a `waiting` state for dependency resolution.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidJobTransition` for any transition not listed above
+    /// (excluding idempotent same-status).
+    pub fn transition_to(self, target: Self) -> Result<Self, InvalidJobTransition> {
+        if self == target {
+            return Ok(self);
+        }
+        match (self, target) {
+            (Self::Queued, Self::Waiting | Self::InProgress)
+            | (Self::Waiting, Self::InProgress)
+            | (Self::InProgress, Self::Completed) => Ok(target),
+            _ => Err(InvalidJobTransition {
+                from: self,
+                to: target,
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +408,104 @@ mod tests {
                 serde_json::from_str(&json).expect("failed to deserialize conclusion");
             assert_eq!(conclusion, deserialized);
         }
+    }
+
+    // core-domain.AC2.1: Valid job transitions succeed
+    #[test]
+    fn test_job_transition_queued_to_in_progress() {
+        let result = JobStatus::Queued.transition_to(JobStatus::InProgress);
+        assert_eq!(result, Ok(JobStatus::InProgress));
+    }
+
+    #[test]
+    fn test_job_transition_queued_to_waiting() {
+        let result = JobStatus::Queued.transition_to(JobStatus::Waiting);
+        assert_eq!(result, Ok(JobStatus::Waiting));
+    }
+
+    #[test]
+    fn test_job_transition_waiting_to_in_progress() {
+        let result = JobStatus::Waiting.transition_to(JobStatus::InProgress);
+        assert_eq!(result, Ok(JobStatus::InProgress));
+    }
+
+    #[test]
+    fn test_job_transition_in_progress_to_completed() {
+        let result = JobStatus::InProgress.transition_to(JobStatus::Completed);
+        assert_eq!(result, Ok(JobStatus::Completed));
+    }
+
+    // core-domain.AC2.3: Invalid transitions return Err(InvalidJobTransition)
+    #[test]
+    fn test_job_transition_completed_to_in_progress_fails() {
+        let result = JobStatus::Completed.transition_to(JobStatus::InProgress);
+        assert_eq!(
+            result,
+            Err(InvalidJobTransition {
+                from: JobStatus::Completed,
+                to: JobStatus::InProgress,
+            })
+        );
+    }
+
+    #[test]
+    fn test_job_transition_queued_to_completed_fails() {
+        let result = JobStatus::Queued.transition_to(JobStatus::Completed);
+        assert_eq!(
+            result,
+            Err(InvalidJobTransition {
+                from: JobStatus::Queued,
+                to: JobStatus::Completed,
+            })
+        );
+    }
+
+    #[test]
+    fn test_job_transition_in_progress_to_queued_fails() {
+        let result = JobStatus::InProgress.transition_to(JobStatus::Queued);
+        assert_eq!(
+            result,
+            Err(InvalidJobTransition {
+                from: JobStatus::InProgress,
+                to: JobStatus::Queued,
+            })
+        );
+    }
+
+    #[test]
+    fn test_job_transition_completed_to_waiting_fails() {
+        let result = JobStatus::Completed.transition_to(JobStatus::Waiting);
+        assert_eq!(
+            result,
+            Err(InvalidJobTransition {
+                from: JobStatus::Completed,
+                to: JobStatus::Waiting,
+            })
+        );
+    }
+
+    // core-domain.AC2.4: Idempotent re-application of same status always succeeds
+    #[test]
+    fn test_job_transition_queued_to_queued_idempotent() {
+        let result = JobStatus::Queued.transition_to(JobStatus::Queued);
+        assert_eq!(result, Ok(JobStatus::Queued));
+    }
+
+    #[test]
+    fn test_job_transition_waiting_to_waiting_idempotent() {
+        let result = JobStatus::Waiting.transition_to(JobStatus::Waiting);
+        assert_eq!(result, Ok(JobStatus::Waiting));
+    }
+
+    #[test]
+    fn test_job_transition_in_progress_to_in_progress_idempotent() {
+        let result = JobStatus::InProgress.transition_to(JobStatus::InProgress);
+        assert_eq!(result, Ok(JobStatus::InProgress));
+    }
+
+    #[test]
+    fn test_job_transition_completed_to_completed_idempotent() {
+        let result = JobStatus::Completed.transition_to(JobStatus::Completed);
+        assert_eq!(result, Ok(JobStatus::Completed));
     }
 }

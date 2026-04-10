@@ -13,6 +13,6 @@ pub mod types;
 pub use clock::{Clock, SystemClock};
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::TestClock;
-pub use job::{Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
-pub use run::{RunConclusion, RunStatus, WorkflowRun};
+pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
+pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
 pub use types::{JobId, LabelSet, RepoKey, RunId};

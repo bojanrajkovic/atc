@@ -90,6 +90,55 @@ impl WorkflowRun {
     }
 }
 
+use std::fmt;
+
+/// Error returned when an invalid run status transition is attempted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidRunTransition {
+    /// The current status.
+    pub from: RunStatus,
+    /// The attempted target status.
+    pub to: RunStatus,
+}
+
+impl fmt::Display for InvalidRunTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid run transition: {:?} -> {:?}", self.from, self.to)
+    }
+}
+
+impl std::error::Error for InvalidRunTransition {}
+
+impl RunStatus {
+    /// Attempt to transition to the target status.
+    ///
+    /// Returns the new status on success, or `InvalidRunTransition` if
+    /// the transition is not allowed. Same-status transitions are
+    /// idempotent and always succeed.
+    ///
+    /// # Valid transitions
+    ///
+    /// - `Queued` -> `InProgress`
+    /// - `InProgress` -> `Completed`
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidRunTransition` for any transition not listed above
+    /// (excluding idempotent same-status).
+    pub fn transition_to(self, target: Self) -> Result<Self, InvalidRunTransition> {
+        if self == target {
+            return Ok(self);
+        }
+        match (self, target) {
+            (Self::Queued, Self::InProgress) | (Self::InProgress, Self::Completed) => Ok(target),
+            _ => Err(InvalidRunTransition {
+                from: self,
+                to: target,
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +288,74 @@ mod tests {
         assert_eq!(run.commit_message, None);
         assert_eq!(run.conclusion, None);
         assert_eq!(run.run_started_at, None);
+    }
+
+    // core-domain.AC2.2: Valid run transitions succeed
+    #[test]
+    fn test_run_transition_queued_to_in_progress() {
+        let result = RunStatus::Queued.transition_to(RunStatus::InProgress);
+        assert_eq!(result, Ok(RunStatus::InProgress));
+    }
+
+    #[test]
+    fn test_run_transition_in_progress_to_completed() {
+        let result = RunStatus::InProgress.transition_to(RunStatus::Completed);
+        assert_eq!(result, Ok(RunStatus::Completed));
+    }
+
+    // core-domain.AC2.3: Invalid transitions return Err(InvalidRunTransition)
+    #[test]
+    fn test_run_transition_completed_to_in_progress_fails() {
+        let result = RunStatus::Completed.transition_to(RunStatus::InProgress);
+        assert_eq!(
+            result,
+            Err(InvalidRunTransition {
+                from: RunStatus::Completed,
+                to: RunStatus::InProgress,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_transition_queued_to_completed_fails() {
+        let result = RunStatus::Queued.transition_to(RunStatus::Completed);
+        assert_eq!(
+            result,
+            Err(InvalidRunTransition {
+                from: RunStatus::Queued,
+                to: RunStatus::Completed,
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_transition_completed_to_queued_fails() {
+        let result = RunStatus::Completed.transition_to(RunStatus::Queued);
+        assert_eq!(
+            result,
+            Err(InvalidRunTransition {
+                from: RunStatus::Completed,
+                to: RunStatus::Queued,
+            })
+        );
+    }
+
+    // core-domain.AC2.4: Idempotent re-application of same status updates fields without erroring
+    #[test]
+    fn test_run_transition_queued_to_queued_idempotent() {
+        let result = RunStatus::Queued.transition_to(RunStatus::Queued);
+        assert_eq!(result, Ok(RunStatus::Queued));
+    }
+
+    #[test]
+    fn test_run_transition_in_progress_to_in_progress_idempotent() {
+        let result = RunStatus::InProgress.transition_to(RunStatus::InProgress);
+        assert_eq!(result, Ok(RunStatus::InProgress));
+    }
+
+    #[test]
+    fn test_run_transition_completed_to_completed_idempotent() {
+        let result = RunStatus::Completed.transition_to(RunStatus::Completed);
+        assert_eq!(result, Ok(RunStatus::Completed));
     }
 }
