@@ -132,7 +132,11 @@ pub struct InvalidJobTransition {
 
 impl fmt::Display for InvalidJobTransition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid job transition: {:?} -> {:?}", self.from, self.to)
+        write!(
+            f,
+            "invalid job transition: {:?} -> {:?}",
+            self.from, self.to
+        )
     }
 }
 
@@ -315,7 +319,11 @@ mod tests {
     // Test StepStatus enum serialization
     #[test]
     fn test_step_status_serialization() {
-        let step_statuses = vec![StepStatus::Queued, StepStatus::InProgress, StepStatus::Completed];
+        let step_statuses = vec![
+            StepStatus::Queued,
+            StepStatus::InProgress,
+            StepStatus::Completed,
+        ];
 
         for status in step_statuses {
             let json = serde_json::to_string(&status).expect("failed to serialize status");

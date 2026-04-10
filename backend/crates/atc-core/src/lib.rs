@@ -12,9 +12,9 @@ pub mod run;
 pub mod store;
 pub mod types;
 
-pub use clock::{Clock, SystemClock};
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::TestClock;
+pub use clock::{Clock, SystemClock};
 pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
 pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};

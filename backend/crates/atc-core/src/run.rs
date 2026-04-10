@@ -103,7 +103,11 @@ pub struct InvalidRunTransition {
 
 impl fmt::Display for InvalidRunTransition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid run transition: {:?} -> {:?}", self.from, self.to)
+        write!(
+            f,
+            "invalid run transition: {:?} -> {:?}",
+            self.from, self.to
+        )
     }
 }
 
@@ -177,7 +181,10 @@ mod tests {
         assert_eq!(run.display_title, "Triggered by push");
         assert_eq!(run.status, RunStatus::InProgress);
         assert_eq!(run.conclusion, None);
-        assert_eq!(run.html_url, "https://github.com/octocat/Hello-World/actions/runs/123");
+        assert_eq!(
+            run.html_url,
+            "https://github.com/octocat/Hello-World/actions/runs/123"
+        );
         assert_eq!(run.created_at, now);
         assert_eq!(run.run_started_at, Some(now));
         assert_eq!(run.updated_at, now);
@@ -257,7 +264,8 @@ mod tests {
         };
 
         let json_str = serde_json::to_string(&original).expect("serialize to JSON");
-        let deserialized: WorkflowRun = serde_json::from_str(&json_str).expect("deserialize from JSON");
+        let deserialized: WorkflowRun =
+            serde_json::from_str(&json_str).expect("deserialize from JSON");
 
         assert_eq!(original, deserialized);
     }

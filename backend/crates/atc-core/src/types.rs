@@ -195,7 +195,10 @@ mod tests {
     fn test_label_set_empty() {
         // AC1.3: Empty label set
         let set = LabelSet::new(Vec::<String>::new());
-        assert!(set.is_empty(), "Empty label set should report is_empty() == true");
+        assert!(
+            set.is_empty(),
+            "Empty label set should report is_empty() == true"
+        );
         assert_eq!(set.len(), 0);
     }
 

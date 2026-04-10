@@ -4,9 +4,9 @@
 //! [`SystemClock`] for production and [`TestClock`] for deterministic
 //! testing without sleeps.
 
-use chrono::{DateTime, Utc};
 #[cfg(any(test, feature = "test-support"))]
 use chrono::TimeDelta;
+use chrono::{DateTime, Utc};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 

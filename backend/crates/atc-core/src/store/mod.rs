@@ -219,18 +219,24 @@ impl StateStore {
         let mut state = self.state.write().await;
 
         let (target_status, conclusion, runner, labels, steps) = match envelope.action {
-            JobEvent::Queued { labels, steps } => {
-                (JobStatus::Queued, None, None, labels, steps)
-            }
-            JobEvent::InProgress { runner, labels, steps } => {
-                (JobStatus::InProgress, None, Some(runner), labels, steps)
-            }
+            JobEvent::Queued { labels, steps } => (JobStatus::Queued, None, None, labels, steps),
+            JobEvent::InProgress {
+                runner,
+                labels,
+                steps,
+            } => (JobStatus::InProgress, None, Some(runner), labels, steps),
             JobEvent::Completed {
                 conclusion,
                 runner,
                 labels,
                 steps,
-            } => (JobStatus::Completed, Some(conclusion), runner, labels, steps),
+            } => (
+                JobStatus::Completed,
+                Some(conclusion),
+                runner,
+                labels,
+                steps,
+            ),
         };
 
         let job_id = envelope.job_id;
@@ -406,8 +412,7 @@ impl StateStore {
 
         let now = self.clock.now();
         let mut state = self.state.write().await;
-        let ttl = TimeDelta::from_std(self.completed_ttl)
-            .unwrap_or(TimeDelta::MAX);
+        let ttl = TimeDelta::from_std(self.completed_ttl).unwrap_or(TimeDelta::MAX);
 
         // Find expired completed job IDs
         let expired_job_ids: Vec<JobId> = state
@@ -425,10 +430,7 @@ impl StateStore {
         if expired_job_ids.is_empty() {
             #[allow(clippy::cast_possible_truncation)]
             let elapsed_us = start.elapsed().as_micros() as u64;
-            tracing::debug!(
-                elapsed_us,
-                "eviction sweep complete, nothing to evict"
-            );
+            tracing::debug!(elapsed_us, "eviction sweep complete, nothing to evict");
             return;
         }
 
@@ -585,10 +587,7 @@ impl StateStore {
                     .jobs_by_run
                     .get(&job.run_id)
                     .is_some_and(|set| set.contains(job_id));
-                let in_repo = state
-                    .jobs_by_repo
-                    .values()
-                    .any(|set| set.contains(job_id));
+                let in_repo = state.jobs_by_repo.values().any(|set| set.contains(job_id));
                 assert!(in_run, "active job {job_id:?} missing from jobs_by_run");
                 assert!(in_repo, "active job {job_id:?} missing from jobs_by_repo");
             }
@@ -605,6 +604,6 @@ impl StateStore {
 }
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod property_tests;
+#[cfg(test)]
+mod tests;
