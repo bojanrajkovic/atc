@@ -43,4 +43,3 @@ The `test-support` feature exposes `TestClock` for deterministic time in downstr
 
 - Architecture: `docs/architecture/backend-server.md` § Domain Model
 - Design plan: `docs/design-plans/2026-04-09-core-domain-model.md`
-- Implementation plan: `docs/implementation-plans/2026-04-09-core-domain/`
