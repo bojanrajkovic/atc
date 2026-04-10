@@ -2136,6 +2136,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ac6_5_rapid_status_cycling() {
+        use crate::job::RunnerInfo;
+
         let start_time = Utc::now();
         let clock = Arc::new(TestClock::new(start_time));
         let store = StateStore::new(clock, Duration::from_secs(3600));
@@ -2157,7 +2159,6 @@ mod tests {
         store.apply_job_event(queued).await.unwrap();
 
         // Send InProgress
-        use crate::job::RunnerInfo;
         let runner = RunnerInfo {
             id: 1,
             name: "runner-1".to_string(),
@@ -2217,6 +2218,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ac6_5_interleaved_multi_job() {
+        use crate::job::RunnerInfo;
+
         let start_time = Utc::now();
         let clock = Arc::new(TestClock::new(start_time));
         let store = StateStore::new(clock, Duration::from_secs(3600));
@@ -2227,8 +2230,6 @@ mod tests {
         // Create two runs
         store.apply_run_event(make_run_event(run1_id, RunEvent::Requested)).await.unwrap();
         store.apply_run_event(make_run_event(run2_id, RunEvent::Requested)).await.unwrap();
-
-        use crate::job::RunnerInfo;
         let runner = RunnerInfo {
             id: 1,
             name: "runner-1".to_string(),
@@ -2281,6 +2282,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ac6_5_eviction_with_mixed_state() {
+        use crate::job::RunnerInfo;
+
         let start_time = Utc::now();
         let clock = Arc::new(TestClock::new(start_time));
         let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
@@ -2289,8 +2292,6 @@ mod tests {
 
         // Create run
         store.apply_run_event(make_run_event(run_id, RunEvent::Requested)).await.unwrap();
-
-        use crate::job::RunnerInfo;
         let runner = RunnerInfo {
             id: 1,
             name: "runner-1".to_string(),
@@ -2340,12 +2341,12 @@ mod tests {
         // Verify: completed jobs (1-3) evicted, active jobs (4-6) retained
         for i in 1..=3 {
             let job = store.get_job(&JobId(i)).await;
-            assert!(job.is_none(), "Completed job {} should be evicted", i);
+            assert!(job.is_none(), "Completed job {i} should be evicted");
         }
 
         for i in 4..=6 {
             let job = store.get_job(&JobId(i)).await;
-            assert!(job.is_some(), "Active job {} should be retained", i);
+            assert!(job.is_some(), "Active job {i} should be retained");
         }
 
         // Verify indexes are consistent
@@ -2465,8 +2466,8 @@ mod property_tests {
         StartRun(i64),
         CompleteRun(i64),
         QueueJob(i64, i64),
-        StartJob(i64),
-        CompleteJob(i64),
+        StartJob(i64, i64),  // (run_id, job_id)
+        CompleteJob(i64, i64),  // (run_id, job_id)
         AdvanceTimeAndEvict,
     }
 
@@ -2477,10 +2478,32 @@ mod property_tests {
             (1i64..=3).prop_map(TestAction::StartRun),
             (1i64..=3).prop_map(TestAction::CompleteRun),
             (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::QueueJob(run_id, job_id)),
-            (1i64..=10).prop_map(TestAction::StartJob),
-            (1i64..=10).prop_map(TestAction::CompleteJob),
+            (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::StartJob(run_id, job_id)),
+            (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::CompleteJob(run_id, job_id)),
             Just(TestAction::AdvanceTimeAndEvict),
         ]
+    }
+
+    /// Create a `RunEventEnvelope` with standard test defaults.
+    fn make_run_envelope(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
+        let now = Utc::now();
+        RunEventEnvelope {
+            run_id,
+            org: "test-org".to_string(),
+            repo: "test-repo".to_string(),
+            workflow_name: "test-workflow".to_string(),
+            workflow_path: ".github/workflows/test.yml".to_string(),
+            branch: Some("main".to_string()),
+            head_sha: "abc123".to_string(),
+            commit_message: Some("test commit".to_string()),
+            trigger_event: "push".to_string(),
+            display_title: "Test Run".to_string(),
+            html_url: "https://example.com/run".to_string(),
+            created_at: now,
+            run_started_at: None,
+            updated_at: now,
+            action,
+        }
     }
 
     /// Apply a test action to the store, silently ignoring errors.
@@ -2492,70 +2515,22 @@ mod property_tests {
         match action {
             TestAction::RequestRun(run_id) => {
                 let run_id = RunId(*run_id);
-                let now = Utc::now();
-                let envelope = RunEventEnvelope {
-                    run_id,
-                    org: "test-org".to_string(),
-                    repo: "test-repo".to_string(),
-                    workflow_name: "test-workflow".to_string(),
-                    workflow_path: ".github/workflows/test.yml".to_string(),
-                    branch: Some("main".to_string()),
-                    head_sha: "abc123".to_string(),
-                    commit_message: Some("test commit".to_string()),
-                    trigger_event: "push".to_string(),
-                    display_title: "Test Run".to_string(),
-                    html_url: "https://example.com/run".to_string(),
-                    created_at: now,
-                    run_started_at: None,
-                    updated_at: now,
-                    action: RunEvent::Requested,
-                };
+                let envelope = make_run_envelope(run_id, RunEvent::Requested);
                 let _ = store.apply_run_event(envelope).await;
             }
             TestAction::StartRun(run_id) => {
                 let run_id = RunId(*run_id);
-                let now = Utc::now();
-                let envelope = RunEventEnvelope {
-                    run_id,
-                    org: "test-org".to_string(),
-                    repo: "test-repo".to_string(),
-                    workflow_name: "test-workflow".to_string(),
-                    workflow_path: ".github/workflows/test.yml".to_string(),
-                    branch: Some("main".to_string()),
-                    head_sha: "abc123".to_string(),
-                    commit_message: Some("test commit".to_string()),
-                    trigger_event: "push".to_string(),
-                    display_title: "Test Run".to_string(),
-                    html_url: "https://example.com/run".to_string(),
-                    created_at: now,
-                    run_started_at: None,
-                    updated_at: now,
-                    action: RunEvent::InProgress,
-                };
+                let envelope = make_run_envelope(run_id, RunEvent::InProgress);
                 let _ = store.apply_run_event(envelope).await;
             }
             TestAction::CompleteRun(run_id) => {
                 let run_id = RunId(*run_id);
-                let now = Utc::now();
-                let envelope = RunEventEnvelope {
+                let envelope = make_run_envelope(
                     run_id,
-                    org: "test-org".to_string(),
-                    repo: "test-repo".to_string(),
-                    workflow_name: "test-workflow".to_string(),
-                    workflow_path: ".github/workflows/test.yml".to_string(),
-                    branch: Some("main".to_string()),
-                    head_sha: "abc123".to_string(),
-                    commit_message: Some("test commit".to_string()),
-                    trigger_event: "push".to_string(),
-                    display_title: "Test Run".to_string(),
-                    html_url: "https://example.com/run".to_string(),
-                    created_at: now,
-                    run_started_at: None,
-                    updated_at: now,
-                    action: RunEvent::Completed {
+                    RunEvent::Completed {
                         conclusion: crate::run::RunConclusion::Success,
                     },
-                };
+                );
                 let _ = store.apply_run_event(envelope).await;
             }
             TestAction::QueueJob(run_id, job_id) => {
@@ -2578,7 +2553,8 @@ mod property_tests {
                 };
                 let _ = store.apply_job_event(envelope).await;
             }
-            TestAction::StartJob(job_id) => {
+            TestAction::StartJob(run_id, job_id) => {
+                let run_id = RunId(*run_id);
                 let job_id = JobId(*job_id);
                 let now = Utc::now();
                 let runner = RunnerInfo {
@@ -2587,9 +2563,6 @@ mod property_tests {
                     group_id: None,
                     group_name: None,
                 };
-                // We need to get the run_id from the existing job
-                // For simplicity in property tests, use run_id = 1
-                let run_id = RunId(1);
                 let envelope = JobEventEnvelope {
                     job_id,
                     run_id,
@@ -2607,7 +2580,8 @@ mod property_tests {
                 };
                 let _ = store.apply_job_event(envelope).await;
             }
-            TestAction::CompleteJob(job_id) => {
+            TestAction::CompleteJob(run_id, job_id) => {
+                let run_id = RunId(*run_id);
                 let job_id = JobId(*job_id);
                 let now = Utc::now();
                 let runner = RunnerInfo {
@@ -2616,8 +2590,6 @@ mod property_tests {
                     group_id: None,
                     group_name: None,
                 };
-                // Same simplification: use run_id = 1
-                let run_id = RunId(1);
                 let envelope = JobEventEnvelope {
                     job_id,
                     run_id,
