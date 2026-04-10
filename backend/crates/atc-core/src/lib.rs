@@ -9,6 +9,7 @@ pub mod clock;
 pub mod event;
 pub mod job;
 pub mod run;
+pub mod store;
 pub mod types;
 
 pub use clock::{Clock, SystemClock};
@@ -17,4 +18,5 @@ pub use clock::TestClock;
 pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
 pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
+pub use store::{StateStore, StoreError};
 pub use types::{JobId, LabelSet, RepoKey, RunId};
