@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-04-09
+Last verified: 2026-04-10
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -9,7 +9,7 @@ Last verified: 2026-04-09
 **ATC — Actions Traffic Control**
 Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite frontend.
 
-**Status:** Skeleton with CI. Both stacks compile, lint, and pass CI. No application features yet.
+**Status:** Core domain model implemented in `atc-core`. Frontend and server remain skeleton. Both stacks compile, lint, and pass CI.
 
 ## Tech Stack
 
