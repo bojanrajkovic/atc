@@ -145,3 +145,210 @@ pub(crate) struct HeadCommit {
     /// Commit message text.
     pub message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ===== Fixture deserialization tests (AC5.1, AC5.2, AC5.3, AC5.4) =====
+
+    #[test]
+    fn test_workflow_run_requested_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_run_requested.json");
+        let payload: WorkflowRunWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_run_requested fixture");
+
+        assert_eq!(payload.action, "requested");
+        assert!(!payload.workflow_run.head_sha.is_empty());
+        assert!(!payload.repository.name.is_empty());
+    }
+
+    #[test]
+    fn test_workflow_run_in_progress_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_run_in_progress.json");
+        let payload: WorkflowRunWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_run_in_progress fixture");
+
+        assert_eq!(payload.action, "in_progress");
+        assert!(!payload.workflow_run.head_sha.is_empty());
+        assert!(!payload.repository.name.is_empty());
+    }
+
+    #[test]
+    fn test_workflow_run_completed_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_run_completed.json");
+        let payload: WorkflowRunWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_run_completed fixture");
+
+        assert_eq!(payload.action, "completed");
+        assert!(!payload.workflow_run.head_sha.is_empty());
+        assert!(!payload.repository.name.is_empty());
+    }
+
+    #[test]
+    fn test_workflow_job_queued_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_job_queued.json");
+        let payload: WorkflowJobWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_job_queued fixture");
+
+        assert_eq!(payload.action, "queued");
+        assert!(payload.workflow_job.run_id > 0);
+    }
+
+    #[test]
+    fn test_workflow_job_in_progress_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_job_in_progress.json");
+        let payload: WorkflowJobWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_job_in_progress fixture");
+
+        assert_eq!(payload.action, "in_progress");
+        assert!(payload.workflow_job.run_id > 0);
+    }
+
+    #[test]
+    fn test_workflow_job_completed_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_job_completed.json");
+        let payload: WorkflowJobWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_job_completed fixture");
+
+        assert_eq!(payload.action, "completed");
+        assert!(payload.workflow_job.run_id > 0);
+    }
+
+    #[test]
+    fn test_workflow_job_waiting_fixture() {
+        let json = include_str!("../../tests/fixtures/workflow_job_waiting.json");
+        let payload: WorkflowJobWebhook = serde_json::from_str(json)
+            .expect("Should deserialize workflow_job_waiting fixture");
+
+        assert_eq!(payload.action, "waiting");
+        assert_eq!(payload.workflow_job.status, "waiting");
+    }
+
+    // ===== Field handling tests (AC1.1, AC1.2, AC1.3, AC1.5) =====
+
+    #[test]
+    fn test_workflow_run_all_fields_populated() {
+        // AC1.1: All mapped fields should be populated in requested action
+        let json = include_str!("../../tests/fixtures/workflow_run_requested.json");
+        let payload: WorkflowRunWebhook = serde_json::from_str(json)
+            .expect("Should deserialize");
+
+        assert!(payload.workflow_run.id > 0);
+        assert!(!payload.workflow_run.status.is_empty());
+        assert!(!payload.workflow_run.head_sha.is_empty());
+        assert!(!payload.workflow_run.event.is_empty());
+        assert!(!payload.workflow_run.display_title.is_empty());
+        assert!(!payload.workflow_run.html_url.is_empty());
+        assert!(!payload.workflow_run.updated_at.to_rfc3339().is_empty());
+    }
+
+    #[test]
+    fn test_null_head_commit() {
+        // AC1.2: workflow_run with null head_commit should deserialize with None
+        let json_str = json!({
+            "action": "requested",
+            "workflow_run": {
+                "id": 12345,
+                "status": "queued",
+                "conclusion": null,
+                "head_branch": "main",
+                "head_sha": "abc123",
+                "head_commit": null,
+                "event": "push",
+                "display_title": "Test Run",
+                "html_url": "https://example.com/run",
+                "created_at": "2026-04-11T20:30:23Z",
+                "updated_at": "2026-04-11T20:30:23Z"
+            },
+            "workflow": null,
+            "repository": {
+                "owner": {"login": "test"},
+                "name": "repo"
+            }
+        }).to_string();
+
+        let payload: WorkflowRunWebhook = serde_json::from_str(&json_str)
+            .expect("Should deserialize with null head_commit");
+
+        assert!(payload.workflow_run.head_commit.is_none());
+    }
+
+    #[test]
+    fn test_null_workflow() {
+        // AC1.3: workflow_run with null workflow should deserialize with None
+        let json_str = json!({
+            "action": "in_progress",
+            "workflow_run": {
+                "id": 12345,
+                "status": "in_progress",
+                "conclusion": null,
+                "head_branch": "main",
+                "head_sha": "abc123",
+                "head_commit": {"message": "Test commit"},
+                "event": "push",
+                "display_title": "Test Run",
+                "html_url": "https://example.com/run",
+                "created_at": "2026-04-11T20:30:23Z",
+                "updated_at": "2026-04-11T20:30:23Z"
+            },
+            "workflow": null,
+            "repository": {
+                "owner": {"login": "test"},
+                "name": "repo"
+            }
+        }).to_string();
+
+        let payload: WorkflowRunWebhook = serde_json::from_str(&json_str)
+            .expect("Should deserialize with null workflow");
+
+        assert!(payload.workflow.is_none());
+    }
+
+    #[test]
+    fn test_workflow_job_null_runner_fields() {
+        // AC1.5: workflow_job with null runner_id/runner_name should deserialize with None
+        // (queued jobs don't have runners assigned yet)
+        let json = include_str!("../../tests/fixtures/workflow_job_queued.json");
+        let payload: WorkflowJobWebhook = serde_json::from_str(json)
+            .expect("Should deserialize");
+
+        assert!(payload.workflow_job.runner_id.is_none());
+        assert!(payload.workflow_job.runner_name.is_none());
+    }
+
+    // ===== Forward compatibility test (AC1.6) =====
+
+    #[test]
+    fn test_unknown_fields_ignored() {
+        // AC1.6: Unknown fields should be ignored for forward compatibility
+        let json_str = json!({
+            "action": "requested",
+            "unknown_future_field": 42,
+            "workflow_run": {
+                "id": 12345,
+                "status": "queued",
+                "conclusion": null,
+                "head_branch": "main",
+                "head_sha": "abc123",
+                "head_commit": null,
+                "event": "push",
+                "display_title": "Test Run",
+                "html_url": "https://example.com/run",
+                "created_at": "2026-04-11T20:30:23Z",
+                "updated_at": "2026-04-11T20:30:23Z"
+            },
+            "workflow": null,
+            "repository": {
+                "owner": {"login": "test"},
+                "name": "repo"
+            }
+        }).to_string();
+
+        let payload: WorkflowRunWebhook = serde_json::from_str(&json_str)
+            .expect("Should deserialize and ignore unknown fields");
+
+        assert_eq!(payload.action, "requested");
+    }
+}
