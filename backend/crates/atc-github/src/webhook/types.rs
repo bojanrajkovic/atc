@@ -4,6 +4,8 @@
 //! They are `pub(crate)` — consumers of `atc-github` never see them;
 //! they only see domain events from `atc-core`.
 
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -91,7 +93,7 @@ pub(crate) struct WorkflowJobData {
     /// When the job finished. `None` until completed.
     pub completed_at: Option<DateTime<Utc>>,
     /// Steps defined in the job. Defaults to empty if omitted from the payload
-    /// (GitHub omits `steps` when jobs are triggered by check_run events).
+    /// (GitHub omits `steps` when jobs are triggered by `check_run` events).
     #[serde(default)]
     pub steps: Vec<StepData>,
     /// Runner labels requested by the job (e.g., `["ubuntu-latest"]`).
