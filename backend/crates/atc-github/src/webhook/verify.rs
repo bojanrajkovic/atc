@@ -91,10 +91,10 @@ mod tests {
             .expect("HMAC-SHA256 accepts any key length");
         mac.update(body);
         let digest = mac.finalize();
-        format!("sha256={}", const_hex::encode(&digest.into_bytes()))
+        format!("sha256={}", const_hex::encode(digest.into_bytes()))
     }
 
-    /// gh-webhooks.AC4.1: Valid sha256=<hex> signature with correct secret passes
+    /// gh-webhooks.AC4.1: Valid `sha256=<hex>` signature with correct secret passes
     #[test]
     fn test_valid_signature_succeeds() {
         let secret = b"my-secret";
@@ -106,7 +106,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// gh-webhooks.AC4.2: Tampered body with valid signature format returns SignatureMismatch
+    /// gh-webhooks.AC4.2: Tampered body with valid signature format returns `SignatureMismatch`
     #[test]
     fn test_tampered_body_fails() {
         let secret = b"my-secret";
@@ -119,7 +119,7 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::SignatureMismatch)));
     }
 
-    /// gh-webhooks.AC4.3: Wrong secret returns SignatureMismatch
+    /// gh-webhooks.AC4.3: Wrong secret returns `SignatureMismatch`
     #[test]
     fn test_wrong_secret_fails() {
         let secret = b"my-secret";
@@ -132,7 +132,7 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::SignatureMismatch)));
     }
 
-    /// gh-webhooks.AC4.4: sha1=<hex> returns RejectedAlgorithm
+    /// gh-webhooks.AC4.4: `sha1=<hex>` returns `RejectedAlgorithm`
     #[test]
     fn test_sha1_algorithm_rejected() {
         let secret = b"my-secret";
@@ -145,7 +145,7 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::RejectedAlgorithm)));
     }
 
-    /// gh-webhooks.AC4.5: Unknown algorithm prefix (e.g., sha512=) returns UnknownAlgorithm
+    /// gh-webhooks.AC4.5: Unknown algorithm prefix (e.g., `sha512=`) returns `UnknownAlgorithm`
     #[test]
     fn test_unknown_algorithm_fails() {
         let secret = b"my-secret";
@@ -158,7 +158,7 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::UnknownAlgorithm)));
     }
 
-    /// gh-webhooks.AC4.6: Invalid hex after prefix returns InvalidHex
+    /// gh-webhooks.AC4.6: Invalid hex after prefix returns `InvalidHex`
     #[test]
     fn test_invalid_hex_fails() {
         let secret = b"my-secret";
@@ -169,7 +169,7 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::InvalidHex)));
     }
 
-    /// gh-webhooks.AC4.7: Signature without = separator returns InvalidFormat
+    /// gh-webhooks.AC4.7: Signature without `=` separator returns `InvalidFormat`
     #[test]
     fn test_no_equals_separator_fails() {
         let secret = b"my-secret";
