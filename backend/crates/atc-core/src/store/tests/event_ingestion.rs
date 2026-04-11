@@ -443,3 +443,134 @@ async fn test_ac3_6_idempotent_queued_twice() {
     assert_eq!(job.status, JobStatus::Queued);
     assert_eq!(job.id, job_id);
 }
+
+// ===== Waiting Event Tests (Task 1 + Task 2) =====
+
+#[tokio::test]
+async fn test_ac3_1_waiting_variant_exists() {
+    // AC3.1: JobEvent::Waiting variant exists and carries labels and steps
+    let step = Step {
+        number: 1,
+        name: "Checkout".to_string(),
+        status: StepStatus::Queued,
+        conclusion: None,
+        started_at: None,
+        completed_at: None,
+    };
+
+    let envelope = make_job_event(
+        JobId(701),
+        RunId(70),
+        "octocat",
+        "Hello-World",
+        JobEvent::Waiting {
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![step.clone()],
+        },
+    );
+
+    // Verify the envelope was created successfully with Waiting variant
+    assert_eq!(envelope.job_id, JobId(701));
+    assert_eq!(envelope.run_id, RunId(70));
+}
+
+#[tokio::test]
+async fn test_ac3_2_create_job_from_waiting() {
+    // AC3.2: StateStore::apply_job_event handles Waiting events, creating jobs in JobStatus::Waiting
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let job_id = JobId(702);
+    let run_id = RunId(71);
+
+    let step = Step {
+        number: 1,
+        name: "Checkout".to_string(),
+        status: StepStatus::Queued,
+        conclusion: None,
+        started_at: None,
+        completed_at: None,
+    };
+
+    let envelope = make_job_event(
+        job_id,
+        run_id,
+        "octocat",
+        "Hello-World",
+        JobEvent::Waiting {
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![step.clone()],
+        },
+    );
+    store.apply_job_event(envelope).await.unwrap();
+
+    let job = store.get_job(&job_id).await.expect("job should exist");
+    assert_eq!(job.status, JobStatus::Waiting);
+    assert_eq!(job.labels, vec!["ubuntu-latest".to_string()]);
+    assert_eq!(job.steps, vec![step]);
+}
+
+#[tokio::test]
+async fn test_ac3_3_queued_to_waiting_to_inprogress() {
+    // AC3.3: Transition Queued → Waiting → InProgress succeeds
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let job_id = JobId(703);
+    let run_id = RunId(72);
+    let runner = RunnerInfo {
+        id: 1,
+        name: "runner-1".to_string(),
+        group_id: None,
+        group_name: None,
+    };
+
+    // Start with Queued
+    let envelope1 = make_job_event(
+        job_id,
+        run_id,
+        "octocat",
+        "Hello-World",
+        JobEvent::Queued {
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope1).await.unwrap();
+
+    let job = store.get_job(&job_id).await.expect("job should exist");
+    assert_eq!(job.status, JobStatus::Queued);
+
+    // Transition to Waiting
+    let envelope2 = make_job_event(
+        job_id,
+        run_id,
+        "octocat",
+        "Hello-World",
+        JobEvent::Waiting {
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope2).await.unwrap();
+
+    let job = store.get_job(&job_id).await.expect("job should exist");
+    assert_eq!(job.status, JobStatus::Waiting);
+
+    // Transition to InProgress
+    let envelope3 = make_job_event(
+        job_id,
+        run_id,
+        "octocat",
+        "Hello-World",
+        JobEvent::InProgress {
+            runner,
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope3).await.unwrap();
+
+    let job = store.get_job(&job_id).await.expect("job should exist");
+    assert_eq!(job.status, JobStatus::InProgress);
+}
