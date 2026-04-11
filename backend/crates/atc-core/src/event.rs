@@ -72,6 +72,13 @@ pub enum JobEvent {
         /// Current step snapshot.
         steps: Vec<Step>,
     },
+    /// A job is waiting for approval (environment protection rule, required reviewer).
+    Waiting {
+        /// Runner labels requested by the job.
+        labels: Vec<String>,
+        /// Steps defined in the job at the time of the event.
+        steps: Vec<Step>,
+    },
     /// Job started executing on a runner.
     InProgress {
         /// Runner that picked up the job.
