@@ -11,3 +11,5 @@ Tool-specific instructions and actions for implementation plan task writers in t
 3. **GitHub Actions use SHA-pinned references** — all `uses:` references pin to full commit SHAs. Renovate's `helpers:pinGitHubActionDigests` preset keeps them current automatically.
 
 4. **ADR implementation includes annotation sweep** — when implementing an ADR, sweep all existing documents and tests for superseded behavior. Annotate docs with `> **Revised by ADR-NNN:** ...` and retire or revise affected tests.
+
+5. **Split large test files by acceptance criteria** — when a test file exceeds ~500 lines or covers more than 2 distinct AC groups, break it into submodules organized by AC/concern area (not implementation detail). Shared helpers go in `tests/mod.rs`, submodules import via `use super::*`, property tests stay in a top-level sibling file. See `backend/crates/atc-core/src/store/tests/` for the reference pattern.
