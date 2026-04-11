@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-08 (updated 2026-04-08 for Metrics phase)
+Last verified: 2026-04-10 (updated 2026-04-10 for Domain Model section)
 
 ## Purpose
 
@@ -12,6 +12,51 @@ The backend server (`atc-server` crate) is an Axum HTTP server that serves as th
 - Configurable address binding and logging format via environment variables
 
 The server binds to `http_addr` (default `0.0.0.0:8080`) configured via `ATC_HTTP_ADDR` environment variable and is the only executable crate in the backend workspace. The other two crates (`atc-core` for domain logic, `atc-github` for GitHub API integration) are placeholder libraries that the server will depend on as features are added.
+
+## Domain Model
+
+The `atc-core` crate implements the canonical domain model for ATC, consisting of a three-level entity hierarchy and event-driven state management.
+
+### Entity Hierarchy
+
+- **WorkflowRun** — A GitHub Actions workflow invocation (one per push/PR/manual trigger). Identified by `run_id`. State: Requested → Queued → InProgress → Completed.
+- **Job** — A unit of work within a run (e.g., "test-linux", "build-docker"). Identified by `job_id`. Belongs to exactly one run. State: Queued → InProgress → Completed (with optional conclusion: Success, Failure, Skipped, etc.).
+- **Step** — An individual action within a job (e.g., "Checkout code", "Run tests"). Identified by `step_id`. Belongs to exactly one job. Carries conclusion and conclusion text. Steps are immutable after completion.
+
+### StateStore Architecture
+
+The `StateStore` is the single source of truth for all entity state. It is backed by:
+
+- **Primary maps** — `jobs: Map<JobId, Job>` and `runs: Map<RunId, WorkflowRun>` store complete entity snapshots. All mutations are made to these maps.
+- **Secondary indexes** — `jobs_by_repo: Map<RepoIdentifier, Set<JobId>>` and `jobs_by_run: Map<RunId, Set<JobId>>` enable fast lookups by context. They are derived from the primary maps and rebuilt on every mutation.
+- **RwLock for concurrency** — All state is protected by a single `Arc<RwLock<State>>`. Read operations (queries) acquire read locks; mutations (apply_event, evict_expired) acquire write locks.
+- **Clock trait** — A pluggable time source (TestClock in tests, SystemClock in production) allows deterministic testing and clock mocking.
+- **TTL eviction** — Completed jobs are retained for a configurable duration (default 1 hour). The `evict_expired()` method removes expired completed jobs from all maps and indexes. Active jobs are never evicted.
+
+### Domain Events
+
+The store mutates only through domain events, ensuring an audit trail and facilitating event replay:
+
+- **RunEvent** — Models workflow run state: Requested, Queued, InProgress, Completed. Transitions are forward-only (no backward transitions allowed).
+- **JobEvent** — Models job state: Queued, InProgress, Completed. Also carries: run_id (which run this job belongs to), conclusion (success/failure/skipped/etc.), and steps (array of completed/active steps).
+
+Events are created from GitHub webhook payloads by `atc-github` and applied to the store via `apply_event()`. The store validates state machine transitions and rejects invalid ones (e.g., Completed → Queued).
+
+### State Machine Invariants
+
+1. **Forward-only transitions** — A job cannot transition from Completed back to Queued. Violations return `StoreError::InvalidTransition`.
+2. **Idempotent reapplication** — Applying the same event twice is safe; the second application is a no-op. This allows out-of-order event tolerance (e.g., a job event may arrive before its run event).
+3. **Conclusion implies completion** — If a job has a conclusion set, its status must be Completed.
+4. **Index consistency** — Every job in the primary map exists in exactly one of `jobs_by_repo` (by repo) and exactly one entry in `jobs_by_run` (by run_id). Applying or evicting a job updates both indexes.
+5. **No orphaned jobs** — At the index level, every job is registered in `jobs_by_run` under its `run_id`. The run itself may not yet exist in the `runs` map if no `RunEvent` has arrived (out-of-order tolerance per AC3.5), but the job is always findable by its run_id.
+
+### TTL Eviction and Cleanup
+
+The `evict_expired()` method runs periodically (e.g., every 30 minutes) and removes completed jobs whose completion timestamp exceeds the configured TTL. Active jobs (Queued, InProgress) are never evicted; only Completed jobs are candidates. Eviction removes entries from all maps (`jobs`, `jobs_by_repo`, `jobs_by_run`) and cleans up empty index entries.
+
+### Runner Pool Stats (Derived Views)
+
+Runner pool statistics are derived views over the store's current state, computed on-demand by query methods. They reflect the number of active jobs, grouped by runner labels (e.g., "linux", "windows", "arm64"). These stats are served via REST API endpoints and do not require separate storage.
 
 ## Key Decisions
 

@@ -1,7 +1,22 @@
 #![deny(missing_docs)]
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
+#![allow(clippy::module_name_repetitions)]
 
-//! ATC core domain logic.
-//!
-//! Placeholder — domain types and business rules will be added in future phases.
+//! Core domain types and business logic for ATC.
+
+pub mod clock;
+pub mod event;
+pub mod job;
+pub mod run;
+pub mod store;
+pub mod types;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use clock::TestClock;
+pub use clock::{Clock, SystemClock};
+pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
+pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
+pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
+pub use store::{QueryResult, RunnerPoolStats, StateStore, StoreError};
+pub use types::{JobId, LabelSet, RepoKey, RunId};

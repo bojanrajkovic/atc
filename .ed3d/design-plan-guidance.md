@@ -17,3 +17,5 @@ Architectural principles and conventions that affect brainstorming and design de
 6. **Design plans include a "Documents to Update" table** — before coding, list every architecture doc, CLAUDE.md, and skill file that must change alongside the implementation.
 
 7. **ADRs carry retroactive annotations** — when creating an ADR, annotate all existing documents that describe superseded behavior with `> **Revised by ADR-NNN:** ...`
+
+8. **Design docs go on a branch, not main** — never commit design docs directly to main. Create a feature branch, commit the design doc there, then open a PR. The implementation will land on the same branch. This repo uses squash merges, so the PR title becomes the commit message on main — title it for the full deliverable (e.g., `feat: add core domain model and in-memory state store`), not for the design doc commit (e.g., `docs: add core domain design plan`).
