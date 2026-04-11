@@ -291,11 +291,11 @@ No divergence from existing patterns. The opaque public API is a new pattern for
 **Components:**
 - `backend/crates/atc-github/Cargo.toml` — add `serde`, `serde_json`, `chrono` dependencies
 - `backend/crates/atc-github/src/webhook/types.rs` — `pub(crate)` GitHub payload structs (`WorkflowRunWebhook`, `WorkflowJobWebhook`, nested types)
-- `backend/crates/atc-github/tests/fixtures/` — curated JSON fixtures captured from ATC repo CI runs (via `scripts/capture-webhooks.py`)
+- `backend/crates/atc-github/tests/fixtures/` — curated JSON fixtures captured from ATC repo CI runs (via `scripts/capture-webhooks.py`). Real captures exist for `workflow_run` (requested, in_progress, completed) and `workflow_job` (queued, in_progress, completed) in `tmp/webhook-captures/`. The `workflow_job` `waiting` action was not captured (requires environment protection rules). Construct a synthetic `waiting` fixture from GitHub's documented `workflow_job` webhook payload schema (https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_job) — copy a real `queued` fixture and change `action` to `"waiting"` and `status` to `"waiting"`. Annotate the fixture file with a comment: `// Synthetic: constructed from GitHub docs, not captured from a live webhook.`
 
 **Dependencies:** Fixture capture (done during PR CI run for this design plan)
 
-**Done when:** Deserialization tests pass — each action variant parses from JSON fixture, optional fields handle null, unknown fields silently ignored. Covers gh-webhooks.AC5.
+**Done when:** Deserialization tests pass — each action variant (including `waiting`) parses from JSON fixture, optional fields handle null, unknown fields silently ignored. Covers gh-webhooks.AC5.
 <!-- END_PHASE_3 -->
 
 <!-- START_PHASE_4 -->
