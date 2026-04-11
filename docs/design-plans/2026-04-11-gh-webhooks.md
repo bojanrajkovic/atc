@@ -11,7 +11,7 @@ The implementation follows a strict boundary design: GitHub's JSON shape is an i
 1. **Webhook payload types** -- serde structs in `atc-github` matching GitHub's `workflow_run` and `workflow_job` JSON shapes (only the fields ATC needs, not the full payload)
 2. **Event translation** -- a function that maps raw GitHub payloads to `RunEventEnvelope`/`JobEventEnvelope` from `atc-core`, handling all action variants including `waiting`
 3. **`JobEvent::Waiting` variant** -- added to `atc-core` with corresponding `StateStore` support
-4. **HMAC-SHA256 verification** -- utility function in `atc-github`, optional (skipped when no secret configured, warn at startup)
+4. **HMAC-SHA256 verification** -- stateless utility function in `atc-github` (takes secret, body, signature; returns Result). Optionality is a server concern: `atc-server` (Phase 9) skips calling verification when no secret is configured and logs a startup warning.
 5. **Deserialization tests** -- against realistic/captured GitHub webhook JSON fixtures
 6. **Translation tests** -- verifying correct mapping from each action variant to domain events
 
@@ -51,6 +51,9 @@ The implementation follows a strict boundary design: GitHub's JSON shape is an i
 - **gh-webhooks.AC3.3 Success:** Transition `Queued` → `Waiting` → `InProgress` succeeds
 - **gh-webhooks.AC3.4 Success:** `JobEvent::InProgress` accepts `runner: None` without error
 - **gh-webhooks.AC3.5 Success:** Existing tests pass with `InProgress` runner wrapped in `Some(...)`
+- **gh-webhooks.AC3.6 Success:** `RunEventEnvelope.workflow_name` and `workflow_path` are `Option<String>`
+- **gh-webhooks.AC3.7 Success:** `StateStore::apply_run_event` preserves existing `workflow_name`/`workflow_path` when a later event arrives with `None` (`.or()` pattern)
+- **gh-webhooks.AC3.8 Failure:** A `requested` event with `workflow_name: Some("CI")` followed by `in_progress` with `workflow_name: None` still shows `workflow_name: "CI"` on the stored run
 
 ### gh-webhooks.AC4: HMAC signature verification
 - **gh-webhooks.AC4.1 Success:** Valid `sha256=<hex>` signature with correct secret passes
@@ -65,7 +68,8 @@ The implementation follows a strict boundary design: GitHub's JSON shape is an i
 ### gh-webhooks.AC5: Deserialization test fixtures
 - **gh-webhooks.AC5.1 Success:** Real captured JSON fixtures exist for `workflow_run` (requested, in_progress, completed)
 - **gh-webhooks.AC5.2 Success:** Real captured JSON fixtures exist for `workflow_job` (queued, in_progress, completed)
-- **gh-webhooks.AC5.3 Success:** Each fixture deserializes into the corresponding GitHub payload type without error
+- **gh-webhooks.AC5.3 Success:** A JSON fixture exists for `workflow_job` with `waiting` action (real capture if the repo has environment protection rules; otherwise a synthetic fixture constructed from GitHub's documented schema — annotated as synthetic in the fixture file)
+- **gh-webhooks.AC5.4 Success:** Each fixture deserializes into the corresponding GitHub payload type without error
 
 ### gh-webhooks.AC6: End-to-end parse_webhook
 - **gh-webhooks.AC6.1 Success:** `parse_webhook("workflow_run", body)` returns `ParseResult::Parsed(WebhookEvent::Run(...))`
@@ -182,7 +186,9 @@ Maps GitHub payload types to domain events in `translate.rs`.
 | `"in_progress"` | `RunEvent::InProgress` |
 | `"completed"` | `RunEvent::Completed { conclusion }` |
 
-Envelope fields: `repository.owner.login` → `org`, `repository.name` → `repo`, `workflow.name`/`workflow.path` → `workflow_name`/`workflow_path` (empty string fallback if `workflow` is null), `head_commit.message` → `commit_message` (nullable).
+Envelope fields: `repository.owner.login` → `org`, `repository.name` → `repo`, `workflow.name`/`workflow.path` → `workflow_name`/`workflow_path` (`Option<String>` — `None` when `workflow` is null), `head_commit.message` → `commit_message` (nullable).
+
+**Preserving workflow metadata across updates:** `RunEventEnvelope.workflow_name` and `workflow_path` are `Option<String>`. When GitHub sends `workflow: null` on a later event (e.g., `in_progress` or `completed`), the translation produces `None`. `StateStore::apply_run_event` uses `.or()` to preserve the existing value — same pattern as `runner`, `started_at`, and `commit_message`. This prevents a `requested` event's real workflow name from being erased by a later null. **Requires an atc-core change:** `RunEventEnvelope.workflow_name` and `workflow_path` change from `String` to `Option<String>`, and the store's update path adds `.or()` for both fields.
 
 **Job event mapping:**
 
@@ -208,11 +214,13 @@ Verification is stateless — no config, no optionality. The "optional HMAC" beh
 
 ### Changes to `atc-core`
 
-Two additions to the domain model:
+Three changes to the domain model:
 
 1. **`JobEvent::Waiting` variant** — `Waiting { labels: Vec<String>, steps: Vec<Step> }`. The state machine already supports `Queued → Waiting → InProgress` transitions (`job.rs:171`). `StateStore::apply_job_event` needs one new match arm: `JobEvent::Waiting { labels, steps } => (JobStatus::Waiting, None, None, labels, steps)`.
 
 2. **`JobEvent::InProgress` runner becomes optional** — `runner: RunnerInfo` → `runner: Option<RunnerInfo>`. The store's update path already uses `runner.or(existing.runner)`, so `None` falls through to the existing value. Existing tests need `runner:` wrapped in `Some(...)`.
+
+3. **`RunEventEnvelope` workflow fields become optional** — `workflow_name: String` → `Option<String>`, `workflow_path: String` → `Option<String>`. `StateStore::apply_run_event` adds `.or()` for both fields in the update path (preserves existing workflow metadata when a later event arrives with `workflow: null`). Same pattern as `runner`, `started_at`, `commit_message`.
 
 ### Dependencies
 
@@ -249,14 +257,14 @@ No divergence from existing patterns. The opaque public API is a new pattern for
 **Goal:** Add `JobEvent::Waiting` variant and make `InProgress` runner optional — prerequisite for all translation work.
 
 **Components:**
-- `backend/crates/atc-core/src/event.rs` — add `Waiting` variant to `JobEvent`, change `InProgress` runner to `Option<RunnerInfo>`
-- `backend/crates/atc-core/src/store.rs` — add `Waiting` match arm in `apply_job_event`
-- `backend/crates/atc-core/src/store/tests/` — update existing tests for `Option<RunnerInfo>`, add `Waiting` ingestion and transition tests
-- `backend/crates/atc-core/src/store/tests/mod.rs` — update `make_job_event` helper with `Waiting` arm
+- `backend/crates/atc-core/src/event.rs` — add `Waiting` variant to `JobEvent`, change `InProgress` runner to `Option<RunnerInfo>`, change `RunEventEnvelope` `workflow_name`/`workflow_path` to `Option<String>`
+- `backend/crates/atc-core/src/store.rs` — add `Waiting` match arm in `apply_job_event`, add `.or()` for `workflow_name`/`workflow_path` in `apply_run_event` update path
+- `backend/crates/atc-core/src/store/tests/` — update existing tests for `Option<RunnerInfo>` and `Option<String>` workflow fields, add `Waiting` ingestion and transition tests, add test verifying workflow metadata preserved when later event has null workflow
+- `backend/crates/atc-core/src/store/tests/mod.rs` — update `make_run_event` and `make_job_event` helpers
 
 **Dependencies:** None (first phase)
 
-**Done when:** `cargo test -p atc-core` passes with new `Waiting` event tests and updated `InProgress` tests. Covers gh-webhooks.AC3.
+**Done when:** `cargo test -p atc-core` passes with new `Waiting` event tests, updated `InProgress` tests, and workflow-preservation test. Covers gh-webhooks.AC3.
 <!-- END_PHASE_1 -->
 
 <!-- START_PHASE_2 -->
