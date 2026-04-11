@@ -81,8 +81,9 @@ pub enum JobEvent {
     },
     /// Job started executing on a runner.
     InProgress {
-        /// Runner that picked up the job.
-        runner: RunnerInfo,
+        /// Runner assigned to the job. `None` when GitHub fires `in_progress`
+        /// before runner assignment is complete.
+        runner: Option<RunnerInfo>,
         /// Runner labels.
         labels: Vec<String>,
         /// Current step snapshot.

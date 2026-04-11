@@ -10,6 +10,7 @@ enum TestAction {
     StartRun(i64),
     CompleteRun(i64),
     QueueJob(i64, i64),
+    WaitJob(i64, i64),     // (run_id, job_id)
     StartJob(i64, i64),    // (run_id, job_id)
     CompleteJob(i64, i64), // (run_id, job_id)
     AdvanceTimeAndEvict,
@@ -22,6 +23,7 @@ fn test_action_strategy() -> impl Strategy<Value = TestAction> {
         (1i64..=3).prop_map(TestAction::StartRun),
         (1i64..=3).prop_map(TestAction::CompleteRun),
         (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::QueueJob(run_id, job_id)),
+        (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::WaitJob(run_id, job_id)),
         (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::StartJob(run_id, job_id)),
         (1i64..=3, 1i64..=10).prop_map(|(run_id, job_id)| TestAction::CompleteJob(run_id, job_id)),
         Just(TestAction::AdvanceTimeAndEvict),
@@ -118,8 +120,28 @@ async fn apply_action(
                 started_at: None,
                 completed_at: None,
                 action: JobEvent::InProgress {
-                    runner,
+                    runner: Some(runner),
                     labels: vec!["linux".to_string()],
+                    steps: vec![],
+                },
+            };
+            let _ = store.apply_job_event(envelope).await;
+        }
+        TestAction::WaitJob(run_id, job_id) => {
+            let run_id = RunId(*run_id);
+            let job_id = JobId(*job_id);
+            let now = Utc::now();
+            let envelope = JobEventEnvelope {
+                job_id,
+                run_id,
+                org: "test-org".to_string(),
+                repo: "test-repo".to_string(),
+                name: "test-job".to_string(),
+                created_at: now,
+                started_at: None,
+                completed_at: None,
+                action: JobEvent::Waiting {
+                    labels: vec![],
                     steps: vec![],
                 },
             };

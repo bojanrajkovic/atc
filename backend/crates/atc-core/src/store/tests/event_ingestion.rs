@@ -159,7 +159,7 @@ async fn test_ac3_2_update_job_to_in_progress() {
         "octocat",
         "Hello-World",
         JobEvent::InProgress {
-            runner: runner.clone(),
+            runner: Some(runner.clone()),
             labels: vec!["linux".to_string()],
             steps: vec![],
         },
@@ -367,7 +367,7 @@ async fn test_ac3_4_steps_snapshot_replacement() {
         "octocat",
         "Hello-World",
         JobEvent::InProgress {
-            runner,
+            runner: Some(runner),
             labels: vec![],
             steps: steps_2,
         },
@@ -564,7 +564,7 @@ async fn test_ac3_3_queued_to_waiting_to_inprogress() {
         "octocat",
         "Hello-World",
         JobEvent::InProgress {
-            runner,
+            runner: Some(runner),
             labels: vec!["ubuntu-latest".to_string()],
             steps: vec![],
         },
@@ -573,4 +573,48 @@ async fn test_ac3_3_queued_to_waiting_to_inprogress() {
 
     let job = store.get_job(&job_id).await.expect("job should exist");
     assert_eq!(job.status, JobStatus::InProgress);
+}
+
+#[tokio::test]
+async fn test_ac3_4_in_progress_with_no_runner() {
+    let clock = TestClock::new(Utc::now());
+    let store = StateStore::new(Arc::new(clock), Duration::from_secs(3600));
+
+    let run_id = RunId(100);
+    let job_id = JobId(1);
+
+    // Create run
+    let run_envelope = make_run_event(run_id, RunEvent::Requested);
+    store.apply_run_event(run_envelope).await.unwrap();
+
+    // Queue job
+    let queued_envelope = make_job_event(
+        job_id,
+        run_id,
+        "octocat",
+        "Hello-World",
+        JobEvent::Queued {
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(queued_envelope).await.unwrap();
+
+    // Transition directly to InProgress with None runner
+    let in_progress_envelope = make_job_event(
+        job_id,
+        run_id,
+        "octocat",
+        "Hello-World",
+        JobEvent::InProgress {
+            runner: None,
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(in_progress_envelope).await.unwrap();
+
+    let job = store.get_job(&job_id).await.expect("job should exist");
+    assert_eq!(job.status, JobStatus::InProgress);
+    assert_eq!(job.runner, None);
 }

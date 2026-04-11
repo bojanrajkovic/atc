@@ -227,7 +227,7 @@ impl StateStore {
                 runner,
                 labels,
                 steps,
-            } => (JobStatus::InProgress, None, Some(runner), labels, steps),
+            } => (JobStatus::InProgress, None, runner, labels, steps),
             JobEvent::Completed {
                 conclusion,
                 runner,

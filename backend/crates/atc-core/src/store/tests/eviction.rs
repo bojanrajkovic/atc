@@ -203,7 +203,7 @@ async fn test_ac5_3_run_with_active_job_retained() {
         "org",
         "repo",
         JobEvent::InProgress {
-            runner,
+            runner: Some(runner),
             labels: vec![],
             steps: vec![],
         },
@@ -272,7 +272,7 @@ async fn test_ac5_4_active_jobs_never_evicted() {
         "org",
         "repo",
         JobEvent::InProgress {
-            runner,
+            runner: Some(runner),
             labels: vec![],
             steps: vec![],
         },
