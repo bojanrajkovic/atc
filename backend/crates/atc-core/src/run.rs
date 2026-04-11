@@ -122,7 +122,7 @@ impl RunStatus {
     ///
     /// # Valid transitions
     ///
-    /// - `Queued` -> `InProgress`
+    /// - `Queued` -> `InProgress` | `Completed`
     /// - `InProgress` -> `Completed`
     ///
     /// # Errors
@@ -134,7 +134,8 @@ impl RunStatus {
             return Ok(self);
         }
         match (self, target) {
-            (Self::Queued, Self::InProgress) | (Self::InProgress, Self::Completed) => Ok(target),
+            (Self::Queued, Self::InProgress | Self::Completed)
+            | (Self::InProgress, Self::Completed) => Ok(target),
             _ => Err(InvalidRunTransition {
                 from: self,
                 to: target,
@@ -324,16 +325,12 @@ mod tests {
         );
     }
 
+    // Queued -> Completed is valid: GitHub can skip runs directly to completed
+    // (e.g., skipped workflows, cancelled-before-start)
     #[test]
-    fn test_run_transition_queued_to_completed_fails() {
+    fn test_run_transition_queued_to_completed() {
         let result = RunStatus::Queued.transition_to(RunStatus::Completed);
-        assert_eq!(
-            result,
-            Err(InvalidRunTransition {
-                from: RunStatus::Queued,
-                to: RunStatus::Completed,
-            })
-        );
+        assert_eq!(result, Ok(RunStatus::Completed));
     }
 
     #[test]
