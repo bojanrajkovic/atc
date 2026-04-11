@@ -36,10 +36,11 @@ pub struct RunEventEnvelope {
     pub org: String,
     /// Repository name.
     pub repo: String,
-    /// Workflow name.
-    pub workflow_name: String,
-    /// Workflow file path.
-    pub workflow_path: String,
+    /// Workflow name from the `workflow` object. `None` when GitHub sends
+    /// `workflow: null` (common on `in_progress` and `completed` events).
+    pub workflow_name: Option<String>,
+    /// Workflow file path. `None` when GitHub sends `workflow: null`.
+    pub workflow_path: Option<String>,
     /// Branch name, if applicable.
     pub branch: Option<String>,
     /// Head commit SHA.

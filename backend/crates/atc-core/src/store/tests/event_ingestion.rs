@@ -17,7 +17,7 @@ async fn test_ac3_1_create_run_from_requested() {
     assert_eq!(run.status, RunStatus::Queued);
     assert_eq!(run.org, "octocat");
     assert_eq!(run.repo, "Hello-World");
-    assert_eq!(run.workflow_name, "CI");
+    assert_eq!(run.workflow_name, Some("CI".to_string()));
     assert_eq!(run.branch, Some("main".to_string()));
     assert_eq!(run.head_sha, "abc123def456");
     assert_eq!(run.commit_message, Some("Fix bug".to_string()));
@@ -617,4 +617,68 @@ async fn test_ac3_4_in_progress_with_no_runner() {
     let job = store.get_job(&job_id).await.expect("job should exist");
     assert_eq!(job.status, JobStatus::InProgress);
     assert_eq!(job.runner, None);
+}
+
+// ===== Workflow Field Preservation Tests (Task 4) =====
+
+#[tokio::test]
+async fn test_ac3_7_workflow_name_preservation_with_or() {
+    // AC3.7: RunEventEnvelope.workflow_name and workflow_path are Option<String>
+    // and preserved via .or() when a later event arrives with None
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let run_id = RunId(800);
+
+    // Create run with Requested event carrying workflow_name: Some("CI")
+    let mut envelope1 = make_run_event(run_id, RunEvent::Requested);
+    envelope1.workflow_name = Some("CI".to_string());
+    envelope1.workflow_path = Some(".github/workflows/ci.yml".to_string());
+    store.apply_run_event(envelope1).await.unwrap();
+
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.workflow_name, Some("CI".to_string()));
+    assert_eq!(run.workflow_path, Some(".github/workflows/ci.yml".to_string()));
+
+    // Update with InProgress event carrying workflow_name: None
+    let mut envelope2 = make_run_event(run_id, RunEvent::InProgress);
+    envelope2.workflow_name = None;
+    envelope2.workflow_path = None;
+    store.apply_run_event(envelope2).await.unwrap();
+
+    // Stored run should still have the workflow_name and workflow_path from envelope1
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.workflow_name, Some("CI".to_string()));
+    assert_eq!(run.workflow_path, Some(".github/workflows/ci.yml".to_string()));
+}
+
+#[tokio::test]
+async fn test_ac3_8_workflow_name_preservation_failure_mode() {
+    // AC3.8: Specific failure test - requested with Some("CI") then in_progress with None
+    // should preserve "CI", not overwrite with None
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let run_id = RunId(801);
+
+    // Requested with workflow_name: Some("CI")
+    let mut envelope_requested = make_run_event(run_id, RunEvent::Requested);
+    envelope_requested.workflow_name = Some("CI".to_string());
+    envelope_requested.workflow_path = Some(".github/workflows/ci.yml".to_string());
+    store.apply_run_event(envelope_requested).await.unwrap();
+
+    // Verify it was stored
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.workflow_name, Some("CI".to_string()));
+
+    // InProgress with workflow_name: None
+    let mut envelope_in_progress = make_run_event(run_id, RunEvent::InProgress);
+    envelope_in_progress.workflow_name = None;
+    envelope_in_progress.workflow_path = None;
+    store.apply_run_event(envelope_in_progress).await.unwrap();
+
+    // Should still show CI, not None
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.workflow_name, Some("CI".to_string()),
+               "workflow_name should be preserved as Some(\"CI\"), not overwritten with None");
 }

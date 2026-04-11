@@ -162,8 +162,8 @@ impl StateStore {
             Some(existing) => WorkflowRun {
                 status: target_status,
                 conclusion: conclusion.or(existing.conclusion),
-                workflow_name: envelope.workflow_name,
-                workflow_path: envelope.workflow_path,
+                workflow_name: envelope.workflow_name.or(existing.workflow_name),
+                workflow_path: envelope.workflow_path.or(existing.workflow_path),
                 branch: envelope.branch,
                 head_sha: envelope.head_sha,
                 commit_message: envelope.commit_message,

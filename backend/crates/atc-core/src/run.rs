@@ -54,10 +54,10 @@ pub struct WorkflowRun {
     pub org: String,
     /// Repository name.
     pub repo: String,
-    /// Name of the workflow.
-    pub workflow_name: String,
-    /// Path to the workflow file (e.g., `.github/workflows/ci.yml`).
-    pub workflow_path: String,
+    /// Name of the workflow. `None` if no event has yet supplied it.
+    pub workflow_name: Option<String>,
+    /// Path to the workflow file. `None` if no event has yet supplied it.
+    pub workflow_path: Option<String>,
     /// Branch that triggered the run, if applicable.
     pub branch: Option<String>,
     /// Git commit SHA at the head of the run.
@@ -155,8 +155,8 @@ mod tests {
             id: RunId(123),
             org: "octocat".to_string(),
             repo: "Hello-World".to_string(),
-            workflow_name: "CI".to_string(),
-            workflow_path: ".github/workflows/ci.yml".to_string(),
+            workflow_name: Some("CI".to_string()),
+            workflow_path: Some(".github/workflows/ci.yml".to_string()),
             branch: Some("main".to_string()),
             head_sha: "abc123def456".to_string(),
             commit_message: Some("Fix bug".to_string()),
@@ -173,8 +173,8 @@ mod tests {
         assert_eq!(run.id, RunId(123));
         assert_eq!(run.org, "octocat");
         assert_eq!(run.repo, "Hello-World");
-        assert_eq!(run.workflow_name, "CI");
-        assert_eq!(run.workflow_path, ".github/workflows/ci.yml");
+        assert_eq!(run.workflow_name, Some("CI".to_string()));
+        assert_eq!(run.workflow_path, Some(".github/workflows/ci.yml".to_string()));
         assert_eq!(run.branch, Some("main".to_string()));
         assert_eq!(run.head_sha, "abc123def456");
         assert_eq!(run.commit_message, Some("Fix bug".to_string()));
@@ -198,8 +198,8 @@ mod tests {
             id: RunId(456),
             org: "github".to_string(),
             repo: "example".to_string(),
-            workflow_name: "Test".to_string(),
-            workflow_path: ".github/workflows/test.yml".to_string(),
+            workflow_name: Some("Test".to_string()),
+            workflow_path: Some(".github/workflows/test.yml".to_string()),
             branch: None,
             head_sha: "xyz789".to_string(),
             commit_message: None,
@@ -249,8 +249,8 @@ mod tests {
             id: RunId(789),
             org: "myorg".to_string(),
             repo: "myrepo".to_string(),
-            workflow_name: "Deploy".to_string(),
-            workflow_path: ".github/workflows/deploy.yml".to_string(),
+            workflow_name: Some("Deploy".to_string()),
+            workflow_path: Some(".github/workflows/deploy.yml".to_string()),
             branch: Some("release".to_string()),
             head_sha: "fedcba987654".to_string(),
             commit_message: Some("Release v1.0".to_string()),
@@ -278,8 +278,8 @@ mod tests {
             id: RunId(999),
             org: "testorg".to_string(),
             repo: "testrepo".to_string(),
-            workflow_name: "TestFlow".to_string(),
-            workflow_path: ".github/workflows/test.yml".to_string(),
+            workflow_name: Some("TestFlow".to_string()),
+            workflow_path: Some(".github/workflows/test.yml".to_string()),
             branch: None,
             head_sha: "111222333444".to_string(),
             commit_message: None,
