@@ -1,8 +1,7 @@
 //! Domain event types for state store ingestion.
 //!
 //! These types are source-agnostic — they carry domain data, not raw
-//! webhook payloads. The `atc-github` crate (Phase 8) maps webhook
-//! JSON into these types.
+//! webhook payloads. The `atc-github` crate maps webhook JSON into these types.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -36,10 +35,11 @@ pub struct RunEventEnvelope {
     pub org: String,
     /// Repository name.
     pub repo: String,
-    /// Workflow name.
-    pub workflow_name: String,
-    /// Workflow file path.
-    pub workflow_path: String,
+    /// Workflow name from the `workflow` object. `None` when GitHub sends
+    /// `workflow: null` (common on `in_progress` and `completed` events).
+    pub workflow_name: Option<String>,
+    /// Workflow file path. `None` when GitHub sends `workflow: null`.
+    pub workflow_path: Option<String>,
     /// Branch name, if applicable.
     pub branch: Option<String>,
     /// Head commit SHA.
@@ -72,10 +72,18 @@ pub enum JobEvent {
         /// Current step snapshot.
         steps: Vec<Step>,
     },
+    /// A job is waiting for approval (environment protection rule, required reviewer).
+    Waiting {
+        /// Runner labels requested by the job.
+        labels: Vec<String>,
+        /// Steps defined in the job at the time of the event.
+        steps: Vec<Step>,
+    },
     /// Job started executing on a runner.
     InProgress {
-        /// Runner that picked up the job.
-        runner: RunnerInfo,
+        /// Runner assigned to the job. `None` when GitHub fires `in_progress`
+        /// before runner assignment is complete.
+        runner: Option<RunnerInfo>,
         /// Runner labels.
         labels: Vec<String>,
         /// Current step snapshot.

@@ -30,6 +30,9 @@ mise.lock
 # Claude Code — track .claude/ config but ignore runtime state
 .remember/
 
+# Temporary / ephemeral
+tmp/
+
 # Environment
 .env
 .env.*

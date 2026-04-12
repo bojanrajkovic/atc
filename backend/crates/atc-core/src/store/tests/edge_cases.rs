@@ -249,7 +249,7 @@ async fn test_ac6_5_rapid_status_cycling() {
         "org",
         "repo",
         JobEvent::InProgress {
-            runner: runner.clone(),
+            runner: Some(runner.clone()),
             labels: vec!["linux".to_string()],
             steps: vec![],
         },
@@ -340,7 +340,7 @@ async fn test_ac6_5_interleaved_multi_job() {
             "org",
             "repo",
             JobEvent::InProgress {
-                runner: runner.clone(),
+                runner: Some(runner.clone()),
                 labels: vec!["linux".to_string()],
                 steps: vec![],
             },

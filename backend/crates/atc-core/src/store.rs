@@ -162,8 +162,8 @@ impl StateStore {
             Some(existing) => WorkflowRun {
                 status: target_status,
                 conclusion: conclusion.or(existing.conclusion),
-                workflow_name: envelope.workflow_name,
-                workflow_path: envelope.workflow_path,
+                workflow_name: envelope.workflow_name.or(existing.workflow_name),
+                workflow_path: envelope.workflow_path.or(existing.workflow_path),
                 branch: envelope.branch,
                 head_sha: envelope.head_sha,
                 commit_message: envelope.commit_message,
@@ -220,11 +220,12 @@ impl StateStore {
 
         let (target_status, conclusion, runner, labels, steps) = match envelope.action {
             JobEvent::Queued { labels, steps } => (JobStatus::Queued, None, None, labels, steps),
+            JobEvent::Waiting { labels, steps } => (JobStatus::Waiting, None, None, labels, steps),
             JobEvent::InProgress {
                 runner,
                 labels,
                 steps,
-            } => (JobStatus::InProgress, None, Some(runner), labels, steps),
+            } => (JobStatus::InProgress, None, runner, labels, steps),
             JobEvent::Completed {
                 conclusion,
                 runner,

@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-04-10
+Last verified: 2026-04-11
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -21,7 +21,7 @@ Core domain types, state store, and business logic for ATC. Source-agnostic — 
 
 ## Contracts
 
-These rules are enforced by the state machine and verified by 99 tests including proptest:
+These rules are enforced by the state machine and verified by 105 tests including proptest:
 
 - **Forward-only transitions:** `RunStatus` and `JobStatus` only progress forward. Backward transitions return `Err`.
 - **Idempotent same-status:** Re-applying the current status succeeds without error (handles duplicate webhooks).
@@ -33,7 +33,7 @@ These rules are enforced by the state machine and verified by 99 tests including
 ## Testing
 
 ```bash
-cargo test -p atc-core        # 99 tests including proptest (256 random cases)
+cargo test -p atc-core        # 105 tests including proptest (256 random cases)
 cargo clippy -p atc-core -- -D warnings
 ```
 

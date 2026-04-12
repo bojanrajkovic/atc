@@ -54,7 +54,7 @@ async fn test_ac4_3_basic_pool_counts() {
         "org",
         "repo",
         JobEvent::InProgress {
-            runner,
+            runner: Some(runner),
             labels: labels.clone(),
             steps: vec![],
         },
@@ -247,7 +247,7 @@ async fn test_ac4_4_group_name_from_runner_info() {
         "org",
         "repo",
         JobEvent::InProgress {
-            runner,
+            runner: Some(runner),
             labels,
             steps: vec![],
         },
