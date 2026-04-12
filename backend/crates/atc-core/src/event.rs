@@ -1,8 +1,7 @@
 //! Domain event types for state store ingestion.
 //!
 //! These types are source-agnostic — they carry domain data, not raw
-//! webhook payloads. The `atc-github` crate (Phase 8) maps webhook
-//! JSON into these types.
+//! webhook payloads. The `atc-github` crate maps webhook JSON into these types.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

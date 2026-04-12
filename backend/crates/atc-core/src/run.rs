@@ -54,9 +54,9 @@ pub struct WorkflowRun {
     pub org: String,
     /// Repository name.
     pub repo: String,
-    /// Name of the workflow. `None` if no event has yet supplied it.
+    /// Name of the workflow. `None` until an event supplies it; once set, preserved via `.or()` across subsequent events.
     pub workflow_name: Option<String>,
-    /// Path to the workflow file. `None` if no event has yet supplied it.
+    /// Path to the workflow file. `None` until an event supplies it; once set, preserved via `.or()` across subsequent events.
     pub workflow_path: Option<String>,
     /// Branch that triggered the run, if applicable.
     pub branch: Option<String>,
