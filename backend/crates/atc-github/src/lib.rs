@@ -10,4 +10,7 @@
 
 mod webhook;
 
-pub use webhook::{verify_signature, VerifyError};
+pub use webhook::{
+    parse_webhook, ParseError, ParseResult, WebhookEvent,
+    verify_signature, VerifyError,
+};
