@@ -226,9 +226,9 @@ mod tests {
         use super::super::types::{HeadCommit, OwnerData, RepositoryData, WorkflowData, WorkflowRunData};
 
         let workflow_run = WorkflowRunData {
-            id: 123456,
+            id: 123_456,
             status: "completed".to_string(),
-            conclusion: conclusion.map(|s| s.to_string()),
+            conclusion: conclusion.map(std::string::ToString::to_string),
             head_branch: Some("main".to_string()),
             head_sha: "abc123def456".to_string(),
             head_commit: Some(HeadCommit {
@@ -267,11 +267,11 @@ mod tests {
         use super::super::types::{OwnerData, RepositoryData, WorkflowJobData};
 
         let workflow_job = WorkflowJobData {
-            id: 987654,
-            run_id: 123456,
+            id: 987_654,
+            run_id: 123_456,
             name: "test-job".to_string(),
             status: "completed".to_string(),
-            conclusion: conclusion.map(|s| s.to_string()),
+            conclusion: conclusion.map(std::string::ToString::to_string),
             created_at: Utc::now(),
             started_at: Some(Utc::now()),
             completed_at: Some(Utc::now()),
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(result.action, RunEvent::Requested);
         assert_eq!(result.org, "test-org");
         assert_eq!(result.repo, "test-repo");
-        assert_eq!(result.run_id, RunId(123456));
+        assert_eq!(result.run_id, RunId(123_456));
         assert_eq!(result.head_sha, "abc123def456");
         assert_eq!(result.workflow_name, Some("CI Workflow".to_string()));
         assert_eq!(result.workflow_path, Some(".github/workflows/ci.yml".to_string()));
@@ -356,9 +356,9 @@ mod tests {
 
             match result.action {
                 RunEvent::Completed { conclusion } => {
-                    assert_eq!(conclusion, expected, "failed for {}", conclusion_str);
+                    assert_eq!(conclusion, expected, "failed for {conclusion_str}");
                 }
-                _ => panic!("expected Completed variant for {}", conclusion_str),
+                _ => panic!("expected Completed variant for {conclusion_str}"),
             }
         }
     }
@@ -481,8 +481,8 @@ mod tests {
         ];
 
         let webhook_job = WorkflowJobData {
-            id: 987654,
-            run_id: 123456,
+            id: 987_654,
+            run_id: 123_456,
             name: "test-job".to_string(),
             status: "in_progress".to_string(),
             conclusion: None,
@@ -629,8 +629,8 @@ mod tests {
         }];
 
         let webhook_job = WorkflowJobData {
-            id: 987654,
-            run_id: 123456,
+            id: 987_654,
+            run_id: 123_456,
             name: "test-job".to_string(),
             status: "in_progress".to_string(),
             conclusion: None,
