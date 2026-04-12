@@ -638,7 +638,10 @@ async fn test_ac3_7_workflow_name_preservation_with_or() {
 
     let run = store.get_run(&run_id).await.expect("run should exist");
     assert_eq!(run.workflow_name, Some("CI".to_string()));
-    assert_eq!(run.workflow_path, Some(".github/workflows/ci.yml".to_string()));
+    assert_eq!(
+        run.workflow_path,
+        Some(".github/workflows/ci.yml".to_string())
+    );
 
     // Update with InProgress event carrying workflow_name: None
     let mut envelope2 = make_run_event(run_id, RunEvent::InProgress);
@@ -649,7 +652,10 @@ async fn test_ac3_7_workflow_name_preservation_with_or() {
     // Stored run should still have the workflow_name and workflow_path from envelope1
     let run = store.get_run(&run_id).await.expect("run should exist");
     assert_eq!(run.workflow_name, Some("CI".to_string()));
-    assert_eq!(run.workflow_path, Some(".github/workflows/ci.yml".to_string()));
+    assert_eq!(
+        run.workflow_path,
+        Some(".github/workflows/ci.yml".to_string())
+    );
 }
 
 #[tokio::test]
@@ -679,6 +685,9 @@ async fn test_ac3_8_workflow_name_preservation_failure_mode() {
 
     // Should still show CI, not None
     let run = store.get_run(&run_id).await.expect("run should exist");
-    assert_eq!(run.workflow_name, Some("CI".to_string()),
-               "workflow_name should be preserved as Some(\"CI\"), not overwritten with None");
+    assert_eq!(
+        run.workflow_name,
+        Some("CI".to_string()),
+        "workflow_name should be preserved as Some(\"CI\"), not overwritten with None"
+    );
 }

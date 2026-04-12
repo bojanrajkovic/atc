@@ -11,6 +11,5 @@
 mod webhook;
 
 pub use webhook::{
-    parse_webhook, ParseError, ParseResult, WebhookEvent,
-    verify_signature, VerifyError,
+    ParseError, ParseResult, VerifyError, WebhookEvent, parse_webhook, verify_signature,
 };

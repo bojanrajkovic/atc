@@ -158,8 +158,8 @@ mod tests {
     #[test]
     fn test_workflow_run_requested_fixture() {
         let json = include_str!("../../tests/fixtures/workflow_run_requested.json");
-        let payload: WorkflowRunWebhook = serde_json::from_str(json)
-            .expect("Should deserialize workflow_run_requested fixture");
+        let payload: WorkflowRunWebhook =
+            serde_json::from_str(json).expect("Should deserialize workflow_run_requested fixture");
 
         assert_eq!(payload.action, "requested");
         assert!(!payload.workflow_run.head_sha.is_empty());
@@ -180,8 +180,8 @@ mod tests {
     #[test]
     fn test_workflow_run_completed_fixture() {
         let json = include_str!("../../tests/fixtures/workflow_run_completed.json");
-        let payload: WorkflowRunWebhook = serde_json::from_str(json)
-            .expect("Should deserialize workflow_run_completed fixture");
+        let payload: WorkflowRunWebhook =
+            serde_json::from_str(json).expect("Should deserialize workflow_run_completed fixture");
 
         assert_eq!(payload.action, "completed");
         assert!(!payload.workflow_run.head_sha.is_empty());
@@ -191,8 +191,8 @@ mod tests {
     #[test]
     fn test_workflow_job_queued_fixture() {
         let json = include_str!("../../tests/fixtures/workflow_job_queued.json");
-        let payload: WorkflowJobWebhook = serde_json::from_str(json)
-            .expect("Should deserialize workflow_job_queued fixture");
+        let payload: WorkflowJobWebhook =
+            serde_json::from_str(json).expect("Should deserialize workflow_job_queued fixture");
 
         assert_eq!(payload.action, "queued");
         assert!(payload.workflow_job.run_id > 0);
@@ -211,8 +211,8 @@ mod tests {
     #[test]
     fn test_workflow_job_completed_fixture() {
         let json = include_str!("../../tests/fixtures/workflow_job_completed.json");
-        let payload: WorkflowJobWebhook = serde_json::from_str(json)
-            .expect("Should deserialize workflow_job_completed fixture");
+        let payload: WorkflowJobWebhook =
+            serde_json::from_str(json).expect("Should deserialize workflow_job_completed fixture");
 
         assert_eq!(payload.action, "completed");
         assert!(payload.workflow_job.run_id > 0);
@@ -221,8 +221,8 @@ mod tests {
     #[test]
     fn test_workflow_job_waiting_fixture() {
         let json = include_str!("../../tests/fixtures/workflow_job_waiting.json");
-        let payload: WorkflowJobWebhook = serde_json::from_str(json)
-            .expect("Should deserialize workflow_job_waiting fixture");
+        let payload: WorkflowJobWebhook =
+            serde_json::from_str(json).expect("Should deserialize workflow_job_waiting fixture");
 
         assert_eq!(payload.action, "waiting");
         assert_eq!(payload.workflow_job.status, "waiting");
@@ -234,8 +234,7 @@ mod tests {
     fn test_workflow_run_all_fields_populated() {
         // AC1.1: All mapped fields should be populated in requested action
         let json = include_str!("../../tests/fixtures/workflow_run_requested.json");
-        let payload: WorkflowRunWebhook = serde_json::from_str(json)
-            .expect("Should deserialize");
+        let payload: WorkflowRunWebhook = serde_json::from_str(json).expect("Should deserialize");
 
         assert!(payload.workflow_run.id > 0);
         assert!(!payload.workflow_run.status.is_empty());
@@ -269,10 +268,11 @@ mod tests {
                 "owner": {"login": "test"},
                 "name": "repo"
             }
-        }).to_string();
+        })
+        .to_string();
 
-        let payload: WorkflowRunWebhook = serde_json::from_str(&json_str)
-            .expect("Should deserialize with null head_commit");
+        let payload: WorkflowRunWebhook =
+            serde_json::from_str(&json_str).expect("Should deserialize with null head_commit");
 
         assert!(payload.workflow_run.head_commit.is_none());
     }
@@ -300,10 +300,11 @@ mod tests {
                 "owner": {"login": "test"},
                 "name": "repo"
             }
-        }).to_string();
+        })
+        .to_string();
 
-        let payload: WorkflowRunWebhook = serde_json::from_str(&json_str)
-            .expect("Should deserialize with null workflow");
+        let payload: WorkflowRunWebhook =
+            serde_json::from_str(&json_str).expect("Should deserialize with null workflow");
 
         assert!(payload.workflow.is_none());
     }
@@ -313,8 +314,7 @@ mod tests {
         // AC1.5: workflow_job with null runner_id/runner_name should deserialize with None
         // (queued jobs don't have runners assigned yet)
         let json = include_str!("../../tests/fixtures/workflow_job_queued.json");
-        let payload: WorkflowJobWebhook = serde_json::from_str(json)
-            .expect("Should deserialize");
+        let payload: WorkflowJobWebhook = serde_json::from_str(json).expect("Should deserialize");
 
         assert!(payload.workflow_job.runner_id.is_none());
         assert!(payload.workflow_job.runner_name.is_none());
@@ -346,10 +346,11 @@ mod tests {
                 "owner": {"login": "test"},
                 "name": "repo"
             }
-        }).to_string();
+        })
+        .to_string();
 
-        let payload: WorkflowRunWebhook = serde_json::from_str(&json_str)
-            .expect("Should deserialize and ignore unknown fields");
+        let payload: WorkflowRunWebhook =
+            serde_json::from_str(&json_str).expect("Should deserialize and ignore unknown fields");
 
         assert_eq!(payload.action, "requested");
     }

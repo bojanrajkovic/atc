@@ -220,9 +220,7 @@ impl StateStore {
 
         let (target_status, conclusion, runner, labels, steps) = match envelope.action {
             JobEvent::Queued { labels, steps } => (JobStatus::Queued, None, None, labels, steps),
-            JobEvent::Waiting { labels, steps } => {
-                (JobStatus::Waiting, None, None, labels, steps)
-            }
+            JobEvent::Waiting { labels, steps } => (JobStatus::Waiting, None, None, labels, steps),
             JobEvent::InProgress {
                 runner,
                 labels,

@@ -174,7 +174,10 @@ mod tests {
         assert_eq!(run.org, "octocat");
         assert_eq!(run.repo, "Hello-World");
         assert_eq!(run.workflow_name, Some("CI".to_string()));
-        assert_eq!(run.workflow_path, Some(".github/workflows/ci.yml".to_string()));
+        assert_eq!(
+            run.workflow_path,
+            Some(".github/workflows/ci.yml".to_string())
+        );
         assert_eq!(run.branch, Some("main".to_string()));
         assert_eq!(run.head_sha, "abc123def456");
         assert_eq!(run.commit_message, Some("Fix bug".to_string()));

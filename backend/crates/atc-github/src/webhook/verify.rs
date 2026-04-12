@@ -69,12 +69,10 @@ pub fn verify_signature(secret: &[u8], body: &[u8], signature: &str) -> Result<(
     }
 
     // Decode the hex digest to raw bytes.
-    let expected_bytes =
-        const_hex::decode(hex_digest).map_err(|_| VerifyError::InvalidHex)?;
+    let expected_bytes = const_hex::decode(hex_digest).map_err(|_| VerifyError::InvalidHex)?;
 
     // Compute HMAC-SHA256 over the body with the shared secret.
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC-SHA256 accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC-SHA256 accepts any key length");
     mac.update(body);
 
     // Constant-time comparison via `verify_slice`.
@@ -88,8 +86,8 @@ mod tests {
 
     /// Helper function to compute a valid HMAC-SHA256 signature for a given secret and body.
     fn compute_signature(secret: &[u8], body: &[u8]) -> String {
-        let mut mac = HmacSha256::new_from_slice(secret)
-            .expect("HMAC-SHA256 accepts any key length");
+        let mut mac =
+            HmacSha256::new_from_slice(secret).expect("HMAC-SHA256 accepts any key length");
         mac.update(body);
         let digest = mac.finalize();
         format!("sha256={}", const_hex::encode(digest.into_bytes()))

@@ -5,24 +5,21 @@ use atc_core::job::{JobConclusion, RunnerInfo, Step, StepStatus};
 use atc_core::run::RunConclusion;
 use atc_core::types::{JobId, RunId};
 
-use super::types::{WorkflowJobWebhook, WorkflowRunWebhook};
 use super::ParseError;
+use super::types::{WorkflowJobWebhook, WorkflowRunWebhook};
 
 /// Translate a deserialized `workflow_run` webhook into a [`RunEventEnvelope`].
-pub(crate) fn translate_run(
-    webhook: WorkflowRunWebhook,
-) -> Result<RunEventEnvelope, ParseError> {
+pub(crate) fn translate_run(webhook: WorkflowRunWebhook) -> Result<RunEventEnvelope, ParseError> {
     let action = match webhook.action.as_str() {
         "requested" => RunEvent::Requested,
         "in_progress" => RunEvent::InProgress,
         "completed" => {
-            let conclusion_str =
-                webhook.workflow_run.conclusion.as_deref().ok_or_else(|| {
-                    ParseError::MissingConclusion {
-                        event_type: "workflow_run".into(),
-                        action: "completed".into(),
-                    }
-                })?;
+            let conclusion_str = webhook.workflow_run.conclusion.as_deref().ok_or_else(|| {
+                ParseError::MissingConclusion {
+                    event_type: "workflow_run".into(),
+                    action: "completed".into(),
+                }
+            })?;
             let conclusion = parse_run_conclusion(conclusion_str)?;
             RunEvent::Completed { conclusion }
         }
@@ -54,9 +51,7 @@ pub(crate) fn translate_run(
 }
 
 /// Translate a deserialized `workflow_job` webhook into a [`JobEventEnvelope`].
-pub(crate) fn translate_job(
-    webhook: WorkflowJobWebhook,
-) -> Result<JobEventEnvelope, ParseError> {
+pub(crate) fn translate_job(webhook: WorkflowJobWebhook) -> Result<JobEventEnvelope, ParseError> {
     let job = webhook.workflow_job;
     let steps = translate_steps(&job.steps)?;
     let runner = make_runner_info(&job);
@@ -72,12 +67,12 @@ pub(crate) fn translate_job(
         },
         "completed" => {
             let conclusion_str =
-                job.conclusion.as_deref().ok_or_else(|| {
-                    ParseError::MissingConclusion {
+                job.conclusion
+                    .as_deref()
+                    .ok_or_else(|| ParseError::MissingConclusion {
                         event_type: "workflow_job".into(),
                         action: "completed".into(),
-                    }
-                })?;
+                    })?;
             let conclusion = parse_job_conclusion(conclusion_str)?;
             JobEvent::Completed {
                 conclusion,
@@ -115,9 +110,7 @@ pub(crate) fn translate_job(
 ///
 /// Returns `None` if `runner_id` or `runner_name` is missing (GitHub sends
 /// null runners on early `in_progress` events before assignment completes).
-fn make_runner_info(
-    job: &super::types::WorkflowJobData,
-) -> Option<RunnerInfo> {
+fn make_runner_info(job: &super::types::WorkflowJobData) -> Option<RunnerInfo> {
     let id = job.runner_id?;
     let name = job.runner_name.clone()?;
     Some(RunnerInfo {
@@ -129,9 +122,7 @@ fn make_runner_info(
 }
 
 /// Translate step data from GitHub format to domain [`Step`] types.
-fn translate_steps(
-    steps: &[super::types::StepData],
-) -> Result<Vec<Step>, ParseError> {
+fn translate_steps(steps: &[super::types::StepData]) -> Result<Vec<Step>, ParseError> {
     steps
         .iter()
         .map(|s| {
@@ -200,10 +191,7 @@ fn parse_step_status(s: &str, step_name: &str) -> Result<StepStatus, ParseError>
     }
 }
 
-fn parse_step_conclusion(
-    s: &str,
-    step_name: &str,
-) -> Result<JobConclusion, ParseError> {
+fn parse_step_conclusion(s: &str, step_name: &str) -> Result<JobConclusion, ParseError> {
     // Step conclusions use the same values as job conclusions.
     parse_job_conclusion(s).map_err(|_| ParseError::UnknownConclusion {
         event_type: format!("step '{step_name}'"),
@@ -219,11 +207,10 @@ mod tests {
     // ===== Test helpers =====
 
     /// Create a minimal `WorkflowRunWebhook` with sensible defaults.
-    fn make_workflow_run_webhook(
-        action: &str,
-        conclusion: Option<&str>,
-    ) -> WorkflowRunWebhook {
-        use super::super::types::{HeadCommit, OwnerData, RepositoryData, WorkflowData, WorkflowRunData};
+    fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> WorkflowRunWebhook {
+        use super::super::types::{
+            HeadCommit, OwnerData, RepositoryData, WorkflowData, WorkflowRunData,
+        };
 
         let workflow_run = WorkflowRunData {
             id: 123_456,
@@ -278,9 +265,17 @@ mod tests {
             steps: vec![],
             labels: vec!["ubuntu-latest".to_string()],
             runner_id: if runner { Some(1) } else { None },
-            runner_name: if runner { Some("runner-1".to_string()) } else { None },
+            runner_name: if runner {
+                Some("runner-1".to_string())
+            } else {
+                None
+            },
             runner_group_id: if runner { Some(100) } else { None },
-            runner_group_name: if runner { Some("self-hosted".to_string()) } else { None },
+            runner_group_name: if runner {
+                Some("self-hosted".to_string())
+            } else {
+                None
+            },
         };
 
         WorkflowJobWebhook {
@@ -309,7 +304,10 @@ mod tests {
         assert_eq!(result.run_id, RunId(123_456));
         assert_eq!(result.head_sha, "abc123def456");
         assert_eq!(result.workflow_name, Some("CI Workflow".to_string()));
-        assert_eq!(result.workflow_path, Some(".github/workflows/ci.yml".to_string()));
+        assert_eq!(
+            result.workflow_path,
+            Some(".github/workflows/ci.yml".to_string())
+        );
     }
 
     #[test]
@@ -413,7 +411,11 @@ mod tests {
         let result = translate_job(webhook).expect("should translate");
 
         match result.action {
-            JobEvent::InProgress { runner, labels, steps } => {
+            JobEvent::InProgress {
+                runner,
+                labels,
+                steps,
+            } => {
                 assert!(runner.is_some());
                 let runner_info = runner.unwrap();
                 assert_eq!(runner_info.id, 1);
@@ -446,7 +448,12 @@ mod tests {
         let result = translate_job(webhook).expect("should translate");
 
         match result.action {
-            JobEvent::Completed { conclusion, runner, labels, steps } => {
+            JobEvent::Completed {
+                conclusion,
+                runner,
+                labels,
+                steps,
+            } => {
                 assert_eq!(conclusion, JobConclusion::Success);
                 assert!(runner.is_some());
                 assert_eq!(labels, vec!["ubuntu-latest"]);
