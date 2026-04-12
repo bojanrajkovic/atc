@@ -9,6 +9,7 @@ mod event_ingestion;
 mod eviction;
 mod queries;
 mod runner_pools;
+mod webhook_domain_updates;
 
 /// Helper to build a `RunEventEnvelope` with sensible defaults.
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
