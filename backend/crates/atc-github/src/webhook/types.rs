@@ -4,8 +4,6 @@
 //! They are `pub(crate)` — consumers of `atc-github` never see them;
 //! they only see domain events from `atc-core`.
 
-#![allow(dead_code)]
-
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -41,6 +39,7 @@ pub(crate) struct WorkflowRunData {
     /// Unique identifier for this workflow run.
     pub id: i64,
     /// Run status string (e.g., `"queued"`, `"in_progress"`, `"completed"`).
+    #[allow(dead_code)]
     pub status: String,
     /// Conclusion string (e.g., `"success"`, `"failure"`). `None` until completed.
     pub conclusion: Option<String>,
@@ -83,6 +82,7 @@ pub(crate) struct WorkflowJobData {
     /// Job name as defined in the workflow YAML.
     pub name: String,
     /// Job status string (e.g., `"queued"`, `"waiting"`, `"in_progress"`, `"completed"`).
+    #[allow(dead_code)]
     pub status: String,
     /// Conclusion string (e.g., `"success"`, `"failure"`). `None` until completed.
     pub conclusion: Option<String>,

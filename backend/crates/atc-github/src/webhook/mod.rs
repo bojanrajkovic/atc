@@ -79,9 +79,118 @@ pub enum WebhookEvent {
 
 /// Parse a GitHub webhook payload into a domain event.
 ///
+/// Accepts the event type string (from the `X-GitHub-Event` HTTP header)
+/// and the raw JSON body. Returns [`ParseResult::Parsed`] for recognized
+/// events (`workflow_run`, `workflow_job`), or [`ParseResult::Skipped`]
+/// for any other event type.
+///
 /// # Errors
 ///
-/// Returns [`ParseError`] if deserialization or translation fails.
-pub fn parse_webhook(_event_type: &str, _body: &[u8]) -> Result<ParseResult, ParseError> {
-    todo!("implemented in Task 3")
+/// Returns [`ParseError`] if JSON deserialization fails or if the payload
+/// contains unrecognized action/conclusion/status values.
+pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, ParseError> {
+    match event_type {
+        "workflow_run" => {
+            let webhook: types::WorkflowRunWebhook = serde_json::from_slice(body)?;
+            let envelope = translate::translate_run(webhook)?;
+            Ok(ParseResult::Parsed(Box::new(WebhookEvent::Run(envelope))))
+        }
+        "workflow_job" => {
+            let webhook: types::WorkflowJobWebhook = serde_json::from_slice(body)?;
+            let envelope = translate::translate_job(webhook)?;
+            Ok(ParseResult::Parsed(Box::new(WebhookEvent::Job(envelope))))
+        }
+        _ => Ok(ParseResult::Skipped {
+            event_type: event_type.to_string(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atc_core::event::{JobEvent, RunEvent};
+
+    #[test]
+    fn test_parse_workflow_run_requested() {
+        // AC6.1: Load workflow_run_requested.json fixture and parse
+        let fixture = include_str!("../../tests/fixtures/workflow_run_requested.json");
+        let result = parse_webhook("workflow_run", fixture.as_bytes())
+            .expect("should parse without error");
+
+        match result {
+            ParseResult::Parsed(event) => {
+                match *event {
+                    WebhookEvent::Run(ref envelope) => {
+                        assert_eq!(envelope.org, "bojanrajkovic");
+                        assert_eq!(envelope.repo, "atc");
+                        assert_eq!(envelope.action, RunEvent::Requested);
+                    }
+                    WebhookEvent::Job(_) => panic!("expected Run variant"),
+                }
+            }
+            ParseResult::Skipped { .. } => panic!("expected Parsed variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_workflow_job_queued() {
+        // AC6.2: Load workflow_job_queued.json fixture and parse
+        let fixture = include_str!("../../tests/fixtures/workflow_job_queued.json");
+        let result = parse_webhook("workflow_job", fixture.as_bytes())
+            .expect("should parse without error");
+
+        match result {
+            ParseResult::Parsed(event) => {
+                match *event {
+                    WebhookEvent::Job(ref envelope) => {
+                        assert_eq!(envelope.org, "bojanrajkovic");
+                        assert_eq!(envelope.repo, "atc");
+                        match envelope.action {
+                            JobEvent::Queued { .. } => {}
+                            _ => panic!("expected Queued action"),
+                        }
+                    }
+                    WebhookEvent::Run(_) => panic!("expected Job variant"),
+                }
+            }
+            ParseResult::Skipped { .. } => panic!("expected Parsed variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unknown_event_skipped() {
+        // AC6.3: Call parse_webhook("push", body) and expect Skipped
+        let result =
+            parse_webhook("push", b"{}").expect("should return ParseResult::Skipped");
+
+        match result {
+            ParseResult::Skipped { event_type } => {
+                assert_eq!(event_type, "push");
+            }
+            ParseResult::Parsed(_) => panic!("expected Skipped variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unknown_event_type_skipped() {
+        // AC6.4: Call parse_webhook("unknown_event", body) and expect Skipped
+        let result = parse_webhook("unknown_event", b"{}")
+            .expect("should return ParseResult::Skipped");
+
+        match result {
+            ParseResult::Skipped { event_type } => {
+                assert_eq!(event_type, "unknown_event");
+            }
+            ParseResult::Parsed(_) => panic!("expected Skipped variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_malformed_json() {
+        // AC1.7: Call parse_webhook("workflow_run", malformed_json)
+        let result = parse_webhook("workflow_run", b"not valid json{{{");
+
+        assert!(matches!(result, Err(ParseError::InvalidJson(_))));
+    }
 }
