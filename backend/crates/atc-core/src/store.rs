@@ -395,13 +395,16 @@ impl StateStore {
                 });
             match job.status {
                 JobStatus::Queued => entry.queued += 1,
-                JobStatus::InProgress => entry.running += 1,
+                JobStatus::InProgress => {
+                    entry.running += 1;
+                    // Track group_name from most recently observed runner (AC4.4)
+                    if let Some(ref runner) = job.runner
+                        && runner.group_name.is_some()
+                    {
+                        entry.group_name.clone_from(&runner.group_name);
+                    }
+                }
                 _ => {}
-            }
-            if let Some(ref runner) = job.runner
-                && let Some(ref name) = runner.group_name
-            {
-                entry.group_name = Some(name.clone());
             }
         }
 

@@ -55,7 +55,7 @@ async fn state_handler(
     State(state): State<Arc<AppState>>,
 ) -> Json<StateSnapshot> {
     let (result, pool_stats) = state.store.snapshot().await;
-    let seq = state.seq.load(std::sync::atomic::Ordering::Acquire);
+    let seq = state.seq.load(Ordering::Acquire);
 
     Json(StateSnapshot {
         seq,
