@@ -21,12 +21,48 @@ struct HealthResponse {
     status: &'static str,
 }
 
+/// REST state snapshot for client backfill.
+///
+/// Returned by `GET /v1/state`. `seq` is the next sequence number to
+/// assign — clients discard buffered WS events with `seq < snapshot_seq`.
+/// A snapshot at `seq: N` reflects all committed events with event seq < N.
+#[derive(Serialize)]
+struct StateSnapshot {
+    seq: u64,
+    runs: Vec<atc_core::WorkflowRun>,
+    jobs: Vec<atc_core::Job>,
+    pool_stats: Vec<atc_core::RunnerPoolStats>,
+}
+
 async fn healthz() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
 async fn readyz() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
+}
+
+/// Return current state snapshot with seq cursor.
+///
+/// Reads store state via `StateStore::snapshot()` (single RwLock
+/// acquisition), then reads the atomic seq counter. The counter
+/// value is the next seq to assign — exactly what REST returns.
+///
+/// Because the webhook handler applies events to the store BEFORE
+/// incrementing seq (with Release ordering), a snapshot at seq: N
+/// is guaranteed to reflect all events with event seq < N.
+async fn state_handler(
+    State(state): State<Arc<AppState>>,
+) -> Json<StateSnapshot> {
+    let (result, pool_stats) = state.store.snapshot().await;
+    let seq = state.seq.load(std::sync::atomic::Ordering::Acquire);
+
+    Json(StateSnapshot {
+        seq,
+        runs: result.runs,
+        jobs: result.jobs,
+        pool_stats,
+    })
 }
 
 /// Handler for removed endpoints that should return 404.
@@ -46,6 +82,7 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/v1/state", get(state_handler))
         .route("/v1/webhooks/github", post(webhook_handler))
         .route("/v1/ws", get(ws::ws_handler))
         // Removed endpoints: explicitly return 404 instead of falling through to SPA
