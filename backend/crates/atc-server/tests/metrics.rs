@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
-use atc_core::{SystemClock, StateStore};
+use atc_core::{StateStore, SystemClock};
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 use tokio::net::TcpListener;
@@ -38,8 +38,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     });
 
     // Step 5: Build main router using the production api_routes function
-    let main_router = routes::api_routes(prometheus_layer)
-        .with_state(app_state);
+    let main_router = routes::api_routes(prometheus_layer).with_state(app_state);
 
     // Step 6: Bind main listener on ephemeral port
     let main_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

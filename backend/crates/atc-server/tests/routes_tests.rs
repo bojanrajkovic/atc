@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use atc_core::{SystemClock, StateStore};
+use atc_core::{StateStore, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};

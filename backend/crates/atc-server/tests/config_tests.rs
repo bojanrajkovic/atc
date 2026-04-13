@@ -181,8 +181,7 @@ fn config_github_webhook_secret_none() {
 
     // Verify the webhook secret is None by default
     assert_eq!(
-        config.github.webhook_secret,
-        None,
+        config.github.webhook_secret, None,
         "webhook_secret should default to None when not set"
     );
 }

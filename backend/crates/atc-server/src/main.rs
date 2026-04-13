@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
-use atc_core::{SystemClock, StateStore};
+use atc_core::{StateStore, SystemClock};
 use atc_server::config;
 use atc_server::metrics;
 use atc_server::routes;
