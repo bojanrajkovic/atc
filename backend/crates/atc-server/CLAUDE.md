@@ -25,16 +25,16 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 These rules are enforced by implementation and verified by tests:
 
 - **Webhook ingestion:** HMAC-SHA256 verification (when secret configured), parse via atc-github, apply to store, broadcast SeqEvent, return appropriate status codes (200/401/422)
-- **Seq ordering:** AtomicU64 incremented on each successfully processed event. Strictly monotonic with no gaps. Resets on server restart.
-- **Broadcast semantics:** Bounded channel (capacity 256) means slow subscribers may miss events. LaggingError logs warning but does not disconnect.
-- **State snapshot:** StateSnapshot.seq is the next seq to assign; all events with seq < N are reflected in snapshot
+- **Seq ordering:** `Mutex<u64>` held across store mutation + seq assignment in the webhook handler, ensuring WS event seq order matches commit order. Strictly monotonic with no gaps. Resets on server restart.
+- **Broadcast semantics:** Bounded channel (capacity 256) means slow subscribers may miss events. LaggingError logs warning but does not disconnect. Mutex is released before broadcast to avoid holding it while waking WS tasks.
+- **State snapshot:** `Mutex<u64>` held across snapshot + seq read in the state handler, ensuring the cursor matches the snapshot content. StateSnapshot.seq is the next seq to assign; all events with seq < N are reflected in snapshot.
 - **WebSocket:** Clients connect and receive SeqEvent stream in real time. Disconnection is clean (no crash, no effect on other clients)
 - **Config:** ATC_GITHUB__WEBHOOK_SECRET loads webhook_secret. If None, HMAC verification skipped
 
 ## Testing
 
 ```bash
-cargo test -p atc-server        # 36 tests across three tiers
+cargo test -p atc-server        # 38 tests across three tiers
 cargo clippy -p atc-server -- -D warnings
 cargo test -p atc-server --test e2e_tests  # 3 full-stack e2e tests
 ```

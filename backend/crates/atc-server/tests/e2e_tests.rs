@@ -9,7 +9,6 @@ mod common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
@@ -23,7 +22,7 @@ use futures_util::stream::StreamExt;
 /// - `Arc<StateStore>` with `SystemClock` and 1-hour TTL
 /// - Broadcast channel with capacity 256
 /// - `Arc<AppState>` with `webhook_secret: None` (HMAC tested separately in Phase 2)
-/// - `seq: AtomicU64::new(0)`
+/// - `seq: Mutex::new(0)`
 /// - OnceLock `PrometheusMetricLayer` with `#[serial_test::serial]`
 /// - Ephemeral `TcpListener::bind("127.0.0.1:0")`
 /// - `tokio::spawn(axum::serve(...))`
@@ -41,7 +40,7 @@ async fn start_test_server() -> SocketAddr {
         store,
         webhook_tx,
         webhook_secret: None,
-        seq: AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
 
     let main_router = routes::api_routes(layer.clone())

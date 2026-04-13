@@ -16,7 +16,7 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         store,
         webhook_tx,
         webhook_secret: None,
-        seq: std::sync::atomic::AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
@@ -162,6 +162,70 @@ async fn test_ac4_3_state_with_pool_stats() {
         !json["pool_stats"].as_array().unwrap().is_empty(),
         "pool_stats should be non-empty with job labels"
     );
+}
+
+/// Snapshot seq is always consistent with snapshot content under concurrent writes.
+///
+/// This test would have caught the bug where state_handler read the store
+/// snapshot and the seq counter separately — a webhook completing between
+/// the two reads could produce seq: N+1 with a snapshot missing event N.
+///
+/// The fix holds the seq Mutex across both reads so no webhook can commit
+/// between the snapshot and the cursor read.
+#[tokio::test]
+#[serial_test::serial]
+async fn test_snapshot_seq_consistent_under_concurrent_writes() {
+    let (server_addr, _) = test_setup().await;
+
+    let client = reqwest::Client::new();
+    let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
+    let state_url = format!("http://{}/v1/state", server_addr);
+
+    // Fire a webhook and a GET /v1/state concurrently, repeatedly.
+    // The invariant: if snapshot says seq=N, the snapshot must contain
+    // exactly N events worth of state (runs.len() + jobs.len() >= N
+    // is not precise because one event can create one entity, but
+    // seq must never exceed what's visible in the snapshot).
+    for _ in 0..10 {
+        let wh_client = client.clone();
+        let wh_url = webhook_url.clone();
+        let body = fixture_workflow_run_requested();
+
+        let state_client = client.clone();
+        let st_url = state_url.clone();
+
+        let (wh_result, state_result) = tokio::join!(
+            async move {
+                wh_client
+                    .post(&wh_url)
+                    .header("X-GitHub-Event", "workflow_run")
+                    .body(body)
+                    .send()
+                    .await
+            },
+            async move { state_client.get(&st_url).send().await }
+        );
+
+        wh_result.expect("webhook POST failed");
+        let state_resp = state_result.expect("GET /v1/state failed");
+        let json: serde_json::Value = state_resp.json().await.unwrap();
+
+        let seq = json["seq"].as_u64().unwrap();
+        let runs_count = json["runs"].as_array().unwrap().len() as u64;
+
+        // Key invariant: the snapshot must contain at least `seq` events
+        // worth of data. In this test every event creates exactly one
+        // run (idempotent on same run_id), so runs_count is either 0
+        // (snapshot taken before the webhook) or 1 (taken after). In
+        // both cases, seq must not exceed what's visible.
+        //
+        // Before the fix: seq could read as 1 while runs was still
+        // empty (snapshot taken before mutation, seq read after).
+        assert!(
+            seq == 0 || runs_count >= 1,
+            "seq={seq} but runs_count={runs_count} — cursor exceeds snapshot content"
+        );
+    }
 }
 
 /// AC4.4: GET /v1/state returns seq consistent with all reflected events

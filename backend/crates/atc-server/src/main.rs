@@ -5,8 +5,9 @@ mod assets;
 
 use std::process;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+
+use tokio::sync::Mutex;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::config;
@@ -80,7 +81,7 @@ async fn main() {
         store,
         webhook_tx,
         webhook_secret: cfg.github.webhook_secret.clone(),
-        seq: AtomicU64::new(0),
+        seq: Mutex::new(0),
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before

@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
@@ -36,7 +35,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         store,
         webhook_tx,
         webhook_secret: Some(secret.to_string()),
-        seq: AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -56,7 +55,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         store,
         webhook_tx,
         webhook_secret: None,
-        seq: AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())

@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use axum::{
     Json, Router,
@@ -44,18 +43,17 @@ async fn readyz() -> Json<HealthResponse> {
 
 /// Return current state snapshot with seq cursor.
 ///
-/// Reads store state via `StateStore::snapshot()` (single RwLock
-/// acquisition), then reads the atomic seq counter. The counter
-/// value is the next seq to assign — exactly what REST returns.
-///
-/// Because the webhook handler applies events to the store BEFORE
-/// incrementing seq (with Release ordering), a snapshot at seq: N
-/// is guaranteed to reflect all events with event seq < N.
+/// Holds the seq mutex across both the store snapshot and the seq
+/// read, ensuring no webhook can commit between them. This
+/// guarantees the cursor matches the snapshot content: a response
+/// at `seq: N` reflects exactly all events with event seq < N.
 async fn state_handler(
     State(state): State<Arc<AppState>>,
 ) -> Json<StateSnapshot> {
+    let seq_guard = state.seq.lock().await;
     let (result, pool_stats) = state.store.snapshot().await;
-    let seq = state.seq.load(Ordering::Acquire);
+    let seq = *seq_guard;
+    drop(seq_guard);
 
     Json(StateSnapshot {
         seq,
@@ -154,18 +152,20 @@ async fn webhook_handler(
     // 4. Handle parse result
     match result {
         ParseResult::Parsed(event) => {
-            // Apply to store. StoreError variants are currently all
-            // deterministic (invalid state transitions) — retrying would
-            // fail identically, so we return 200 to prevent GitHub retries.
+            // Hold the seq mutex across store mutation + seq assignment.
+            // This serializes the critical section so that:
+            // (a) WS event seq values match store commit order, and
+            // (b) GET /v1/state cannot read between mutation and seq bump.
+            //
+            // StoreError variants are currently all deterministic (invalid
+            // state transitions) — retrying would fail identically, so we
+            // return 200 to prevent GitHub retries.
             //
             // Only assign seq and broadcast on successful store mutation.
             // Failed transitions should not produce SeqEvents — clients
             // must never receive events that aren't reflected in the store.
-            //
-            // Future: when state externalizes to a database, transient
-            // failures (connection errors, deadlocks) should return 5xx
-            // so GitHub retries. Add a new StoreError variant for those
-            // and take a different branch here.
+            let mut seq_guard = state.seq.lock().await;
+
             let store_ok = match &*event {
                 atc_github::WebhookEvent::Run(envelope) => state
                     .store
@@ -181,21 +181,22 @@ async fn webhook_handler(
                     .is_ok(),
             };
 
-            if store_ok {
-                // Assign seq AFTER successful store mutation. fetch_add
-                // returns the OLD value — this becomes the event's assigned
-                // seq (0 for the first event, 1 for the second, etc.).
-                //
-                // The REST handler returns the live counter value (next seq
-                // to assign). After N events, counter = N. Clients discard
-                // buffered WS events with seq < snapshot_seq.
-                let seq = state.seq.fetch_add(1, Ordering::Release);
+            let seq_event = if store_ok {
+                let seq = *seq_guard;
+                *seq_guard += 1;
+                Some(SeqEvent { seq, event: *event })
+            } else {
+                None
+            };
 
-                // Broadcast to WebSocket clients. Ignore send error (no receivers).
-                let seq_event = SeqEvent { seq, event: *event };
+            // Release the mutex before broadcasting (broadcast doesn't
+            // need serialization and we don't want to hold the lock
+            // while waking potentially many WS tasks).
+            drop(seq_guard);
+
+            if let Some(seq_event) = seq_event {
+                tracing::info!(event_type, seq = seq_event.seq, "event processed");
                 let _ = state.webhook_tx.send(seq_event);
-
-                tracing::info!(event_type, seq, "event processed");
             } else {
                 tracing::info!(event_type, "event accepted (transition already applied)");
             }

@@ -1,8 +1,7 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use atc_github::WebhookEvent;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 
 use atc_core::StateStore;
 
@@ -16,7 +15,13 @@ pub struct AppState {
     /// `None` means verification is skipped.
     pub webhook_secret: Option<String>,
     /// Monotonic event counter. Incremented on each successfully ingested event.
-    pub seq: AtomicU64,
+    ///
+    /// Protected by a `tokio::sync::Mutex` so that:
+    /// - The webhook handler holds the lock across store mutation + seq
+    ///   assignment, ensuring WS event seq order matches commit order.
+    /// - The state handler holds the lock across snapshot + seq read,
+    ///   ensuring the cursor matches the snapshot content.
+    pub seq: Mutex<u64>,
 }
 
 /// A domain event annotated with a monotonic sequence number.

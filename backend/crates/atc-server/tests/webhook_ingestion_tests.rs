@@ -251,6 +251,75 @@ async fn webhook_ingestion_broadcast_single_event_with_seq() {
     assert!(matches!(seq_event.event, atc_github::WebhookEvent::Run(_)));
 }
 
+/// Concurrent webhooks assign seq values that match store commit order.
+///
+/// This test would have caught the bug where AtomicU64::fetch_add was
+/// called outside the store lock — two concurrent webhooks could
+/// interleave between store mutation and seq assignment, producing WS
+/// events whose seq values didn't match the committed state order.
+///
+/// The fix holds a Mutex across store mutation + seq assignment,
+/// serializing the critical section so seq order matches commit order.
+#[tokio::test]
+#[serial_test::serial]
+async fn webhook_concurrent_requests_produce_ordered_seq() {
+    let (app, state) = build_app_no_secret();
+
+    let mut rx = state.webhook_tx.subscribe();
+
+    // Fire two webhooks concurrently via spawned tasks.
+    let app1 = app.clone();
+    let body1 = fixture_workflow_run_requested();
+    let handle1 = tokio::spawn(async move {
+        app1.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_run")
+                .body(Body::from(body1))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    });
+
+    let app2 = app.clone();
+    let body2 = fixture_workflow_job_queued();
+    let handle2 = tokio::spawn(async move {
+        app2.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_job")
+                .body(Body::from(body2))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    });
+
+    let (r1, r2) = tokio::join!(handle1, handle2);
+    assert_eq!(r1.unwrap().status(), StatusCode::OK);
+    assert_eq!(r2.unwrap().status(), StatusCode::OK);
+
+    // Collect both broadcast events.
+    let ev1 = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+        .await
+        .expect("timeout waiting for first broadcast")
+        .expect("recv failed");
+    let ev2 = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+        .await
+        .expect("timeout waiting for second broadcast")
+        .expect("recv failed");
+
+    // The critical invariant: seq values are strictly ordered 0, 1.
+    // With the old AtomicU64 code, concurrent requests could assign
+    // seq values out of store-commit order.
+    assert_eq!(ev1.seq, 0, "first broadcast event should have seq 0");
+    assert_eq!(ev2.seq, 1, "second broadcast event should have seq 1");
+    assert!(ev2.seq > ev1.seq, "seq must be strictly increasing");
+}
+
 /// AC2.8: Consecutive events have strictly increasing seq values (0, 1, ...)
 #[tokio::test]
 #[serial_test::serial]

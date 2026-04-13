@@ -2,7 +2,6 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
@@ -34,7 +33,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         store,
         webhook_tx,
         webhook_secret: None,
-        seq: AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
 
     // Step 5: Build main router using the production api_routes function

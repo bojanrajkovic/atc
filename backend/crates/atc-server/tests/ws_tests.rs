@@ -8,7 +8,6 @@ mod common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
@@ -33,7 +32,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         store,
         webhook_tx,
         webhook_secret: None,
-        seq: AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
 
     let main_router = routes::api_routes(layer.clone())

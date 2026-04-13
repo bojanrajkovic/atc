@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-12 (updated 2026-04-12 for Server Wiring section)
+Last verified: 2026-04-12 (updated 2026-04-12 for seq Mutex concurrency fix)
 
 ## Purpose
 
@@ -193,14 +193,14 @@ struct AppState {
     store: Arc<StateStore>,
     webhook_tx: broadcast::Sender<SeqEvent>,
     webhook_secret: Option<String>,
-    seq: AtomicU64,
+    seq: Mutex<u64>,
 }
 ```
 
 - **`store`** — Reference to the shared `atc-core` StateStore. All webhook events are applied here, and REST/WebSocket endpoints read from here.
 - **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
-- **`seq`** — `AtomicU64` counter incremented on each successfully ingested event. Provides a monotonic ordering cursor for snapshot/stream reconciliation. Resets on server restart (consistent with in-memory-only store).
+- **`seq`** — `tokio::sync::Mutex<u64>` counter incremented on each successfully ingested event. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across store mutation + seq assignment, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches commit order, and REST snapshots are consistent with their cursor. Resets on server restart (consistent with in-memory-only store).
 
 ### Webhook Ingestion (`POST /v1/webhooks/github`)
 
@@ -213,9 +213,9 @@ struct AppState {
    - `ParseResult::Parsed(WebhookEvent)` — Continue to store ingestion
    - `ParseResult::Skipped { event_type }` — Return 200 with `{"status": "skipped"}`
    - `ParseResult::Err(ParseError)` — Return 422 with error details
-4. Apply the parsed event to the store via `store.apply_event(domain_event)`. If the transition is invalid (e.g., backward transition from Completed to InProgress), log warning and continue (not a 500 error).
-5. Atomically increment `seq` by 1, assigning the next sequence number to this event.
-6. Broadcast a `SeqEvent { seq, event }` to the webhook channel. WebSocket subscribers receive it immediately.
+4. Acquire the `seq` mutex. Apply the parsed event to the store via `store.apply_event(domain_event)`. If the transition is invalid (e.g., backward transition from Completed to InProgress), log warning and continue (not a 500 error).
+5. Increment `seq` by 1 (under the same mutex guard), assigning the next sequence number to this event.
+6. Release the mutex, then broadcast a `SeqEvent { seq, event }` to the webhook channel. WebSocket subscribers receive it immediately.
 7. Return 200 with `{"status": "processed"}`.
 
 **Error responses:**
@@ -223,7 +223,7 @@ struct AppState {
 - **401** — Invalid or missing signature when secret is configured; SHA-1 signature when SHA-256 is expected
 - **422** — Malformed JSON body or unknown action/conclusion values
 
-**Ordering guarantee:** `seq` values are strictly monotonically increasing with no gaps. Consecutive webhook ingestions increment the counter by exactly 1 per event.
+**Ordering guarantee:** The `seq` mutex serializes the critical section (store mutation + seq assignment), so `seq` values are strictly monotonically increasing with no gaps, and their order always matches the store commit order. The mutex is released before broadcasting to avoid holding it while waking WS tasks.
 
 ### WebSocket Event Stream (`GET /v1/ws`)
 
@@ -246,8 +246,10 @@ struct AppState {
 **Responsibility:** Return the full current state snapshot and the next `seq` to assign.
 
 **Flow:**
-1. Acquire a read lock on the store
-2. Serialize the current state into a `StateSnapshot`:
+1. Acquire the `seq` mutex (prevents any webhook from committing during the read)
+2. Read the store snapshot under the store's read lock
+3. Read `seq` from the mutex guard
+4. Release the mutex, then serialize the response as a `StateSnapshot`:
    ```rust
    struct StateSnapshot {
        seq: u64,           // Next seq to assign; acts as a cursor
@@ -256,8 +258,8 @@ struct AppState {
        pool_stats: Vec<PoolStat>,
    }
    ```
-3. The `seq` value reflects the state: all events with `seq < N` are reflected in the snapshot; the next event will receive `seq = N`.
-4. Return 200 with the JSON snapshot.
+5. The `seq` value reflects the state: all events with `seq < N` are reflected in the snapshot; the next event will receive `seq = N`. This guarantee holds because the mutex excludes concurrent webhook writes during the read.
+6. Return 200 with the JSON snapshot.
 
 **Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `seq`, then connect to `GET /v1/ws` and filter incoming `SeqEvent`s to those with `seq >= cursor`. This protocol allows robust reconnection and bootstrap.
 

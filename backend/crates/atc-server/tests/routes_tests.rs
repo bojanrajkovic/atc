@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
@@ -27,7 +26,7 @@ fn build_full_app() -> axum::Router {
         store,
         webhook_tx,
         webhook_secret: None,
-        seq: AtomicU64::new(0),
+        seq: tokio::sync::Mutex::new(0),
     });
     atc_server::routes::api_routes(layer.clone())
         .with_state(app_state)
