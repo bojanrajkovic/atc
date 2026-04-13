@@ -1,7 +1,13 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
+use atc_core::{SystemClock, StateStore};
+use atc_server::state::{AppState, SeqEvent};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tower::ServiceExt;
 
 // Guard: PrometheusMetricLayer::pair() is called only once per test binary.
@@ -12,7 +18,20 @@ static PROMETHEUS_INIT: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new
 /// Must be used in tests marked with #[serial_test::serial] since pair() installs a global recorder.
 fn build_full_app() -> axum::Router {
     let layer = PROMETHEUS_INIT.get_or_init(|| PrometheusMetricLayer::pair().0);
-    atc_server::routes::api_routes(layer.clone()).fallback(atc_server::assets::fallback_handler())
+    let store = Arc::new(StateStore::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let app_state = Arc::new(AppState {
+        store,
+        webhook_tx,
+        webhook_secret: None,
+        seq: AtomicU64::new(0),
+    });
+    atc_server::routes::api_routes(layer.clone())
+        .with_state(app_state)
+        .fallback(atc_server::assets::fallback_handler())
 }
 
 #[tokio::test]
