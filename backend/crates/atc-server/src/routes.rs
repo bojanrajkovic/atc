@@ -2,7 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use axum::{
-    Json, Router, extract::State, http::{HeaderMap, StatusCode}, body::Bytes,
+    Json, Router,
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
 use axum_prometheus::PrometheusMetricLayer;
@@ -11,6 +14,7 @@ use serde::Serialize;
 use atc_github::{ParseResult, parse_webhook, verify_signature};
 
 use crate::state::{AppState, SeqEvent};
+use crate::ws;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -43,6 +47,7 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/v1/webhooks/github", post(webhook_handler))
+        .route("/v1/ws", get(ws::ws_handler))
         // Removed endpoints: explicitly return 404 instead of falling through to SPA
         .route("/health", get(removed_endpoint_404))
         .layer(prometheus_layer)
@@ -125,16 +130,18 @@ async fn webhook_handler(
             // so GitHub retries. Add a new StoreError variant for those
             // and take a different branch here.
             let store_ok = match &*event {
-                atc_github::WebhookEvent::Run(envelope) => {
-                    state.store.apply_run_event(envelope.clone()).await
-                        .map_err(|e| tracing::warn!(error = %e, "store run transition warning"))
-                        .is_ok()
-                }
-                atc_github::WebhookEvent::Job(envelope) => {
-                    state.store.apply_job_event(envelope.clone()).await
-                        .map_err(|e| tracing::warn!(error = %e, "store job transition warning"))
-                        .is_ok()
-                }
+                atc_github::WebhookEvent::Run(envelope) => state
+                    .store
+                    .apply_run_event(envelope.clone())
+                    .await
+                    .map_err(|e| tracing::warn!(error = %e, "store run transition warning"))
+                    .is_ok(),
+                atc_github::WebhookEvent::Job(envelope) => state
+                    .store
+                    .apply_job_event(envelope.clone())
+                    .await
+                    .map_err(|e| tracing::warn!(error = %e, "store job transition warning"))
+                    .is_ok(),
             };
 
             if store_ok {
@@ -148,10 +155,7 @@ async fn webhook_handler(
                 let seq = state.seq.fetch_add(1, Ordering::Release);
 
                 // Broadcast to WebSocket clients. Ignore send error (no receivers).
-                let seq_event = SeqEvent {
-                    seq,
-                    event: *event,
-                };
+                let seq_event = SeqEvent { seq, event: *event };
                 let _ = state.webhook_tx.send(seq_event);
 
                 tracing::info!(event_type, seq, "event processed");
