@@ -47,9 +47,7 @@ async fn start_test_server() -> SocketAddr {
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
-    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let main_addr = main_listener.local_addr().unwrap();
 
     tokio::spawn(async move {
@@ -98,7 +96,10 @@ async fn ac5_1_webhook_to_rest_state() {
         "GET /v1/state should return 200"
     );
 
-    let state_json = state_response.text().await.expect("should read response body");
+    let state_json = state_response
+        .text()
+        .await
+        .expect("should read response body");
     let state: serde_json::Value =
         serde_json::from_str(&state_json).expect("should parse state JSON");
 
@@ -264,14 +265,15 @@ async fn ac5_3_multi_event_sequence() {
             _ => panic!("expected text frame from WebSocket"),
         };
 
-        let seq_event: atc_server::state::SeqEvent = serde_json::from_str(&text)
-            .expect("should deserialize SeqEvent");
+        let seq_event: atc_server::state::SeqEvent =
+            serde_json::from_str(&text).expect("should deserialize SeqEvent");
         seq_values.push(seq_event.seq);
     }
 
     // Assert seq values are 0, 1, 2 (strictly increasing)
     assert_eq!(
-        seq_values, vec![0, 1, 2],
+        seq_values,
+        vec![0, 1, 2],
         "WS events should have strictly increasing seq values"
     );
 
@@ -283,7 +285,10 @@ async fn ac5_3_multi_event_sequence() {
         .await
         .expect("GET /v1/state should succeed");
 
-    let state_json = state_response.text().await.expect("should read response body");
+    let state_json = state_response
+        .text()
+        .await
+        .expect("should read response body");
     let state: serde_json::Value =
         serde_json::from_str(&state_json).expect("should parse state JSON");
 
@@ -321,10 +326,7 @@ async fn ac5_3_multi_event_sequence() {
 
     // Pool stats should be non-empty (both jobs' label sets)
     let pool_stats = &state["pool_stats"];
-    assert!(
-        pool_stats.is_array(),
-        "pool_stats should be an array"
-    );
+    assert!(pool_stats.is_array(), "pool_stats should be an array");
     let pool_stats_array = pool_stats.as_array().expect("pool_stats is array");
     assert!(
         !pool_stats_array.is_empty(),

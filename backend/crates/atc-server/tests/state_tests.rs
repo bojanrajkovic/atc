@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 mod common;
-use common::{fixture_workflow_run_requested, fixture_workflow_job_queued};
+use common::{fixture_workflow_job_queued, fixture_workflow_run_requested};
 
 /// Setup an ephemeral HTTP server for testing.
 async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState>) {
@@ -23,9 +23,7 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
-    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let main_addr = main_listener.local_addr().unwrap();
 
     tokio::spawn(async move {
@@ -57,7 +55,11 @@ async fn test_ac4_1_empty_state() {
     assert_eq!(json["seq"], 0, "seq should be 0 when no events ingested");
     assert_eq!(json["runs"], serde_json::json!([]), "runs should be empty");
     assert_eq!(json["jobs"], serde_json::json!([]), "jobs should be empty");
-    assert_eq!(json["pool_stats"], serde_json::json!([]), "pool_stats should be empty");
+    assert_eq!(
+        json["pool_stats"],
+        serde_json::json!([]),
+        "pool_stats should be empty"
+    );
 }
 
 /// AC4.2: GET /v1/state after workflow_run_requested webhook returns seq: 1, run in runs
@@ -99,8 +101,16 @@ async fn test_ac4_2_state_after_run_event() {
         !json["runs"].as_array().unwrap().is_empty(),
         "runs should contain the workflow run"
     );
-    assert_eq!(json["jobs"], serde_json::json!([]), "jobs should still be empty");
-    assert_eq!(json["pool_stats"], serde_json::json!([]), "pool_stats should still be empty");
+    assert_eq!(
+        json["jobs"],
+        serde_json::json!([]),
+        "jobs should still be empty"
+    );
+    assert_eq!(
+        json["pool_stats"],
+        serde_json::json!([]),
+        "pool_stats should still be empty"
+    );
 }
 
 /// AC4.3: GET /v1/state after workflow_job_queued webhook returns pool_stats non-empty

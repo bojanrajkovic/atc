@@ -27,10 +27,7 @@ pub async fn ws_handler(
 }
 
 /// Per-connection task: forward broadcast events as JSON text frames.
-async fn handle_socket(
-    mut socket: WebSocket,
-    mut rx: broadcast::Receiver<SeqEvent>,
-) {
+async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEvent>) {
     tracing::info!("WebSocket client connected");
 
     loop {

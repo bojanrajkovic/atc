@@ -47,9 +47,7 @@ async fn readyz() -> Json<HealthResponse> {
 /// read, ensuring no webhook can commit between them. This
 /// guarantees the cursor matches the snapshot content: a response
 /// at `seq: N` reflects exactly all events with event seq < N.
-async fn state_handler(
-    State(state): State<Arc<AppState>>,
-) -> Json<StateSnapshot> {
+async fn state_handler(State(state): State<Arc<AppState>>) -> Json<StateSnapshot> {
     let seq_guard = state.seq.lock().await;
     let (result, pool_stats) = state.store.snapshot().await;
     let seq = *seq_guard;

@@ -109,13 +109,13 @@ async fn ac3_2_ws_receives_webhook_event() {
     };
 
     // Deserialize as SeqEvent and verify the structure
-    let seq_event: SeqEvent = serde_json::from_str(&text)
-        .expect("SeqEvent JSON deserialization should succeed");
+    let seq_event: SeqEvent =
+        serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
 
     assert_eq!(seq_event.seq, 0, "First event should have seq=0");
     // Just verify it's a Run event variant (don't deep-inspect the enum)
     match &seq_event.event {
-        atc_github::WebhookEvent::Run(_) => {},
+        atc_github::WebhookEvent::Run(_) => {}
         atc_github::WebhookEvent::Job(_) => panic!("Expected Run event, got Job"),
     }
 }
@@ -174,10 +174,10 @@ async fn ac3_3_multiple_clients_receive_same_event() {
         _ => panic!("Expected text frame on socket2"),
     };
 
-    let seq_event1: SeqEvent = serde_json::from_str(&text1)
-        .expect("SeqEvent 1 JSON deserialization should succeed");
-    let seq_event2: SeqEvent = serde_json::from_str(&text2)
-        .expect("SeqEvent 2 JSON deserialization should succeed");
+    let seq_event1: SeqEvent =
+        serde_json::from_str(&text1).expect("SeqEvent 1 JSON deserialization should succeed");
+    let seq_event2: SeqEvent =
+        serde_json::from_str(&text2).expect("SeqEvent 2 JSON deserialization should succeed");
 
     // Both should have the same seq
     assert_eq!(
@@ -236,8 +236,8 @@ async fn ac3_4_disconnect_does_not_crash_server() {
         _ => panic!("Expected text frame on socket2"),
     };
 
-    let seq_event: SeqEvent = serde_json::from_str(&text)
-        .expect("SeqEvent JSON deserialization should succeed");
+    let seq_event: SeqEvent =
+        serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
     assert_eq!(seq_event.seq, 0, "Client 2 should receive the event");
 }
 
