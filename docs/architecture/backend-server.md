@@ -180,11 +180,119 @@ Prometheus discovers the endpoint (via ServiceMonitor or pod annotations); the
 port is always open so that `kubectl port-forward` and ad-hoc `curl` work
 without chart-level changes.
 
+## Server Wiring
+
+The server wires together `atc-core` (state store) and `atc-github` (webhook parsing) into a cohesive HTTP API. The design separates **state mutation** (webhook ingestion) from **state delivery** (REST snapshot and WebSocket stream), allowing each path to evolve independently.
+
+### AppState
+
+A shared `AppState` struct is passed to all handlers via Axum's `State` extractor:
+
+```rust
+struct AppState {
+    store: Arc<StateStore>,
+    webhook_tx: broadcast::Sender<SeqEvent>,
+    webhook_secret: Option<String>,
+    seq: AtomicU64,
+}
+```
+
+- **`store`** — Reference to the shared `atc-core` StateStore. All webhook events are applied here, and REST/WebSocket endpoints read from here.
+- **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
+- **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
+- **`seq`** — `AtomicU64` counter incremented on each successfully ingested event. Provides a monotonic ordering cursor for snapshot/stream reconciliation. Resets on server restart (consistent with in-memory-only store).
+
+### Webhook Ingestion (`POST /v1/webhooks/github`)
+
+**Responsibility:** Receive GitHub webhook payloads, verify signatures, parse to domain events, apply to store, and publish to broadcast channel.
+
+**Flow:**
+1. Extract `X-GitHub-Event` header and raw body from HTTP request
+2. If `webhook_secret` is configured, verify HMAC-SHA256 signature from `X-Hub-Signature-256` header (via `atc_github::verify_signature`). Return 401 if verification fails.
+3. Parse payload via `atc_github::parse_webhook(event_type, body)`, yielding one of:
+   - `ParseResult::Parsed(WebhookEvent)` — Continue to store ingestion
+   - `ParseResult::Skipped { event_type }` — Return 200 with `{"status": "skipped"}`
+   - `ParseResult::Err(ParseError)` — Return 422 with error details
+4. Apply the parsed event to the store via `store.apply_event(domain_event)`. If the transition is invalid (e.g., backward transition from Completed to InProgress), log warning and continue (not a 500 error).
+5. Atomically increment `seq` by 1, assigning the next sequence number to this event.
+6. Broadcast a `SeqEvent { seq, event }` to the webhook channel. WebSocket subscribers receive it immediately.
+7. Return 200 with `{"status": "processed"}`.
+
+**Error responses:**
+- **400** — Missing `X-GitHub-Event` header
+- **401** — Invalid or missing signature when secret is configured; SHA-1 signature when SHA-256 is expected
+- **422** — Malformed JSON body or unknown action/conclusion values
+
+**Ordering guarantee:** `seq` values are strictly monotonically increasing with no gaps. Consecutive webhook ingestions increment the counter by exactly 1 per event.
+
+### WebSocket Event Stream (`GET /v1/ws`)
+
+**Responsibility:** Accept WebSocket upgrades and push `SeqEvent`s to connected clients in real time.
+
+**Flow:**
+1. Accept WebSocket upgrade request via Axum's `WebSocketUpgrade` extractor
+2. Create a new broadcast receiver: `webhook_tx.subscribe()`
+3. Spawn a task that:
+   - Awaits messages from the receiver in a loop
+   - Serializes each `SeqEvent` to JSON
+   - Sends the JSON as a text frame to the WebSocket client
+   - On `RecvError::Lagged` (buffer overflow), logs warning but does not disconnect — the client can recover by fetching `/v1/state` to resync
+4. If the client disconnects, the task exits cleanly (no crash; other clients unaffected)
+
+**Lag handling:** If a client is slow and the broadcast channel buffer overflows, `recv()` returns `Err(RecvError::Lagged)`. The handler logs this as a warning and continues, allowing the client to reconnect and fetch the current state via REST. This prevents one slow client from blocking or crashing the server.
+
+### REST State Snapshot (`GET /v1/state`)
+
+**Responsibility:** Return the full current state snapshot and the next `seq` to assign.
+
+**Flow:**
+1. Acquire a read lock on the store
+2. Serialize the current state into a `StateSnapshot`:
+   ```rust
+   struct StateSnapshot {
+       seq: u64,           // Next seq to assign; acts as a cursor
+       runs: Vec<WorkflowRun>,
+       jobs: Vec<Job>,
+       pool_stats: Vec<PoolStat>,
+   }
+   ```
+3. The `seq` value reflects the state: all events with `seq < N` are reflected in the snapshot; the next event will receive `seq = N`.
+4. Return 200 with the JSON snapshot.
+
+**Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `seq`, then connect to `GET /v1/ws` and filter incoming `SeqEvent`s to those with `seq >= cursor`. This protocol allows robust reconnection and bootstrap.
+
+### Configuration
+
+Server wiring configuration extends the existing figment-based config:
+
+- **`github.webhook_secret`** (`ATC_GITHUB__WEBHOOK_SECRET` env var) — Optional string. If present, all webhook requests must carry a valid HMAC-SHA256 signature. If absent, signatures are not required or verified.
+
+### Lifecycle Wiring
+
+In `main.rs`:
+1. Load config via `Config::load()`
+2. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
+3. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
+4. Create `AppState` with all components and pass to Axum via `.with_state()`
+5. Start background eviction task: `start_eviction_task(store.clone())`
+6. Bind the server to `http_addr`
+7. On graceful shutdown, abort the eviction task
+
+The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
+
+### Modules
+
+- **`state.rs`** — `AppState` struct, `SeqEvent`, `StateSnapshot` types, and helper functions
+- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`
+- **`ws.rs`** — WebSocket connection handling and message broadcast logic
+
 ## Files
 
-- `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition
-- `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, Config::load()
-- `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz endpoints)
+- `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition, eviction task lifecycle
+- `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
+- `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
+- `backend/crates/atc-server/src/state.rs` — AppState struct, SeqEvent, StateSnapshot types
+- `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars
