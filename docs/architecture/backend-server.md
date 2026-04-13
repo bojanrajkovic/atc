@@ -215,15 +215,15 @@ struct AppState {
    - `ParseResult::Err(ParseError)` — Return 422 with error details
 4. Acquire the `seq` mutex. Apply the parsed event to the store via `store.apply_event(domain_event)`. If the transition is invalid (e.g., backward transition from Completed to InProgress), log warning and continue (not a 500 error).
 5. Increment `seq` by 1 (under the same mutex guard), assigning the next sequence number to this event.
-6. Release the mutex, then broadcast a `SeqEvent { seq, event }` to the webhook channel. WebSocket subscribers receive it immediately.
-7. Return 200 with `{"status": "processed"}`.
+6. Broadcast a `SeqEvent { seq, event }` to the webhook channel (still under the mutex). WebSocket subscribers receive it immediately.
+7. Release the mutex. Return 200 with `{"status": "processed"}`.
 
 **Error responses:**
 - **400** — Missing `X-GitHub-Event` header
 - **401** — Invalid or missing signature when secret is configured; SHA-1 signature when SHA-256 is expected
 - **422** — Malformed JSON body or unknown action/conclusion values
 
-**Ordering guarantee:** The `seq` mutex serializes the critical section (store mutation + seq assignment), so `seq` values are strictly monotonically increasing with no gaps, and their order always matches the store commit order. The mutex is released before broadcasting to avoid holding it while waking WS tasks.
+**Ordering guarantee:** The `seq` mutex serializes the entire critical section (store mutation + seq assignment + broadcast), so `seq` values are strictly monotonically increasing with no gaps, their order always matches the store commit order, and all events up to a given seq have been broadcast before the mutex is released. This means `state_handler` can never observe a seq cursor that advertises events WS clients haven't received yet.
 
 ### WebSocket Event Stream (`GET /v1/ws`)
 

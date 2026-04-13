@@ -181,25 +181,26 @@ async fn webhook_handler(
                     .is_ok(),
             };
 
-            let seq_event = if store_ok {
+            if store_ok {
                 let seq = *seq_guard;
                 *seq_guard += 1;
-                Some(SeqEvent { seq, event: *event })
-            } else {
-                None
-            };
 
-            // Release the mutex before broadcasting (broadcast doesn't
-            // need serialization and we don't want to hold the lock
-            // while waking potentially many WS tasks).
-            drop(seq_guard);
-
-            if let Some(seq_event) = seq_event {
-                tracing::info!(event_type, seq = seq_event.seq, "event processed");
+                // Broadcast while still holding the mutex. send() is
+                // synchronous (pushes into a bounded ring buffer) so
+                // this is cheap. Holding through broadcast ensures that
+                // when state_handler acquires the mutex, all events up
+                // to that seq have already been broadcast — no window
+                // where a snapshot cursor advertises an event that WS
+                // clients haven't received yet.
+                let seq_event = SeqEvent { seq, event: *event };
                 let _ = state.webhook_tx.send(seq_event);
+
+                tracing::info!(event_type, seq, "event processed");
             } else {
                 tracing::info!(event_type, "event accepted (transition already applied)");
             }
+
+            drop(seq_guard);
 
             (
                 StatusCode::OK,
