@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use atc_github::WebhookEvent;
 use tokio::sync::broadcast;
@@ -23,7 +23,7 @@ pub struct AppState {
 ///
 /// Carried over the broadcast channel and sent to WebSocket clients as JSON.
 /// Clients use `seq` to reconcile the REST snapshot with the live event stream.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SeqEvent {
     /// Monotonic sequence number assigned at ingestion time.
     pub seq: u64,
