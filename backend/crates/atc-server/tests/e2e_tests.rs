@@ -5,8 +5,6 @@
 //! and verifies state via GET /v1/state and WebSocket messages. Tests exercise the full stack
 //! through real network I/O with no shortcuts.
 
-#![allow(dead_code)]
-
 mod common;
 
 use std::net::SocketAddr;
@@ -60,17 +58,6 @@ async fn start_test_server() -> SocketAddr {
     });
 
     main_addr
-}
-
-/// Compute HMAC-SHA256 signature in the format GitHub expects: sha256=<hex>
-fn compute_signature(secret: &[u8], body: &[u8]) -> String {
-    use hmac::{Hmac, KeyInit, Mac};
-    use sha2::Sha256;
-    type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(secret).unwrap();
-    mac.update(body);
-    let digest = mac.finalize();
-    format!("sha256={}", const_hex::encode(digest.into_bytes()))
 }
 
 // ============================================================================

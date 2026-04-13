@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-11 (updated 2026-04-11 for GitHub API Integration and Domain Model sections)
+Last verified: 2026-04-12 (updated 2026-04-12 for Server Wiring section)
 
 ## Purpose
 

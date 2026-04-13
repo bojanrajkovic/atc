@@ -34,7 +34,7 @@ These rules are enforced by implementation and verified by tests:
 ## Testing
 
 ```bash
-cargo test -p atc-server        # 60+ tests across three tiers
+cargo test -p atc-server        # 36 tests across three tiers
 cargo clippy -p atc-server -- -D warnings
 cargo test -p atc-server --test e2e_tests  # 3 full-stack e2e tests
 ```
