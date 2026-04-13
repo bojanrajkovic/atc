@@ -12,6 +12,7 @@ fn config_load_defaults() {
         std::env::remove_var("ATC_DATABASE_URL");
         std::env::remove_var("ATC_LOG_FILTER");
         std::env::remove_var("ATC_LOG_FORMAT");
+        std::env::remove_var("ATC_GITHUB__WEBHOOK_SECRET");
     }
 
     let config = Config::load().expect("Config::load() should succeed with defaults");
@@ -136,4 +137,52 @@ fn config_load_invalid_log_format() {
     unsafe {
         std::env::remove_var("ATC_LOG_FORMAT");
     }
+}
+
+/// Test 5: GitHub webhook secret loads from env (server-wiring.AC6.1).
+#[test]
+#[serial_test::serial]
+fn config_github_webhook_secret_set() {
+    // Clean up any existing env vars
+    unsafe {
+        std::env::remove_var("ATC_GITHUB__WEBHOOK_SECRET");
+    }
+
+    // Set the webhook secret env var
+    unsafe {
+        std::env::set_var("ATC_GITHUB__WEBHOOK_SECRET", "mysecret");
+    }
+
+    let config = Config::load().expect("Config::load() should succeed");
+
+    // Verify the webhook secret is set
+    assert_eq!(
+        config.github.webhook_secret,
+        Some("mysecret".to_string()),
+        "webhook_secret should be loaded from ATC_GITHUB__WEBHOOK_SECRET"
+    );
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("ATC_GITHUB__WEBHOOK_SECRET");
+    }
+}
+
+/// Test 6: GitHub webhook secret defaults to None (server-wiring.AC6.2).
+#[test]
+#[serial_test::serial]
+fn config_github_webhook_secret_none() {
+    // Clean up any existing env vars
+    unsafe {
+        std::env::remove_var("ATC_GITHUB__WEBHOOK_SECRET");
+    }
+
+    let config = Config::load().expect("Config::load() should succeed");
+
+    // Verify the webhook secret is None by default
+    assert_eq!(
+        config.github.webhook_secret,
+        None,
+        "webhook_secret should default to None when not set"
+    );
 }
