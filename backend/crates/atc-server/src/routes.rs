@@ -1,10 +1,16 @@
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use axum::{Json, Router, http::StatusCode, routing::get};
+use axum::{
+    Json, Router, extract::State, http::{HeaderMap, StatusCode}, body::Bytes,
+    routing::{get, post},
+};
 use axum_prometheus::PrometheusMetricLayer;
 use serde::Serialize;
 
-use crate::state::AppState;
+use atc_github::{ParseResult, parse_webhook, verify_signature};
+
+use crate::state::{AppState, SeqEvent};
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -36,7 +42,134 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/v1/webhooks/github", post(webhook_handler))
         // Removed endpoints: explicitly return 404 instead of falling through to SPA
         .route("/health", get(removed_endpoint_404))
         .layer(prometheus_layer)
+}
+
+/// Handle incoming GitHub webhook payloads.
+///
+/// Verifies HMAC signature (when configured), parses the payload into domain
+/// events, applies them to the state store, assigns a monotonic seq number,
+/// and broadcasts to WebSocket clients.
+#[tracing::instrument(skip(state, body))]
+async fn webhook_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> (StatusCode, Json<serde_json::Value>) {
+    // 1. Extract X-GitHub-Event header
+    let event_type = match headers.get("x-github-event").and_then(|v| v.to_str().ok()) {
+        Some(et) => et,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "missing X-GitHub-Event header"})),
+            );
+        }
+    };
+
+    tracing::debug!(event_type, "webhook received");
+
+    // 2. Verify HMAC-SHA256 signature if secret is configured
+    if let Some(ref secret) = state.webhook_secret {
+        let signature = match headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+        {
+            Some(sig) => sig,
+            None => {
+                tracing::warn!("missing X-Hub-Signature-256 header");
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": "missing X-Hub-Signature-256 header"})),
+                );
+            }
+        };
+
+        if let Err(_e) = verify_signature(secret.as_bytes(), &body, signature) {
+            tracing::warn!("HMAC verification failed");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "invalid signature"})),
+            );
+        }
+    }
+
+    // 3. Parse webhook payload
+    let result = match parse_webhook(event_type, &body) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, event_type, "webhook parse error");
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            );
+        }
+    };
+
+    // 4. Handle parse result
+    match result {
+        ParseResult::Parsed(event) => {
+            // Apply to store. StoreError variants are currently all
+            // deterministic (invalid state transitions) — retrying would
+            // fail identically, so we return 200 to prevent GitHub retries.
+            //
+            // Only assign seq and broadcast on successful store mutation.
+            // Failed transitions should not produce SeqEvents — clients
+            // must never receive events that aren't reflected in the store.
+            //
+            // Future: when state externalizes to a database, transient
+            // failures (connection errors, deadlocks) should return 5xx
+            // so GitHub retries. Add a new StoreError variant for those
+            // and take a different branch here.
+            let store_ok = match &*event {
+                atc_github::WebhookEvent::Run(envelope) => {
+                    state.store.apply_run_event(envelope.clone()).await
+                        .map_err(|e| tracing::warn!(error = %e, "store run transition warning"))
+                        .is_ok()
+                }
+                atc_github::WebhookEvent::Job(envelope) => {
+                    state.store.apply_job_event(envelope.clone()).await
+                        .map_err(|e| tracing::warn!(error = %e, "store job transition warning"))
+                        .is_ok()
+                }
+            };
+
+            if store_ok {
+                // Assign seq AFTER successful store mutation. fetch_add
+                // returns the OLD value — this becomes the event's assigned
+                // seq (0 for the first event, 1 for the second, etc.).
+                //
+                // The REST handler returns the live counter value (next seq
+                // to assign). After N events, counter = N. Clients discard
+                // buffered WS events with seq < snapshot_seq.
+                let seq = state.seq.fetch_add(1, Ordering::Release);
+
+                // Broadcast to WebSocket clients. Ignore send error (no receivers).
+                let seq_event = SeqEvent {
+                    seq,
+                    event: *event,
+                };
+                let _ = state.webhook_tx.send(seq_event);
+
+                tracing::info!(event_type, seq, "event processed");
+            } else {
+                tracing::info!(event_type, "event accepted (transition already applied)");
+            }
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"status": "processed"})),
+            )
+        }
+        ParseResult::Skipped { ref event_type } => {
+            tracing::debug!(event_type, "event skipped");
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"status": "skipped"})),
+            )
+        }
+    }
 }
