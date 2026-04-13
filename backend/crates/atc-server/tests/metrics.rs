@@ -46,7 +46,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     let main_addr = main_listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        let _ = axum::serve(main_listener, main_router).with_graceful_shutdown(async {}).await;
+        axum::serve(main_listener, main_router).await.unwrap();
     });
 
     // Step 7: Bind metrics listener on ephemeral port
@@ -54,7 +54,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     let metrics_addr = metrics_listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        let _ = axum::serve(metrics_listener, metrics_router).with_graceful_shutdown(async {}).await;
+        axum::serve(metrics_listener, metrics_router).await.unwrap();
     });
 
     (main_addr, metrics_addr)
