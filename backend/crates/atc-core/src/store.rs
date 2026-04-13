@@ -398,10 +398,10 @@ impl StateStore {
                 JobStatus::InProgress => entry.running += 1,
                 _ => {}
             }
-            if let Some(ref runner) = job.runner {
-                if let Some(ref name) = runner.group_name {
-                    entry.group_name = Some(name.clone());
-                }
+            if let Some(ref runner) = job.runner
+                && let Some(ref name) = runner.group_name
+            {
+                entry.group_name = Some(name.clone());
             }
         }
 
