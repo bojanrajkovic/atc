@@ -15,7 +15,7 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 | `main` | Server entry point, config loading, AppState creation, router setup, eviction task lifecycle |
 | `config` | figment-based Config struct, GitHubConfig with webhook_secret, Config::load() |
 | `routes` | HTTP route handlers: `POST /v1/webhooks/github`, `GET /v1/state`, `GET /v1/ws`, health/ready probes |
-| `state` | AppState struct, SeqEvent, StateSnapshot types |
+| `state` | AppState struct, SeqEvent type |
 | `ws` | WebSocket upgrade handler, broadcast subscription, SeqEvent serialization and push |
 | `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
 | `metrics` | Prometheus layer, build_info gauge, process collector |

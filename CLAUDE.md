@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-04-11
+Last verified: 2026-04-12
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -9,14 +9,14 @@ Last verified: 2026-04-11
 **ATC — Actions Traffic Control**
 Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite frontend.
 
-**Status:** Core domain model implemented in `atc-core`. Frontend and server remain skeleton. Both stacks compile, lint, and pass CI.
+**Status:** Core domain model in `atc-core`, GitHub webhook integration in `atc-github`, and server wiring in `atc-server` (webhook ingestion, WebSocket streaming, REST state) are implemented. Frontend remains skeleton. Both stacks compile, lint, and pass CI.
 
 ## Tech Stack
 
 - **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates:
   - `atc-core` — Domain model (WorkflowRun, Job, Step types; StateStore with event-driven mutations; TTL eviction)
   - `atc-github` — GitHub API integration (webhook parsing via `parse_webhook`, HMAC-SHA256 signature verification via `verify_signature`, event translation to atc-core domain types)
-  - `atc-server` — Axum HTTP server (routes, config, assets, metrics)
+  - `atc-server` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
 - **Frontend:** Svelte 5 + Vite + Tailwind v4 — standalone SPA at `frontend/` with OKLCH design system
 - **Package manager:** pnpm (via Corepack)
 - **Task runner:** just (see `justfile` for all commands)
