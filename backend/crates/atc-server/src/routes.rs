@@ -1,6 +1,10 @@
+use std::sync::Arc;
+
 use axum::{Json, Router, http::StatusCode, routing::get};
 use axum_prometheus::PrometheusMetricLayer;
 use serde::Serialize;
+
+use crate::state::AppState;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -25,7 +29,10 @@ async fn removed_endpoint_404() -> StatusCode {
 ///
 /// `prometheus_layer` is applied here so that every request to the main router
 /// is counted in `axum_http_requests_total`.
-pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router {
+///
+/// Returns a `Router<Arc<AppState>>` that will be attached to application state
+/// in `main.rs` via `.with_state()`.
+pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
