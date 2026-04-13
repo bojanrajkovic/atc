@@ -1,74 +1,12 @@
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-
-use atc_core::{SystemClock, StateStore};
-use atc_server::state::AppState;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use axum_prometheus::PrometheusMetricLayer;
-use std::sync::OnceLock;
-use std::time::Duration;
 use tower::ServiceExt;
 
-// Guard: PrometheusMetricLayer::pair() is called only once per test binary.
-// Tests that use this must be marked with #[serial_test::serial] to avoid concurrent execution.
-static PROMETHEUS_INIT: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
+mod common;
 
-/// Compute HMAC-SHA256 signature in the format GitHub expects: sha256=<hex>
-fn compute_signature(secret: &[u8], body: &[u8]) -> String {
-    use hmac::{Hmac, KeyInit, Mac};
-    use sha2::Sha256;
-    type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(secret).unwrap();
-    mac.update(body);
-    let digest = mac.finalize();
-    format!("sha256={}", const_hex::encode(digest.into_bytes()))
-}
-
-/// Build app with a specific webhook secret
-fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT.get_or_init(|| PrometheusMetricLayer::pair().0);
-    let store = Arc::new(StateStore::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let app_state = Arc::new(AppState {
-        store,
-        webhook_tx,
-        webhook_secret: Some(secret.to_string()),
-        seq: AtomicU64::new(0),
-    });
-    let app = atc_server::routes::api_routes(layer.clone())
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
-    (app, app_state)
-}
-
-/// Build app with no webhook secret (verification bypassed)
-fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT.get_or_init(|| PrometheusMetricLayer::pair().0);
-    let store = Arc::new(StateStore::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let app_state = Arc::new(AppState {
-        store,
-        webhook_tx,
-        webhook_secret: None,
-        seq: AtomicU64::new(0),
-    });
-    let app = atc_server::routes::api_routes(layer.clone())
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
-    (app, app_state)
-}
-
-// Fixture: workflow_run_requested.json
-fn fixture_workflow_run_requested() -> Vec<u8> {
-    include_bytes!("../../atc-github/tests/fixtures/workflow_run_requested.json").to_vec()
-}
+use common::{
+    build_app_no_secret, build_app_with_secret, compute_signature, fixture_workflow_run_requested,
+};
 
 /// AC1.1: Valid signature with matching secret returns 200
 #[tokio::test]
@@ -96,8 +34,7 @@ async fn webhook_hmac_valid_signature_returns_200() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("failed to read response body");
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).expect("response is valid JSON");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
     assert_eq!(json["status"], "processed");
 }
 
@@ -124,8 +61,7 @@ async fn webhook_hmac_no_secret_no_signature_returns_200() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("failed to read response body");
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).expect("response is valid JSON");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
     assert_eq!(json["status"], "processed");
 }
 
@@ -143,7 +79,10 @@ async fn webhook_hmac_invalid_signature_returns_401() {
                 .method("POST")
                 .uri("/v1/webhooks/github")
                 .header("x-github-event", "workflow_run")
-                .header("x-hub-signature-256", "sha256=0000000000000000000000000000000000000000000000000000000000000000")
+                .header(
+                    "x-hub-signature-256",
+                    "sha256=0000000000000000000000000000000000000000000000000000000000000000",
+                )
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -154,8 +93,7 @@ async fn webhook_hmac_invalid_signature_returns_401() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("failed to read response body");
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).expect("response is valid JSON");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
     assert_eq!(json["error"], "invalid signature");
 }
 
@@ -183,8 +121,7 @@ async fn webhook_hmac_missing_signature_header_returns_401() {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("failed to read response body");
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).expect("response is valid JSON");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
     assert_eq!(json["error"], "missing X-Hub-Signature-256 header");
 }
 
@@ -202,7 +139,10 @@ async fn webhook_hmac_sha1_signature_rejected_returns_401() {
                 .method("POST")
                 .uri("/v1/webhooks/github")
                 .header("x-github-event", "workflow_run")
-                .header("x-hub-signature-256", "sha1=0000000000000000000000000000000000000000")
+                .header(
+                    "x-hub-signature-256",
+                    "sha1=0000000000000000000000000000000000000000",
+                )
                 .body(Body::from(body))
                 .unwrap(),
         )
