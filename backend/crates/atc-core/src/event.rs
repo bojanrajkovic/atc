@@ -13,6 +13,7 @@ use crate::types::{JobId, RunId};
 
 /// Action that occurred on a workflow run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", content = "data")]
 #[ts(export)]
 pub enum RunEvent {
     /// New run appeared (maps to `workflow_run` `requested` action).
@@ -68,6 +69,7 @@ pub struct RunEventEnvelope {
 
 /// Action that occurred on a job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", content = "data")]
 #[ts(export)]
 pub enum JobEvent {
     /// Job entered the queue.
