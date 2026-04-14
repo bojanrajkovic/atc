@@ -71,7 +71,14 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**/*", "!!**/*.svelte", "!!**/node_modules", "!!**/dist", "!!**/pnpm-lock.yaml"]
+    "includes": [
+      "**/*",
+      "!!**/*.svelte",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!**/pnpm-lock.yaml",
+      "!!**/src/lib/types/generated"
+    ]
   },
   "assist": {
     "enabled": true,
