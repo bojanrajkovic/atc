@@ -22,6 +22,7 @@ tokio-util = "0.7.18"
 tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+ts-rs = { workspace = true, features = ["serde-compat"] }
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }
