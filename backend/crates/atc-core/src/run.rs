@@ -2,12 +2,14 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::types::{RepoKey, RunId};
 
 /// Status of a workflow run in its lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
+#[ts(export)]
 pub enum RunStatus {
     /// Run is waiting to be processed.
     Queued,
@@ -18,8 +20,9 @@ pub enum RunStatus {
 }
 
 /// Conclusion of a completed workflow run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
+#[ts(export)]
 pub enum RunConclusion {
     /// All jobs succeeded.
     Success,
@@ -45,8 +48,9 @@ pub enum RunConclusion {
 ///
 /// Top-level container that groups related jobs. Created and updated
 /// by `RunEvent`s (Phase 2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct WorkflowRun {
     /// Unique identifier for this run.
     pub id: RunId,

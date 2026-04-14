@@ -5,9 +5,11 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Unique identifier for a workflow run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct RunId(pub i64);
 
 impl fmt::Display for RunId {
@@ -17,7 +19,8 @@ impl fmt::Display for RunId {
 }
 
 /// Unique identifier for a job within a workflow run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct JobId(pub i64);
 
 impl fmt::Display for JobId {
@@ -29,8 +32,9 @@ impl fmt::Display for JobId {
 /// Repository identifier as an (org, repo) pair.
 ///
 /// Used as the primary filter key for access-controlled queries.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct RepoKey {
     /// The GitHub organization or user name.
     pub org: String,
@@ -59,7 +63,8 @@ impl fmt::Display for RepoKey {
 /// Wraps a [`BTreeSet<String>`] to provide deterministic ordering and
 /// deduplication. Two label sets with the same labels in different
 /// order compare as equal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct LabelSet(BTreeSet<String>);
 
 impl Hash for LabelSet {

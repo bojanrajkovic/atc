@@ -13,6 +13,7 @@ use chrono::TimeDelta;
 use tokio::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::clock::Clock;
 use crate::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
@@ -99,7 +100,9 @@ pub struct QueryResult {
 ///
 /// Computed on read from live job state — not stored separately.
 /// Each entry represents a unique label set with aggregated counts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct RunnerPoolStats {
     /// The set of labels identifying this pool.
     pub labels: LabelSet,
