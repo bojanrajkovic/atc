@@ -103,6 +103,17 @@ jobs:
         working-directory: backend
         run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
 
+      - name: Verify generated TypeScript types are current
+        run: |
+          mkdir -p frontend/src/lib/types/generated
+          cd backend
+          TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace 2>/dev/null
+          cd ..
+          git diff --exit-code frontend/src/lib/types/generated/ || {
+            echo "::error::Generated TypeScript types are out of date. Run 'just types' and commit the changes."
+            exit 1
+          }
+
       - name: Upload coverage to Codecov
         if: github.repository == 'bojanrajkovic/atc'
         uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
