@@ -107,7 +107,7 @@ jobs:
         run: |
           mkdir -p frontend/src/lib/types/generated
           cd backend
-          TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace 2>/dev/null
+          TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace 2>&1 | tail -1
           cd ..
           git diff --exit-code frontend/src/lib/types/generated/ || {
             echo "::error::Generated TypeScript types are out of date. Run 'just types' and commit the changes."

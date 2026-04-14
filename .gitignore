@@ -38,5 +38,8 @@ tmp/
 .env.*
 !.env.example
 
+# ts-rs generated TypeScript bindings — canonical location is frontend/src/lib/types/generated/
+backend/**/bindings/
+
 # Implementation plans (generated, not source-controlled)
 docs/implementation-plans/
