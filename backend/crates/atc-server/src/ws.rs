@@ -27,33 +27,47 @@ pub async fn ws_handler(
 }
 
 /// Per-connection task: forward broadcast events as JSON text frames.
+///
+/// Uses `tokio::select!` to race broadcast recv against socket recv,
+/// so idle-period client disconnects are detected promptly rather than
+/// waiting for the next broadcast event to trigger a failed send.
 async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEvent>) {
     tracing::info!("WebSocket client connected");
 
     loop {
-        match rx.recv().await {
-            Ok(seq_event) => {
-                let json = match serde_json::to_string(&seq_event) {
-                    Ok(j) => j,
-                    Err(e) => {
-                        tracing::error!(error = %e, "failed to serialize SeqEvent");
-                        continue;
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(seq_event) => {
+                        let json = match serde_json::to_string(&seq_event) {
+                            Ok(j) => j,
+                            Err(e) => {
+                                tracing::error!(error = %e, "failed to serialize SeqEvent");
+                                continue;
+                            }
+                        };
+                        if socket.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                        tracing::debug!(seq = seq_event.seq, "forwarded event to WS client");
                     }
-                };
-                if socket.send(Message::Text(json.into())).await.is_err() {
-                    // Client disconnected — exit loop
-                    break;
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed = n, "WebSocket client lagging");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
                 }
-                tracing::debug!(seq = seq_event.seq, "forwarded event to WS client");
             }
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!(missed = n, "WebSocket client lagging");
-                // Continue receiving — don't disconnect. Client can
-                // recover via GET /v1/state when it notices gaps.
-            }
-            Err(broadcast::error::RecvError::Closed) => {
-                // Channel closed — server shutting down
-                break;
+            msg = socket.recv() => {
+                match msg {
+                    // Client sent close or the connection dropped.
+                    Some(Ok(Message::Close(_))) | None => break,
+                    // Ignore all other client-to-server messages.
+                    Some(Ok(_)) => {}
+                    // Read error — connection is broken.
+                    Some(Err(_)) => break,
+                }
             }
         }
     }
