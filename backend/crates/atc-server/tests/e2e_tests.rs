@@ -325,11 +325,11 @@ async fn ac5_3_multi_event_sequence() {
     );
 
     // Pool stats should be non-empty (both jobs' label sets)
-    let pool_stats = &state["pool_stats"];
-    assert!(pool_stats.is_array(), "pool_stats should be an array");
-    let pool_stats_array = pool_stats.as_array().expect("pool_stats is array");
+    let pool_stats = &state["poolStats"];
+    assert!(pool_stats.is_array(), "poolStats should be an array");
+    let pool_stats_array = pool_stats.as_array().expect("poolStats is array");
     assert!(
         !pool_stats_array.is_empty(),
-        "pool_stats should not be empty after two jobs"
+        "poolStats should not be empty after two jobs"
     );
 }
