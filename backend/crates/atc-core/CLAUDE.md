@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-04-11
+Last verified: 2026-04-12
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -16,7 +16,7 @@ Core domain types, state store, and business logic for ATC. Source-agnostic — 
 | `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`, state transitions |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`, state transitions |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |
-| `store` | `StateStore` — in-memory state with event ingestion, queries, pool stats, TTL eviction |
+| `store` | `StateStore` — in-memory state with event ingestion, queries, `snapshot()` (atomic consistent read), pool stats, TTL eviction |
 | `clock` | `Clock` trait, `SystemClock`, `TestClock` (behind `test-support` feature) |
 
 ## Contracts

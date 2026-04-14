@@ -1,6 +1,6 @@
 # CLAUDE.md -- atc-github
 
-Last verified: 2026-04-11
+Last verified: 2026-04-12
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (GitHub API Integration section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -27,12 +27,13 @@ These rules are enforced by the implementation and verified by 42 tests:
 - **Structured error context:** Every `ParseError` variant carries enough context (event type, action, value) for observability without the raw payload.
 - **SHA-256 only:** `verify_signature` accepts `sha256=<hex>` signatures. SHA-1 is explicitly rejected (`RejectedAlgorithm`), unknown algorithms return `UnknownAlgorithm`.
 - **Constant-time comparison:** Signature verification uses HMAC's `verify_slice` for timing-safe comparison.
+- **Serializable public types:** `WebhookEvent` and `ParseResult` derive `Clone`, `Serialize` (and `Deserialize` for `WebhookEvent`), enabling downstream broadcast and REST snapshot serialization.
 - **Forward compatibility:** Serde types use default deny-unknown-fields=false, so new GitHub payload fields are silently ignored.
 
 ## Dependencies
 
 - **Uses:** `atc-core` (domain types: `RunEvent`, `JobEvent`, envelope structs, `RunnerInfo`, `Step`, `StepStatus`, conclusions, IDs)
-- **Used by:** `atc-server` (future: webhook route handler will call `verify_signature` then `parse_webhook`)
+- **Used by:** `atc-server` (webhook route handler calls `verify_signature` then `parse_webhook`)
 - **External:** `hmac`/`sha2` for HMAC-SHA256, `const-hex` for hex decoding, `serde`/`serde_json` for JSON, `chrono` for timestamps, `thiserror` for error types
 
 ## Testing

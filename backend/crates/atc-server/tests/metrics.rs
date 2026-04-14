@@ -1,8 +1,12 @@
 //! Integration tests for the metrics side-port.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
+use atc_core::{StateStore, SystemClock};
 use atc_server::routes;
+use atc_server::state::{AppState, SeqEvent};
 use tokio::net::TcpListener;
 
 /// Build the full server setup with metrics registration.
@@ -19,10 +23,23 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     // Step 3: Spawn process collector task
     atc_server::metrics::spawn_process_collector();
 
-    // Step 4: Build main router using the production api_routes function
-    let main_router = routes::api_routes(prometheus_layer);
+    // Step 4: Create app state
+    let store = Arc::new(StateStore::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let app_state = Arc::new(AppState {
+        store,
+        webhook_tx,
+        webhook_secret: None,
+        seq: tokio::sync::Mutex::new(0),
+    });
 
-    // Step 5: Bind main listener on ephemeral port
+    // Step 5: Build main router using the production api_routes function
+    let main_router = routes::api_routes(prometheus_layer).with_state(app_state);
+
+    // Step 6: Bind main listener on ephemeral port
     let main_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let main_addr = main_listener.local_addr().unwrap();
 
@@ -30,7 +47,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         axum::serve(main_listener, main_router).await.unwrap();
     });
 
-    // Step 6: Bind metrics listener on ephemeral port
+    // Step 7: Bind metrics listener on ephemeral port
     let metrics_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let metrics_addr = metrics_listener.local_addr().unwrap();
 

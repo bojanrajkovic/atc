@@ -4,10 +4,16 @@
 mod assets;
 
 use std::process;
+use std::sync::Arc;
+use std::time::Duration;
 
+use tokio::sync::Mutex;
+
+use atc_core::{StateStore, SystemClock};
 use atc_server::config;
 use atc_server::metrics;
 use atc_server::routes;
+use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 
 async fn shutdown_signal(shutdown: CancellationToken) {
@@ -57,6 +63,27 @@ async fn main() {
             .init();
     }
 
+    // Create the shared state store with system clock and 1-hour TTL for completed entries.
+    let store = Arc::new(StateStore::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+
+    // Start the background eviction task. Runs every 60 seconds.
+    let eviction_handle = store.start_eviction_task(Duration::from_secs(60));
+
+    // Create the broadcast channel for pushing domain events to WebSocket clients.
+    // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
+    // and should re-fetch via GET /v1/state.
+    let (webhook_tx, _rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+
+    let app_state = Arc::new(AppState {
+        store,
+        webhook_tx,
+        webhook_secret: cfg.github.webhook_secret.clone(),
+        seq: Mutex::new(0),
+    });
+
     // Build Prometheus layer + metrics side-port router. Must happen before
     // register_build_info() and spawn_process_collector() because pair()
     // installs the global metrics recorder.
@@ -64,7 +91,9 @@ async fn main() {
     metrics::register_build_info();
     metrics::spawn_process_collector();
 
-    let app = routes::api_routes(prometheus_layer).fallback(assets::fallback_handler());
+    let app = routes::api_routes(prometheus_layer)
+        .with_state(app_state)
+        .fallback(assets::fallback_handler());
 
     // Bind metrics listener first so a port-conflict failure is detected before
     // the main listener opens (AC2.5: bind failure exits non-zero cleanly).
@@ -118,4 +147,7 @@ async fn main() {
             }
         }
     }
+
+    // Clean up: abort the eviction background task
+    eviction_handle.abort();
 }

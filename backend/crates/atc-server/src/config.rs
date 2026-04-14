@@ -22,6 +22,12 @@ impl Default for LogFormat {
     }
 }
 
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+pub struct GitHubConfig {
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
+}
+
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Config {
     pub http_addr: SocketAddr,
@@ -29,6 +35,7 @@ pub struct Config {
     pub database_url: Option<String>,
     pub log_filter: String,
     pub log_format: LogFormat,
+    pub github: GitHubConfig,
 }
 
 impl Default for Config {
@@ -39,6 +46,7 @@ impl Default for Config {
             database_url: None,
             log_filter: "info".to_string(),
             log_format: LogFormat::default(),
+            github: GitHubConfig::default(),
         }
     }
 }

@@ -2,8 +2,7 @@ use super::*;
 use chrono::Utc;
 
 use crate::webhook::types::{
-    HeadCommit, OwnerData, RepositoryData, StepData, WorkflowData, WorkflowJobData,
-    WorkflowRunData,
+    HeadCommit, OwnerData, RepositoryData, StepData, WorkflowData, WorkflowJobData, WorkflowRunData,
 };
 
 // ===== Test helpers =====

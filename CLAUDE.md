@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-04-11
+Last verified: 2026-04-12
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -9,14 +9,14 @@ Last verified: 2026-04-11
 **ATC — Actions Traffic Control**
 Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite frontend.
 
-**Status:** Core domain model implemented in `atc-core`. Frontend and server remain skeleton. Both stacks compile, lint, and pass CI.
+**Status:** Core domain model in `atc-core`, GitHub webhook integration in `atc-github`, and server wiring in `atc-server` (webhook ingestion, WebSocket streaming, REST state) are implemented. Frontend remains skeleton. Both stacks compile, lint, and pass CI.
 
 ## Tech Stack
 
 - **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates:
   - `atc-core` — Domain model (WorkflowRun, Job, Step types; StateStore with event-driven mutations; TTL eviction)
   - `atc-github` — GitHub API integration (webhook parsing via `parse_webhook`, HMAC-SHA256 signature verification via `verify_signature`, event translation to atc-core domain types)
-  - `atc-server` — Axum HTTP server (routes, config, assets, metrics)
+  - `atc-server` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
 - **Frontend:** Svelte 5 + Vite + Tailwind v4 — standalone SPA at `frontend/` with OKLCH design system
 - **Package manager:** pnpm (via Corepack)
 - **Task runner:** just (see `justfile` for all commands)
@@ -45,7 +45,7 @@ just build    # Production build
 - `backend/` — Rust workspace with three crates:
   - `backend/crates/atc-core/` — Domain model and state store (types: RunId, JobId, StepId; events: RunEvent, JobEvent; StateStore with RwLock and TTL eviction; Clock trait)
   - `backend/crates/atc-github/` — GitHub API integration (webhook parsing and translation to atc-core domain events, HMAC-SHA256 signature verification)
-  - `backend/crates/atc-server/` — Axum HTTP server (routes, config, asset serving, metrics, dev proxy)
+  - `backend/crates/atc-server/` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
 - `deploy/helm/` — Helm chart at `deploy/helm/atc/`
 - `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
@@ -87,6 +87,8 @@ This project uses a five-layer documentation model with a strict non-duplication
 - **Doc-staleness gate:** `scripts/check-docs-lefthook.sh` blocks push if source files changed without updating their mapped architecture doc. Mappings live in `scripts/doc-mapping.sh`.
 - **CI gates PRs:** All PRs must pass CI checks (lint, type-check, test, build) before merge. Path-filtered on PRs; full matrix on pushes to main. See `docs/architecture/ci-pipeline.md`.
 - **Non-duplication rule:** Each piece of documentation has exactly one canonical home. CLAUDE.md points to docs; it does not duplicate them.
+- **Slim CLAUDE.md in every domain directory:** Every subdirectory that represents a distinct domain (crates, frontend, helm chart, .github, etc.) must have a slim `CLAUDE.md` that states its purpose, points to canonical architecture docs, and provides domain-specific guidance. Do not duplicate architecture doc content — reference it. Follow the pattern established in `backend/crates/atc-core/CLAUDE.md`.
+- **AGENTS.md symlinks:** Every `CLAUDE.md` must have a corresponding `AGENTS.md` symlink (`ln -s CLAUDE.md AGENTS.md`) in the same directory. This ensures tools that look for either filename find the same content. Create both files together — never one without the other.
 
 ## Commit Format
 

@@ -57,7 +57,7 @@ pub enum ParseError {
 }
 
 /// Three-way result from [`parse_webhook`].
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum ParseResult {
     /// Successfully parsed and translated to a domain event.
     Parsed(Box<WebhookEvent>),
@@ -69,7 +69,7 @@ pub enum ParseResult {
 }
 
 /// A parsed webhook event carrying a domain event envelope.
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum WebhookEvent {
     /// A `workflow_run` event translated to a run event envelope.
     Run(RunEventEnvelope),
