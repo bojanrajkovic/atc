@@ -114,6 +114,15 @@ test:
 	wait $pid2 || fail=1
 	exit $fail
 
+# Generate TypeScript types from Rust structs via ts-rs
+types:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p frontend/src/lib/types/generated
+	cd backend
+	TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace 2>&1 | tail -1
+	echo "Types generated in frontend/src/lib/types/generated/"
+
 # Start development servers (parallel — both run in foreground)
 dev:
 	#!/usr/bin/env bash
