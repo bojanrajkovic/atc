@@ -34,7 +34,7 @@ pub async fn ws_handler(
 async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEvent>) {
     tracing::info!("WebSocket client connected");
 
-    loop {
+    let reason = loop {
         tokio::select! {
             result = rx.recv() => {
                 match result {
@@ -47,7 +47,7 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEve
                             }
                         };
                         if socket.send(Message::Text(json.into())).await.is_err() {
-                            break;
+                            break "send failed";
                         }
                         tracing::debug!(seq = seq_event.seq, "forwarded event to WS client");
                     }
@@ -55,22 +55,23 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEve
                         tracing::warn!(missed = n, "WebSocket client lagging");
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        break;
+                        break "broadcast channel closed";
                     }
                 }
             }
             msg = socket.recv() => {
                 match msg {
-                    // Client sent close or the connection dropped.
-                    Some(Ok(Message::Close(_))) | None => break,
-                    // Ignore all other client-to-server messages.
+                    Some(Ok(Message::Close(_))) => break "client sent close",
+                    None => break "connection dropped",
                     Some(Ok(_)) => {}
-                    // Read error — connection is broken.
-                    Some(Err(_)) => break,
+                    Some(Err(e)) => {
+                        tracing::warn!(error = %e, "WebSocket read error");
+                        break "read error";
+                    }
                 }
             }
         }
-    }
+    };
 
-    tracing::info!("WebSocket client disconnected");
+    tracing::info!(reason, "WebSocket client disconnected");
 }
