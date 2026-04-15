@@ -113,6 +113,12 @@ pub struct RunnerPoolStats {
     /// Runner group name from the most recently observed `RunnerInfo`
     /// for this label set, if available.
     pub group_name: Option<String>,
+    /// Whether this pool uses GitHub-hosted (elastic) runners.
+    /// Derived from `RunnerInfo.group_id == Some(0)` for any observed runner.
+    pub is_elastic: bool,
+    /// Total runner capacity for this pool, if known.
+    /// Always `None` until operator capacity configuration is implemented.
+    pub total: Option<u32>,
 }
 
 impl StateStore {
@@ -395,16 +401,22 @@ impl StateStore {
                     queued: 0,
                     running: 0,
                     group_name: None,
+                    is_elastic: false,
+                    total: None,
                 });
             match job.status {
                 JobStatus::Queued => entry.queued += 1,
                 JobStatus::InProgress => {
                     entry.running += 1;
                     // Track group_name from most recently observed runner (AC4.4)
-                    if let Some(ref runner) = job.runner
-                        && runner.group_name.is_some()
-                    {
-                        entry.group_name.clone_from(&runner.group_name);
+                    if let Some(ref runner) = job.runner {
+                        if runner.group_name.is_some() {
+                            entry.group_name.clone_from(&runner.group_name);
+                        }
+                        // Derive is_elastic: group_id == 0 means GitHub-hosted (AC3.3)
+                        if runner.group_id == Some(0) {
+                            entry.is_elastic = true;
+                        }
                     }
                 }
                 _ => {}
@@ -442,6 +454,8 @@ impl StateStore {
                     queued: 0,
                     running: 0,
                     group_name: None,
+                    is_elastic: false,
+                    total: None,
                 });
 
             match job.status {
@@ -451,10 +465,14 @@ impl StateStore {
                 JobStatus::InProgress => {
                     entry.running += 1;
                     // Track group_name from most recently observed runner (AC4.4)
-                    if let Some(ref runner) = job.runner
-                        && runner.group_name.is_some()
-                    {
-                        entry.group_name.clone_from(&runner.group_name);
+                    if let Some(ref runner) = job.runner {
+                        if runner.group_name.is_some() {
+                            entry.group_name.clone_from(&runner.group_name);
+                        }
+                        // Derive is_elastic: group_id == 0 means GitHub-hosted (AC3.3)
+                        if runner.group_id == Some(0) {
+                            entry.is_elastic = true;
+                        }
                     }
                 }
                 _ => {}
