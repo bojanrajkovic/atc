@@ -120,7 +120,7 @@ types:
 	set -euo pipefail
 	mkdir -p frontend/src/lib/types/generated
 	cd backend
-	TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace 2>&1 | tail -1
+	TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace -- export_bindings
 	echo "Types generated in frontend/src/lib/types/generated/"
 
 # Start development servers (parallel — both run in foreground)
