@@ -102,6 +102,56 @@ describe('ConnectionManager', () => {
       manager.destroy()
       vi.useRealTimers()
     })
+
+    it('exponential backoff progression: 1s → 2s → 4s → 8s → 30s cap', async () => {
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+      const delays: number[] = []
+
+      const timeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation((_cb, delay) => {
+        delays.push(delay as number)
+        // Return a fake timer ID (cast through unknown to avoid type errors)
+        return 1 as unknown as ReturnType<typeof setTimeout>
+      })
+
+      manager.connect()
+
+      // Let initial connection setup run
+      await vi.runAllTimersAsync()
+
+      // Trigger 6 consecutive disconnections to test the full backoff sequence
+      const expectedDelays = [1000, 2000, 4000, 8000, 16000, 30000]
+
+      for (let i = 0; i < 6; i++) {
+        // Get current WebSocket
+        const ws = MockWebSocket.getLastInstance()
+        if (ws) {
+          ws.close(1000)
+        }
+
+        // Process close event
+        await Promise.resolve()
+
+        // Let reconnect timer be scheduled
+        await vi.runAllTimersAsync()
+
+        // The last setTimeout call should be the reconnect delay
+        const reconnectDelays = delays.filter((_, idx) => {
+          // Filter to only reconnect timeouts (skip earlier connection attempts)
+          return idx >= i
+        })
+
+        if (reconnectDelays.length > 0) {
+          const lastDelay = reconnectDelays[reconnectDelays.length - 1]
+          expect(lastDelay).toBe(expectedDelays[i])
+        }
+      }
+
+      timeoutSpy.mockRestore()
+      manager.destroy()
+      vi.useRealTimers()
+    })
   })
 
   describe('fe-foundation.AC4.5: Success — Reconnect re-runs full connect sequence', () => {

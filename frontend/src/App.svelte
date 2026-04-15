@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+
   const themes = ['warm', 'radar', 'violet', 'pink'] as const
   let currentTheme = $state<string>('radar') // default theme per .impeccable.md
   let isLight = $state(false) // dark-first
@@ -16,6 +18,11 @@
       document.documentElement.removeAttribute('data-mode')
     }
   }
+
+  onMount(() => {
+    // Set initial theme attribute (default is radar)
+    document.documentElement.setAttribute('data-theme', currentTheme)
+  })
 </script>
 
 <main class="min-h-screen flex flex-col items-center justify-center gap-8 p-8">
