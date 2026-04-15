@@ -186,22 +186,9 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
   }
 })
 
-test.describe('fe-foundation.AC1.5: shadcn components render with ATC token colors', () => {
-  test('shadcn components are not currently rendered in the app', async ({ page }) => {
-    await page.goto('/')
-
-    // This test documents that shadcn components are not yet integrated.
-    // Once components are added to App.svelte, this test should be replaced with
-    // verification that their computed styles use ATC design tokens.
-    // Expected components: Badge, Card, Progress, Toggle (from src/lib/components/ui/)
-
-    const h1 = page.locator('h1')
-    await expect(h1).toBeVisible()
-
-    // If shadcn components become visible, they should inherit token colors
-    // (background, foreground, primary, etc. CSS variables)
-  })
-})
+// AC1.5 (shadcn components render with ATC token colors) is not testable yet —
+// components are installed but not rendered in the scaffold UI. Add E2E coverage
+// when components are integrated into real views.
 
 test.describe('fe-foundation.AC1.6: prefers-reduced-motion disables animations', () => {
   test('animations are disabled when prefers-reduced-motion is set', async ({ page }) => {
