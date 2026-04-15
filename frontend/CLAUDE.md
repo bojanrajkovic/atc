@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-04-14
+Last verified: 2026-04-15
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -12,11 +12,13 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 
 | File | Role |
 |------|------|
-| `src/App.svelte` | Root component with theme/mode switching demo |
+| `src/App.svelte` | Root component: mounts ConnectionManager and AppShell |
 | `src/app.css` | Design tokens (`@theme` block), OKLCH color definitions, base styles |
 | `src/main.ts` | Vite entry point |
 | `vite.config.ts` | Build config with Tailwind v4 and Svelte plugins |
-| `vitest.config.ts` | Vitest configuration (jsdom environment for unit tests) |
+| `vitest.config.ts` | Vitest workspace config (delegates to unit and browser projects) |
+| `vitest.config.unit.ts` | Vitest unit project (jsdom, `*.test.ts`) |
+| `vitest.config.browser.ts` | Vitest browser project (Playwright chromium, `*.browser.test.ts`) |
 | `playwright.config.ts` | Playwright E2E test configuration with webServer auto-start |
 | `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts` |
 | `src/lib/dispatcher.ts` | EventDispatcher — buffers WebSocket events and flushes to stores via requestAnimationFrame |

@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-04-12
+Last verified: 2026-04-15
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
