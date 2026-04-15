@@ -87,7 +87,15 @@ The `evict_expired()` method runs periodically (e.g., every 30 minutes) and remo
 
 ### Runner Pool Stats (Derived Views)
 
-Runner pool statistics are derived views over the store's current state, computed on-demand by query methods. They reflect the number of active jobs, grouped by runner labels (e.g., "linux", "windows", "arm64"). These stats are served via REST API endpoints and do not require separate storage.
+Runner pool statistics are derived views over the store's current state, computed on-demand by query methods. They reflect the number of active jobs, grouped by runner labels (e.g., "linux", "windows", "arm64"), along with pool metadata. These stats are served via REST API endpoints and do not require separate storage.
+
+**RunnerPoolStats fields:**
+- `labels: Vec<String>` — Runner label set (e.g., ["linux", "x86_64"]) grouped into this pool
+- `group_name: String` — Friendly pool name (e.g., "Default", "macOS")
+- `running: u32` — Count of currently running jobs in this pool
+- `queued: u32` — Count of queued jobs waiting for a runner in this pool
+- `is_elastic: bool` — Derived from runner `group_id == Some(0)`. Indicates whether the pool auto-scales (true) or has fixed capacity (false).
+- `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented in a later phase. Used to render capacity bars and thresholds in the frontend.
 
 ## Key Decisions
 

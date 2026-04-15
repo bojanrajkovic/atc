@@ -12,7 +12,7 @@ Core domain types, state store, and business logic for ATC. Source-agnostic — 
 
 | Module | Role |
 |--------|------|
-| `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet` |
+| `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; structs: `RunnerPoolStats` with `is_elastic` and `total` fields |
 | `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`, state transitions |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`, state transitions |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |
@@ -29,6 +29,15 @@ All domain types derive `#[derive(TS)]` with `#[ts(export)]` to generate TypeScr
 - Status enums (`RunStatus`, `JobStatus`, `StepStatus`, `RunConclusion`, `JobConclusion`) generate as PascalCase string literal unions in TypeScript
 
 See `docs/architecture/backend-server.md` § Frontend Type Generation for full details.
+
+## RunnerPoolStats Extension
+
+The `RunnerPoolStats` type has been extended with two new fields to support pool capacity visualization in the frontend:
+
+- `is_elastic: bool` — Derived from runner `group_id == Some(0)` during pool stats computation. Indicates whether the pool auto-scales (true) or has fixed capacity (false). Used by the frontend to adjust capacity bar rendering and threshold colors.
+- `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented. Will be used by the frontend to render capacity bars and determine if a pool is over capacity.
+
+Pool stats are computed on-demand by `StateStore` query methods and do not require separate storage.
 
 ## Contracts
 

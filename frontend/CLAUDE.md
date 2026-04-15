@@ -22,11 +22,20 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/dispatcher.ts` | EventDispatcher — buffers WebSocket events and flushes to stores via requestAnimationFrame |
 | `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
 | `src/lib/types/generated/` | ts-rs generated TypeScript types from Rust (do not hand-edit) |
-| `e2e/` | Playwright E2E tests (theme rendering, switching, mode toggle) |
+| `src/lib/components/AppShell.svelte` | Layout container: 100dvh flex column with TopBar + slot for content area |
+| `src/lib/components/TopBar.svelte` | Header bar: reads stores, composes Logo, RunnerBar, ConnectionIndicator, SettingsPopover |
+| `src/lib/components/ConnectionManager.svelte` | Service component: connects WebSocket on mount, disconnects on destroy |
+| `src/lib/components/Logo.svelte` | Pure: "ATC" monospace text mark |
+| `src/lib/components/CapacityBar.svelte` | Pure: horizontal fill bar with color thresholds (unused/normal/warning/critical) |
+| `src/lib/components/ConnectionIndicator.svelte` | Pure: colored dot + tooltip showing connection state |
+| `src/lib/components/RunnerPool.svelte` | Pure: single pool indicator with pool name, running/queued counts, capacity bar |
+| `src/lib/components/RunnerBar.svelte` | Pure: grid of pool indicators, receives pools[] prop |
+| `src/lib/components/SettingsPopover.svelte` | Connected: theme selector popover, reads/writes UIStore |
+| `e2e/` | Playwright E2E tests (theme rendering, switching, mode toggle, app shell rendering) |
 
 ## Status
 
-Phase 5 complete. App foundation infrastructure established: OKLCH design system with four themes, dark/light mode, Svelte 5 stores with WS client, event dispatcher with RAF batching, comprehensive unit tests (Vitest), and E2E tests (Playwright) verifying rendering and theming. Component hierarchy skeleton in place but feature implementation deferred to next phase.
+Phase 6 complete. App shell with TopBar (logo, runner pool indicators, connection indicator, settings popover), AppShell layout (100dvh flex column), and ConnectionManager service component. All app shell E2E tests passing. Architecture documentation updated with component hierarchy, data flow, and component contracts.
 
 ## Commands
 
