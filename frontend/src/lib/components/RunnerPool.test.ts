@@ -24,7 +24,7 @@ describe('RunnerPool', () => {
   })
 
   it('unknown-capacity variant shows running count without CapacityBar', () => {
-    const { container } = render(RunnerPool, {
+    render(RunnerPool, {
       props: {
         pool: {
           label: 'windows',
@@ -36,15 +36,14 @@ describe('RunnerPool', () => {
       },
     })
 
-    const meter = container.querySelector('[role="meter"]')
-    expect(meter).toBeNull()
+    expect(screen.queryByRole('meter')).toBeNull()
 
     const countText = screen.getByText('5')
     expect(countText).toBeTruthy()
   })
 
   it('elastic variant shows running count without CapacityBar', () => {
-    const { container } = render(RunnerPool, {
+    render(RunnerPool, {
       props: {
         pool: {
           label: 'macos',
@@ -56,8 +55,7 @@ describe('RunnerPool', () => {
       },
     })
 
-    const meter = container.querySelector('[role="meter"]')
-    expect(meter).toBeNull()
+    expect(screen.queryByRole('meter')).toBeNull()
 
     const countText = screen.getByText('2')
     expect(countText).toBeTruthy()
@@ -115,7 +113,7 @@ describe('RunnerPool', () => {
   })
 
   it('hides queued badge when queued is 0', () => {
-    const { container } = render(RunnerPool, {
+    render(RunnerPool, {
       props: {
         pool: {
           label: 'linux',
@@ -127,8 +125,7 @@ describe('RunnerPool', () => {
       },
     })
 
-    const badge = container.querySelector('[class*="badge"]')
-    expect(badge).toBeNull()
+    expect(screen.queryByText(/queued/)).toBeNull()
   })
 
   it('renders pool label', () => {

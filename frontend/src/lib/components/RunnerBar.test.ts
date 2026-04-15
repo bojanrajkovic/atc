@@ -10,11 +10,11 @@ describe('RunnerBar', () => {
       { label: 'macos', running: 1, queued: 0, total: 5, isElastic: false },
     ]
 
-    const { container } = render(RunnerBar, {
+    render(RunnerBar, {
       props: { pools },
     })
 
-    const listitems = container.querySelectorAll('[role="listitem"]')
+    const listitems = screen.getAllByRole('listitem')
     expect(listitems).toHaveLength(3)
 
     expect(screen.getByText('linux')).toBeTruthy()
@@ -34,11 +34,11 @@ describe('RunnerBar', () => {
   it('renders single pool correctly', () => {
     const pools = [{ label: 'linux', running: 3, queued: 0, total: 10, isElastic: false }]
 
-    const { container } = render(RunnerBar, {
+    render(RunnerBar, {
       props: { pools },
     })
 
-    const listitems = container.querySelectorAll('[role="listitem"]')
+    const listitems = screen.getAllByRole('listitem')
     expect(listitems).toHaveLength(1)
 
     expect(screen.getByText('linux')).toBeTruthy()
