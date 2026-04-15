@@ -18,20 +18,27 @@
 <Tooltip.Provider>
   <Tooltip.Root>
     <Tooltip.Trigger>
-      <span class="relative inline-flex h-3 w-3 shrink-0" role="status" aria-label={detail}>
-        {#if state === 'connecting'}
-          <span
-            class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
-            style="background-color: {color};"
-          ></span>
-        {/if}
+      {#snippet child({ props })}
         <span
-          class="relative inline-flex h-3 w-3 rounded-full"
-          style="background-color: {color}; {state === 'live'
-            ? `box-shadow: 0 0 6px 2px ${color};`
-            : ''}"
-        ></span>
-      </span>
+          {...props}
+          class="relative inline-flex h-3 w-3 shrink-0"
+          role="status"
+          aria-label={detail}
+        >
+          {#if state === 'connecting'}
+            <span
+              class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
+              style="background-color: {color};"
+            ></span>
+          {/if}
+          <span
+            class="relative inline-flex h-3 w-3 rounded-full"
+            style="background-color: {color}; {state === 'live'
+              ? `box-shadow: 0 0 6px 2px ${color};`
+              : ''}"
+          ></span>
+        </span>
+      {/snippet}
     </Tooltip.Trigger>
     <Tooltip.Content>
       <p>{detail}</p>

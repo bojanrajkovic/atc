@@ -148,8 +148,8 @@ describe('ConnectionIndicator', () => {
   })
 
   describe('dynamic updates', () => {
-    it('updates aria-label when detail prop changes', () => {
-      const { unmount } = render(ConnectionIndicator, {
+    it('updates aria-label when detail prop changes', async () => {
+      const { rerender } = render(ConnectionIndicator, {
         props: {
           state: 'live',
           detail: 'Original detail',
@@ -159,14 +159,10 @@ describe('ConnectionIndicator', () => {
       let status = screen.getByRole('status')
       expect(status.getAttribute('aria-label')).toBe('Original detail')
 
-      // Unmount and remount with new props
-      unmount()
-
-      render(ConnectionIndicator, {
-        props: {
-          state: 'live',
-          detail: 'Updated detail',
-        },
+      // Re-render with new props to test reactivity
+      await rerender({
+        state: 'live',
+        detail: 'Updated detail',
       })
 
       status = screen.getByRole('status')
