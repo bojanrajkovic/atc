@@ -47,7 +47,7 @@ pnpm build        # Production build to dist/
 pnpm check        # svelte-check type checking
 pnpm lint         # Biome (ts/js) + eslint-plugin-svelte (.svelte)
 pnpm format       # Biome + prettier-plugin-svelte
-pnpm test         # Vitest unit tests
+pnpm test         # Vitest unit + browser tests
 pnpm test:e2e     # Playwright E2E tests
 ```
 
