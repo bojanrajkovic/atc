@@ -27,6 +27,8 @@
     "@testing-library/svelte": "^5.3.1",
     "@types/node": "^25.6.0",
     "@typescript-eslint/parser": "catalog:",
+    "@vitest/browser": "catalog:",
+    "@vitest/browser-playwright": "^4.1.4",
     "@vitest/coverage-v8": "catalog:",
     "bits-ui": "catalog:",
     "eslint": "catalog:",

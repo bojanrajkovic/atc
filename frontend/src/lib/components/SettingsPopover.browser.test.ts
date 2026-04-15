@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Mock localStorage since jsdom doesn't properly support it
+// Mock localStorage since browsers still need this mock in some contexts
 const mockLocalStorage = (() => {
   let store: Record<string, string> = {}
 
@@ -21,7 +21,7 @@ const mockLocalStorage = (() => {
 
 vi.stubGlobal('localStorage', mockLocalStorage)
 
-describe('SettingsPopover', () => {
+describe('SettingsPopover (browser mode)', () => {
   // SettingsPopover uses uiStore, which is a module-level singleton with $effect.root().
   // We use vi.resetModules() to get a fresh singleton for each test.
   let uiStore: typeof import('$lib/stores/ui.svelte')['uiStore']
@@ -41,15 +41,7 @@ describe('SettingsPopover', () => {
   })
 
   it('renders settings button with gear icon', () => {
-    try {
-      render(SettingsPopover)
-    } catch (_error) {
-      // bits-ui Popover uses portals that don't work in jsdom, but the button should still render
-      // Check that the component at least exports and can be imported
-      expect(SettingsPopover).toBeTruthy()
-      expect(typeof SettingsPopover).toBe('function')
-      return
-    }
+    render(SettingsPopover)
 
     const button = screen.getByRole('button', { name: /settings/i })
     expect(button).toBeTruthy()
@@ -65,14 +57,7 @@ describe('SettingsPopover', () => {
   })
 
   it('opens popover when settings button clicked', async () => {
-    try {
-      render(SettingsPopover)
-    } catch {
-      // Popover portal rendering not supported in jsdom - this is expected
-      // The test framework should use a browser environment for full popover testing
-      expect(true).toBe(true)
-      return
-    }
+    render(SettingsPopover)
 
     // Initially, theme controls should not be visible (not in DOM)
     expect(screen.queryByLabelText('Select theme')).toBeNull()
@@ -84,7 +69,7 @@ describe('SettingsPopover', () => {
     await fireEvent.click(button)
 
     // After click, the popover content should be visible
-    // Wait for the popover to open (it may be async)
+    // Wait a tick for the popover animation/render
     await new Promise((r) => setTimeout(r, 50))
 
     // Verify theme selector, mode toggle, and density toggle are now visible
@@ -105,16 +90,7 @@ describe('SettingsPopover', () => {
   })
 
   it('clicking theme dot updates uiStore.theme', async () => {
-    try {
-      render(SettingsPopover)
-    } catch {
-      // Store mutation still works even if rendering fails
-      expect(uiStore.theme).toBe('radar')
-      uiStore.theme = 'warm'
-      await new Promise((r) => setTimeout(r, 0))
-      expect(uiStore.theme).toBe('warm')
-      return
-    }
+    render(SettingsPopover)
 
     // Open the popover
     const button = screen.getByRole('button', { name: /settings/i })
@@ -128,24 +104,15 @@ describe('SettingsPopover', () => {
     const themeToggles = screen.getAllByLabelText(/warm|radar|violet|pink/)
     const warmToggle = themeToggles.find((el) => el.getAttribute('aria-label') === 'warm')
 
-    if (warmToggle) {
-      await fireEvent.click(warmToggle)
-      await new Promise((r) => setTimeout(r, 0))
-      expect(uiStore.theme).toBe('warm')
-    }
+    expect(warmToggle).toBeTruthy()
+    await fireEvent.click(warmToggle!)
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(uiStore.theme).toBe('warm')
   })
 
   it('toggling mode updates uiStore.mode', async () => {
-    try {
-      render(SettingsPopover)
-    } catch {
-      // Store mutation still works even if rendering fails
-      expect(uiStore.mode).toBe('dark')
-      uiStore.mode = 'light'
-      await new Promise((r) => setTimeout(r, 0))
-      expect(uiStore.mode).toBe('light')
-      return
-    }
+    render(SettingsPopover)
 
     // Open the popover
     const button = screen.getByRole('button', { name: /settings/i })
@@ -164,16 +131,7 @@ describe('SettingsPopover', () => {
   })
 
   it('toggling density updates uiStore.density', async () => {
-    try {
-      render(SettingsPopover)
-    } catch {
-      // Store mutation still works even if rendering fails
-      expect(uiStore.density).toBe('comfortable')
-      uiStore.density = 'compact'
-      await new Promise((r) => setTimeout(r, 0))
-      expect(uiStore.density).toBe('compact')
-      return
-    }
+    render(SettingsPopover)
 
     // Open the popover
     const button = screen.getByRole('button', { name: /settings/i })
@@ -196,13 +154,7 @@ describe('SettingsPopover', () => {
     uiStore.theme = 'violet'
     await new Promise((r) => setTimeout(r, 0))
 
-    try {
-      render(SettingsPopover)
-    } catch {
-      // Store state verification works even if rendering fails
-      expect(uiStore.theme).toBe('violet')
-      return
-    }
+    render(SettingsPopover)
 
     // Open the popover
     const button = screen.getByRole('button', { name: /settings/i })
@@ -213,14 +165,14 @@ describe('SettingsPopover', () => {
     const themeToggles = screen.getAllByLabelText(/warm|radar|violet|pink/)
     const violetToggle = themeToggles.find((el) => el.getAttribute('aria-label') === 'violet')
 
-    if (violetToggle) {
-      // The violet toggle should have the "pressed" state
-      // Check if it has the aria-pressed attribute set to true or the data-state attribute
-      const isPressed =
-        violetToggle.getAttribute('aria-pressed') === 'true' ||
-        violetToggle.getAttribute('data-state') === 'on'
+    expect(violetToggle).toBeTruthy()
 
-      expect(isPressed || violetToggle.className.includes('bg-')).toBeTruthy()
-    }
+    // The violet toggle should have the "pressed" state
+    // Check if it has the aria-pressed attribute set to true or the data-state attribute
+    const isPressed =
+      violetToggle!.getAttribute('aria-pressed') === 'true' ||
+      violetToggle!.getAttribute('data-state') === 'on'
+
+    expect(isPressed || violetToggle!.className.includes('bg-')).toBeTruthy()
   })
 })
