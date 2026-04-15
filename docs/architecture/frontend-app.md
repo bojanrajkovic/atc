@@ -80,12 +80,11 @@ App.svelte
 - `running: number` — Count of running jobs in pool
 - `queued: number` — Count of queued jobs in pool
 - `total: number | null` — Total capacity (null until operator sets it)
-- `isElastic: bool` — Whether pool auto-scales (derived from runner group_id == Some(0))
+- `isElastic: boolean` — Whether pool auto-scales (derived from runner group_id == Some(0))
 
 **CapacityBarProps**
 - `used: number` — Jobs currently running
-- `total: number | null` — Pool capacity, or null for unknown
-- `isElastic: bool` — Whether pool auto-scales (affects color thresholds and label)
+- `total: number` — Pool capacity (parent only renders CapacityBar when total is known)
 
 ## Store Architecture
 
