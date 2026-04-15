@@ -1,9 +1,9 @@
+import { eventDispatcher } from '$lib/dispatcher'
+import { connectionStore } from '$lib/stores/connection.svelte'
+import { runnerStore } from '$lib/stores/runners.svelte'
+import { runStore } from '$lib/stores/runs.svelte'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
-import { connectionStore } from '$lib/stores/connection.svelte'
-import { runStore } from '$lib/stores/runs.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
-import { eventDispatcher } from '$lib/dispatcher'
 
 export class ConnectionManager {
   private ws: WebSocket | null = null
@@ -19,14 +19,12 @@ export class ConnectionManager {
 
   /** JSON reviver to convert string bigints back to actual bigints */
   private jsonReviver(key: string, value: unknown): unknown {
-    if (typeof value === 'string') {
+    if (typeof value === 'string' && ['seq', 'id', 'runId', 'jobId'].includes(key)) {
       // Convert string bigints for known bigint fields
-      if (['seq', 'id', 'runId', 'jobId'].includes(key)) {
-        try {
-          return BigInt(value)
-        } catch {
-          return value
-        }
+      try {
+        return BigInt(value)
+      } catch {
+        return value
       }
     }
     return value
@@ -38,21 +36,21 @@ export class ConnectionManager {
     this.preConnectBuffer = []
 
     // Step 1: Open WebSocket FIRST (WS-first protocol)
-    const wsUrl = this.baseUrl.replace(/^http/, 'ws') + '/v1/ws'
+    const wsUrl = `${this.baseUrl.replace(/^http/, 'ws')}/v1/ws`
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onmessage = (event) => {
       const seqEvent: SeqEvent = JSON.parse(event.data, (key, value) =>
-        this.jsonReviver(key, value)
+        this.jsonReviver(key, value),
       )
       connectionStore.recordEvent()
 
-      if (!this.connected) {
-        // Buffer events during state fetch
-        this.preConnectBuffer.push(seqEvent)
-      } else {
+      if (this.connected) {
         // Post-connect: dispatch normally
         eventDispatcher.dispatch(seqEvent)
+      } else {
+        // Buffer events during state fetch
+        this.preConnectBuffer.push(seqEvent)
       }
     }
 
@@ -77,9 +75,7 @@ export class ConnectionManager {
       const res = await fetch(`${this.baseUrl}/v1/state`)
       if (!res.ok) throw new Error(`State fetch failed: ${res.status}`)
       const text = await res.text()
-      const snapshot: StateSnapshot = JSON.parse(text, (key, value) =>
-        this.jsonReviver(key, value)
-      )
+      const snapshot: StateSnapshot = JSON.parse(text, (key, value) => this.jsonReviver(key, value))
 
       // Step 4: Load snapshot into stores
       runStore.loadSnapshot(snapshot.runs, snapshot.jobs)
@@ -111,10 +107,7 @@ export class ConnectionManager {
     connectionStore.status = 'reconnecting'
 
     // Exponential backoff: 1s, 2s, 4s, 8s, ..., capped at 30s
-    const delay = Math.min(
-      1000 * (2 ** connectionStore.reconnectAttempt),
-      30_000
-    )
+    const delay = Math.min(1000 * 2 ** connectionStore.reconnectAttempt, 30_000)
     connectionStore.reconnectAttempt++
 
     this.reconnectTimer = setTimeout(() => {
