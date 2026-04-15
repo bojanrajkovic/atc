@@ -6,6 +6,7 @@
       "recommended": true,
       "complexity": {
         "noForEach": "warn",
+        "noImportantStyles": "warn",
         "noUselessCatch": "error",
         "noUselessStringConcat": "error",
         "noUselessUndefined": "error",
@@ -71,8 +72,29 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**/*", "!!**/*.svelte", "!!**/node_modules", "!!**/dist", "!!**/pnpm-lock.yaml"]
+    "includes": [
+      "**/*",
+      "!!**/*.svelte",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!**/pnpm-lock.yaml",
+      "!!**/src/lib/types/generated",
+      "!!**/test-results",
+      "!!**/playwright-report"
+    ]
   },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "enabled": true,
     "actions": {

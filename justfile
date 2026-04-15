@@ -107,12 +107,21 @@ test:
 	set -euo pipefail
 	cd backend && cargo test --workspace &
 	pid1=$!
-	(cd frontend && pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)') &
+	(cd frontend && pnpm exec vitest run) &
 	pid2=$!
 	fail=0
 	wait $pid1 || fail=1
 	wait $pid2 || fail=1
 	exit $fail
+
+# Generate TypeScript types from Rust structs via ts-rs
+types:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	mkdir -p frontend/src/lib/types/generated
+	cd backend
+	TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace -- export_bindings
+	echo "Types generated in frontend/src/lib/types/generated/"
 
 # Start development servers (parallel — both run in foreground)
 dev:

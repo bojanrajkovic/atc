@@ -19,6 +19,17 @@ Core domain types, state store, and business logic for ATC. Source-agnostic — 
 | `store` | `StateStore` — in-memory state with event ingestion, queries, `snapshot()` (atomic consistent read), pool stats, TTL eviction |
 | `clock` | `Clock` trait, `SystemClock`, `TestClock` (behind `test-support` feature) |
 
+## TypeScript Generation
+
+All domain types derive `#[derive(TS)]` with `#[ts(export)]` to generate TypeScript interfaces. This enables strict type safety in the frontend. Generated types are written to `frontend/src/lib/types/generated/` via `just types` recipe, driven by ts-rs export tests.
+
+**Serialization format:**
+- All structs use `#[serde(rename_all = "camelCase")]` for consistent JSON naming across the API
+- `RunEvent` and `JobEvent` enums use `#[serde(tag = "type", content = "data")]` (adjacently-tagged) to generate discriminated unions in TypeScript (e.g., `{ type: "Completed", data: { conclusion: "Success" } }`)
+- Status enums (`RunStatus`, `JobStatus`, `StepStatus`, `RunConclusion`, `JobConclusion`) generate as PascalCase string literal unions in TypeScript
+
+See `docs/architecture/backend-server.md` § Frontend Type Generation for full details.
+
 ## Contracts
 
 These rules are enforced by the state machine and verified by 105 tests including proptest:

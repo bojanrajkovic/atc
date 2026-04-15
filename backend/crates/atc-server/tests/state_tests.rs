@@ -56,9 +56,9 @@ async fn test_ac4_1_empty_state() {
     assert_eq!(json["runs"], serde_json::json!([]), "runs should be empty");
     assert_eq!(json["jobs"], serde_json::json!([]), "jobs should be empty");
     assert_eq!(
-        json["pool_stats"],
+        json["poolStats"],
         serde_json::json!([]),
-        "pool_stats should be empty"
+        "poolStats should be empty"
     );
 }
 
@@ -107,9 +107,9 @@ async fn test_ac4_2_state_after_run_event() {
         "jobs should still be empty"
     );
     assert_eq!(
-        json["pool_stats"],
+        json["poolStats"],
         serde_json::json!([]),
-        "pool_stats should still be empty"
+        "poolStats should still be empty"
     );
 }
 
@@ -169,8 +169,8 @@ async fn test_ac4_3_state_with_pool_stats() {
         "jobs should contain the queued job"
     );
     assert!(
-        !json["pool_stats"].as_array().unwrap().is_empty(),
-        "pool_stats should be non-empty with job labels"
+        !json["poolStats"].as_array().unwrap().is_empty(),
+        "poolStats should be non-empty with job labels"
     );
 }
 

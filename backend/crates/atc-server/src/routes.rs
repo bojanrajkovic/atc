@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use axum_prometheus::PrometheusMetricLayer;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use atc_github::{ParseResult, parse_webhook, verify_signature};
 
@@ -25,7 +25,9 @@ struct HealthResponse {
 /// Returned by `GET /v1/state`. `seq` is the next sequence number to
 /// assign — clients discard buffered WS events with `seq < snapshot_seq`.
 /// A snapshot at `seq: N` reflects all committed events with event seq < N.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 struct StateSnapshot {
     seq: u64,
     runs: Vec<atc_core::WorkflowRun>,

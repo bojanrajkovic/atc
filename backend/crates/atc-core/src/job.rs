@@ -2,12 +2,14 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::types::{JobId, RunId};
 
 /// Status of a job in its lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
+#[ts(export)]
 pub enum JobStatus {
     /// Job is waiting in the queue.
     Queued,
@@ -20,8 +22,9 @@ pub enum JobStatus {
 }
 
 /// Conclusion of a completed job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
+#[ts(export)]
 pub enum JobConclusion {
     /// Job succeeded.
     Success,
@@ -42,8 +45,9 @@ pub enum JobConclusion {
 }
 
 /// Status of a step within a job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "PascalCase")]
+#[ts(export)]
 pub enum StepStatus {
     /// Step is waiting to execute.
     Queued,
@@ -54,8 +58,9 @@ pub enum StepStatus {
 }
 
 /// A step within a job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Step {
     /// Position number within the job (1-based).
     pub number: i64,
@@ -75,8 +80,9 @@ pub struct Step {
 ///
 /// This is a composed struct (not flattened into `Job`) to enable
 /// runner pool derivation and group-level reporting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct RunnerInfo {
     /// Unique identifier for the runner.
     pub id: i64,
@@ -92,8 +98,9 @@ pub struct RunnerInfo {
 ///
 /// Created and updated by `JobEvent`s (Phase 2). Steps use snapshot
 /// semantics — the entire `Vec<Step>` is replaced on each event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Job {
     /// Unique identifier for this job.
     pub id: JobId,

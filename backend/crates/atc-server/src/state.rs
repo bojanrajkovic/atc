@@ -28,7 +28,8 @@ pub struct AppState {
 ///
 /// Carried over the broadcast channel and sent to WebSocket clients as JSON.
 /// Clients use `seq` to reconcile the REST snapshot with the live event stream.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct SeqEvent {
     /// Monotonic sequence number assigned at ingestion time.
     pub seq: u64,

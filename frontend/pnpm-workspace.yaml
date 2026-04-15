@@ -1,17 +1,29 @@
 packages: []
 catalog:
   '@biomejs/biome': ^2.4.9
+  '@internationalized/date': ^3.12.1
+  '@radix-ui/dialog': ^1.1.2
+  '@radix-ui/primitive': ^1.1.1
+  '@radix-ui/react-progress': ^1.1.0
+  '@radix-ui/react-toggle': ^1.1.0
   '@sveltejs/vite-plugin-svelte': ^7.0.0
   '@tailwindcss/vite': ^4.2.2
+  '@testing-library/svelte': ^5.3.1
   '@typescript-eslint/parser': ^8.57.2
   '@vitest/coverage-v8': ^4.1.1
+  'bits-ui': ^2.17.3
+  clsx: ^2.1.1
   eslint: ^10.1.0
   eslint-plugin-svelte: ^3.16.0
+  jsdom: ^29.0.2
   prettier: ^3.8.1
   prettier-plugin-svelte: ^3.5.1
+  'shadcn-svelte': ^1.2.7
   svelte: ^5.55.0
-  svelte-check: ^4.4.5
+  svelte-check: ^4.4.6
   svelte-eslint-parser: ^1.6.0
+  'tailwind-merge': ^2.6.1
+  'tailwind-variants': ^3.2.2
   tailwindcss: ^4.2.2
   typescript: ^6.0.2
   vite: ^8.0.2

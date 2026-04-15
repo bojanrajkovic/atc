@@ -69,7 +69,9 @@ pub enum ParseResult {
 }
 
 /// A parsed webhook event carrying a domain event envelope.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(tag = "type", content = "data")]
+#[ts(export)]
 pub enum WebhookEvent {
     /// A `workflow_run` event translated to a run event envelope.
     Run(RunEventEnvelope),

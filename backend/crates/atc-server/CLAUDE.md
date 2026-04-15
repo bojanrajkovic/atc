@@ -20,6 +20,17 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 | `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
 | `metrics` | Prometheus layer, build_info gauge, process collector |
 
+## TypeScript Generation
+
+`SeqEvent` and `StateSnapshot` derive `#[derive(TS)]` with `#[ts(export)]` to generate TypeScript interfaces for WebSocket and REST payloads.
+
+**Serialization format:**
+- `SeqEvent` is serialized as-is (contains `seq` and `event` fields)
+- `StateSnapshot` uses `#[serde(rename_all = "camelCase")]` so the field `pool_stats` serializes as `poolStats` in JSON
+- WebSocket events use the adjacently-tagged serde format inherited from `atc-core::WebhookEvent` (discriminated union with `type` and `data` fields)
+
+Generated types are written to `frontend/src/lib/types/generated/` via `just types` recipe.
+
 ## Contracts
 
 These rules are enforced by implementation and verified by tests:

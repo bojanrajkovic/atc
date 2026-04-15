@@ -5,13 +5,16 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::job::{JobConclusion, RunnerInfo, Step};
 use crate::run::RunConclusion;
 use crate::types::{JobId, RunId};
 
 /// Action that occurred on a workflow run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", content = "data")]
+#[ts(export)]
 pub enum RunEvent {
     /// New run appeared (maps to `workflow_run` `requested` action).
     Requested,
@@ -27,7 +30,9 @@ pub enum RunEvent {
 /// Full run event data for state store ingestion.
 ///
 /// Carries all fields needed to create or update a `WorkflowRun`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct RunEventEnvelope {
     /// Unique identifier for the run.
     pub run_id: RunId,
@@ -63,7 +68,9 @@ pub struct RunEventEnvelope {
 }
 
 /// Action that occurred on a job.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "type", content = "data")]
+#[ts(export)]
 pub enum JobEvent {
     /// Job entered the queue.
     Queued {
@@ -105,7 +112,9 @@ pub enum JobEvent {
 /// Full job event data for state store ingestion.
 ///
 /// Carries all fields needed to create or update a `Job`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct JobEventEnvelope {
     /// Unique identifier for the job.
     pub job_id: JobId,
