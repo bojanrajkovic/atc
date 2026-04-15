@@ -190,9 +190,17 @@ jobs:
         working-directory: frontend
         run: pnpm check
 
-      - name: Run tests with coverage
+      - name: Run unit tests with coverage
         working-directory: frontend
-        run: pnpm exec vitest run --coverage --coverage.reporter=lcov --passWithNoTests
+        run: pnpm exec vitest run --coverage --coverage.reporter=lcov
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: frontend
+        run: pnpm exec playwright test
 
       - name: Upload coverage to Codecov
         if: github.repository == 'bojanrajkovic/atc'

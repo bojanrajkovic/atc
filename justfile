@@ -107,7 +107,7 @@ test:
 	set -euo pipefail
 	cd backend && cargo test --workspace &
 	pid1=$!
-	(cd frontend && pnpm exec vitest run --passWithNoTests 2>/dev/null || echo 'vitest: no tests configured yet (skipped)') &
+	(cd frontend && pnpm exec vitest run) &
 	pid2=$!
 	fail=0
 	wait $pid1 || fail=1
