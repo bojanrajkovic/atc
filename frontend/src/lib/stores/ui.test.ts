@@ -23,10 +23,8 @@ vi.stubGlobal('localStorage', mockLocalStorage)
 describe('UIStore', () => {
   // UIStore is a module-level singleton with $effect.root().
   // We use vi.resetModules() to get a fresh singleton for each test.
-  // Due to dynamic imports with vi.resetModules(), we cannot infer the type statically.
-  // Using typeof on a dynamic import would require awaiting beforeEach, so we keep 'any'.
-  // biome-ignore lint/suspicious/noExplicitAny: vi.resetModules() dynamic imports prevent static type inference
-  let uiStore: any
+  // The type is resolved at compile time via typeof; the value is assigned dynamically in beforeEach.
+  let uiStore: typeof import('./ui.svelte')['uiStore']
 
   beforeEach(async () => {
     // Clear localStorage before test
