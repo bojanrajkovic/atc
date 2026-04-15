@@ -27,7 +27,7 @@
     "noImplicitOverride": true,
 
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "types": ["svelte", "vite/client"]
+    "types": ["node", "svelte", "vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
 }

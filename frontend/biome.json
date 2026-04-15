@@ -6,6 +6,7 @@
       "recommended": true,
       "complexity": {
         "noForEach": "warn",
+        "noImportantStyles": "warn",
         "noUselessCatch": "error",
         "noUselessStringConcat": "error",
         "noUselessUndefined": "error",
