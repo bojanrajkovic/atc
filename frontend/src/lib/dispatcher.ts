@@ -18,6 +18,15 @@ class EventDispatcher {
     this.processBuffer()
   }
 
+  /** Drain buffer and cancel pending RAF. Call before loading a new snapshot. */
+  clear(): void {
+    this.buffer = []
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId)
+      this.rafId = null
+    }
+  }
+
   private processBuffer(): void {
     this.rafId = null
     const events = this.buffer

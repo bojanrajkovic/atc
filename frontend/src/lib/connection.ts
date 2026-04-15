@@ -79,12 +79,15 @@ export class ConnectionManager {
       const text = await res.text()
       const snapshot: StateSnapshot = JSON.parse(text, (key, value) => this.jsonReviver(key, value))
 
-      // Step 4: Load snapshot into stores
+      // Step 4: Drain any stale dispatcher events from prior connection
+      eventDispatcher.clear()
+
+      // Step 5: Load snapshot into stores
       runStore.loadSnapshot(snapshot.runs, snapshot.jobs)
       runnerStore.loadPools(snapshot.poolStats)
       this.snapshotSeq = snapshot.seq
 
-      // Step 5: Flush buffered events, discarding stale ones
+      // Step 6: Flush buffered events, discarding stale ones
       for (const buffered of this.preConnectBuffer) {
         if (buffered.seq >= this.snapshotSeq) {
           eventDispatcher.dispatch(buffered)
@@ -93,7 +96,7 @@ export class ConnectionManager {
       this.preConnectBuffer = []
       this.connected = true
 
-      // Step 6: Transition to connected
+      // Step 7: Transition to connected
       connectionStore.status = 'connected'
       connectionStore.reconnectAttempt = 0
     } catch {
