@@ -234,18 +234,17 @@ ws.onmessage = (event) => {
 
 Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testable.
 
-### Sub-Phase 1: Foundation
+### Sub-Phase 1: Foundation ✅ COMPLETE
 
-**Goal:** shadcn-svelte integrated with ATC's OKLCH design system, store scaffolding, WebSocket client with reconnect.
+**Implemented in:** PR #22 (`feat/fe-foundation-design` branch)
 
-- Install shadcn-svelte CLI, copy initial component set (Card, Badge, Toggle, Progress)
-- Remap shadcn-svelte CSS tokens to ATC's OKLCH token system (one-time find-and-replace in copied source)
-- Scaffold 4 stores as Svelte 5 rune classes (runs, runners, connection, ui)
-- Implement ConnectionManager (WebSocket connect, reconnect with exponential backoff, `GET /v1/state` for initial load, seq-based reconciliation with WS stream)
-- TypeScript types for the server's `StateSnapshot` and `SeqEvent` payloads
-- Vitest + `@testing-library/svelte` setup with jsdom
-- Playwright setup with dev server fixture
-- **Tests:** Store unit tests (apply event, derived filters). ConnectionManager tests (mock WS, verify store mutations, verify reconnect). E2E: app renders, theme switching works.
+**What was built:**
+- ts-rs TypeScript type generation from Rust structs (`just types`, CI freshness check)
+- OKLCH design system with CSS alias layer for shadcn-svelte (Card, Badge, Toggle, Progress)
+- 4 Svelte 5 rune-class stores (RunStore, RunnerStore, ConnectionStore, UIStore with localStorage persistence)
+- ConnectionManager with WS-first connect protocol, seq-based reconciliation, exponential backoff, AbortController teardown
+- EventDispatcher with RAF batching
+- Vitest (65 unit tests, 94% coverage) + Playwright (13 E2E tests) fully gated in CI
 
 ### Sub-Phase 2: Shell + Runner Bar
 

@@ -19,7 +19,7 @@
           color: {uiStore.theme === theme ? 'var(--bg)' : 'var(--text)'};
           border: 1px solid var(--border);
         "
-        onclick={() => uiStore.theme = theme}
+        onclick={() => (uiStore.theme = theme)}
       >
         {theme}
       </button>
@@ -34,7 +34,7 @@
       color: var(--text);
       border: 1px solid var(--border);
     "
-    onclick={() => uiStore.mode = uiStore.mode === 'dark' ? 'light' : 'dark'}
+    onclick={() => (uiStore.mode = uiStore.mode === 'dark' ? 'light' : 'dark')}
   >
     {uiStore.mode === 'dark' ? 'Light Mode' : 'Dark Mode'}
   </button>
