@@ -34,7 +34,7 @@ get_doc_for_file() {
             echo "docs/architecture/frontend-app.md"
             return
             ;;
-        frontend/vite.config.ts|frontend/svelte.config.js|frontend/biome.json|frontend/eslint.config.mjs|frontend/.prettierrc)
+        frontend/vite.config.ts|frontend/svelte.config.js|frontend/biome.json|frontend/eslint.config.mjs|frontend/.prettierrc|frontend/vitest.config.ts|frontend/playwright.config.ts)
             echo "docs/architecture/frontend-app.md"
             return
             ;;
