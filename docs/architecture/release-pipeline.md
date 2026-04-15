@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-04-09
+Last verified: 2026-04-14 (updated 2026-04-14 for upload-artifact SHA update)
 
 ## Purpose
 

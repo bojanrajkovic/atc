@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-12 (updated 2026-04-12 for seq Mutex concurrency fix)
+Last verified: 2026-04-14 (updated 2026-04-14 for ts-rs type generation and adjacently-tagged serde)
 
 ## Purpose
 
