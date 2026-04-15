@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-14
+Last verified: 2026-04-15
 
 ## Purpose
 
@@ -68,15 +68,14 @@ App.svelte
 ### Component Contracts
 
 **ConnectionIndicatorProps**
-- `state: IndicatorState` — Connection state: 'connecting', 'reconnecting', 'connected', 'disconnected'
-- `detail?: string` — Optional detail message for tooltip (e.g., "Reconnecting... attempt 3 of 5")
+- `state: IndicatorState` — Derived state: `'live' | 'stale' | 'connecting' | 'disconnected'`
+- `detail: string` — Detail message for tooltip and aria-label (e.g., "Connected", "Reconnecting (attempt 3)...")
 
 **RunnerBarProps**
-- `pools: RunnerPoolDisplay[]` — Array of pool statistics
+- `pools: RunnerPoolDisplay[]` — Array of pool display objects
 
 **RunnerPoolDisplay**
-- `groupName: string` — Pool name (e.g., "Default", "macOS")
-- `labels: string[]` — Runner labels (e.g., ["linux", "x86_64"])
+- `label: string` — Pool display name (derived from `groupName ?? labels.join(', ')` in TopBar)
 - `running: number` — Count of running jobs in pool
 - `queued: number` — Count of queued jobs in pool
 - `total: number | null` — Total capacity (null until operator sets it)
