@@ -16,10 +16,13 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/app.css` | Design tokens (`@theme` block), OKLCH color definitions |
 | `src/main.ts` | Vite entry point |
 | `vite.config.ts` | Build config, Tailwind plugin |
+| `src/lib/stores/` | Svelte 5 rune stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts` |
+| `src/lib/dispatcher.ts` | EventDispatcher — buffers WebSocket events and flushes to stores via requestAnimationFrame |
+| `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
 
 ## Status
 
-Skeleton phase. Renders a hello-world component demonstrating the Tailwind + OKLCH token system. No application features or API integration yet.
+Phase 4 complete. WebSocket client with WS-first connect protocol, event buffering, and reconnnect backoff. EventDispatcher batches events via RAF. Stores initialized but component hierarchy not yet built.
 
 ## Commands
 
