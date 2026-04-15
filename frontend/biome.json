@@ -78,7 +78,9 @@
       "!!**/node_modules",
       "!!**/dist",
       "!!**/pnpm-lock.yaml",
-      "!!**/src/lib/types/generated"
+      "!!**/src/lib/types/generated",
+      "!!**/test-results",
+      "!!**/playwright-report"
     ]
   },
   "assist": {
