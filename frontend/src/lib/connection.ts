@@ -17,10 +17,9 @@ export class ConnectionManager {
     this.baseUrl = baseUrl
   }
 
-  /** JSON reviver to convert string bigints back to actual bigints */
+  /** JSON reviver to convert numeric fields to bigint for known i64/u64 fields */
   private jsonReviver(key: string, value: unknown): unknown {
-    if (typeof value === 'string' && ['seq', 'id', 'runId', 'jobId'].includes(key)) {
-      // Convert string bigints for known bigint fields
+    if (['seq', 'id', 'runId', 'jobId'].includes(key) && (typeof value === 'number' || typeof value === 'string')) {
       try {
         return BigInt(value)
       } catch {
@@ -95,8 +94,14 @@ export class ConnectionManager {
       connectionStore.status = 'connected'
       connectionStore.reconnectAttempt = 0
     } catch {
-      // State fetch failed — trigger reconnect
-      this.ws?.close()
+      // State fetch failed — close WS and let onclose trigger reconnect.
+      // Nullify onclose first to prevent double-reconnect, then call
+      // handleDisconnect once explicitly.
+      if (this.ws) {
+        this.ws.onclose = null
+        this.ws.close()
+        this.ws = null
+      }
       this.handleDisconnect()
     }
   }

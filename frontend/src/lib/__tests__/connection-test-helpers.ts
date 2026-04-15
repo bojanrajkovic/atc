@@ -52,12 +52,12 @@ import { HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
-// Helper to serialize snapshots with BigInt
+// Helper to serialize snapshots with BigInt → number (matching serde's i64/u64 JSON output)
 export const snapshotToJSON = (snapshot: StateSnapshot) => {
   return JSON.parse(
     JSON.stringify(snapshot, (_key, value) => {
       if (typeof value === 'bigint') {
-        return value.toString()
+        return Number(value)
       }
       return value
     }),
