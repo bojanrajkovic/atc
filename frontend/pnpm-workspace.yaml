@@ -11,6 +11,7 @@ catalog:
   '@testing-library/svelte': ^5.3.1
   '@typescript-eslint/parser': ^8.57.2
   '@vitest/browser': ^4.1.4
+  '@vitest/browser-playwright': ^4.1.4
   '@vitest/coverage-v8': ^4.1.4
   'bits-ui': ^2.17.3
   clsx: ^2.1.1

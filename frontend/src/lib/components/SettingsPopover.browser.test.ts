@@ -72,21 +72,10 @@ describe('SettingsPopover (browser mode)', () => {
     // Wait a tick for the popover animation/render
     await new Promise((r) => setTimeout(r, 50))
 
-    // Verify theme selector, mode toggle, and density toggle are now visible
-    const themeGroup = screen.queryByLabelText('Select theme')
-    const modeToggle = screen.queryByLabelText('Toggle light mode')
-    const densityToggle = screen.queryByLabelText('Toggle compact density')
-
-    // At least one of these should exist (theme group or one of the toggles)
-    const hasPopoverContent =
-      themeGroup ||
-      modeToggle ||
-      densityToggle ||
-      screen.queryByText('Theme') ||
-      screen.queryByText('Light mode') ||
-      screen.queryByText('Compact')
-
-    expect(hasPopoverContent).toBeTruthy()
+    // Verify all three controls are now visible
+    expect(screen.getByLabelText('Select theme')).toBeTruthy()
+    expect(screen.getByLabelText('Toggle light mode')).toBeTruthy()
+    expect(screen.getByLabelText('Toggle compact density')).toBeTruthy()
   })
 
   it('clicking theme dot updates uiStore.theme', async () => {
@@ -168,11 +157,10 @@ describe('SettingsPopover (browser mode)', () => {
     expect(violetToggle).toBeTruthy()
 
     // The violet toggle should have the "pressed" state
-    // Check if it has the aria-pressed attribute set to true or the data-state attribute
     const isPressed =
       violetToggle!.getAttribute('aria-pressed') === 'true' ||
       violetToggle!.getAttribute('data-state') === 'on'
 
-    expect(isPressed || violetToggle!.className.includes('bg-')).toBeTruthy()
+    expect(isPressed).toBe(true)
   })
 })
