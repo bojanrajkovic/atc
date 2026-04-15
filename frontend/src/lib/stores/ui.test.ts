@@ -25,6 +25,7 @@ describe('UIStore', () => {
   // We use vi.resetModules() to get a fresh singleton for each test.
   // Due to dynamic imports with vi.resetModules(), we cannot infer the type statically.
   // Using typeof on a dynamic import would require awaiting beforeEach, so we keep 'any'.
+  // biome-ignore lint/suspicious/noExplicitAny: vi.resetModules() dynamic imports prevent static type inference
   let uiStore: any
 
   beforeEach(async () => {

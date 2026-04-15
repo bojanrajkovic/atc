@@ -178,7 +178,7 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
         for (const value of values.slice(1)) {
           expect(value).toBe(
             firstValue,
-            `${colorVar} should be constant across themes, but got different values`
+            `${colorVar} should be constant across themes, but got different values`,
           )
         }
       }
