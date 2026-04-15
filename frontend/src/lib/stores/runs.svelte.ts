@@ -57,16 +57,20 @@ class RunStore {
       updatedAt: envelope.updatedAt,
     }
 
-    // Update existing run with new data
+    // Update existing run with new data — matches backend store.rs semantics
     if (existing) {
       run.status = status
-      run.conclusion = conclusion
-      // Preserve fields that may be null in new events; use ?? to keep existing if new is null
+      run.conclusion = conclusion ?? existing.conclusion
+      // Preserve optional fields that may be absent in some events
       run.workflowName = envelope.workflowName ?? existing.workflowName
       run.workflowPath = envelope.workflowPath ?? existing.workflowPath
-      run.branch = envelope.branch ?? existing.branch
-      run.commitMessage = envelope.commitMessage ?? existing.commitMessage
       run.runStartedAt = envelope.runStartedAt ?? existing.runStartedAt
+      // Overwrite fields that the backend always replaces
+      run.branch = envelope.branch
+      run.headSha = envelope.headSha
+      run.commitMessage = envelope.commitMessage
+      run.displayTitle = envelope.displayTitle
+      run.htmlUrl = envelope.htmlUrl
       run.updatedAt = envelope.updatedAt
     }
 
@@ -134,8 +138,8 @@ class RunStore {
       const existingJob = existing[jobIndex]
       if (existingJob) {
         existingJob.status = status
-        existingJob.conclusion = conclusion
-        existingJob.runner = runner
+        existingJob.conclusion = conclusion ?? existingJob.conclusion
+        existingJob.runner = runner ?? existingJob.runner
         existingJob.labels = labels
         existingJob.steps = steps
         existingJob.startedAt = envelope.startedAt ?? existingJob.startedAt

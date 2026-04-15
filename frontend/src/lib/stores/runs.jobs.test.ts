@@ -180,8 +180,8 @@ describe('RunStore', () => {
       const jobs = runStore.jobsByRun.get(runId)!
       const job = jobs[0]!
       expect(job.status).toBe('Completed')
-      // Runner should be set to the new null value (per the Completed action)
-      expect(job.runner).toBeNull()
+      // Runner preserved from prior event (backend uses .or() semantics)
+      expect(job.runner).toEqual({ id: 1n, name: 'Runner1', groupId: null, groupName: null })
     })
 
     it('should handle duplicate job events without creating duplicates', () => {

@@ -232,10 +232,10 @@ describe('RunStore', () => {
       })
 
       const run = runStore.runs.get(runId)!
-      expect(run.workflowName).toBe('MyWorkflow') // Preserved
-      expect(run.workflowPath).toBe('.github/workflows/my.yml') // Preserved
-      expect(run.branch).toBe('develop') // Preserved
-      expect(run.commitMessage).toBe('Initial commit') // Preserved
+      expect(run.workflowName).toBe('MyWorkflow') // Preserved (optional field)
+      expect(run.workflowPath).toBe('.github/workflows/my.yml') // Preserved (optional field)
+      expect(run.branch).toBeNull() // Overwritten (backend always replaces)
+      expect(run.commitMessage).toBeNull() // Overwritten (backend always replaces)
     })
   })
 
