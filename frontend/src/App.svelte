@@ -1,28 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { uiStore } from '$lib/stores/ui.svelte'
 
   const themes = ['warm', 'radar', 'violet', 'pink'] as const
-  let currentTheme = $state<string>('radar') // default theme per .impeccable.md
-  let isLight = $state(false) // dark-first
-
-  function setTheme(theme: string) {
-    currentTheme = theme
-    document.documentElement.setAttribute('data-theme', theme)
-  }
-
-  function toggleMode() {
-    isLight = !isLight
-    if (isLight) {
-      document.documentElement.setAttribute('data-mode', 'light')
-    } else {
-      document.documentElement.removeAttribute('data-mode')
-    }
-  }
-
-  onMount(() => {
-    // Set initial theme attribute (default is radar)
-    document.documentElement.setAttribute('data-theme', currentTheme)
-  })
 </script>
 
 <main class="min-h-screen flex flex-col items-center justify-center gap-8 p-8">
@@ -36,11 +15,11 @@
         type="button"
         class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         style="
-          background-color: {currentTheme === theme ? 'var(--accent)' : 'var(--surface-raised)'};
-          color: {currentTheme === theme ? 'var(--bg)' : 'var(--text)'};
+          background-color: {uiStore.theme === theme ? 'var(--accent)' : 'var(--surface-raised)'};
+          color: {uiStore.theme === theme ? 'var(--bg)' : 'var(--text)'};
           border: 1px solid var(--border);
         "
-        onclick={() => setTheme(theme)}
+        onclick={() => uiStore.theme = theme}
       >
         {theme}
       </button>
@@ -55,9 +34,9 @@
       color: var(--text);
       border: 1px solid var(--border);
     "
-    onclick={toggleMode}
+    onclick={() => uiStore.mode = uiStore.mode === 'dark' ? 'light' : 'dark'}
   >
-    {isLight ? 'Dark Mode' : 'Light Mode'}
+    {uiStore.mode === 'dark' ? 'Light Mode' : 'Dark Mode'}
   </button>
 
   <div class="flex gap-4 mt-4">
