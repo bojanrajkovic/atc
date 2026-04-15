@@ -6,7 +6,7 @@ class UIStore {
   theme = $state<Theme>('radar')
   mode = $state<Mode>('dark')
   density = $state<Density>('comfortable')
-  selectedRunId = $state<number | null>(null)
+  selectedRunId = $state<bigint | null>(null)
 
   constructor() {
     // Restore persisted values from localStorage

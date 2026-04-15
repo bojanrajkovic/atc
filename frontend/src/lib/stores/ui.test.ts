@@ -138,7 +138,7 @@ describe('UIStore', () => {
       mockLocalStorage.setItem('atc-mode', 'light')
 
       vi.resetModules()
-      const { uiStore: newStore } = await import('./ui.svelte')
+      await import('./ui.svelte')
 
       expect(document.documentElement.getAttribute('data-theme')).toBe('radar')
       expect(document.documentElement.getAttribute('data-mode')).toBe('light')

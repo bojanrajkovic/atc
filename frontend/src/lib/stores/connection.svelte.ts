@@ -14,7 +14,7 @@ class ConnectionStore {
   // reactive, so without this tick the staleness check would freeze
   // at its initial computation.
   private tick = $state(0)
-  tickInterval: ReturnType<typeof setInterval> | null = null
+  private tickInterval: ReturnType<typeof setInterval> | null = null
 
   isStale = $derived(
     // Reference this.tick so $derived re-evaluates when tick changes

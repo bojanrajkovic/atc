@@ -1,6 +1,10 @@
 import type { Job } from '$lib/types/generated/Job'
+import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
+import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
+import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
+import type { Step } from '$lib/types/generated/Step'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
 class RunStore {
@@ -16,7 +20,7 @@ class RunStore {
 
     // Determine status from the action type
     let status: 'Queued' | 'InProgress' | 'Completed'
-    let conclusion: any = null
+    let conclusion: RunConclusion | null = null
 
     if (envelope.action.type === 'Requested') {
       status = 'Queued'
@@ -75,10 +79,10 @@ class RunStore {
 
     // Determine status from the action type
     let status: 'Queued' | 'Waiting' | 'InProgress' | 'Completed'
-    let conclusion: any = null
-    let runner: any = null
+    let conclusion: JobConclusion | null = null
+    let runner: RunnerInfo | null = null
     let labels: Array<string> = []
-    let steps: Array<any> = []
+    let steps: Array<Step> = []
 
     if (envelope.action.type === 'Queued') {
       status = 'Queued'
