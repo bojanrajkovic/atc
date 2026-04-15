@@ -61,7 +61,7 @@ App.svelte
 
 ### Data Flow
 
-- **ConnectionStore → TopBar → ConnectionIndicator** — TopBar reads `ConnectionStore` connection status and derives `IndicatorState` (connecting/reconnecting/connected/disconnected) to pass to ConnectionIndicator
+- **ConnectionStore → TopBar → ConnectionIndicator** — TopBar reads `ConnectionStore` connection status and derives `IndicatorState` (live/stale/connecting/disconnected) to pass to ConnectionIndicator
 - **RunnerStore → TopBar → RunnerBar → RunnerPool → CapacityBar** — TopBar reads `RunnerStore` to compute pool statistics, passes pools[] array to RunnerBar, which renders RunnerPool items. Each RunnerPool passes used/total to CapacityBar for rendering fill percentage.
 - **UIStore ↔ SettingsPopover** — SettingsPopover reads/writes `UIStore` to persist theme and dark/light mode selections directly
 
