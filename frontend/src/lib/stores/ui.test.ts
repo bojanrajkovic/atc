@@ -23,6 +23,8 @@ vi.stubGlobal('localStorage', mockLocalStorage)
 describe('UIStore', () => {
   // UIStore is a module-level singleton with $effect.root().
   // We use vi.resetModules() to get a fresh singleton for each test.
+  // Due to dynamic imports with vi.resetModules(), we cannot infer the type statically.
+  // Using typeof on a dynamic import would require awaiting beforeEach, so we keep 'any'.
   let uiStore: any
 
   beforeEach(async () => {
@@ -194,9 +196,9 @@ describe('UIStore', () => {
       expect(uiStore.selectedRunId).toBeNull()
 
       uiStore.theme = 'warm'
-      uiStore.selectedRunId = 42
+      uiStore.selectedRunId = 42n
 
-      expect(uiStore.selectedRunId).toBe(42)
+      expect(uiStore.selectedRunId).toBe(42n)
     })
   })
 })
