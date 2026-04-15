@@ -2,12 +2,13 @@ import path from 'node:path'
 
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { svelteTesting } from '@testing-library/svelte/vite'
-import * as browserPlaywright from '@vitest/browser-playwright'
+import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [svelte(), svelteTesting()],
   resolve: {
+    conditions: ['browser', 'import'],
     alias: {
       $lib: path.resolve('./src/lib'),
     },
@@ -18,7 +19,7 @@ export default defineConfig({
     exclude: ['e2e/**'],
     browser: {
       enabled: true,
-      provider: browserPlaywright.playwright,
+      provider: playwright(),
       instances: [{ browser: 'chromium' }],
     },
   },
