@@ -1,14 +1,14 @@
-import { beforeAll, afterEach, afterAll, beforeEach, describe, it, expect, vi } from 'vitest'
-import { http, HttpResponse, ws } from 'msw'
+import { HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionManager } from '$lib/connection'
-import { connectionStore } from '$lib/stores/connection.svelte'
-import { runStore } from '$lib/stores/runs.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
-import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
+import { connectionStore } from '$lib/stores/connection.svelte'
+import { runnerStore } from '$lib/stores/runners.svelte'
+import { runStore } from '$lib/stores/runs.svelte'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
+import type { SeqEvent } from '$lib/types/generated/SeqEvent'
+import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
 // Mock WebSocket connections for testing
 class MockWebSocket {
@@ -65,12 +65,14 @@ describe('ConnectionManager', () => {
 
   // Helper to serialize snapshots with BigInt
   const snapshotToJSON = (snapshot: StateSnapshot) => {
-    return JSON.parse(JSON.stringify(snapshot, (key, value) => {
-      if (typeof value === 'bigint') {
-        return value.toString()
-      }
-      return value
-    }))
+    return JSON.parse(
+      JSON.stringify(snapshot, (_key, value) => {
+        if (typeof value === 'bigint') {
+          return value.toString()
+        }
+        return value
+      }),
+    )
   }
 
   // Default state snapshot for most tests
@@ -91,14 +93,12 @@ describe('ConnectionManager', () => {
   beforeAll(() => {
     server.listen()
     // Replace WebSocket constructor with our mock
-    const originalWebSocket = globalThis.WebSocket
     Object.defineProperty(globalThis, 'WebSocket', {
       value: MockWebSocket,
       writable: true,
       configurable: true,
     })
   })
-
 
   beforeEach(() => {
     MockWebSocket.clearAll()
@@ -149,7 +149,7 @@ describe('ConnectionManager', () => {
             branch: 'main',
             headSha: 'abc123',
             commitMessage: 'test commit',
-            triggerEvent: 'push',
+            event: 'push',
             displayTitle: 'Test run',
             htmlUrl: 'https://github.com/org/repo/actions/runs/1',
             createdAt: new Date().toISOString(),
@@ -157,9 +157,6 @@ describe('ConnectionManager', () => {
             updatedAt: new Date().toISOString(),
             status: 'Queued',
             conclusion: null,
-            totalJobCount: 0,
-            completedJobCount: 0,
-            neutralJobCount: 0,
           },
         ],
         jobs: [],
@@ -188,7 +185,7 @@ describe('ConnectionManager', () => {
 
       const manager = new ConnectionManager(baseUrl)
 
-      const connectPromise = manager.connect()
+      manager.connect()
 
       // Let microtasks and timers process
       await vi.runAllTimersAsync()
@@ -216,7 +213,7 @@ describe('ConnectionManager', () => {
 
       const timeoutSpy = vi.spyOn(global, 'setTimeout')
 
-      const connectPromise = manager.connect()
+      manager.connect()
 
       // Let microtasks and timers process
       await vi.runAllTimersAsync()
@@ -244,6 +241,8 @@ describe('ConnectionManager', () => {
 
   describe('fe-foundation.AC4.5: Success — Reconnect re-runs full connect sequence', () => {
     it('re-fetches state during reconnect instead of just reopening WebSocket', async () => {
+      vi.useFakeTimers()
+
       const manager = new ConnectionManager(baseUrl)
       let stateRequestCount = 0
 
@@ -262,20 +261,34 @@ describe('ConnectionManager', () => {
       }
 
       server.use(
-        http.get('http://localhost:*/v1/state', ({ request }) => {
+        http.get('http://localhost:*/v1/state', () => {
           stateRequestCount++
           return HttpResponse.json(snapshotToJSON(stateRequestCount === 1 ? snapshot1 : snapshot2))
         }),
       )
 
-      await manager.connect()
+      manager.connect()
+      await vi.runAllTimersAsync()
       expect(stateRequestCount).toBe(1)
 
-      // We can't directly trigger reconnect from the test without full async/timer handling,
-      // but we've verified the structure. A full reconnect would call connect() again,
-      // which would increment stateRequestCount.
+      // Trigger disconnect by closing the WebSocket
+      const ws = MockWebSocket.getLastInstance()
+      if (ws) {
+        ws.close(1000)
+      }
+
+      // Process the close event
+      await Promise.resolve()
+
+      // Advance time past the first reconnect backoff delay (1000ms)
+      vi.advanceTimersByTime(1001)
+      await vi.runAllTimersAsync()
+
+      // Verify state was re-fetched during reconnect
+      expect(stateRequestCount).toBe(2)
 
       manager.destroy()
+      vi.useRealTimers()
     })
   })
 
@@ -283,7 +296,7 @@ describe('ConnectionManager', () => {
     it('closes WebSocket when destroy is called', async () => {
       const manager = new ConnectionManager(baseUrl)
 
-      const connectPromise = manager.connect()
+      manager.connect()
       await new Promise((resolve) => setTimeout(resolve, 10))
 
       expect(connectionStore.status).toBe('connected')
@@ -299,7 +312,7 @@ describe('ConnectionManager', () => {
       const manager = new ConnectionManager(baseUrl)
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout')
 
-      const connectPromise = manager.connect()
+      manager.connect()
       // Advance timers to let the connection complete
       await vi.runAllTimersAsync()
 
@@ -330,7 +343,7 @@ describe('ConnectionManager', () => {
 
       const manager = new ConnectionManager(baseUrl)
 
-      const connectPromise = manager.connect()
+      manager.connect()
       // Advance timers to let the connection complete
       await vi.runAllTimersAsync()
 
@@ -401,10 +414,10 @@ describe('ConnectionManager', () => {
   describe('fe-foundation.AC4.8: Edge — Events buffered during state fetch are replayed after seq filtering', () => {
     it('buffers events arriving while state fetch is in progress', async () => {
       const manager = new ConnectionManager(baseUrl)
-      let resolveStateFetch: (() => void) | null = null
+      let resolveStateFetch: (() => void) | undefined
 
       const statePromise = new Promise<void>((resolve) => {
-        resolveStateFetch = resolve
+        resolveStateFetch = () => resolve()
       })
 
       server.use(
@@ -448,12 +461,14 @@ describe('ConnectionManager', () => {
             } as RunEventEnvelope,
           },
         }
-        ws.receiveMessage(JSON.stringify(event, (key, value) => {
-          if (typeof value === 'bigint') {
-            return value.toString()
-          }
-          return value
-        }))
+        ws.receiveMessage(
+          JSON.stringify(event, (_key, value) => {
+            if (typeof value === 'bigint') {
+              return value.toString()
+            }
+            return value
+          }),
+        )
       }
 
       // Resolve the state fetch
@@ -480,10 +495,10 @@ describe('ConnectionManager', () => {
         poolStats: [],
       }
 
-      let resolveStateFetch: (() => void) | null = null
+      let resolveStateFetch: (() => void) | undefined
 
       const statePromise = new Promise<void>((resolve) => {
-        resolveStateFetch = resolve
+        resolveStateFetch = () => resolve()
       })
 
       server.use(
@@ -526,12 +541,14 @@ describe('ConnectionManager', () => {
             } as RunEventEnvelope,
           },
         }
-        ws.receiveMessage(JSON.stringify(staleEvent, (key, value) => {
-          if (typeof value === 'bigint') {
-            return value.toString()
-          }
-          return value
-        }))
+        ws.receiveMessage(
+          JSON.stringify(staleEvent, (_key, value) => {
+            if (typeof value === 'bigint') {
+              return value.toString()
+            }
+            return value
+          }),
+        )
       }
 
       // Resolve the state fetch
@@ -557,10 +574,10 @@ describe('ConnectionManager', () => {
         poolStats: [],
       }
 
-      let resolveStateFetch: (() => void) | null = null
+      let resolveStateFetch: (() => void) | undefined
 
       const statePromise = new Promise<void>((resolve) => {
-        resolveStateFetch = resolve
+        resolveStateFetch = () => resolve()
       })
 
       server.use(
@@ -603,12 +620,14 @@ describe('ConnectionManager', () => {
             } as RunEventEnvelope,
           },
         }
-        ws.receiveMessage(JSON.stringify(freshEvent, (key, value) => {
-          if (typeof value === 'bigint') {
-            return value.toString()
-          }
-          return value
-        }))
+        ws.receiveMessage(
+          JSON.stringify(freshEvent, (_key, value) => {
+            if (typeof value === 'bigint') {
+              return value.toString()
+            }
+            return value
+          }),
+        )
       }
 
       // Resolve the state fetch

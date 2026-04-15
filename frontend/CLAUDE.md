@@ -22,7 +22,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 
 ## Status
 
-Phase 4 complete. WebSocket client with WS-first connect protocol, event buffering, and reconnnect backoff. EventDispatcher batches events via RAF. Stores initialized but component hierarchy not yet built.
+Phase 4 complete. WebSocket client with WS-first connect protocol, event buffering, and reconnect backoff. EventDispatcher batches events via RAF. Stores initialized but component hierarchy not yet built.
 
 ## Commands
 
