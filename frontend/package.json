@@ -11,7 +11,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "svelte": "catalog:"
+    "@internationalized/date": "catalog:",
+    "bits-ui": "catalog:",
+    "clsx": "catalog:",
+    "shadcn-svelte": "catalog:",
+    "svelte": "catalog:",
+    "tailwind-merge": "catalog:",
+    "tailwind-variants": "catalog:"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
