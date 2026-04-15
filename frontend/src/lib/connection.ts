@@ -8,6 +8,7 @@ import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 export class ConnectionManager {
   private ws: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private abortController: AbortController | null = null
   private baseUrl: string
   private snapshotSeq: bigint = 0n
   private preConnectBuffer: SeqEvent[] = []
@@ -20,7 +21,7 @@ export class ConnectionManager {
   /** JSON reviver to convert numeric fields to bigint for known i64/u64 fields */
   private jsonReviver(key: string, value: unknown): unknown {
     if (
-      ['seq', 'id', 'runId', 'jobId'].includes(key) &&
+      ['seq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
       (typeof value === 'number' || typeof value === 'string')
     ) {
       try {
@@ -33,6 +34,11 @@ export class ConnectionManager {
   }
 
   async connect(): Promise<void> {
+    // Abort any prior in-flight connect
+    this.abortController?.abort()
+    this.abortController = new AbortController()
+    const { signal } = this.abortController
+
     connectionStore.status = 'connecting'
     this.connected = false
     this.preConnectBuffer = []
@@ -48,10 +54,8 @@ export class ConnectionManager {
       connectionStore.recordEvent()
 
       if (this.connected) {
-        // Post-connect: dispatch normally
         eventDispatcher.dispatch(seqEvent)
       } else {
-        // Buffer events during state fetch
         this.preConnectBuffer.push(seqEvent)
       }
     }
@@ -63,7 +67,6 @@ export class ConnectionManager {
     await new Promise<void>((resolve, reject) => {
       if (!this.ws) return reject(new Error('No WebSocket'))
       this.ws.onopen = () => resolve()
-      // If close fires before open, reject
       const originalOnclose = this.ws.onclose
       const ws = this.ws
       this.ws.onclose = (e) => {
@@ -72,12 +75,18 @@ export class ConnectionManager {
       }
     })
 
+    // Bail if aborted (destroy() called during WS open wait)
+    if (signal.aborted) return
+
     // Step 3: Fetch state snapshot
     try {
-      const res = await fetch(`${this.baseUrl}/v1/state`)
+      const res = await fetch(`${this.baseUrl}/v1/state`, { signal })
       if (!res.ok) throw new Error(`State fetch failed: ${res.status}`)
       const text = await res.text()
       const snapshot: StateSnapshot = JSON.parse(text, (key, value) => this.jsonReviver(key, value))
+
+      // Bail if aborted (destroy() called during fetch)
+      if (signal.aborted) return
 
       // Step 4: Drain any stale dispatcher events from prior connection
       eventDispatcher.clear()
@@ -100,9 +109,10 @@ export class ConnectionManager {
       connectionStore.status = 'connected'
       connectionStore.reconnectAttempt = 0
     } catch {
-      // State fetch failed — close WS and let onclose trigger reconnect.
-      // Nullify onclose first to prevent double-reconnect, then call
-      // handleDisconnect once explicitly.
+      // Ignore abort errors — destroy() was called intentionally
+      if (signal.aborted) return
+
+      // State fetch failed — close WS and trigger reconnect
       if (this.ws) {
         this.ws.onclose = null
         this.ws.close()
@@ -122,17 +132,21 @@ export class ConnectionManager {
     connectionStore.reconnectAttempt++
 
     this.reconnectTimer = setTimeout(() => {
-      this.connect()
+      this.connect().catch(() => {})
     }, delay)
   }
 
   destroy(): void {
+    // Abort any in-flight connect (fetch, WS open wait)
+    this.abortController?.abort()
+    this.abortController = null
+
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
     if (this.ws) {
-      this.ws.onclose = null // Prevent reconnect on intentional close
+      this.ws.onclose = null
       this.ws.close()
       this.ws = null
     }
