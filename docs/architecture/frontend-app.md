@@ -115,7 +115,7 @@ Testing is split into three tiers: unit (Vitest), integration, and E2E (Playwrig
 - Run in headless Chromium with dev server auto-start
 - Playwright starts `pnpm dev` automatically, reuses existing server in local mode
 - Location: `e2e/*.test.ts`
-- Run with: `pnpm test` or `playwright test`
+- Run with: `pnpm test:e2e` or `playwright test`
 
 ## Files
 
