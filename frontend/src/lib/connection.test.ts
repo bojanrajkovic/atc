@@ -300,7 +300,8 @@ describe('ConnectionManager', () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout')
 
       const connectPromise = manager.connect()
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      // Advance timers to let the connection complete
+      await vi.runAllTimersAsync()
 
       // Get the mock WebSocket and close it
       const ws = MockWebSocket.getLastInstance()
@@ -308,7 +309,10 @@ describe('ConnectionManager', () => {
         ws.close(1000)
       }
 
-      // Advance time a bit for the close event to process
+      // Flush microtasks to let the close event handler run
+      await Promise.resolve()
+
+      // Advance time a bit for the reconnect timer to be scheduled
       vi.advanceTimersByTime(10)
 
       // A reconnect timer should have been scheduled
@@ -327,7 +331,8 @@ describe('ConnectionManager', () => {
       const manager = new ConnectionManager(baseUrl)
 
       const connectPromise = manager.connect()
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      // Advance timers to let the connection complete
+      await vi.runAllTimersAsync()
 
       // Get the mock WebSocket and close it
       const ws = MockWebSocket.getLastInstance()

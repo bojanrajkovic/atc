@@ -17,6 +17,21 @@ export class ConnectionManager {
     this.baseUrl = baseUrl
   }
 
+  /** JSON reviver to convert string bigints back to actual bigints */
+  private jsonReviver(key: string, value: unknown): unknown {
+    if (typeof value === 'string') {
+      // Convert string bigints for known bigint fields
+      if (['seq', 'id', 'runId', 'jobId'].includes(key)) {
+        try {
+          return BigInt(value)
+        } catch {
+          return value
+        }
+      }
+    }
+    return value
+  }
+
   async connect(): Promise<void> {
     connectionStore.status = 'connecting'
     this.connected = false
@@ -27,7 +42,9 @@ export class ConnectionManager {
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onmessage = (event) => {
-      const seqEvent: SeqEvent = JSON.parse(event.data)
+      const seqEvent: SeqEvent = JSON.parse(event.data, (key, value) =>
+        this.jsonReviver(key, value)
+      )
       connectionStore.recordEvent()
 
       if (!this.connected) {
@@ -59,7 +76,10 @@ export class ConnectionManager {
     try {
       const res = await fetch(`${this.baseUrl}/v1/state`)
       if (!res.ok) throw new Error(`State fetch failed: ${res.status}`)
-      const snapshot: StateSnapshot = await res.json()
+      const text = await res.text()
+      const snapshot: StateSnapshot = JSON.parse(text, (key, value) =>
+        this.jsonReviver(key, value)
+      )
 
       // Step 4: Load snapshot into stores
       runStore.loadSnapshot(snapshot.runs, snapshot.jobs)
