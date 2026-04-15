@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-04-12
+Last verified: 2026-04-14
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
