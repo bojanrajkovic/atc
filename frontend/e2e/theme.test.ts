@@ -271,5 +271,25 @@ test.describe('fe-foundation.AC1.7: Theme and mode independence', () => {
     dataTheme = await page.locator('html').getAttribute('data-theme')
     expect(dataMode).toBe('light') // Mode unchanged
     expect(dataTheme).toBe('warm') // Theme changed
+
+    // Sequential theme change — popover still open, switch to pink
+    await page.locator('button[aria-label="pink"]').click()
+    await page.waitForTimeout(100)
+
+    // Verify theme changed again but mode still light
+    dataMode = await page.locator('html').getAttribute('data-mode')
+    dataTheme = await page.locator('html').getAttribute('data-theme')
+    expect(dataMode).toBe('light') // Mode still unchanged
+    expect(dataTheme).toBe('pink') // Theme changed again
+
+    // Toggle mode back to dark — verify bidirectional independence
+    await page.locator('button[aria-label="Toggle light mode"]').click()
+    await page.waitForTimeout(100)
+
+    // Verify mode toggled back but theme unchanged
+    dataMode = await page.locator('html').getAttribute('data-mode')
+    dataTheme = await page.locator('html').getAttribute('data-theme')
+    expect(dataMode).toBeNull() // Back to dark (no attribute)
+    expect(dataTheme).toBe('pink') // Theme preserved
   })
 })

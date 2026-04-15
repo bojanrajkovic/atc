@@ -71,12 +71,15 @@ describe('TopBar (browser mode)', () => {
     expect(noPools).toBeTruthy()
   })
 
-  it('shows connected indicator when connection established', () => {
+  it('shows connected indicator when connection established', async () => {
     render(TopBar)
 
     // Set connection to connected and update timestamp
     connectionStore.status = 'connected'
     connectionStore.lastEventAt = Date.now()
+
+    // Wait for reactivity
+    await new Promise((r) => setTimeout(r, 50))
 
     // Should render indicator with "Connected" status
     const indicator = screen.getByRole('status', { name: /connected/i })
