@@ -40,8 +40,5 @@ pre-push:
     vitest:
       root: "frontend/"
       run: mise exec -- pnpm exec vitest run
-    playwright:
-      # Not configured yet — keep conditional until playwright is set up
-      run: "if mise exec -- pnpm exec playwright --version >/dev/null 2>&1; then mise exec -- pnpm exec playwright test; else echo 'playwright: not configured yet (skipped)'; fi"
     doc-staleness:
       run: scripts/check-docs-lefthook.sh
