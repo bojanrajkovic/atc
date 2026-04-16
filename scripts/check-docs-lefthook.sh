@@ -52,7 +52,7 @@ fi
 # Check which required docs were also modified
 has_violations=false
 while IFS= read -r doc; do
-    if ! echo "$CHANGED_FILES" | grep -qxF "$doc"; then
+    if ! grep -qxF "$doc" <<< "$CHANGED_FILES"; then
         echo "ERROR: Source files mapped to '$doc' were modified, but '$doc' was not updated."
         has_violations=true
     fi
