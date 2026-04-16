@@ -20,11 +20,31 @@
     return 'disconnected'
   })
 
+  // Tick counter that increments every second while stale, forcing
+  // indicatorDetail to re-evaluate Date.now() for the elapsed time.
+  let staleTick = $state(0)
+  let staleTimer: ReturnType<typeof setInterval> | null = null
+
+  $effect(() => {
+    if (indicatorState === 'stale') {
+      staleTimer = setInterval(() => staleTick++, 1000)
+    } else {
+      if (staleTimer) clearInterval(staleTimer)
+      staleTimer = null
+      staleTick = 0
+    }
+    return () => {
+      if (staleTimer) clearInterval(staleTimer)
+    }
+  })
+
   const indicatorDetail = $derived.by(() => {
     switch (indicatorState) {
       case 'live':
         return 'Connected'
       case 'stale': {
+        // staleTick dependency forces re-evaluation every second
+        void staleTick
         const elapsed = connectionStore.lastEventAt
           ? Math.round((Date.now() - connectionStore.lastEventAt) / 1000)
           : 0
