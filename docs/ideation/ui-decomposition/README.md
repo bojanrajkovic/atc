@@ -246,16 +246,24 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - EventDispatcher with RAF batching
 - Vitest (65 unit tests, 94% coverage) + Playwright (13 E2E tests) fully gated in CI
 
-### Sub-Phase 2: Shell + Runner Bar
+### Sub-Phase 2: Shell + Runner Bar ✅ COMPLETE
 
-**Goal:** App shell layout with top bar, runner pool utilization, connection indicator, theme controls.
+**Implemented in:** PR #23 (`feat/app-shell-design` branch)
 
-- AppShell (full-viewport flex layout)
-- TopBar with Logo, ThemeControls (theme picker + dark/light toggle + density), ConnectionIndicator (live/stale/disconnected dot)
-- RunnerBar with RunnerPool components (dot + label + CapacityBar + count)
-- Elastic pool special case (github-hosted: count only, no bar)
-- Color thresholds on CapacityBar: green (<70%), amber (70-99%), red (100%)
-- **Tests:** Pure component tests for RunnerPool, CapacityBar, ConnectionIndicator, Logo. Connected tests for TopBar, RunnerBar with mock stores. E2E: runner bar renders with mock data, theme switching applies globally.
+**What was built:**
+- Backend: `RunnerPoolStats` extended with `is_elastic: bool` and `total: Option<u32>`, ts-rs type regeneration
+- AppShell (100dvh flex column layout with TopBar pinned, scrollable content slot)
+- TopBar (connected component reading ConnectionStore + RunnerStore, deriving IndicatorState + RunnerPoolDisplay[])
+- ConnectionManager.svelte (service component: connect on mount, destroy on unmount, no DOM)
+- RunnerBar + RunnerPool with 3 variants (known-capacity with CapacityBar, unknown-capacity, elastic)
+- CapacityBar with color thresholds (green <70%, amber 70-99%, red 100%)
+- ConnectionIndicator with 4 states (live/stale/connecting/disconnected) + tooltip
+- SettingsPopover (theme picker with 4 OKLCH dots, dark/light toggle, density toggle)
+- Logo (monospace "ATC" text mark)
+- Vitest split into unit (jsdom) + browser (Playwright) projects for portal-dependent components
+- shadcn-svelte: Separator, Tooltip, Popover, ToggleGroup installed
+- 111 unit/browser tests + 19 E2E tests (307 total with backend), architecture docs updated
+- Fixed SIGPIPE false positive in doc-staleness pre-push hook
 
 ### Sub-Phase 3: Kanban Board
 
