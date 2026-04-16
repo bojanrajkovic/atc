@@ -14,17 +14,18 @@ The standout implementation concern is animation correctness. Cards must visuall
   - `KanbanBoard.svelte` — connected component that reads `RunStore` and passes three filtered+sorted run arrays to three `KanbanColumn` instances.
   - `KanbanColumn.svelte` — pure component that receives a filtered run array, a label, and renders `ColumnHeader` + a scrollable card list with animated transitions.
   - `ColumnHeader.svelte` — pure component that renders uppercase label + total count badge.
-  - `RunCard.svelte` — pure component **skeleton only**; displays `displayTitle` and a status indicator. Progress, meta, runner, halo, duration ticker, and full StatusIcon are explicitly Sub-Phase 4 work.
+  - `RunCard.svelte` — pure component **skeleton only**; displays `displayTitle` and a status indicator that combines color **with** a non-color cue (a small glyph **and** visually-hidden status text) so the indicator never communicates via color alone (`.impeccable.md` principle 2). Progress, meta, runner, halo, duration ticker, and full `StatusIcon` are explicitly Sub-Phase 4 work.
 - Card animations on state changes, implemented via a single shared `crossfade` instance whose `fallback` uses the `intro: boolean` parameter to distinguish arrival from removal:
-  - `animate:flip` for within-column reordering, paired with `crossfade` on every card (mitigates Svelte issue #10252 for multi-item simultaneous transitions).
+  - `animate:flip` for within-column reordering, paired with `crossfade` on every card (mitigates Svelte issue #10252 for multi-item simultaneous transitions). `animate:flip` consumes the same `DURATION_MOVE` constant exported from `kanban-transitions.ts` — a single reduced-motion check zeroes every motion primitive in the kanban.
   - `crossfade` `send`/`receive` pair (matched by `run.id`) for cross-column movement — a card that transitions Queued→InProgress visually animates between the columns, not fade-out-then-fade-in.
   - Crossfade fallback with `intro=true` → `fly` for new-card arrival. There is no separate `transition:fly` directive; the behavior is consolidated into the crossfade fallback.
   - Crossfade fallback with `intro=false` → `fade` for card removal. There is no separate `transition:fade` directive; the behavior is consolidated into the crossfade fallback.
-  - All animations respect `prefers-reduced-motion` and degrade to instant state changes.
-- `RunStore` derived arrays get per-column sort strategies:
-  - Queued: ascending by `createdAt` (FIFO — which runs next).
-  - InProgress: descending by `runStartedAt` (most recently started at top).
-  - Completed: descending by `updatedAt` (most recently finished at top).
+  - All animations (crossfade, flip, fallback) respect `prefers-reduced-motion` and degrade to instant state changes via the single module-level duration branch.
+- `RunStore` derived arrays get per-column sort strategies with deterministic tie-breakers:
+  - Queued: ascending by `createdAt`, then ascending by `run.id` (FIFO — which runs next).
+  - InProgress: descending by `runStartedAt ?? createdAt`, then descending by `run.id` (most recently started at top).
+  - Completed: descending by `updatedAt`, then descending by `run.id` (most recently finished at top).
+  - Comparison uses direct lexical comparison of ISO-8601 strings (`a < b`, `a > b`) — NOT `localeCompare`. ISO-8601 is machine-sortable; locale-sensitive comparison is both slower and wrong. Secondary key on `run.id` prevents Map-iteration-order leakage on reconnect when timestamps tie.
 
 **Success criteria:**
 - Cards render in the correct column for their status; status changes move the card with a visible animation.
@@ -48,12 +49,12 @@ The standout implementation concern is animation correctness. Cards must visuall
 ## Acceptance Criteria
 
 ### kanban-board.AC1: The kanban renders inside the app shell
-- **kanban-board.AC1.1 Success:** Visiting the app after mount renders three column containers with uppercase labels "QUEUED", "IN PROGRESS", "COMPLETED" inside `<main>`.
-- **kanban-board.AC1.2 Success:** Each column is a `role="list"`; each rendered card is a `role="listitem"`.
+- **kanban-board.AC1.1 Success:** Visiting the app after mount renders three column containers labeled "QUEUED", "IN PROGRESS", "COMPLETED" inside `<main>`. Labels are presentation only — the underlying domain values remain `Queued`, `InProgress`, `Completed`.
+- **kanban-board.AC1.2 Success:** Each column is a `<section>` with `aria-labelledby` referencing its heading; inside the section, the card container is a `role="list"` and each card is a `role="listitem"`. The heading is a real `<h2>` (visually styled per the design system) so screen-reader navigation treats each column as an addressable region.
 - **kanban-board.AC1.3 Success:** The board occupies the full width of `<main>` via `display: grid; grid-template-columns: repeat(3, 1fr)`.
 
 ### kanban-board.AC2: ColumnHeader renders label and count
-- **kanban-board.AC2.1 Success:** ColumnHeader with `label="queued"` and `count=3` renders text "QUEUED" (uppercase) and "3" in a visible count badge.
+- **kanban-board.AC2.1 Success:** ColumnHeader with `label="queued"` and `count=3` renders text "QUEUED" (uppercase) in the heading and "3" as a plain-text count badge. The badge is NOT a `role="status"` element — in a live dashboard, column counts change constantly, and `role="status"` would produce screen-reader churn.
 - **kanban-board.AC2.2 Edge:** ColumnHeader with `count=0` still renders the badge with "0" (does not hide it). The empty-state message is a board-level concern, not a column-level one.
 
 ### kanban-board.AC3: Column sort strategies are deterministic
@@ -61,31 +62,39 @@ The standout implementation concern is animation correctness. Cards must visuall
 - **kanban-board.AC3.2 Success:** `runStore.inProgressRuns` is sorted descending by `runStartedAt`. Given runs with `runStartedAt = ["2026-04-16T09:00:00Z", "2026-04-16T10:00:00Z"]`, the resulting array is `["2026-04-16T10:00:00Z", "2026-04-16T09:00:00Z"]`.
 - **kanban-board.AC3.3 Edge:** `runStore.inProgressRuns` with a null `runStartedAt` falls back to `createdAt` for sort key; no crash, no NaN.
 - **kanban-board.AC3.4 Success:** `runStore.completedRuns` is sorted descending by `updatedAt`. Most recently updated completed run appears at index 0.
+- **kanban-board.AC3.5 Success:** When two runs have identical primary-sort timestamps, the tie-breaker is `run.id` (ascending for Queued, descending for InProgress and Completed). Given three runs with the same `createdAt` and `run.id = [3n, 1n, 2n]`, `queuedRuns` yields them in order `[1n, 2n, 3n]`.
+- **kanban-board.AC3.6 Success:** A snapshot reload (`runStore.loadSnapshot(...)`) of the same runs with unchanged timestamps produces the same array order as before the reload. No gratuitous reshuffling from Map iteration order.
+- **kanban-board.AC3.7 Success:** Sort comparison uses direct lexical string comparison on ISO-8601 timestamps (`a < b`), not `localeCompare`. Assertion: sort implementation contains no call to `localeCompare`.
 
 ### kanban-board.AC4: RunCard skeleton renders minimum information
 - **kanban-board.AC4.1 Success:** RunCard with a `run` prop renders `run.displayTitle` as visible text.
-- **kanban-board.AC4.2 Success:** RunCard renders a status indicator whose color is derived only from `run.status` (three values): `--queued` for Queued, `--running` for InProgress, `--text-dim` for Completed. Conclusion-based coloring (distinguishing Success, Failure, Cancelled, TimedOut, etc.) is explicitly deferred to Sub-Phase 4's `StatusIcon` work.
-- **kanban-board.AC4.3 Failure:** RunCard source file contains zero matches for the forbidden import list (`StatusIcon`, `ProgressBar`, `JobMeta`, `JobHeader`, `RunnerLabel`), zero `@keyframes` rules, and zero `setInterval` calls. Enforced by the pre-merge grep checklist.
+- **kanban-board.AC4.2 Success:** RunCard's status indicator combines color with a non-color cue. Color is derived only from `run.status` (three values): `--queued` for Queued, `--running` for InProgress, `--text-dim` for Completed. Alongside the color, each indicator includes (a) a small glyph that differs per status (e.g., `○` / `▶` / `●` or equivalent geometric shapes) AND (b) visually-hidden status text (e.g., `<span class="sr-only">Status: In Progress</span>`) so the status is accessible to screen readers and distinguishable when color is unavailable. Conclusion-based coloring (distinguishing Success, Failure, Cancelled, TimedOut, etc.) remains Sub-Phase 4 scope.
+- **kanban-board.AC4.3 Reviewer guidance:** RunCard source file should contain zero matches for the forbidden import list (`StatusIcon`, `ProgressBar`, `JobMeta`, `JobHeader`, `RunnerLabel`), zero `@keyframes` rules, and zero `setInterval` calls. This is a reviewer-checked convention, NOT an automated gate — the scope-contract comment at the top of `RunCard.svelte` documents the expectation, and code review is expected to catch violations.
 
 ### kanban-board.AC5: Animation module exports the expected contract
 - **kanban-board.AC5.1 Success:** `kanban-transitions.ts` exports `send`, `receive`, `DURATION_MOVE`, `DURATION_ARRIVE`, `DURATION_REMOVE`, `FLY_SETTLE_Y`. All are defined.
 - **kanban-board.AC5.2 Success:** The crossfade fallback returns a function when called with `intro=true` (arrival) and a function when called with `intro=false` (removal).
 - **kanban-board.AC5.3 Success:** A KanbanColumn rendered in browser mode with two keyed cards has `animate:flip` applied to each card wrapper (directive presence verified via DOM transforms after reorder).
-- **kanban-board.AC5.4 Success:** In browser mode, moving a card between two rendered columns (by mutating the store) produces matching `send`/`receive` keys; the card does not unmount and remount without the crossfade pair firing.
-- **kanban-board.AC5.5 Success:** `bigint` as an `{#each}` key works: in browser mode, reordering the `runs` array for a KanbanColumn preserves the same DOM node identity (verified via a stable `data-run-id` attribute) across the re-render. No runtime errors from Svelte's keyed-each Map.
+- **kanban-board.AC5.4 Success:** In browser mode, when a run's status changes causing it to move between two rendered columns, both the `out:send` directive on the source column's card wrapper and the `in:receive` directive on the destination column's card wrapper fire with matching `run.id` keys (verified by instrumenting the crossfade's `send`/`receive` calls). The card is not merely removed from one column and inserted as a fresh element in the other — the crossfade pair matches by key.
+- **kanban-board.AC5.5 Success:** `bigint` as an `{#each}` key works in Svelte 5's keyed-each: in browser mode, reordering the `runs` array for a KanbanColumn keeps each card's `data-run-id` attribute stable across the re-render, and no Svelte runtime errors occur.
+- **kanban-board.AC5.6 Success:** In browser mode, mutating multiple runs in the same RAF batch (e.g., two runs transition Queued→InProgress simultaneously) lands all cards in their correct final columns. Asserted on final DOM state after the frame settles, not on intermediate animation frames.
 
 ### kanban-board.AC6: Animations respect `prefers-reduced-motion`
 - **kanban-board.AC6.1 Success:** When `prefersReducedMotion.current` is true at module init, `DURATION_MOVE`, `DURATION_ARRIVE`, and `DURATION_REMOVE` are all `0`.
 - **kanban-board.AC6.2 Success:** Unit test: the reduced-motion branch's exported durations are exactly `0`.
-- **kanban-board.AC6.3 Success:** Browser-mode test with `matchMedia` mocked to match `(prefers-reduced-motion: reduce)` verifies cards appear in final positions without visible animation errors.
+- **kanban-board.AC6.3 Success:** Browser-mode test with `matchMedia` mocked to match `(prefers-reduced-motion: reduce)` verifies cross-column movement completes without visible animation (cards appear in final positions in the destination column without animated transit).
+- **kanban-board.AC6.4 Success:** Browser-mode test with reduced motion verifies that **within-column reorder** (pure `animate:flip`, no crossfade) also completes instantly. Because `animate:flip` consumes the same `DURATION_MOVE` constant, zeroing it under reduced motion suppresses FLIP motion too.
 
-### kanban-board.AC7: KanbanBoard wires RunStore to three columns
-- **kanban-board.AC7.1 Success:** When `runStore` is empty, KanbanBoard renders "No workflows yet." text inline (no reusable `EmptyState` component).
-- **kanban-board.AC7.2 Success:** After `runStore.applyRunEvent` with three runs of distinct statuses, each card appears in its corresponding column (verified via `data-run-id` attribute on the card DOM).
-- **kanban-board.AC7.3 Success:** ColumnHeader count for each column reflects `runStore.{queued,inProgress,completed}Runs.length` after mutation.
+### kanban-board.AC7: KanbanBoard wires RunStore to three columns and distinguishes loading from empty
+- **kanban-board.AC7.1 Success:** When `connectionStore.status !== 'connected'` (i.e., `connecting`, `reconnecting`, or `disconnected`), KanbanBoard renders a neutral hydration placeholder (inline text, not a reusable primitive) — NOT "No workflows yet." The placeholder distinguishes "we haven't finished loading" from "we loaded and there's nothing to show."
+- **kanban-board.AC7.2 Success:** When `connectionStore.status === 'connected'` AND `totalRuns === 0`, KanbanBoard renders "No workflows yet." text inline.
+- **kanban-board.AC7.3 Success:** When `connectionStore.status === 'connected'` AND `totalRuns > 0`, KanbanBoard renders the three-column kanban with cards distributed across their status-appropriate columns.
+- **kanban-board.AC7.4 Success:** After `runStore.applyRunEvent` with three runs of distinct statuses, each card appears in its corresponding column (verified via `data-run-id` attribute on the card DOM).
+- **kanban-board.AC7.5 Success:** ColumnHeader count for each column reflects `runStore.{queued,inProgress,completed}Runs.length` after mutation.
+- **kanban-board.AC7.6 Success:** A snapshot reload via `runStore.loadSnapshot(...)` with identical run contents (same IDs, same timestamps) preserves DOM identity and ordering across the reload. Visual continuity is preserved on reconnect when nothing substantive has changed.
 
 ### kanban-board.AC8: End-to-end lifecycle via mock WS event stream
-- **kanban-board.AC8.1 Success:** On app load with no events, the E2E test sees "No workflows yet." and all three column headers.
+- **kanban-board.AC8.1 Success:** On app load, the E2E test sees the hydration placeholder ("Connecting…") on initial mount before the mock snapshot arrives. After the mock snapshot loads empty, it sees "No workflows yet." After the first mock WS event arrives, it sees all three column headers and the card in the appropriate column.
 - **kanban-board.AC8.2 Success:** Driving a run through `Queued → InProgress → Completed` via mock WS events moves the card across columns; E2E asserts on card placement at each step (not on animation behavior itself).
 - **kanban-board.AC8.3 Success:** One viewport variant with `prefers-reduced-motion: reduce` completes the same lifecycle without animation-related console errors.
 
@@ -125,23 +134,29 @@ App.svelte                              (modified: replace placeholder)
   AppShell.svelte                       (existing, unchanged)
     TopBar.svelte                       (existing, unchanged)
     <main> (AppShell's slot)
-      KanbanBoard.svelte                (NEW — connected, reads runStore)
-        KanbanColumn.svelte × 3         (NEW — pure, one per status)
-          ColumnHeader.svelte           (NEW — pure)
-          <div class="card-list">       (inline — scrollable flex column)
-            RunCard.svelte × N          (NEW — pure skeleton)
-        {#if totalRuns === 0}
-          inline empty message          (no new EmptyState primitive)
+      KanbanBoard.svelte                (NEW — connected, reads runStore + connectionStore)
+        {#if connectionStore.status !== 'connected'}
+          hydration placeholder         (inline — "Connecting…")
+        {:else if totalRuns === 0}
+          empty message                 (inline — "No workflows yet.")
+        {:else}
+          <section> × 3                 (NEW — column sections)
+            <h2>                        (column heading — aria-labelledby target)
+            <div role="list">           (NEW — card container)
+              <article role="listitem"> (one per card)
+                KanbanColumn.svelte × 3 (NEW — pure, one per status)
+                  ColumnHeader.svelte   (NEW — pure, renders the <h2>)
+                  RunCard.svelte × N    (NEW — pure skeleton)
 ```
 
 ### New files
 
 | Path | Role |
 |------|------|
-| `frontend/src/lib/components/KanbanBoard.svelte` | Connected. Reads `runStore.queuedRuns`, `runStore.inProgressRuns`, `runStore.completedRuns`. Renders three `KanbanColumn`s in a CSS Grid with three equal columns. Shows inline empty state when all columns are empty. |
-| `frontend/src/lib/components/KanbanColumn.svelte` | Pure. Props: `label`, `runs` (sorted array). Renders `ColumnHeader` + a scrollable keyed `{#each}` of `RunCard` wrappers with `animate:flip` + `in:receive` + `out:send`. |
+| `frontend/src/lib/components/KanbanBoard.svelte` | Connected. Reads `runStore.queuedRuns`, `runStore.inProgressRuns`, `runStore.completedRuns`, and `connectionStore.status`. Renders one of three states: hydration placeholder (`status !== 'connected'`), empty state (`connected && totalRuns === 0`), or the three-column grid (`connected && totalRuns > 0`). Grid is `display: grid; grid-template-columns: repeat(3, 1fr)`. |
+| `frontend/src/lib/components/KanbanColumn.svelte` | Pure. Props: `label`, `runs` (sorted `readonly WorkflowRun[]`), `headingId` (the `aria-labelledby` anchor). Renders as a `<section aria-labelledby={headingId}>` with `ColumnHeader` providing the `<h2 id={headingId}>` and a `role="list"` card container below. Each card wrapper is a `role="listitem"` with `animate:flip` + `in:receive` + `out:send`. |
 | `frontend/src/lib/components/ColumnHeader.svelte` | Pure. Props: `label`, `count`. Renders uppercase label + total count badge. No conclusion breakdown. |
-| `frontend/src/lib/components/RunCard.svelte` | Pure **skeleton**. Props: `run: WorkflowRun`. Renders `displayTitle` and a minimal inline status indicator (colored dot). Scope-contract comment block at top of file forbids sibling-component imports. |
+| `frontend/src/lib/components/RunCard.svelte` | Pure **skeleton**. Props: `run: WorkflowRun`. Renders `displayTitle` and an inline status indicator that combines **color + glyph + visually-hidden status text** (never color alone, per `.impeccable.md` principle 2). Scope-contract comment block at top of file documents what this phase does NOT do (reviewer guidance, not an enforced gate). |
 | `frontend/src/lib/animations/kanban-transitions.ts` | Shared `crossfade` instance. Exports `send`, `receive`, and motion constants (`DURATION_MOVE`, `DURATION_ARRIVE`, `DURATION_REMOVE`, `FLY_SETTLE_Y`). Respects `prefersReducedMotion` at module init. |
 
 ### Modified files
@@ -154,18 +169,20 @@ App.svelte                              (modified: replace placeholder)
 ### Component contracts
 
 ```typescript
-// KanbanBoard.svelte — no props (reads runStore directly)
+// KanbanBoard.svelte — no props (reads runStore + connectionStore directly)
 
 // KanbanColumn.svelte
 export interface KanbanColumnProps {
-  label: string           // "QUEUED" | "IN PROGRESS" | "COMPLETED"
-  runs: WorkflowRun[]     // already filtered and sorted by the parent
+  label: string                     // "QUEUED" | "IN PROGRESS" | "COMPLETED" — presentation only, not a domain state
+  runs: readonly WorkflowRun[]      // already filtered and sorted by the parent; readonly expresses the ownership boundary
+  headingId: string                 // DOM id used by aria-labelledby on the <section> wrapper
 }
 
 // ColumnHeader.svelte
 export interface ColumnHeaderProps {
   label: string           // uppercase label
-  count: number           // total card count
+  count: number           // total card count (rendered as plain text, NOT role="status")
+  headingId: string       // DOM id assigned to the emitted <h2>, used by aria-labelledby on the parent <section>
 }
 
 // RunCard.svelte
@@ -202,13 +219,28 @@ Sorting lives in `RunStore` because it is a data-ordering concern, not a present
 The three sort strategies:
 
 ```typescript
-// frontend/src/lib/stores/runs.svelte.ts
-queuedRuns     = $derived( ... .filter(Queued)     .sort(asc  by createdAt) )
-inProgressRuns = $derived( ... .filter(InProgress) .sort(desc by runStartedAt ?? createdAt) )
-completedRuns  = $derived( ... .filter(Completed)  .sort(desc by updatedAt) )
+// frontend/src/lib/stores/runs.svelte.ts (conceptual — direct lexical ISO compare + run.id tie-breaker)
+queuedRuns     = $derived( ...filter(Queued)
+  .sort((a, b) => a.createdAt === b.createdAt
+    ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)         // asc tie-breaker
+    : (a.createdAt < b.createdAt ? -1 : 1)) )
+
+inProgressRuns = $derived( ...filter(InProgress)
+  .sort((a, b) => {
+    const aKey = a.runStartedAt ?? a.createdAt
+    const bKey = b.runStartedAt ?? b.createdAt
+    return aKey === bKey
+      ? (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)       // desc tie-breaker
+      : (aKey > bKey ? -1 : 1)                         // desc primary
+  }) )
+
+completedRuns  = $derived( ...filter(Completed)
+  .sort((a, b) => a.updatedAt === b.updatedAt
+    ? (a.id > b.id ? -1 : a.id < b.id ? 1 : 0)
+    : (a.updatedAt > b.updatedAt ? -1 : 1)) )
 ```
 
-All three timestamps are ISO-8601 strings; sorting uses `localeCompare` rather than `new Date()` to avoid allocation in the hot path. The `runStartedAt ?? createdAt` coalesce guards the transient window where an `InProgress` event is applied before the timestamp arrives.
+All three timestamps are ISO-8601 strings; sorting uses **direct lexical comparison** (`a < b`) — NOT `localeCompare`. Locale-sensitive comparison is both slower and incorrect: ISO-8601 is designed for lexical sort. Each column has a deterministic secondary key on `run.id` (bigint comparison) so identical timestamps produce stable order independent of Map iteration order. The `runStartedAt ?? createdAt` coalesce guards the transient window where an `InProgress` event is applied before the timestamp arrives.
 
 ### Animation model
 
@@ -222,9 +254,9 @@ The fallback hook handles three distinct behaviors in one place:
 | New-card arrival | only `receive` fires | `intro=true` | `fly` (y=FLY_SETTLE_Y, DURATION_ARRIVE) |
 | Card removal | only `send` fires | `intro=false` | `fade` (DURATION_REMOVE) |
 
-`animate:flip` is applied to every card wrapper and pairs with `crossfade` to mitigate Svelte issue #10252 (inconsistent fallback firing under simultaneous multi-item transitions).
+`animate:flip` is applied to every card wrapper and pairs with `crossfade` to mitigate Svelte issue #10252 (inconsistent fallback firing under simultaneous multi-item transitions). **`animate:flip` consumes the same `DURATION_MOVE` constant** exported from `kanban-transitions.ts`, not a hardcoded value — this is what makes reduced motion a single-source-of-truth concern.
 
-`prefers-reduced-motion` is consumed once at module init via `prefersReducedMotion` from `svelte/motion`. When true, exported durations are set to `0` — a single check point, not per-component branches.
+`prefers-reduced-motion` is consumed once at module init via `prefersReducedMotion` from `svelte/motion`. When true, exported durations are set to `0` — a single check point, not per-component branches. Because `animate:flip`, the crossfade pair, AND the fallback all read their durations from the same module-level constants, zeroing them suppresses every motion primitive in the kanban consistently.
 
 ## Existing Patterns
 
@@ -234,7 +266,9 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 
 **Store-dependent component tests use `vi.resetModules()` + dynamic import.** `TopBar.browser.test.ts` established this idiom to get a fresh store module per test. `KanbanBoard.test.ts` follows the same shape.
 
-**Accessibility-first test selectors.** `@testing-library/svelte` with `getByRole` / `getByLabelText` / `getByText` is used throughout. `getByTestId` is reserved for layout containers with no semantic role. Sub-Phase 3 components expose ARIA-appropriate roles (`role="list"` on card containers, `role="listitem"` on cards).
+**Accessibility-first test selectors.** `@testing-library/svelte` with `getByRole` / `getByLabelText` / `getByText` is used throughout. `getByTestId` is reserved for layout containers with no semantic role. Sub-Phase 3 components expose ARIA-appropriate roles: each column is a `<section aria-labelledby>` with an `<h2>` heading and a nested `role="list"` / `role="listitem"` card container.
+
+**Hydration signal via `connectionStore.status`.** The existing `ConnectionManager` (`frontend/src/lib/connection.ts`) only transitions `connectionStore.status` to `'connected'` AFTER the WS handshake completes, the state snapshot loads, and the pre-connect buffer drains. Sub-Phase 3 uses this as its hydration gate — the empty state message is only shown when `status === 'connected'` AND the store is empty, never while `connecting` or `reconnecting`.
 
 **Exported TypeScript `Props` interface per component.** Sub-Phase 2 established this per the UI decomposition README's principle #4. Sub-Phase 3 continues it — no inline prop types, no `any`.
 
@@ -254,13 +288,13 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Extend `RunStore`'s three existing derived arrays with deterministic per-column sort strategies, without introducing new deriveds.
 
 **Components:**
-- `frontend/src/lib/stores/runs.svelte.ts` — add `.sort(...)` to the existing `queuedRuns`, `inProgressRuns`, `completedRuns` `$derived` expressions
-- Existing `frontend/src/lib/stores/runs.*.test.ts` suite — add sort-order assertions; audit existing assertions for any that depend on the previous unsorted order (likely none — current tests assert membership, not position)
-- New test: bigint-key round-trip sanity test in `runs.apply-events.test.ts` or a dedicated `runs.bigint-key.test.ts` — verifies that re-applying an event for an existing `run.id` yields the same object identity from the Map (foundational for `animate:flip` correctness)
+- `frontend/src/lib/stores/runs.svelte.ts` — add `.sort(...)` to the existing `queuedRuns`, `inProgressRuns`, `completedRuns` `$derived` expressions. Comparators use direct lexical ISO-8601 string comparison (`a < b`, NOT `localeCompare`) with `run.id` (bigint) as the secondary key for deterministic ordering.
+- Existing `frontend/src/lib/stores/runs.*.test.ts` suite — add sort-order assertions and tie-breaker assertions; audit existing assertions for any that depend on the previous unsorted order (likely none — current tests assert membership, not position).
+- Snapshot-stability test: `runStore.loadSnapshot(...)` with the same runs twice in a row produces the same sort order (covers `kanban-board.AC3.6` and the reconnect-reconcile risk from review).
 
 **Dependencies:** None (first phase).
 
-**Done when:** Tests covering `kanban-board.AC3.1`, `kanban-board.AC3.2`, `kanban-board.AC3.3`, `kanban-board.AC3.4` pass. Existing runs.*.test.ts suite remains green. `just lint` and `just check` pass.
+**Done when:** Tests covering `kanban-board.AC3.1` through `kanban-board.AC3.7` pass. Existing runs.*.test.ts suite remains green. `just lint` and `just check` pass.
 
 *Note:* `bigint`-as-`{#each}`-key is not verifiable in this phase (no keyed-each exists yet). It is verified in Phase 4 via `kanban-board.AC5.5`.
 <!-- END_PHASE_1 -->
@@ -271,14 +305,16 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Build the two purest leaves of the kanban component tree: `ColumnHeader` (trivially testable) and `RunCard` (skeleton only, with scope-contract comment).
 
 **Components:**
-- `frontend/src/lib/components/ColumnHeader.svelte` — pure, props `{ label: string, count: number }`, renders uppercase label + total count badge
-- `frontend/src/lib/components/ColumnHeader.test.ts` — unit test: renders label uppercase, renders count in a `role="status"` badge
-- `frontend/src/lib/components/RunCard.svelte` — pure skeleton, prop `{ run: WorkflowRun }`, renders `run.displayTitle` and a minimal inline status indicator (colored dot derived from `run.status`). File opens with the scope-contract comment block enumerating forbidden imports
-- `frontend/src/lib/components/RunCard.test.ts` — unit test: renders `displayTitle`, status indicator reflects `run.status`
+- `frontend/src/lib/components/ColumnHeader.svelte` — pure, props `{ label: string, count: number, headingId: string }`. Renders `<h2 id={headingId}>` containing uppercase label + plain-text count badge. Badge is NOT a `role="status"` element (would announce churn in a live dashboard).
+- `frontend/src/lib/components/ColumnHeader.test.ts` — unit test: renders label uppercase, renders count as plain text, heading id is assigned to the `<h2>`.
+- `frontend/src/lib/components/RunCard.svelte` — pure skeleton, prop `{ run: WorkflowRun }`. Renders `run.displayTitle` and an inline status indicator that emits color + a distinct glyph + visually-hidden status text ("Queued" / "In Progress" / "Completed"). Never color alone. File opens with the scope-contract comment block (reviewer guidance, self-marked for removal in Sub-Phase 4's first commit).
+- `frontend/src/lib/components/RunCard.test.ts` — unit test: renders `displayTitle`, status indicator includes glyph and sr-only text, color matches `run.status`.
 
 **Dependencies:** None (pure leaves).
 
-**Done when:** Tests covering `kanban-board.AC2.1`, `kanban-board.AC2.2`, `kanban-board.AC4.1`, `kanban-board.AC4.2`, `kanban-board.AC4.3` pass. `just lint` and `just check` pass.
+**Done when:** Tests covering `kanban-board.AC2.1`, `kanban-board.AC2.2`, `kanban-board.AC4.1`, `kanban-board.AC4.2` pass. `just lint` and `just check` pass.
+
+*Note:* `kanban-board.AC4.3` is reviewer guidance, not a test — the scope-contract comment documents the convention and code review enforces it.
 <!-- END_PHASE_2 -->
 
 <!-- START_PHASE_3 -->
@@ -287,8 +323,8 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Produce the shared `crossfade` instance and motion constants that `KanbanColumn` will consume.
 
 **Components:**
-- `frontend/src/lib/animations/kanban-transitions.ts` — exports `send`, `receive`, `DURATION_MOVE`, `DURATION_ARRIVE`, `DURATION_REMOVE`, `FLY_SETTLE_Y`. Single `crossfade` call at module scope with a `fallback` that switches on the `intro` boolean (`true` → `fly`, `false` → `fade`). Durations collapse to `0` when `prefersReducedMotion.current` is true.
-- `frontend/src/lib/animations/kanban-transitions.test.ts` — unit test: exports are defined; fallback returns a function for both `intro=true` and `intro=false`; reduced-motion branch returns zero-duration transitions
+- `frontend/src/lib/animations/kanban-transitions.ts` — exports `send`, `receive`, `DURATION_MOVE`, `DURATION_ARRIVE`, `DURATION_REMOVE`, `FLY_SETTLE_Y`. Single `crossfade` call at module scope with a `fallback` that switches on the `intro` boolean (`true` → `fly`, `false` → `fade`). Durations collapse to `0` when `prefersReducedMotion.current` is true. **`DURATION_MOVE` is intentionally consumed by `animate:flip` too** (in Phase 4) — zeroing it suppresses both cross-column crossfade and within-column FLIP in one place.
+- `frontend/src/lib/animations/kanban-transitions.test.ts` — unit test: exports are defined; fallback returns a function for both `intro=true` and `intro=false`; reduced-motion branch returns zero for all three durations.
 
 **Dependencies:** None (standalone module).
 
@@ -301,13 +337,13 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Compose the leaf components and animation module into a column that handles reordering and cross-column transitions correctly.
 
 **Components:**
-- `frontend/src/lib/components/KanbanColumn.svelte` — pure, props `{ label: string, runs: WorkflowRun[] }`, renders `ColumnHeader` + a scrollable `{#each runs as run (run.id)}` block; each card is wrapped in a `<div animate:flip={...} in:receive={{ key: run.id }} out:send={{ key: run.id }}>` that contains `<RunCard {run} />`. Uses `role="list"` / `role="listitem"` for a11y.
-- `frontend/src/lib/components/KanbanColumn.test.ts` — unit test (jsdom): correct number of cards rendered, stable `data-run-id` on each, empty-list branch renders nothing. Does NOT assert animation behavior (jsdom can't measure positions).
-- `frontend/src/lib/components/KanbanColumn.browser.test.ts` — browser-mode test: `Element.prototype.animate` mocked to skip duration; `animate:flip` directive present; `prefers-reduced-motion` via `matchMedia` mock yields zero-duration animations; marked serial (or `svelte/transition` mocked) to avoid cross-file crossfade state races.
+- `frontend/src/lib/components/KanbanColumn.svelte` — pure, props `{ label: string, runs: readonly WorkflowRun[], headingId: string }`. Renders as `<section aria-labelledby={headingId}>` containing `ColumnHeader` (which emits the `<h2 id={headingId}>`) + a scrollable `role="list"` `{#each runs as run (run.id)}` block. Each card is wrapped in an `<article role="listitem" animate:flip={{ duration: DURATION_MOVE, easing: cubicOut }} in:receive={{ key: run.id }} out:send={{ key: run.id }}>` containing `<RunCard {run} />`. `animate:flip` consumes the shared `DURATION_MOVE`, so reduced motion is inherited from the transitions module.
+- `frontend/src/lib/components/KanbanColumn.test.ts` — unit test (jsdom): correct number of cards rendered, stable `data-run-id` on each, correct ARIA hierarchy (`<section aria-labelledby>` → `<h2>` + `role="list"` with `role="listitem"` children), empty-list branch renders nothing. Does NOT assert animation behavior (jsdom can't measure positions).
+- `frontend/src/lib/components/KanbanColumn.browser.test.ts` — browser-mode test with `svelte/transition` mocked at the file scope (chosen over test-level serial to prevent cross-file crossfade state races while keeping parallel execution). Verifies: `animate:flip` directive present and reorders cards; `in:receive`/`out:send` fire with matching `run.id` keys when a card moves between two rendered columns; `prefers-reduced-motion` via `matchMedia` mock suppresses both within-column FLIP motion AND cross-column transit; multi-run burst mutation in one RAF lands all cards in correct final columns (`kanban-board.AC5.6`).
 
 **Dependencies:** Phase 2 (ColumnHeader, RunCard), Phase 3 (kanban-transitions).
 
-**Done when:** Tests covering `kanban-board.AC1.2`, `kanban-board.AC5.3`, `kanban-board.AC5.4`, `kanban-board.AC5.5`, `kanban-board.AC6.3` pass. `just lint`, `just check`, and `just test` pass.
+**Done when:** Tests covering `kanban-board.AC1.2`, `kanban-board.AC5.3`, `kanban-board.AC5.4`, `kanban-board.AC5.5`, `kanban-board.AC5.6`, `kanban-board.AC6.3`, `kanban-board.AC6.4` pass. `just lint`, `just check`, and `just test` pass.
 <!-- END_PHASE_4 -->
 
 <!-- START_PHASE_5 -->
@@ -316,13 +352,17 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Stand up the connected component that reads `runStore`, renders three `KanbanColumn`s in a CSS Grid, handles the empty-board case, and replaces the placeholder in `App.svelte`.
 
 **Components:**
-- `frontend/src/lib/components/KanbanBoard.svelte` — connected; reads `runStore.queuedRuns`, `runStore.inProgressRuns`, `runStore.completedRuns`; renders three columns in `display: grid; grid-template-columns: repeat(3, 1fr)`. Inline `{#if totalRuns === 0}` renders "No workflows yet." (no new `EmptyState` primitive). `totalRuns` is a local `$derived`.
-- `frontend/src/lib/components/KanbanBoard.test.ts` — uses `vi.resetModules()` + dynamic import of `runStore` (matches `TopBar.browser.test.ts` pattern). Asserts: empty state appears when store is empty; cards distribute to correct columns after `applyRunEvent`; column counts update on store mutation.
+- `frontend/src/lib/components/KanbanBoard.svelte` — connected; reads `runStore.queuedRuns`, `runStore.inProgressRuns`, `runStore.completedRuns`, and `connectionStore.status`. Renders one of three states determined by the pair `(status, totalRuns)`:
+  1. `status !== 'connected'` → inline hydration placeholder ("Connecting…"). This is the **loading** state.
+  2. `status === 'connected' && totalRuns === 0` → inline empty text ("No workflows yet."). This is the **truly empty** state.
+  3. `status === 'connected' && totalRuns > 0` → three-column grid (`display: grid; grid-template-columns: repeat(3, 1fr)`) with three `KanbanColumn`s.
+  Stable `headingId`s are generated per column (e.g., `kanban-col-queued`) and passed down.
+- `frontend/src/lib/components/KanbanBoard.test.ts` — uses `vi.resetModules()` + dynamic import of `runStore` and `connectionStore` (matches `TopBar.browser.test.ts` pattern). Asserts: hydration placeholder shown while `status !== 'connected'`; empty state shown only when `status === 'connected' && totalRuns === 0`; cards distribute to correct columns after `applyRunEvent`; column counts update on store mutation; snapshot reload with identical runs preserves card DOM identity and order (`kanban-board.AC7.6`).
 - `frontend/src/App.svelte` — replace the placeholder `<div>` inside `<AppShell>` with `<KanbanBoard />`.
 
 **Dependencies:** Phase 1 (sorted deriveds), Phase 4 (KanbanColumn).
 
-**Done when:** Tests covering `kanban-board.AC1.1`, `kanban-board.AC1.3`, `kanban-board.AC7.1`, `kanban-board.AC7.2` pass. `just lint`, `just check`, and `just test` pass.
+**Done when:** Tests covering `kanban-board.AC1.1`, `kanban-board.AC1.3`, `kanban-board.AC7.1` through `kanban-board.AC7.6` pass. `just lint`, `just check`, and `just test` pass.
 <!-- END_PHASE_5 -->
 
 <!-- START_PHASE_6 -->
@@ -331,7 +371,11 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Verify end-to-end behavior: the kanban renders from a real Vite build, cards move between columns as WebSocket events arrive, and animations run without errors.
 
 **Components:**
-- `frontend/e2e/kanban.spec.ts` — Playwright test that mounts the app with a mock WebSocket event stream. Drives a run through `Queued → InProgress → Completed`, asserting the card appears in the correct column at each step. Asserts the empty state renders before any events. Includes one `prefers-reduced-motion: reduce` viewport variant that verifies no animation errors and cards still appear in the right column.
+- `frontend/e2e/kanban.spec.ts` — Playwright test that mounts the app with a mock WebSocket event stream. Covers:
+  1. Hydration placeholder ("Connecting…") appears briefly before the mock snapshot loads.
+  2. After the mock snapshot loads empty, the "No workflows yet." empty state is shown.
+  3. Driving a run through `Queued → InProgress → Completed` via mock WS events moves the card across columns; assert card placement at each step (not animation behavior).
+  4. One `prefers-reduced-motion: reduce` viewport variant verifies the same lifecycle completes without animation-related console errors.
 
 **Dependencies:** Phases 1-5 (full kanban functional).
 
@@ -344,41 +388,67 @@ Investigation identified established patterns in Sub-Phases 1 and 2 that this de
 **Goal:** Update architecture docs, module CLAUDE.md files, and doc-staleness mappings per project convention, so the doc-staleness gate at pre-push stays green and future contributors find the canonical description of the kanban.
 
 **Components:**
-- `docs/architecture/frontend-app.md` — add Kanban Board section covering component hierarchy, data flow, animation model, sort strategies, and testing approach
-- `frontend/CLAUDE.md` — extend Key Files table with `KanbanBoard.svelte`, `KanbanColumn.svelte`, `ColumnHeader.svelte`, `RunCard.svelte`, `kanban-transitions.ts`
-- `CLAUDE.md` (root) — update Status paragraph to reflect Sub-Phase 3 completion
-- `scripts/doc-mapping.sh` — add mapping: `lib/components/Kanban*.svelte` → `docs/architecture/frontend-app.md`; `lib/components/RunCard.svelte` → `docs/architecture/frontend-app.md`; `lib/animations/kanban-transitions.ts` → `docs/architecture/frontend-app.md`
+- `docs/architecture/frontend-app.md` — two-part update, NOT just an append:
+  1. **Staleness sweep:** review the entire file for language that's now out of date (e.g., "The foundation infrastructure is complete... Component feature implementation is deferred to the next phase" — stale post-Sub-Phase 2). Refresh the status paragraph to reflect Sub-Phase 3. Update `Last verified` timestamp.
+  2. **Append Kanban Board section:** component hierarchy (with the loading/empty/populated three-state branch), data flow (RunStore + ConnectionStore integration), animation model (shared crossfade + animate:flip sharing durations), sort strategies with tie-breakers, and testing approach (three-project split + what goes where).
+- `frontend/CLAUDE.md` — extend Key Files table with `KanbanBoard.svelte`, `KanbanColumn.svelte`, `ColumnHeader.svelte`, `RunCard.svelte`, `kanban-transitions.ts`. Update Status paragraph.
+- `CLAUDE.md` (root) — update Status paragraph to reflect Sub-Phase 3 completion.
+- `scripts/doc-mapping.sh` — **no changes needed.** The existing `frontend/src/*` mapping already catches all new kanban files. Verified during design; mentioned here to prevent redundant additions.
 
 **Dependencies:** Phases 1-6 (code stable).
 
-**Done when:** `scripts/check-docs-lefthook.sh` passes for the full diff. No stale doc warnings.
+**Done when:** `scripts/check-docs-lefthook.sh` passes for the full diff. `Last verified` dates on all touched architecture/CLAUDE docs are current. No stale doc warnings.
 <!-- END_PHASE_7 -->
 
 ## Additional Considerations
 
-### Scope guardrails (forbidden in this phase, enforced at review)
+### Scope guardrails (reviewer guidance, NOT an enforced gate)
 
-A concrete list of temptations that would leak Sub-Phase 4 work into this phase. All enforced via code review (grep checks in the pre-merge checklist), not via lint or type rules.
+A concrete list of temptations that would leak Sub-Phase 4 work into this phase. These are **reviewer conventions** — the scope-contract comment at the top of `RunCard.svelte` documents them, and PR review is expected to catch violations. There is deliberately no CI gate, lint rule, or pre-commit script enforcing the list. Grep-based enforcement is brittle (easy to forget, easy to bypass, easy to outdate), and the added infrastructure to maintain-then-remove the check isn't worth the cost for a single-phase guardrail.
 
-- `RunCard.svelte` must not import `StatusIcon`, `ProgressBar`, `JobMeta`, `JobHeader`, or `RunnerLabel` — none of these components should exist yet; all are Sub-Phase 4.
+- `RunCard.svelte` should not import `StatusIcon`, `ProgressBar`, `JobMeta`, `JobHeader`, or `RunnerLabel` — none of these components should exist yet; all are Sub-Phase 4.
 - No CSS `@keyframes` rules in any Sub-Phase 3 file (the pulsating halo is Sub-Phase 4).
 - No `setInterval` or recurring `$effect` in any Sub-Phase 3 component (the duration ticker is Sub-Phase 4).
-- `RunCard`'s rendered body must not exceed the skeleton contract: `displayTitle` + minimal inline status indicator. No progress bar, no meta (repo/branch), no runner label, no accent bar.
+- `RunCard`'s rendered body must not exceed the skeleton contract: `displayTitle` + status indicator (color + glyph + sr-only text). No progress bar, no meta (repo/branch), no runner label, no accent bar.
 - `ColumnHeader` renders total count only. No conclusion breakdown pills (Sub-Phase 4).
 - No card click handlers, no keyboard navigation, no detail panel (Sub-Phase 5).
+- No ARIA live regions for card-level announcements (Sub-Phase 5 — see "Accessibility deferrals" below).
 - No responsive breakpoints, no virtualization, no reusable `EmptyState.svelte` primitive (Sub-Phase 6).
 
-**Pre-merge review checklist (explicit):**
+During PR review, a reviewer checking for scope leakage can run this grep as a spot-check, but it is NOT a gate:
 
 ```bash
-# Forbidden imports in RunCard
-grep -E "(StatusIcon|ProgressBar|JobMeta|JobHeader|RunnerLabel)" frontend/src/lib/components/RunCard.svelte
-# Should return zero matches
-
-# Forbidden patterns in all Sub-Phase 3 components
-grep -rE "@keyframes|setInterval" frontend/src/lib/components/Kanban*.svelte frontend/src/lib/components/RunCard.svelte frontend/src/lib/animations/kanban-transitions.ts
-# Should return zero matches
+grep -E "(StatusIcon|ProgressBar|JobMeta|JobHeader|RunnerLabel|@keyframes|setInterval)" \
+  frontend/src/lib/components/{Kanban*,RunCard}.svelte \
+  frontend/src/lib/animations/kanban-transitions.ts
 ```
+
+### Release-unit rationale (why Sub-Phase 3 is intentionally not standalone-valuable)
+
+Frontend sub-phases 1–6 are internal checkpoints; they do not ship independently to users. The 1.0 release is the bundled delivery of all six sub-phases together. This means observations like "the Completed column is information-poor without a failure cue" or "live-update announcements are missing" are acknowledged and deliberately deferred — they are closed before 1.0 by Sub-Phase 4 (StatusIcon + conclusion coloring) and Sub-Phase 5 (ARIA live regions) respectively. Deferrals are documented below so later sub-phases know what gaps they own.
+
+### Accessibility deferrals and Sub-Phase 5 handoff
+
+This phase introduces real-time card movement but intentionally defers live-update screen-reader announcements to Sub-Phase 5. To prevent reinvention, here is the recommended implementation approach for Sub-Phase 5 when it designs the live-region strategy:
+
+- **One polite live region** (`aria-live="polite"`, `aria-atomic="true"`) rendered at the KanbanBoard level (NOT per-column).
+- **Per-run announcements with RAF-batch debouncing.** When the EventDispatcher flushes a RAF batch that changed card placements, aggregate the changes into a single announcement: "Run {displayTitle} moved to In Progress" for single changes, "{N} runs moved" for burst batches exceeding a threshold (e.g., 5).
+- **Column counts are NOT live-announced.** Already noted in `kanban-board.AC2.1` — `ColumnHeader` badges are plain text, not `role="status"`, specifically to prevent announcement churn.
+- **Mute during reconnect.** When `connectionStore.status` transitions through `reconnecting` → `connected` with a snapshot reload, suppress announcements for changes that result purely from reconcile.
+
+### Handoff to Sub-Phase 4
+
+The scope guardrails above are **not permanent architectural rules**. They exist only for Sub-Phase 3 and must be removed when Sub-Phase 4 begins, or legitimate Sub-Phase 4 work will be blocked by folklore.
+
+Three places carry the expiration signal:
+
+1. **The scope-contract comment at the top of `RunCard.svelte`** explicitly states that the block is temporary and must be removed as part of Sub-Phase 4's first task.
+2. **This design document** — this section — records the handoff expectation so nothing is silently forgotten.
+3. **Sub-Phase 4's future design plan** must include a Phase 0 (pre-work) task: *"Remove the Sub-Phase 3 scope-contract comment from `RunCard.svelte`. 1 commit, no behavior change. This yields a clean, low-risk first commit on the Sub-Phase 4 branch and verifies the branch is building before any real component work starts."*
+
+### Branch and PR workflow
+
+Per `.ed3d/design-plan-guidance.md` principle 8, this design document lives on branch `feat/kanban-board` (not main). All Sub-Phase 3 implementation commits land on the same branch. The PR title, when the branch is opened for review, will name the full Sub-Phase 3 deliverable (e.g., `feat: add kanban board with animated column transitions`) — NOT the design doc commit — because this repo uses squash merges and the PR title becomes the commit message on main.
 
 ### Handoff to Sub-Phase 4
 
@@ -395,7 +465,7 @@ Three places carry the expiration signal:
 | Risk | Mitigation |
 |------|------------|
 | `bigint` as `{#each}` key may interact oddly with Svelte's internal keyed-list Map. | Phase 4 adds a browser-mode test (AC5.5) that reorders a column's `runs` array and asserts stable DOM identity via a `data-run-id` attribute. If this fails, we coerce the key to string at render time (`(run) => String(run.id)`) or raise the issue upstream. |
-| Svelte issue #10252 — multi-item simultaneous crossfade fallback can fire inconsistently. | `animate:flip` paired with `crossfade` on every card (per research). The E2E test drives multiple simultaneous transitions and asserts final DOM state; if the mitigation is insufficient, we'll catch it before merge. |
+| Svelte issue #10252 — multi-item simultaneous crossfade fallback can fire inconsistently. | `animate:flip` paired with `crossfade` on every card (per research). Phase 4's browser-mode test (`kanban-board.AC5.6`) mutates multiple runs in the same RAF batch and asserts final column placement; if the mitigation is insufficient, we'll catch it before merge. |
 | `crossfade`'s global state can race across parallel test files. | Browser-mode tests that exercise `send`/`receive` are marked serial, or `svelte/transition` is mocked at file scope. Either approach is fine; pick whichever keeps the test file more readable. |
 
 ### Documents to update
@@ -404,8 +474,8 @@ Per `.ed3d/design-plan-guidance.md` principle 6, this design enumerates every do
 
 | Document | Change |
 |----------|--------|
-| `docs/architecture/frontend-app.md` | Add Kanban Board section (component hierarchy, data flow, animation model, testing approach) |
-| `frontend/CLAUDE.md` | Extend Key Files table with the 4 new components + `kanban-transitions.ts` |
+| `docs/architecture/frontend-app.md` | **Staleness sweep** (refresh the "foundation infrastructure is complete... deferred to next phase" language, update `Last verified`) + append a Kanban Board section (component hierarchy with loading/empty/populated branch, data flow including ConnectionStore hydration gate, animation model, sort strategies with tie-breakers, testing approach) |
+| `frontend/CLAUDE.md` | Extend Key Files table with the 4 new components + `kanban-transitions.ts`; refresh Status paragraph; update `Last verified` |
 | `CLAUDE.md` (root) | Update Status paragraph to reflect Sub-Phase 3 completion |
-| `scripts/doc-mapping.sh` | Add source → `frontend-app.md` mappings for the new files |
+| `scripts/doc-mapping.sh` | **No changes** — existing `frontend/src/*` mapping already catches all new kanban files |
 
