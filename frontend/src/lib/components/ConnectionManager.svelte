@@ -13,7 +13,10 @@
 
   onMount(() => {
     manager = new ConnectionManager(baseUrl)
-    manager.connect()
+    // connect() may reject on initial WS failure before the internal
+    // reconnect loop takes over — swallow the rejection since the
+    // manager handles reconnection internally.
+    manager.connect().catch(() => {})
   })
 
   onDestroy(() => {

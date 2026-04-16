@@ -2,6 +2,7 @@
   import RunnerPool from './RunnerPool.svelte'
 
   interface RunnerPoolDisplay {
+    key: string
     label: string
     running: number
     queued: number
@@ -13,7 +14,7 @@
 </script>
 
 <div class="flex items-center gap-4" role="list" aria-label="Runner pools">
-  {#each pools as pool (pool.label)}
+  {#each pools as pool (pool.key)}
     <div role="listitem">
       <RunnerPool {pool} />
     </div>

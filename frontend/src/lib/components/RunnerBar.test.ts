@@ -5,9 +5,9 @@ import RunnerBar from './RunnerBar.svelte'
 describe('RunnerBar', () => {
   it('renders one RunnerPool per pool entry', () => {
     const pools = [
-      { label: 'linux', running: 3, queued: 0, total: 10, isElastic: false },
-      { label: 'windows', running: 2, queued: 0, total: 8, isElastic: false },
-      { label: 'macos', running: 1, queued: 0, total: 5, isElastic: false },
+      { key: 'linux', label: 'linux', running: 3, queued: 0, total: 10, isElastic: false },
+      { key: 'windows', label: 'windows', running: 2, queued: 0, total: 8, isElastic: false },
+      { key: 'macos', label: 'macos', running: 1, queued: 0, total: 5, isElastic: false },
     ]
 
     render(RunnerBar, {
@@ -32,7 +32,9 @@ describe('RunnerBar', () => {
   })
 
   it('renders single pool correctly', () => {
-    const pools = [{ label: 'linux', running: 3, queued: 0, total: 10, isElastic: false }]
+    const pools = [
+      { key: 'linux', label: 'linux', running: 3, queued: 0, total: 10, isElastic: false },
+    ]
 
     render(RunnerBar, {
       props: { pools },
@@ -45,7 +47,9 @@ describe('RunnerBar', () => {
   })
 
   it('has accessible list label', () => {
-    const pools = [{ label: 'linux', running: 3, queued: 0, total: 10, isElastic: false }]
+    const pools = [
+      { key: 'linux', label: 'linux', running: 3, queued: 0, total: 10, isElastic: false },
+    ]
 
     render(RunnerBar, {
       props: { pools },

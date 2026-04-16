@@ -42,6 +42,7 @@
   // Map RunnerPoolStats to RunnerPoolDisplay for RunnerBar
   const pools = $derived(
     runnerStore.pools.map((pool) => ({
+      key: pool.labels.join(','),
       label: pool.groupName ?? pool.labels.join(', '),
       running: pool.running,
       queued: pool.queued,
