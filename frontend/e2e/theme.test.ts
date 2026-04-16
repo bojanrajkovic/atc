@@ -11,8 +11,8 @@ test.describe('App rendering', () => {
 
     await page.goto('/')
 
-    // Verify something renders (the app title)
-    await expect(page.locator('h1')).toBeVisible()
+    // Verify TopBar renders with ATC logo
+    await expect(page.getByText('ATC')).toBeVisible()
 
     // Verify no console errors
     expect(consoleErrors).toEqual([])
@@ -31,8 +31,13 @@ test.describe('Theme switching', () => {
     test(`clicking ${name} theme sets data-theme="${name}"`, async ({ page }) => {
       await page.goto('/')
 
-      // Click the theme button
-      await page.getByRole('button', { name }).click()
+      // Open the settings popover
+      await page.getByRole('button', { name: /settings/i }).click()
+      await page.waitForTimeout(100)
+
+      // Find and click the theme button using locator with aria-label
+      await page.locator(`button[aria-label="${name}"]`).click()
+      await page.waitForTimeout(100)
 
       // Verify data-theme attribute on <html>
       const dataTheme = await page.locator('html').getAttribute('data-theme')
@@ -51,17 +56,23 @@ test.describe('Dark/light mode toggle', () => {
   test('toggling mode changes data-mode attribute', async ({ page }) => {
     await page.goto('/')
 
+    // Open the settings popover
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.waitForTimeout(100)
+
     // Default is dark (no data-mode attribute or data-mode absent)
-    // Click the mode toggle button
-    const modeButton = page.getByRole('button', { name: /mode/i })
-    await modeButton.click()
+    // Click the mode toggle button using aria-label
+    const modeToggle = page.locator('button[aria-label="Toggle light mode"]')
+    await modeToggle.click()
+    await page.waitForTimeout(100)
 
     // After toggle: should be light mode
     const dataMode = await page.locator('html').getAttribute('data-mode')
     expect(dataMode).toBe('light')
 
     // Toggle back
-    await modeButton.click()
+    await modeToggle.click()
+    await page.waitForTimeout(100)
 
     // Should be dark again (no data-mode attribute)
     const dataModeAfter = await page.locator('html').getAttribute('data-mode')
@@ -76,8 +87,13 @@ test.describe('Dark/light mode toggle', () => {
       return getComputedStyle(document.body).backgroundColor
     })
 
+    // Open the settings popover
+    await page.getByRole('button', { name: /settings/i }).click()
+    await page.waitForTimeout(100)
+
     // Switch to light mode
-    await page.getByRole('button', { name: /mode/i }).click()
+    await page.locator('button[aria-label="Toggle light mode"]').click()
+    await page.waitForTimeout(100)
 
     // Get light mode background color
     const lightBg = await page.evaluate(() => {
@@ -152,16 +168,20 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
 
       await page.goto('/')
 
+      // Open the settings popover
+      await page.getByRole('button', { name: /settings/i }).click()
+      await page.waitForTimeout(100)
+
       // Set to light mode if needed
       if (!mode.isDark) {
-        await page.getByRole('button', { name: /mode/i }).click()
+        await page.locator('button[aria-label="Toggle light mode"]').click()
         await page.waitForTimeout(100)
       }
 
       // For each theme, capture the status colors
       for (const theme of themes) {
         // Switch theme
-        await page.getByRole('button', { name: theme.name }).click()
+        await page.locator(`button[aria-label="${theme.name}"]`).click()
         await page.waitForTimeout(100)
 
         // Read all status color values
@@ -230,36 +250,46 @@ test.describe('fe-foundation.AC1.7: Theme and mode independence', () => {
     expect(dataMode).toBeNull() // Dark is default (no attribute)
     expect(dataTheme).toBe('radar') // Radar is default
 
-    // Switch to light mode
-    await page.getByRole('button', { name: /mode/i }).click()
+    // Open the settings popover and switch to light mode
+    await page.getByRole('button', { name: /settings/i }).click()
     await page.waitForTimeout(100)
+    await page.locator('button[aria-label="Toggle light mode"]').click()
+    await page.waitForTimeout(100)
+
+    // Verify mode changed but theme unchanged
     dataMode = await page.locator('html').getAttribute('data-mode')
     dataTheme = await page.locator('html').getAttribute('data-theme')
     expect(dataMode).toBe('light')
     expect(dataTheme).toBe('radar') // Theme unchanged
 
-    // Switch to violet theme
-    await page.getByRole('button', { name: 'violet' }).click()
+    // Popover is still open after mode toggle — click warm theme directly
+    await page.locator('button[aria-label="warm"]').click()
     await page.waitForTimeout(100)
+
+    // Verify theme changed but mode unchanged
     dataMode = await page.locator('html').getAttribute('data-mode')
     dataTheme = await page.locator('html').getAttribute('data-theme')
     expect(dataMode).toBe('light') // Mode unchanged
-    expect(dataTheme).toBe('violet') // Theme changed
+    expect(dataTheme).toBe('warm') // Theme changed
 
-    // Switch theme to pink
-    await page.getByRole('button', { name: 'pink' }).click()
+    // Sequential theme change — popover still open, switch to pink
+    await page.locator('button[aria-label="pink"]').click()
     await page.waitForTimeout(100)
+
+    // Verify theme changed again but mode still light
     dataMode = await page.locator('html').getAttribute('data-mode')
     dataTheme = await page.locator('html').getAttribute('data-theme')
-    expect(dataMode).toBe('light') // Mode unchanged
-    expect(dataTheme).toBe('pink') // Theme changed
+    expect(dataMode).toBe('light') // Mode still unchanged
+    expect(dataTheme).toBe('pink') // Theme changed again
 
-    // Toggle back to dark mode
-    await page.getByRole('button', { name: /mode/i }).click()
+    // Toggle mode back to dark — verify bidirectional independence
+    await page.locator('button[aria-label="Toggle light mode"]').click()
     await page.waitForTimeout(100)
+
+    // Verify mode toggled back but theme unchanged
     dataMode = await page.locator('html').getAttribute('data-mode')
     dataTheme = await page.locator('html').getAttribute('data-theme')
-    expect(dataMode).toBeNull() // Mode changed to dark (no attribute)
-    expect(dataTheme).toBe('pink') // Theme still pink
+    expect(dataMode).toBeNull() // Back to dark (no attribute)
+    expect(dataTheme).toBe('pink') // Theme preserved
   })
 })

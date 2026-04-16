@@ -20,12 +20,16 @@ describe('RunnerStore', () => {
           queued: 2,
           running: 1,
           groupName: 'Default',
+          isElastic: false,
+          total: null,
         },
         {
           labels: ['windows', 'x86_64'],
           queued: 0,
           running: 3,
           groupName: 'Windows Runners',
+          isElastic: false,
+          total: null,
         },
       ]
 
@@ -49,6 +53,8 @@ describe('RunnerStore', () => {
           queued: 1,
           running: 0,
           groupName: 'Old Pool',
+          isElastic: false,
+          total: null,
         },
       ]
 
@@ -64,18 +70,24 @@ describe('RunnerStore', () => {
           queued: 5,
           running: 2,
           groupName: 'macOS',
+          isElastic: false,
+          total: null,
         },
         {
           labels: ['linux', 'arm64'],
           queued: 0,
           running: 1,
           groupName: 'ARM Linux',
+          isElastic: false,
+          total: null,
         },
         {
           labels: ['windows', 'x86_64'],
           queued: 3,
           running: 4,
           groupName: 'Windows',
+          isElastic: false,
+          total: null,
         },
       ]
 
@@ -96,6 +108,8 @@ describe('RunnerStore', () => {
           queued: 1,
           running: 0,
           groupName: 'Default',
+          isElastic: false,
+          total: null,
         },
       ]
 
@@ -114,12 +128,16 @@ describe('RunnerStore', () => {
           queued: 1,
           running: 0,
           groupName: null,
+          isElastic: false,
+          total: null,
         },
         {
           labels: ['windows'],
           queued: 2,
           running: 1,
           groupName: 'Windows Group',
+          isElastic: false,
+          total: null,
         },
       ]
 

@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-04-14 (updated 2026-04-14 for generated types freshness check and Playwright E2E)
+Last verified: 2026-04-15 (updated 2026-04-15 for Playwright install ordering — browser-mode Vitest needs Chromium before unit tests)
 
 ## Purpose
 

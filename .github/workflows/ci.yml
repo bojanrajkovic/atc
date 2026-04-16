@@ -190,13 +190,13 @@ jobs:
         working-directory: frontend
         run: pnpm check
 
-      - name: Run unit tests with coverage
-        working-directory: frontend
-        run: pnpm exec vitest run --coverage --coverage.reporter=lcov
-
       - name: Install Playwright browsers
         working-directory: frontend
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run unit tests with coverage
+        working-directory: frontend
+        run: pnpm exec vitest run --coverage --coverage.reporter=lcov
 
       - name: Run E2E tests
         working-directory: frontend

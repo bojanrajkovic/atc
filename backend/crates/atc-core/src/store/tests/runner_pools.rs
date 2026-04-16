@@ -68,6 +68,8 @@ async fn test_ac4_3_basic_pool_counts() {
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].queued, 2);
     assert_eq!(stats[0].running, 1);
+    assert!(!stats[0].is_elastic);
+    assert_eq!(stats[0].total, None);
 }
 
 #[tokio::test]
@@ -116,6 +118,10 @@ async fn test_ac4_3_multiple_pools() {
     let mut counts: Vec<(usize, usize)> = stats.iter().map(|s| (s.queued, s.running)).collect();
     counts.sort_unstable();
     assert_eq!(counts, vec![(1, 0), (1, 0)]);
+    for stat in &stats {
+        assert!(!stat.is_elastic);
+        assert_eq!(stat.total, None);
+    }
 }
 
 #[tokio::test]
@@ -163,6 +169,8 @@ async fn test_ac4_3_label_normalization() {
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].queued, 2);
     assert_eq!(stats[0].running, 0);
+    assert!(!stats[0].is_elastic);
+    assert_eq!(stats[0].total, None);
 }
 
 #[tokio::test]
@@ -220,6 +228,8 @@ async fn test_ac4_3_excludes_completed() {
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].queued, 1);
     assert_eq!(stats[0].running, 0);
+    assert!(!stats[0].is_elastic);
+    assert_eq!(stats[0].total, None);
 }
 
 #[tokio::test]
@@ -260,4 +270,104 @@ async fn test_ac4_4_group_name_from_runner_info() {
     // Verify group_name is captured
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].group_name, Some("default".to_string()));
+    assert!(!stats[0].is_elastic);
+    assert_eq!(stats[0].total, None);
+}
+
+#[tokio::test]
+async fn test_ac3_3_elastic_pool_from_github_hosted_runner() {
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+
+    let run_id = RunId(2000);
+    let run_envelope = make_run_event(run_id, RunEvent::Requested);
+    store.apply_run_event(run_envelope).await.unwrap();
+
+    // Create a running job with GitHub-hosted runner (group_id: Some(0))
+    let runner = RunnerInfo {
+        id: 1,
+        name: "github-runner-1".to_string(),
+        group_id: Some(0),
+        group_name: Some("GitHub Actions".to_string()),
+    };
+    let job_id = JobId(2001);
+    let labels = vec!["ubuntu-latest".to_string()];
+    let envelope = make_job_event(
+        job_id,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::InProgress {
+            runner: Some(runner),
+            labels,
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope).await.unwrap();
+
+    // Get pool stats
+    let stats = store.pool_stats().await;
+
+    // Verify is_elastic is true for GitHub-hosted runner (group_id == 0)
+    assert_eq!(stats.len(), 1);
+    assert!(stats[0].is_elastic);
+    assert_eq!(stats[0].total, None);
+}
+
+#[tokio::test]
+async fn test_ac3_3_elastic_sticky_with_queued_jobs() {
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+
+    let run_id = RunId(2100);
+    let run_envelope = make_run_event(run_id, RunEvent::Requested);
+    store.apply_run_event(run_envelope).await.unwrap();
+
+    // Create a queued job with labels ["ubuntu-latest"]
+    let job_id_queued = JobId(2101);
+    let labels = vec!["ubuntu-latest".to_string()];
+    let envelope_queued = make_job_event(
+        job_id_queued,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_queued).await.unwrap();
+
+    // Create an InProgress job with same labels and GitHub-hosted runner
+    let runner = RunnerInfo {
+        id: 2,
+        name: "github-runner-2".to_string(),
+        group_id: Some(0),
+        group_name: Some("GitHub Actions".to_string()),
+    };
+    let job_id_running = JobId(2102);
+    let envelope_running = make_job_event(
+        job_id_running,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::InProgress {
+            runner: Some(runner),
+            labels,
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_running).await.unwrap();
+
+    // Get pool stats
+    let stats = store.pool_stats().await;
+
+    // Verify single pool with sticky is_elastic=true, queued=1, running=1
+    assert_eq!(stats.len(), 1);
+    assert!(stats[0].is_elastic);
+    assert_eq!(stats[0].queued, 1);
+    assert_eq!(stats[0].running, 1);
+    assert_eq!(stats[0].total, None);
 }

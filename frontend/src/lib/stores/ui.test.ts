@@ -190,6 +190,28 @@ describe('UIStore', () => {
       expect(uiStore.density).toBe('comfortable')
     })
 
+    it('should sync density to DOM and localStorage', async () => {
+      expect(uiStore.density).toBe('comfortable')
+      expect(document.documentElement.getAttribute('data-density')).toBeNull()
+
+      uiStore.density = 'compact'
+      await new Promise((r) => setTimeout(r, 0))
+      expect(document.documentElement.getAttribute('data-density')).toBe('compact')
+      expect(mockLocalStorage.getItem('atc-density')).toBe('compact')
+
+      uiStore.density = 'comfortable'
+      await new Promise((r) => setTimeout(r, 0))
+      expect(document.documentElement.getAttribute('data-density')).toBeNull()
+      expect(mockLocalStorage.getItem('atc-density')).toBe('comfortable')
+    })
+
+    it('should restore density from localStorage', async () => {
+      mockLocalStorage.setItem('atc-density', 'compact')
+      vi.resetModules()
+      const module = await import('$lib/stores/ui.svelte')
+      expect(module.uiStore.density).toBe('compact')
+    })
+
     it('should not affect selectedRunId field', () => {
       expect(uiStore.selectedRunId).toBeNull()
 

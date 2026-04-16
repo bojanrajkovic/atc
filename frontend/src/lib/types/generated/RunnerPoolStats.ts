@@ -24,4 +24,14 @@ running: number,
  * Runner group name from the most recently observed `RunnerInfo`
  * for this label set, if available.
  */
-groupName: string | null, };
+groupName: string | null, 
+/**
+ * Whether this pool uses GitHub-hosted (elastic) runners.
+ * Derived from `RunnerInfo.group_id == Some(0)` for any observed runner.
+ */
+isElastic: boolean, 
+/**
+ * Total runner capacity for this pool, if known.
+ * Always `None` until operator capacity configuration is implemented.
+ */
+total: number | null, };
