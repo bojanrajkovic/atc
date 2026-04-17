@@ -17,7 +17,9 @@
 
   let { run }: { run: WorkflowRun } = $props()
 
-  const STATUS_MAP: Record<string, { color: string; glyph: string; label: string }> = {
+  import type { RunStatus } from '$lib/types/generated/RunStatus'
+
+  const STATUS_MAP: Record<RunStatus, { color: string; glyph: string; label: string }> = {
     Queued: { color: 'var(--queued)', glyph: '\u25CB', label: 'Queued' },
     InProgress: {
       color: 'var(--running)',
@@ -27,7 +29,7 @@
     Completed: { color: 'var(--text-dim)', glyph: '\u25CF', label: 'Completed' },
   }
 
-  const statusInfo = $derived(STATUS_MAP[run.status] || STATUS_MAP['Queued']!)
+  const statusInfo = $derived(STATUS_MAP[run.status])
 </script>
 
 <div data-run-id={run.id} class="flex items-center gap-3">

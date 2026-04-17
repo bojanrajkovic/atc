@@ -38,7 +38,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/components/ColumnHeader.svelte` | Pure: uppercase label + count badge |
 | `src/lib/components/RunCard.svelte` | Pure: skeleton card with displayTitle + accessible status indicator |
 | `src/lib/animations/kanban-transitions.ts` | Shared crossfade instance, motion constants, reduced-motion support |
-| `e2e/` | Playwright E2E tests (theme rendering, switching, mode toggle, app shell rendering) |
+| `e2e/` | Playwright E2E tests (theme rendering, app shell, kanban board lifecycle) |
 
 ## Status
 

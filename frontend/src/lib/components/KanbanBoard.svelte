@@ -8,12 +8,12 @@
   )
 </script>
 
-{#if connectionStore.status !== 'connected'}
-  <!-- Hydration placeholder: still loading, not yet connected -->
+{#if connectionStore.status !== 'connected' && totalRuns === 0}
+  <!-- Hydration placeholder: no data yet, not connected -->
   <div class="flex items-center justify-center h-full" style="color: var(--text-dim);">
     <p class="text-sm">Connecting&hellip;</p>
   </div>
-{:else if totalRuns === 0}
+{:else if connectionStore.status === 'connected' && totalRuns === 0}
   <!-- Empty state: connected but no workflow runs -->
   <div class="flex items-center justify-center h-full" style="color: var(--text-dim);">
     <p class="text-sm">No workflows yet.</p>

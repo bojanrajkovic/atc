@@ -7,14 +7,16 @@ import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
  *
  * Playwright's `routeWebSocket` intercepts at the CDP layer, but
  * `WebSocketRoute.send()` does not reliably deliver messages to the page
- * in this Vite dev-server environment. Instead, we mock at the JS level:
+ * in Vite dev-server environments (known Playwright bug:
+ * microsoft/playwright#34280, #33370). Instead, we mock at the JS level:
  *
  * - Intercept `new WebSocket('/v1/ws')` and fire `onopen` via microtask
  * - Passthrough all other URLs (including Vite HMR) to the real WebSocket
  * - State transitions use window.__stores bridge (set in main.ts) instead
  *
- * This tests the full pipeline: onmessage → JSON.parse with bigint reviver →
- * EventDispatcher → RAF → store mutation → Svelte reactivity → DOM.
+ * This tests: JSON parsing with bigint reviver → store mutation →
+ * Svelte reactivity → DOM rendering. The WS transport and EventDispatcher
+ * RAF path are NOT exercised (covered by browser-mode tests instead).
  */
 const WS_MOCK_INIT_SCRIPT = `
 (() => {
@@ -220,7 +222,7 @@ test.describe('Kanban board', () => {
    * AC8.2: Card movement through lifecycle via WS events
    * Queued → InProgress → Completed within a single page session
    */
-  test('AC8.2: card moves between columns via WS events', async ({ page }) => {
+  test('AC8.2: card moves between columns as run status changes', async ({ page }) => {
     // Start with one run in Queued via initial snapshot
     await page.route('**/v1/state', (route) => {
       route.fulfill({

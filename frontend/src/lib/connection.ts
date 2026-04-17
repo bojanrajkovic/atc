@@ -103,6 +103,7 @@ export class ConnectionManager {
         }
       }
       this.preConnectBuffer = []
+      eventDispatcher.flush()
       this.connected = true
 
       // Step 7: Transition to connected

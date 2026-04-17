@@ -114,7 +114,7 @@ All animations defined in `src/lib/animations/kanban-transitions.ts`:
 
 - **Within-column reorder:** `animate:flip` (FLIP animation)
 - **Cross-column movement:** `crossfade` send/receive (fade out of source, fade in at destination)
-- **Arrival (first load):** `fly` transition (top to current position)
+- **Arrival (first load):** `fly` transition (20px below to current position)
 - **Removal:** `fade` transition
 - **Motion constants:** `DURATION_MOVE` (300ms), `DURATION_ARRIVE` (250ms), `DURATION_REMOVE` (200ms), `FLY_SETTLE_Y` (20px)
 - **Reduced motion:** All durations zeroed when `prefers-reduced-motion` is active
@@ -141,16 +141,15 @@ Tests split across three Vitest projects and E2E tier:
 The frontend uses Svelte 5 rune-class stores as module-level singletons. All stores are defined in `src/lib/stores/` and are initialized on app mount.
 
 **ConnectionStore** (`src/lib/stores/connection.svelte.ts`)
-- Manages WebSocket lifecycle: connect, disconnect, reconnect with exponential backoff
-- Buffers outbound messages before WS is ready (WS-first protocol)
-- Emits `ConnectionStatus` state changes
-- Tracks connection readiness and error states
+- Tracks connection status (`disconnected`, `connecting`, `connected`, `reconnecting`)
+- Tracks reconnect attempt count and last event timestamp
+- Does NOT manage WebSocket lifecycle directly — that's `ConnectionManager` in `connection.ts`
 
 **RunsStore** (`src/lib/stores/runs.svelte.ts`)
 - Holds a map of `WorkflowRun` objects indexed by `RunId` (bigint)
 - Receives and applies `RunEvent` mutations from the WebSocket
 - Derives: three sorted arrays (`queuedRuns` ascending by createdAt, `inProgressRuns` descending by runStartedAt, `completedRuns` descending by updatedAt), each with run.id tie-breaker; direct lexical ISO-8601 comparison, no Date parsing
-- Implements copy-on-write semantics for immutable state updates
+- Uses Svelte 5 `$state<Map>` with in-place mutation via `Map.set()`
 
 **RunnersStore** (`src/lib/stores/runners.svelte.ts`)
 - Holds a map of `Runner` objects indexed by `RunnerId` (string)
@@ -172,16 +171,16 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 
 **Startup sequence:**
 1. App mounts and creates stores
-2. `ConnectionManager` begins connecting to WebSocket
-3. While connecting, client buffers outbound messages (heartbeats, state requests)
-4. WS connection succeeds; buffered messages are flushed
-5. Server sends full state snapshot via REST `/api/state`
-6. Subsequent events flow via WebSocket
+2. `ConnectionManager` opens WebSocket to `/v1/ws`
+3. While WS is connecting, inbound messages are buffered in `preConnectBuffer`
+4. WS opens; client fetches full state snapshot via REST `/v1/state`
+5. Snapshot is loaded into stores; buffered events with seq >= snapshot seq are flushed synchronously
+6. Connection transitions to `'connected'`; subsequent WS events are dispatched via `EventDispatcher`
 
 **Seq reconciliation:**
-- Each event (webhook, state change) carries a sequence number
-- Client filters out events with seq <= last received to handle network reordering
-- If client detects seq gap, it requests state refresh via `/api/state`
+- Each event carries a monotonic sequence number (`SeqEvent.seq`)
+- Buffered pre-connect events with seq < snapshot seq are discarded as stale
+- No explicit gap detection — reconnect re-fetches the full snapshot via `/v1/state`
 
 **Reconnect:**
 - Connection loss triggers exponential backoff (1s, 2s, 4s, ..., max 30s)
