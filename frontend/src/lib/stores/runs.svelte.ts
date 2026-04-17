@@ -11,9 +11,47 @@ class RunStore {
   runs = $state<Map<bigint, WorkflowRun>>(new Map())
   jobsByRun = $state<Map<bigint, Job[]>>(new Map())
 
-  queuedRuns = $derived([...this.runs.values()].filter((r) => r.status === 'Queued'))
-  inProgressRuns = $derived([...this.runs.values()].filter((r) => r.status === 'InProgress'))
-  completedRuns = $derived([...this.runs.values()].filter((r) => r.status === 'Completed'))
+  queuedRuns = $derived(
+    [...this.runs.values()]
+      .filter((r) => r.status === 'Queued')
+      .sort((a, b) =>
+        a.createdAt === b.createdAt
+          ? a.id < b.id
+            ? -1
+            : a.id > b.id
+              ? 1
+              : 0
+          : a.createdAt < b.createdAt
+            ? -1
+            : 1,
+      ),
+  )
+
+  inProgressRuns = $derived(
+    [...this.runs.values()]
+      .filter((r) => r.status === 'InProgress')
+      .sort((a, b) => {
+        const aKey = a.runStartedAt ?? a.createdAt
+        const bKey = b.runStartedAt ?? b.createdAt
+        return aKey === bKey ? (a.id > b.id ? -1 : a.id < b.id ? 1 : 0) : aKey > bKey ? -1 : 1
+      }),
+  )
+
+  completedRuns = $derived(
+    [...this.runs.values()]
+      .filter((r) => r.status === 'Completed')
+      .sort((a, b) =>
+        a.updatedAt === b.updatedAt
+          ? a.id > b.id
+            ? -1
+            : a.id < b.id
+              ? 1
+              : 0
+          : a.updatedAt > b.updatedAt
+            ? -1
+            : 1,
+      ),
+  )
 
   applyRunEvent(envelope: RunEventEnvelope): void {
     const runId = envelope.runId
