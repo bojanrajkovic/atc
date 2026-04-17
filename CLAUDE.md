@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-04-15
+Last verified: 2026-04-16
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -9,7 +9,7 @@ Last verified: 2026-04-15
 **ATC — Actions Traffic Control**
 Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite frontend.
 
-**Status:** Core domain model in `atc-core`, GitHub webhook integration in `atc-github`, and server wiring in `atc-server` (webhook ingestion, WebSocket streaming, REST state) are implemented. Frontend app shell complete: TopBar with logo, runner pool indicators, connection indicator, and settings popover; AppShell layout; ConnectionManager service component; OKLCH design system with four themes; Svelte 5 rune stores with WS client and event dispatching; Vitest unit + browser-mode tests and Playwright E2E tests. Both stacks compile, lint, and pass CI.
+**Status:** Core domain model in `atc-core`, GitHub webhook integration in `atc-github`, and server wiring in `atc-server` (webhook ingestion, WebSocket streaming, REST state) are implemented. Frontend complete: app shell with TopBar, kanban board rendering inside app shell with three-column layout (queued/in-progress/completed), card animations via shared crossfade and FLIP, sorted derived arrays in RunStore, OKLCH design system with four themes, Svelte 5 rune stores with WS client and event dispatching, unit + browser-mode + E2E test coverage across all components. Both stacks compile, lint, and pass CI.
 
 ## Tech Stack
 
