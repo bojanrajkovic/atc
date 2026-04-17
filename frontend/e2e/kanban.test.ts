@@ -51,16 +51,18 @@ test.describe('Kanban board', () => {
     const emptyText = page.getByText('No workflows yet.')
     await expect(emptyText).toBeVisible()
 
-    // Step 3b: Navigate to a fresh page with data already in the snapshot
-    // to verify the board populates correctly from the initial state
-    await page.goto('/')
+    // Step 3b: Now verify the board can render with data from the initial snapshot
+    // Set up a fresh page with a run in Queued state to test the rendering pipeline
+    // This verifies the board renders correctly when it receives data from state snapshot
+    // (In production, subsequent runs would arrive via WebSocket events)
+    await page.reload()
 
-    // Set up a new state route that returns a run
+    // Change the state response to include a run
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1,
+          seq: 2,
           runs: [
             {
               id: 1001,
@@ -169,8 +171,10 @@ test.describe('Kanban board', () => {
       completedSection.locator('article[role="listitem"][data-run-id="1002"]'),
     ).not.toBeVisible()
 
-    // Simulate a state update where the run transitions to InProgress
-    // (In real usage, this comes from a WS event, but we verify the board state here)
+    // Reload to get updated state (simulating the effect of WS event transitions)
+    await page.reload()
+
+    // Update state to show run in InProgress
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
@@ -202,9 +206,6 @@ test.describe('Kanban board', () => {
       })
     })
 
-    // Reload to get updated state (simulating the WS event effect)
-    await page.goto('/')
-
     // Verify card moved to IN PROGRESS column
     await expect(
       inProgressSection.locator('article[role="listitem"][data-run-id="1002"]').first(),
@@ -217,7 +218,10 @@ test.describe('Kanban board', () => {
       completedSection.locator('article[role="listitem"][data-run-id="1002"]'),
     ).not.toBeVisible()
 
-    // Simulate final transition to Completed
+    // Reload again for final transition
+    await page.reload()
+
+    // Update state to show run in Completed
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
@@ -248,9 +252,6 @@ test.describe('Kanban board', () => {
         } satisfies StateSnapshot),
       })
     })
-
-    // Reload to get updated state
-    await page.goto('/')
 
     // Verify card moved to COMPLETED column
     await expect(
@@ -335,7 +336,10 @@ test.describe('Kanban board', () => {
       queuedSectionRM.locator('article[role="listitem"][data-run-id="1003"]').first(),
     ).toBeVisible()
 
-    // Transition to InProgress
+    // Reload for InProgress transition
+    await page.reload()
+
+    // Update state to show run in InProgress
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
@@ -367,8 +371,6 @@ test.describe('Kanban board', () => {
       })
     })
 
-    await page.goto('/')
-
     // Verify transition
     const inProgressSection = page
       .locator('section')
@@ -377,7 +379,10 @@ test.describe('Kanban board', () => {
       inProgressSection.locator('article[role="listitem"][data-run-id="1003"]').first(),
     ).toBeVisible()
 
-    // Transition to Completed
+    // Reload for Completed transition
+    await page.reload()
+
+    // Update state to show run in Completed
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
@@ -408,8 +413,6 @@ test.describe('Kanban board', () => {
         } satisfies StateSnapshot),
       })
     })
-
-    await page.goto('/')
 
     // Verify final transition
     const completedSection = page
