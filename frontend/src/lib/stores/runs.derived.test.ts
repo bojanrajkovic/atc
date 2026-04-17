@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runStore } from './runs.svelte'
 
@@ -382,9 +385,10 @@ describe('RunStore', () => {
       })
 
       expect(runStore.inProgressRuns.length).toBe(2)
-      expect(runStore.inProgressRuns.map((r) => r.id)).toContain(runIdNull)
-      expect(runStore.inProgressRuns.map((r) => r.id)).toContain(runIdWithStart)
-      // Should not crash and both should be present
+      // The null-fallback run (createdAt '2026-04-16T10:00:00Z') is later in time
+      // than the started run ('2026-04-16T09:00:05Z'), so under descending sort it comes first
+      expect(runStore.inProgressRuns[0]?.id).toBe(runIdNull) // null-fallback run (createdAt 10:00)
+      expect(runStore.inProgressRuns[1]?.id).toBe(runIdWithStart) // started run (runStartedAt 09:00:05)
     })
 
     // AC3.4: completedRuns sorted descending by updatedAt
@@ -631,8 +635,7 @@ describe('RunStore', () => {
     })
 
     // AC3.7: Sort uses lexical comparison, not localeCompare
-    // This is a code-level assertion: the implementation uses direct < > operators on ISO-8601 strings
-    // without localeCompare. The test verifies all three sort implementations follow this pattern.
+    // This test has two parts: behavioral verification and source-level assertion
     it('AC3.7: Sort implementation uses direct lexical comparison', () => {
       // Create runs with timestamps that would differ under locale-aware sorting
       const runId1 = 150n
@@ -675,10 +678,17 @@ describe('RunStore', () => {
         action: { type: 'Requested' },
       })
 
-      // If using direct < comparison: '2026-04-16T09:00:00Z' < '2026-04-16T10:00:00Z' = true
+      // Behavioral: If using direct < comparison: '2026-04-16T09:00:00Z' < '2026-04-16T10:00:00Z' = true
       // runId2 should come before runId1
       expect(runStore.queuedRuns[0]?.id).toBe(runId2)
       expect(runStore.queuedRuns[1]?.id).toBe(runId1)
+
+      // Source-level: Assert the implementation does not use localeCompare
+      const storeSource = readFileSync(
+        resolve(dirname(fileURLToPath(import.meta.url)), './runs.svelte.ts'),
+        'utf-8',
+      )
+      expect(storeSource).not.toContain('localeCompare')
     })
   })
 })
