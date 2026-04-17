@@ -1,17 +1,9 @@
 import { render, screen } from '@testing-library/svelte'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { RunStatus } from '$lib/types/generated/RunStatus'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
 describe('KanbanColumn (browser mode)', () => {
-  let KanbanColumn: typeof import('./KanbanColumn.svelte').default
-
-  beforeEach(async () => {
-    vi.resetModules()
-    const columnModule = await import('./KanbanColumn.svelte')
-    KanbanColumn = columnModule.default
-  })
-
   // Helper to create mock WorkflowRun objects
   function createMockRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     return {
@@ -37,6 +29,9 @@ describe('KanbanColumn (browser mode)', () => {
 
   describe('kanban-board.AC5.3: animate:flip is applied to cards', () => {
     it('keeps card DOM identity stable across array reorder', async () => {
+      // Each test imports its own fresh copy of KanbanColumn
+      const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
+
       let runs: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
       const { container, rerender } = render(KanbanColumn, {
         props: {
@@ -46,9 +41,9 @@ describe('KanbanColumn (browser mode)', () => {
         },
       })
 
-      // Get initial card elements
-      const card1Before = container.querySelector('[data-run-id="100"]')
-      const card2Before = container.querySelector('[data-run-id="200"]')
+      // Get initial card DOM node reference (not just the selector)
+      const card1Before = container.querySelector('[data-run-id="100"]') as HTMLElement
+      const card2Before = container.querySelector('[data-run-id="200"]') as HTMLElement
       expect(card1Before).toBeTruthy()
       expect(card2Before).toBeTruthy()
 
@@ -61,13 +56,17 @@ describe('KanbanColumn (browser mode)', () => {
       })
 
       // Wait for animation/reactivity
-      await new Promise((r) => setTimeout(r, 50))
+      await new Promise((r) => setTimeout(r, 350))
 
       // Cards should still exist with same data-run-id values
-      const card1After = container.querySelector('[data-run-id="100"]')
-      const card2After = container.querySelector('[data-run-id="200"]')
+      const card1After = container.querySelector('[data-run-id="100"]') as HTMLElement
+      const card2After = container.querySelector('[data-run-id="200"]') as HTMLElement
       expect(card1After).toBeTruthy()
       expect(card2After).toBeTruthy()
+
+      // Verify DOM identity is preserved (same node reference, not recreated)
+      expect(card1After).toBe(card1Before)
+      expect(card2After).toBe(card2Before)
 
       // Verify data-run-id attributes are stable (converted to string)
       expect(card1After?.getAttribute('data-run-id')).toBe('100')
@@ -76,43 +75,67 @@ describe('KanbanColumn (browser mode)', () => {
   })
 
   describe('kanban-board.AC5.4: crossfade key matching between columns', () => {
-    it('two columns share same crossfade instance for cross-column transitions', async () => {
-      // This test verifies that both columns import the same crossfade module
-      // and thus share the same send/receive pair. Simulating this with two
-      // separate renders and a manual re-import to verify module scope sharing.
-      vi.resetModules()
+    it('moves a card between two columns via crossfade matching', async () => {
+      // Each test imports its own fresh copy of KanbanColumn
+      const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
-      const queuedModule = await import('./KanbanColumn.svelte')
-      const KanbanColumnFirst = queuedModule.default
+      // Render two columns side-by-side with a card in column A
+      let runs1: readonly WorkflowRun[] = [createMockRun({ id: 100n })]
+      let runs2: readonly WorkflowRun[] = [createMockRun({ id: 200n })]
 
-      const { container: container1 } = render(KanbanColumnFirst, {
+      const { container: container1, rerender: rerender1 } = render(KanbanColumn, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
-          runs: [createMockRun({ id: 100n })],
+          runs: runs1,
         },
       })
 
-      // Import again without resetting modules — should share same crossfade
+      // Import again (same module) to render second column sharing the same crossfade
       const { default: KanbanColumnSecond } = await import('./KanbanColumn.svelte')
-
-      const { container: container2 } = render(KanbanColumnSecond, {
+      const { container: container2, rerender: rerender2 } = render(KanbanColumnSecond, {
         props: {
           label: 'IN_PROGRESS',
           headingId: 'kanban-col-in-progress',
-          runs: [createMockRun({ id: 200n })],
+          runs: runs2,
         },
       })
 
-      // Both columns should have loaded without error, proving they share the same
-      // module-level crossfade instance
+      // Verify initial state: card 100 in column 1, card 200 in column 2
       expect(container1.querySelector('[data-run-id="100"]')).toBeTruthy()
+      expect(container2.querySelector('[data-run-id="200"]')).toBeTruthy()
+
+      // Move card 100 from column 1 to column 2 (simulating status change)
+      runs1 = []
+      runs2 = [createMockRun({ id: 200n }), createMockRun({ id: 100n })]
+
+      await rerender1({
+        label: 'QUEUED',
+        headingId: 'kanban-col-queued',
+        runs: runs1,
+      })
+
+      await rerender2({
+        label: 'IN_PROGRESS',
+        headingId: 'kanban-col-in-progress',
+        runs: runs2,
+      })
+
+      // Wait for crossfade animation to settle
+      await new Promise((r) => setTimeout(r, 350))
+
+      // Verify cross-column transition: card 100 no longer in column 1, now in column 2
+      expect(container1.querySelector('[data-run-id="100"]')).toBeFalsy()
+      expect(container2.querySelector('[data-run-id="100"]')).toBeTruthy()
       expect(container2.querySelector('[data-run-id="200"]')).toBeTruthy()
     })
   })
 
   describe('kanban-board.AC5.5: bigint as {#each} key', () => {
     it('handles bigint run IDs without errors', async () => {
+      // Each test imports its own fresh copy of KanbanColumn
+      const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
+
       const run1 = createMockRun({ id: 1n })
       const run2 = createMockRun({ id: 2n })
       const run3 = createMockRun({ id: 3n })
@@ -152,64 +175,133 @@ describe('KanbanColumn (browser mode)', () => {
   })
 
   describe('kanban-board.AC5.6: burst (multiple runs in one update)', () => {
-    it('renders all cards correctly after single update with multiple runs', async () => {
-      let runs: readonly WorkflowRun[] = [
-        createMockRun({ id: 100n }),
-        createMockRun({ id: 200n }),
-        createMockRun({ id: 300n }),
-      ]
+    it('moves multiple cards between columns in a single update', async () => {
+      // Each test imports its own fresh copy of KanbanColumn
+      const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
-      const { container, rerender } = render(KanbanColumn, {
+      // Render two columns: column A has 100n and 200n, column B is empty
+      let runsA: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
+      let runsB: readonly WorkflowRun[] = []
+
+      const { container: containerA, rerender: rerenderA } = render(KanbanColumn, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
-          runs,
+          runs: runsA,
+        },
+      })
+
+      // Import again to render second column with same crossfade instance
+      const { default: KanbanColumnB } = await import('./KanbanColumn.svelte')
+      const { container: containerB, rerender: rerenderB } = render(KanbanColumnB, {
+        props: {
+          label: 'IN_PROGRESS',
+          headingId: 'kanban-col-in-progress',
+          runs: runsB,
+        },
+      })
+
+      // Verify initial state: both cards in column A
+      expect(containerA.querySelector('[data-run-id="100"]')).toBeTruthy()
+      expect(containerA.querySelector('[data-run-id="200"]')).toBeTruthy()
+      expect(containerB.querySelector('[data-run-id="100"]')).toBeFalsy()
+      expect(containerB.querySelector('[data-run-id="200"]')).toBeFalsy()
+
+      // Burst: move both cards to column B in a single update
+      runsA = []
+      runsB = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
+
+      await rerenderA({
+        label: 'QUEUED',
+        headingId: 'kanban-col-queued',
+        runs: runsA,
+      })
+
+      await rerenderB({
+        label: 'IN_PROGRESS',
+        headingId: 'kanban-col-in-progress',
+        runs: runsB,
+      })
+
+      // Wait for crossfade animations to settle
+      await new Promise((r) => setTimeout(r, 350))
+
+      // Verify both cards moved to column B
+      expect(containerA.querySelector('[data-run-id="100"]')).toBeFalsy()
+      expect(containerA.querySelector('[data-run-id="200"]')).toBeFalsy()
+      expect(containerB.querySelector('[data-run-id="100"]')).toBeTruthy()
+      expect(containerB.querySelector('[data-run-id="200"]')).toBeTruthy()
+
+      // Verify final count in destination column
+      const listItems = screen.getAllByRole('listitem')
+      expect(listItems).toHaveLength(2)
+    })
+  })
+
+  describe('kanban-board.AC6.3 & AC6.4: Animations respect prefers-reduced-motion', () => {
+    it('AC6.3: cross-column movement completes (reduced motion duration values tested in unit tests)', async () => {
+      // Note: The AC6.3 reduced-motion test verifies cross-column movement works.
+      // Duration value verification (DURATION_MOVE = 0 when reduced motion is true) is
+      // tested in kanban-transitions.test.ts where matchMedia can be mocked before module import.
+      // Browser mode tests verify the observable behavior: cross-column transitions work.
+
+      const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
+
+      let runsA: readonly WorkflowRun[] = [createMockRun({ id: 100n })]
+      let runsB: readonly WorkflowRun[] = []
+
+      const { container: containerA, rerender: rerenderA } = render(KanbanColumn, {
+        props: {
+          label: 'QUEUED',
+          headingId: 'kanban-col-queued',
+          runs: runsA,
+        },
+      })
+
+      // Import again without resetting to use same crossfade
+      const { default: KanbanColumnSecond } = await import('./KanbanColumn.svelte')
+      const { container: containerB, rerender: rerenderB } = render(KanbanColumnSecond, {
+        props: {
+          label: 'IN_PROGRESS',
+          headingId: 'kanban-col-in-progress',
+          runs: runsB,
         },
       })
 
       // Verify initial state
-      expect(container.querySelector('[data-run-id="100"]')).toBeTruthy()
-      expect(container.querySelector('[data-run-id="200"]')).toBeTruthy()
-      expect(container.querySelector('[data-run-id="300"]')).toBeTruthy()
+      expect(containerA.querySelector('[data-run-id="100"]')).toBeTruthy()
+      expect(containerB.querySelector('[data-run-id="100"]')).toBeFalsy()
 
-      // Reorder all three runs in a single update (burst)
-      runs = [
-        createMockRun({ id: 300n }),
-        createMockRun({ id: 100n }),
-        createMockRun({ id: 200n }),
-      ] as const
+      // Move card between columns
+      runsA = []
+      runsB = [createMockRun({ id: 100n })]
 
-      await rerender({
+      await rerenderA({
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
-        runs,
+        runs: runsA,
       })
 
-      // Wait for animations/reactivity to settle
+      await rerenderB({
+        label: 'IN_PROGRESS',
+        headingId: 'kanban-col-in-progress',
+        runs: runsB,
+      })
+
+      // Wait for animation to complete (300ms with normal motion)
       await new Promise((r) => setTimeout(r, 350))
 
-      // Verify all cards are still present after burst update
-      expect(container.querySelector('[data-run-id="100"]')).toBeTruthy()
-      expect(container.querySelector('[data-run-id="200"]')).toBeTruthy()
-      expect(container.querySelector('[data-run-id="300"]')).toBeTruthy()
-
-      // Verify final count
-      const listItems = screen.getAllByRole('listitem')
-      expect(listItems).toHaveLength(3)
+      // Verify cross-column transition succeeded
+      expect(containerB.querySelector('[data-run-id="100"]')).toBeTruthy()
     })
-  })
 
-  describe('kanban-board.AC6.3 & AC6.4: reduced motion verification', () => {
-    it('verifies the animation module respects reduced motion preference', async () => {
-      // This test verifies that when window.matchMedia is mocked to report
-      // reduced motion, the transitions module correctly sets durations to 0.
-      // Note: Direct duration inspection requires fresh module import with
-      // reduced motion mocked BEFORE any imports, which is tested in the
-      // unit test suite via kanban-transitions.test.ts.
-      //
-      // For KanbanColumn browser tests, we verify the functional behavior:
-      // cards appear in their final positions with no visible animation delay.
-      // This is asserted through DOM observation after reorder operations.
+    it('AC6.4: within-column reorder completes (reduced motion duration values tested in unit tests)', async () => {
+      // Note: The AC6.4 reduced-motion test verifies animate:flip reordering works.
+      // Duration value verification (DURATION_MOVE = 0 when reduced motion is true) is
+      // tested in kanban-transitions.test.ts where matchMedia can be mocked before module import.
+      // Browser mode tests verify the observable behavior: within-column reordering works.
+
+      const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
       let runs: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
 
@@ -225,7 +317,7 @@ describe('KanbanColumn (browser mode)', () => {
       expect(container.querySelector('[data-run-id="100"]')).toBeTruthy()
       expect(container.querySelector('[data-run-id="200"]')).toBeTruthy()
 
-      // Reorder (this exercises FLIP and would use DURATION_MOVE)
+      // Reorder within the column
       runs = [createMockRun({ id: 200n }), createMockRun({ id: 100n })] as const
 
       await rerender({
@@ -234,8 +326,10 @@ describe('KanbanColumn (browser mode)', () => {
         runs,
       })
 
-      // Cards should still be present after reorder
-      await new Promise((r) => setTimeout(r, 10))
+      // Wait for animation to complete (300ms with normal motion)
+      await new Promise((r) => setTimeout(r, 350))
+
+      // Cards should be in final positions
       expect(container.querySelector('[data-run-id="100"]')).toBeTruthy()
       expect(container.querySelector('[data-run-id="200"]')).toBeTruthy()
     })
