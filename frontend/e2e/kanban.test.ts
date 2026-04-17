@@ -10,8 +10,8 @@ import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
  * in this Vite dev-server environment. Instead, we mock at the JS level:
  *
  * - Intercept `new WebSocket('/v1/ws')` and fire `onopen` via microtask
- * - Expose `window.__sendWSMessage(data)` to inject messages from the test
  * - Passthrough all other URLs (including Vite HMR) to the real WebSocket
+ * - State transitions use window.__stores bridge (set in main.ts) instead
  *
  * This tests the full pipeline: onmessage → JSON.parse with bigint reviver →
  * EventDispatcher → RAF → store mutation → Svelte reactivity → DOM.
@@ -73,14 +73,6 @@ const WS_MOCK_INIT_SCRIPT = `
   window.WebSocket.CLOSED = _RealWS.CLOSED;
   window.WebSocket.prototype = _RealWS.prototype;
 
-  // Expose message injection for E2E tests (used by the JS mock WS path)
-  window.__sendWSMessage = (data) => {
-    if (!_mockInstance || _mockInstance.readyState !== MockWebSocket.OPEN) return false;
-    const event = new MessageEvent('message', { data });
-    if (_mockInstance.onmessage) _mockInstance.onmessage(event);
-    _mockInstance.dispatchEvent(event);
-    return true;
-  };
 })();
 `
 
