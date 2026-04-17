@@ -1,33 +1,8 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
-import type { RunId } from '$lib/types/generated/RunId'
-import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+import { createMockRun } from '$lib/test-utils/factories'
 
 import RunCard from './RunCard.svelte'
-
-// Test helper to create mock WorkflowRun objects
-function createMockRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
-  const baseId: RunId = 123n
-  return {
-    id: baseId,
-    org: 'test-org',
-    repo: 'test-repo',
-    workflowName: 'Test Workflow',
-    workflowPath: '.github/workflows/test.yml',
-    branch: 'main',
-    headSha: 'abc123def456',
-    commitMessage: 'Test commit',
-    event: 'push',
-    displayTitle: 'Test Run',
-    status: 'Queued',
-    conclusion: null,
-    htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/123',
-    createdAt: '2024-01-01T00:00:00Z',
-    runStartedAt: null,
-    updatedAt: '2024-01-01T00:00:00Z',
-    ...overrides,
-  }
-}
 
 describe('RunCard', () => {
   it('renders displayTitle as visible text (AC4.1)', () => {

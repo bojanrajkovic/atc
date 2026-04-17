@@ -1,32 +1,9 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it, vi } from 'vitest'
-import type { RunStatus } from '$lib/types/generated/RunStatus'
+import { createMockRun } from '$lib/test-utils/factories'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
 describe('KanbanColumn (browser mode)', () => {
-  // Helper to create mock WorkflowRun objects
-  function createMockRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
-    return {
-      id: 123n,
-      org: 'test-org',
-      repo: 'test-repo',
-      workflowName: 'Test Workflow',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc123def456',
-      commitMessage: 'Test commit',
-      event: 'push',
-      displayTitle: 'Test Run',
-      status: 'Queued' as RunStatus,
-      conclusion: null,
-      htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/123',
-      createdAt: '2024-01-01T00:00:00Z',
-      runStartedAt: null,
-      updatedAt: '2024-01-01T00:00:00Z',
-      ...overrides,
-    }
-  }
-
   describe('kanban-board.AC5.3: animate:flip is applied to cards', () => {
     it('keeps card DOM identity stable across array reorder', async () => {
       // Each test imports its own fresh copy of KanbanColumn

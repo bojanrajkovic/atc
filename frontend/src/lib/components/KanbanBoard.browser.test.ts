@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/svelte'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+import { createMockRun, createMockRunEvent } from '$lib/test-utils/factories'
 
 // Mock localStorage since browsers still need this mock in some contexts
 const mockLocalStorage = (() => {
@@ -103,126 +103,88 @@ describe('KanbanBoard (browser mode)', () => {
     connectionStore.status = 'connected'
 
     // Create test runs for each status
-    const queuedRun: WorkflowRun = {
+    const queuedRun = createMockRun({
       id: 1n,
-      org: 'test',
-      repo: 'repo',
-      workflowName: 'Test',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc123',
-      commitMessage: 'Test commit',
-      event: 'push',
-      displayTitle: 'Test Run',
       status: 'Queued',
-      conclusion: null,
+      displayTitle: 'Test Run',
       htmlUrl: 'https://example.com/run/1',
-      createdAt: new Date().toISOString(),
-      runStartedAt: null,
-      updatedAt: new Date().toISOString(),
-    }
+    })
 
-    const inProgressRun: WorkflowRun = {
+    const inProgressRun = createMockRun({
       id: 2n,
-      org: 'test',
-      repo: 'repo',
-      workflowName: 'Test',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc124',
-      commitMessage: 'Test commit 2',
-      event: 'push',
-      displayTitle: 'Test Run 2',
       status: 'InProgress',
-      conclusion: null,
+      displayTitle: 'Test Run 2',
       htmlUrl: 'https://example.com/run/2',
-      createdAt: new Date().toISOString(),
-      runStartedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    })
 
-    const completedRun: WorkflowRun = {
+    const completedRun = createMockRun({
       id: 3n,
-      org: 'test',
-      repo: 'repo',
-      workflowName: 'Test',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc125',
-      commitMessage: 'Test commit 3',
-      event: 'push',
-      displayTitle: 'Test Run 3',
       status: 'Completed',
       conclusion: 'Success',
+      displayTitle: 'Test Run 3',
       htmlUrl: 'https://example.com/run/3',
-      createdAt: new Date().toISOString(),
-      runStartedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    })
 
     // Apply events to populate the store BEFORE rendering
-    runStore.applyRunEvent({
-      runId: queuedRun.id,
-      org: queuedRun.org,
-      repo: queuedRun.repo,
-      workflowName: queuedRun.workflowName,
-      workflowPath: queuedRun.workflowPath,
-      branch: queuedRun.branch,
-      headSha: queuedRun.headSha,
-      commitMessage: queuedRun.commitMessage,
-      triggerEvent: queuedRun.event,
-      displayTitle: queuedRun.displayTitle,
-      htmlUrl: queuedRun.htmlUrl,
-      createdAt: queuedRun.createdAt,
-      runStartedAt: null,
-      updatedAt: queuedRun.updatedAt,
-      action: {
-        type: 'Requested',
-      },
-    })
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: queuedRun.id,
+        org: queuedRun.org,
+        repo: queuedRun.repo,
+        workflowName: queuedRun.workflowName,
+        workflowPath: queuedRun.workflowPath,
+        branch: queuedRun.branch,
+        headSha: queuedRun.headSha,
+        commitMessage: queuedRun.commitMessage,
+        triggerEvent: queuedRun.event,
+        displayTitle: queuedRun.displayTitle,
+        htmlUrl: queuedRun.htmlUrl,
+        createdAt: queuedRun.createdAt,
+        runStartedAt: null,
+        updatedAt: queuedRun.updatedAt,
+        action: { type: 'Requested' },
+      }),
+    )
 
-    runStore.applyRunEvent({
-      runId: inProgressRun.id,
-      org: inProgressRun.org,
-      repo: inProgressRun.repo,
-      workflowName: inProgressRun.workflowName,
-      workflowPath: inProgressRun.workflowPath,
-      branch: inProgressRun.branch,
-      headSha: inProgressRun.headSha,
-      commitMessage: inProgressRun.commitMessage,
-      triggerEvent: inProgressRun.event,
-      displayTitle: inProgressRun.displayTitle,
-      htmlUrl: inProgressRun.htmlUrl,
-      createdAt: inProgressRun.createdAt,
-      runStartedAt: inProgressRun.runStartedAt,
-      updatedAt: inProgressRun.updatedAt,
-      action: {
-        type: 'InProgress',
-      },
-    })
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: inProgressRun.id,
+        org: inProgressRun.org,
+        repo: inProgressRun.repo,
+        workflowName: inProgressRun.workflowName,
+        workflowPath: inProgressRun.workflowPath,
+        branch: inProgressRun.branch,
+        headSha: inProgressRun.headSha,
+        commitMessage: inProgressRun.commitMessage,
+        triggerEvent: inProgressRun.event,
+        displayTitle: inProgressRun.displayTitle,
+        htmlUrl: inProgressRun.htmlUrl,
+        createdAt: inProgressRun.createdAt,
+        runStartedAt: inProgressRun.runStartedAt,
+        updatedAt: inProgressRun.updatedAt,
+        action: { type: 'InProgress' },
+      }),
+    )
 
-    runStore.applyRunEvent({
-      runId: completedRun.id,
-      org: completedRun.org,
-      repo: completedRun.repo,
-      workflowName: completedRun.workflowName,
-      workflowPath: completedRun.workflowPath,
-      branch: completedRun.branch,
-      headSha: completedRun.headSha,
-      commitMessage: completedRun.commitMessage,
-      triggerEvent: completedRun.event,
-      displayTitle: completedRun.displayTitle,
-      htmlUrl: completedRun.htmlUrl,
-      createdAt: completedRun.createdAt,
-      runStartedAt: completedRun.runStartedAt,
-      updatedAt: completedRun.updatedAt,
-      action: {
-        type: 'Completed',
-        data: {
-          conclusion: 'Success',
-        },
-      },
-    })
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: completedRun.id,
+        org: completedRun.org,
+        repo: completedRun.repo,
+        workflowName: completedRun.workflowName,
+        workflowPath: completedRun.workflowPath,
+        branch: completedRun.branch,
+        headSha: completedRun.headSha,
+        commitMessage: completedRun.commitMessage,
+        triggerEvent: completedRun.event,
+        displayTitle: completedRun.displayTitle,
+        htmlUrl: completedRun.htmlUrl,
+        createdAt: completedRun.createdAt,
+        runStartedAt: completedRun.runStartedAt,
+        updatedAt: completedRun.updatedAt,
+        action: { type: 'Completed', data: { conclusion: 'Success' } },
+      }),
+    )
 
     // Now render AFTER store is populated
     render(KanbanBoard)
@@ -246,125 +208,87 @@ describe('KanbanBoard (browser mode)', () => {
 
     connectionStore.status = 'connected'
 
-    const queuedRun: WorkflowRun = {
+    const queuedRun = createMockRun({
       id: 1n,
-      org: 'test',
-      repo: 'repo',
-      workflowName: 'Test',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc123',
-      commitMessage: 'Test commit',
-      event: 'push',
-      displayTitle: 'Test Run',
       status: 'Queued',
-      conclusion: null,
+      displayTitle: 'Test Run',
       htmlUrl: 'https://example.com/run/1',
-      createdAt: new Date().toISOString(),
-      runStartedAt: null,
-      updatedAt: new Date().toISOString(),
-    }
+    })
 
-    const inProgressRun: WorkflowRun = {
+    const inProgressRun = createMockRun({
       id: 2n,
-      org: 'test',
-      repo: 'repo',
-      workflowName: 'Test',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc124',
-      commitMessage: 'Test commit 2',
-      event: 'push',
-      displayTitle: 'Test Run 2',
       status: 'InProgress',
-      conclusion: null,
+      displayTitle: 'Test Run 2',
       htmlUrl: 'https://example.com/run/2',
-      createdAt: new Date().toISOString(),
-      runStartedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
+    })
 
-    const completedRun: WorkflowRun = {
+    const completedRun = createMockRun({
       id: 3n,
-      org: 'test',
-      repo: 'repo',
-      workflowName: 'Test',
-      workflowPath: '.github/workflows/test.yml',
-      branch: 'main',
-      headSha: 'abc125',
-      commitMessage: 'Test commit 3',
-      event: 'push',
-      displayTitle: 'Test Run 3',
       status: 'Completed',
       conclusion: 'Success',
+      displayTitle: 'Test Run 3',
       htmlUrl: 'https://example.com/run/3',
-      createdAt: new Date().toISOString(),
-      runStartedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
-
-    runStore.applyRunEvent({
-      runId: queuedRun.id,
-      org: queuedRun.org,
-      repo: queuedRun.repo,
-      workflowName: queuedRun.workflowName,
-      workflowPath: queuedRun.workflowPath,
-      branch: queuedRun.branch,
-      headSha: queuedRun.headSha,
-      commitMessage: queuedRun.commitMessage,
-      triggerEvent: queuedRun.event,
-      displayTitle: queuedRun.displayTitle,
-      htmlUrl: queuedRun.htmlUrl,
-      createdAt: queuedRun.createdAt,
-      runStartedAt: null,
-      updatedAt: queuedRun.updatedAt,
-      action: {
-        type: 'Requested',
-      },
     })
 
-    runStore.applyRunEvent({
-      runId: inProgressRun.id,
-      org: inProgressRun.org,
-      repo: inProgressRun.repo,
-      workflowName: inProgressRun.workflowName,
-      workflowPath: inProgressRun.workflowPath,
-      branch: inProgressRun.branch,
-      headSha: inProgressRun.headSha,
-      commitMessage: inProgressRun.commitMessage,
-      triggerEvent: inProgressRun.event,
-      displayTitle: inProgressRun.displayTitle,
-      htmlUrl: inProgressRun.htmlUrl,
-      createdAt: inProgressRun.createdAt,
-      runStartedAt: inProgressRun.runStartedAt,
-      updatedAt: inProgressRun.updatedAt,
-      action: {
-        type: 'InProgress',
-      },
-    })
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: queuedRun.id,
+        org: queuedRun.org,
+        repo: queuedRun.repo,
+        workflowName: queuedRun.workflowName,
+        workflowPath: queuedRun.workflowPath,
+        branch: queuedRun.branch,
+        headSha: queuedRun.headSha,
+        commitMessage: queuedRun.commitMessage,
+        triggerEvent: queuedRun.event,
+        displayTitle: queuedRun.displayTitle,
+        htmlUrl: queuedRun.htmlUrl,
+        createdAt: queuedRun.createdAt,
+        runStartedAt: null,
+        updatedAt: queuedRun.updatedAt,
+        action: { type: 'Requested' },
+      }),
+    )
 
-    runStore.applyRunEvent({
-      runId: completedRun.id,
-      org: completedRun.org,
-      repo: completedRun.repo,
-      workflowName: completedRun.workflowName,
-      workflowPath: completedRun.workflowPath,
-      branch: completedRun.branch,
-      headSha: completedRun.headSha,
-      commitMessage: completedRun.commitMessage,
-      triggerEvent: completedRun.event,
-      displayTitle: completedRun.displayTitle,
-      htmlUrl: completedRun.htmlUrl,
-      createdAt: completedRun.createdAt,
-      runStartedAt: completedRun.runStartedAt,
-      updatedAt: completedRun.updatedAt,
-      action: {
-        type: 'Completed',
-        data: {
-          conclusion: 'Success',
-        },
-      },
-    })
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: inProgressRun.id,
+        org: inProgressRun.org,
+        repo: inProgressRun.repo,
+        workflowName: inProgressRun.workflowName,
+        workflowPath: inProgressRun.workflowPath,
+        branch: inProgressRun.branch,
+        headSha: inProgressRun.headSha,
+        commitMessage: inProgressRun.commitMessage,
+        triggerEvent: inProgressRun.event,
+        displayTitle: inProgressRun.displayTitle,
+        htmlUrl: inProgressRun.htmlUrl,
+        createdAt: inProgressRun.createdAt,
+        runStartedAt: inProgressRun.runStartedAt,
+        updatedAt: inProgressRun.updatedAt,
+        action: { type: 'InProgress' },
+      }),
+    )
+
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: completedRun.id,
+        org: completedRun.org,
+        repo: completedRun.repo,
+        workflowName: completedRun.workflowName,
+        workflowPath: completedRun.workflowPath,
+        branch: completedRun.branch,
+        headSha: completedRun.headSha,
+        commitMessage: completedRun.commitMessage,
+        triggerEvent: completedRun.event,
+        displayTitle: completedRun.displayTitle,
+        htmlUrl: completedRun.htmlUrl,
+        createdAt: completedRun.createdAt,
+        runStartedAt: completedRun.runStartedAt,
+        updatedAt: completedRun.updatedAt,
+        action: { type: 'Completed', data: { conclusion: 'Success' } },
+      }),
+    )
 
     const { container } = render(KanbanBoard)
 
@@ -479,19 +403,19 @@ describe('KanbanBoard (browser mode)', () => {
 
     // Verify RENDERED count badges match (the actual DOM output)
     const queuedSection = container.querySelector('section[aria-labelledby="kanban-col-queued"]')
-    const queuedCountSpan = queuedSection?.querySelector('span[aria-hidden="true"]')
+    const queuedCountSpan = queuedSection?.querySelector('h2 + span')
     expect(queuedCountSpan?.textContent).toBe('2')
 
     const inProgressSection = container.querySelector(
       'section[aria-labelledby="kanban-col-in-progress"]',
     )
-    const inProgressCountSpan = inProgressSection?.querySelector('span[aria-hidden="true"]')
+    const inProgressCountSpan = inProgressSection?.querySelector('h2 + span')
     expect(inProgressCountSpan?.textContent).toBe('2')
 
     const completedSection = container.querySelector(
       'section[aria-labelledby="kanban-col-completed"]',
     )
-    const completedCountSpan = completedSection?.querySelector('span[aria-hidden="true"]')
+    const completedCountSpan = completedSection?.querySelector('h2 + span')
     expect(completedCountSpan?.textContent).toBe('3')
   })
 
@@ -501,43 +425,23 @@ describe('KanbanBoard (browser mode)', () => {
 
     connectionStore.status = 'connected'
 
-    const runs: WorkflowRun[] = [
-      {
+    const runs = [
+      createMockRun({
         id: 1n,
-        org: 'test',
-        repo: 'repo',
-        workflowName: 'Test',
-        workflowPath: '.github/workflows/test.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'Test commit',
-        event: 'push',
+        status: 'Queued',
         displayTitle: 'Test Run 1',
-        status: 'Queued',
-        conclusion: null,
         htmlUrl: 'https://example.com/run/1',
-        createdAt: new Date('2026-04-16T10:00:00Z').toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date('2026-04-16T10:00:00Z').toISOString(),
-      },
-      {
+        createdAt: '2026-04-16T10:00:00Z',
+        updatedAt: '2026-04-16T10:00:00Z',
+      }),
+      createMockRun({
         id: 2n,
-        org: 'test',
-        repo: 'repo',
-        workflowName: 'Test',
-        workflowPath: '.github/workflows/test.yml',
-        branch: 'main',
-        headSha: 'abc124',
-        commitMessage: 'Test commit 2',
-        event: 'push',
-        displayTitle: 'Test Run 2',
         status: 'Queued',
-        conclusion: null,
+        displayTitle: 'Test Run 2',
         htmlUrl: 'https://example.com/run/2',
-        createdAt: new Date('2026-04-16T10:01:00Z').toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date('2026-04-16T10:01:00Z').toISOString(),
-      },
+        createdAt: '2026-04-16T10:01:00Z',
+        updatedAt: '2026-04-16T10:01:00Z',
+      }),
     ]
 
     // Load initial snapshot

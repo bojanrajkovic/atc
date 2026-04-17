@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
-import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { runStore } from './runs.svelte'
 
 describe('RunStore', () => {
@@ -51,24 +51,19 @@ describe('RunStore', () => {
       expect(runStore.jobsByRun.size).toBe(1)
 
       // Load new snapshot
-      const newRun: WorkflowRun = {
+      const newRun = createMockRun({
         id: 51n,
-        org: 'org',
-        repo: 'repo',
         workflowName: 'CI',
         workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'newsha',
         commitMessage: 'New msg',
-        event: 'push',
         displayTitle: 'New Run',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'newurl',
         createdAt: '2025-01-02T00:00:00Z',
         runStartedAt: '2025-01-02T00:00:05Z',
         updatedAt: '2025-01-02T00:00:05Z',
-      }
+      })
 
       const newJob: Job = {
         id: 501n,
@@ -105,13 +100,10 @@ describe('RunStore', () => {
     })
 
     it('should handle loading snapshot with multiple runs and jobs', () => {
-      const run1: WorkflowRun = {
+      const run1 = createMockRun({
         id: 60n,
-        org: 'org',
-        repo: 'repo',
         workflowName: 'CI',
         workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha1',
         commitMessage: 'msg1',
         event: 'push',
@@ -122,12 +114,10 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         runStartedAt: '2025-01-02T00:00:05Z',
         updatedAt: '2025-01-02T00:00:15Z',
-      }
+      })
 
-      const run2: WorkflowRun = {
+      const run2 = createMockRun({
         id: 61n,
-        org: 'org',
-        repo: 'repo',
         workflowName: 'Test',
         workflowPath: '.github/workflows/test.yml',
         branch: 'develop',
@@ -136,12 +126,11 @@ describe('RunStore', () => {
         event: 'pull_request',
         displayTitle: 'Run 2',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'url2',
         createdAt: '2025-01-02T01:00:00Z',
         runStartedAt: '2025-01-02T01:00:05Z',
         updatedAt: '2025-01-02T01:00:10Z',
-      }
+      })
 
       const job1: Job = {
         id: 600n,
@@ -205,62 +194,36 @@ describe('RunStore', () => {
   describe('AC3.6: Sort order stability on snapshot reload', () => {
     it('queuedRuns maintains same order after reload with same runs in different input order', () => {
       // Create runs with identical createdAt (to test tie-breaker stability)
-      const run1: WorkflowRun = {
+      const run1 = createMockRun({
         id: 200n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha1',
-        commitMessage: 'msg1',
-        event: 'push',
         displayTitle: 'Run 1',
         status: 'Queued',
-        conclusion: null,
         htmlUrl: 'url1',
         createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
         updatedAt: '2026-04-16T09:00:00Z',
-      }
+      })
 
-      const run2: WorkflowRun = {
+      const run2 = createMockRun({
         id: 201n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha2',
         commitMessage: 'msg2',
-        event: 'push',
         displayTitle: 'Run 2',
         status: 'Queued',
-        conclusion: null,
         htmlUrl: 'url2',
         createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
         updatedAt: '2026-04-16T09:00:00Z',
-      }
+      })
 
-      const run3: WorkflowRun = {
+      const run3 = createMockRun({
         id: 202n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha3',
         commitMessage: 'msg3',
-        event: 'push',
         displayTitle: 'Run 3',
         status: 'Queued',
-        conclusion: null,
         htmlUrl: 'url3',
         createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
         updatedAt: '2026-04-16T09:00:00Z',
-      }
+      })
 
       // Load snapshot in forward order
       runStore.loadSnapshot([run1, run2, run3], [])
@@ -276,62 +239,39 @@ describe('RunStore', () => {
     })
 
     it('inProgressRuns maintains same order after reload with same runs in different input order', () => {
-      const run1: WorkflowRun = {
+      const run1 = createMockRun({
         id: 210n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha1',
-        commitMessage: 'msg1',
-        event: 'push',
         displayTitle: 'Run 1',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'url1',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:05Z',
-      }
+      })
 
-      const run2: WorkflowRun = {
+      const run2 = createMockRun({
         id: 211n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha2',
         commitMessage: 'msg2',
-        event: 'push',
         displayTitle: 'Run 2',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'url2',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:05Z',
-      }
+      })
 
-      const run3: WorkflowRun = {
+      const run3 = createMockRun({
         id: 212n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha3',
         commitMessage: 'msg3',
-        event: 'push',
         displayTitle: 'Run 3',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'url3',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:05Z',
-      }
+      })
 
       // Load snapshot in forward order
       runStore.loadSnapshot([run1, run2, run3], [])
@@ -347,16 +287,8 @@ describe('RunStore', () => {
     })
 
     it('completedRuns maintains same order after reload with same runs in different input order', () => {
-      const run1: WorkflowRun = {
+      const run1 = createMockRun({
         id: 220n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha1',
-        commitMessage: 'msg1',
-        event: 'push',
         displayTitle: 'Run 1',
         status: 'Completed',
         conclusion: 'Success',
@@ -364,18 +296,12 @@ describe('RunStore', () => {
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:15Z',
-      }
+      })
 
-      const run2: WorkflowRun = {
+      const run2 = createMockRun({
         id: 221n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha2',
         commitMessage: 'msg2',
-        event: 'push',
         displayTitle: 'Run 2',
         status: 'Completed',
         conclusion: 'Success',
@@ -383,18 +309,12 @@ describe('RunStore', () => {
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:15Z',
-      }
+      })
 
-      const run3: WorkflowRun = {
+      const run3 = createMockRun({
         id: 222n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha3',
         commitMessage: 'msg3',
-        event: 'push',
         displayTitle: 'Run 3',
         status: 'Completed',
         conclusion: 'Success',
@@ -402,7 +322,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:15Z',
-      }
+      })
 
       // Load snapshot in forward order
       runStore.loadSnapshot([run1, run2, run3], [])

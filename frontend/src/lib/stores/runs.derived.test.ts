@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createMockRunEvent } from '$lib/test-utils/factories'
 import { runStore } from './runs.svelte'
 
 describe('RunStore', () => {
@@ -21,78 +22,40 @@ describe('RunStore', () => {
       const inProgress = 22n
 
       // Add queued runs
-      runStore.applyRunEvent({
-        runId: queued1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: queued1,
+          displayTitle: 'Run 1',
+          action: { type: 'Requested' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: queued2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 2',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: queued2,
+          displayTitle: 'Run 2',
+          action: { type: 'Requested' },
+        }),
+      )
 
       // Add in-progress run
-      runStore.applyRunEvent({
-        runId: inProgress,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 3',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: inProgress,
+          displayTitle: 'Run 3',
+          action: { type: 'Requested' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: inProgress,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 3',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:05Z',
-        updatedAt: '2025-01-01T00:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: inProgress,
+          displayTitle: 'Run 3',
+          runStartedAt: '2025-01-01T00:00:05Z',
+          updatedAt: '2025-01-01T00:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       expect(runStore.queuedRuns.length).toBe(2)
       expect(runStore.queuedRuns.map((r) => r.id)).toContain(queued1)
@@ -104,59 +67,31 @@ describe('RunStore', () => {
       const inProgress2 = 31n
       const queued = 32n
 
-      runStore.applyRunEvent({
-        runId: inProgress1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:05Z',
-        updatedAt: '2025-01-01T00:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: inProgress1,
+          runStartedAt: '2025-01-01T00:00:05Z',
+          updatedAt: '2025-01-01T00:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: inProgress2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:10Z',
-        updatedAt: '2025-01-01T00:00:10Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: inProgress2,
+          runStartedAt: '2025-01-01T00:00:10Z',
+          updatedAt: '2025-01-01T00:00:10Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: queued,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: queued,
+          runStartedAt: null,
+          action: { type: 'Requested' },
+        }),
+      )
 
       expect(runStore.inProgressRuns.length).toBe(2)
       expect(runStore.inProgressRuns.map((r) => r.id)).toContain(inProgress1)
@@ -169,59 +104,32 @@ describe('RunStore', () => {
       const completed2 = 41n
       const inProgress = 42n
 
-      runStore.applyRunEvent({
-        runId: completed1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:05Z',
-        updatedAt: '2025-01-01T00:00:15Z',
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: completed1,
+          runStartedAt: '2025-01-01T00:00:05Z',
+          updatedAt: '2025-01-01T00:00:15Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: completed2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:05Z',
-        updatedAt: '2025-01-01T00:00:20Z',
-        action: { type: 'Completed', data: { conclusion: 'Failure' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: completed2,
+          runStartedAt: '2025-01-01T00:00:05Z',
+          updatedAt: '2025-01-01T00:00:20Z',
+          action: { type: 'Completed', data: { conclusion: 'Failure' } },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: inProgress,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:05Z',
-        updatedAt: '2025-01-01T00:00:10Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: inProgress,
+          runStartedAt: '2025-01-01T00:00:05Z',
+          updatedAt: '2025-01-01T00:00:10Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       expect(runStore.completedRuns.length).toBe(2)
       expect(runStore.completedRuns.map((r) => r.id)).toContain(completed1)
@@ -237,41 +145,25 @@ describe('RunStore', () => {
       const runId1 = 100n
       const runId2 = 101n
 
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Later run',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T10:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T10:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Later run',
+          createdAt: '2026-04-16T10:00:00Z',
+          updatedAt: '2026-04-16T10:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Earlier run',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T09:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Earlier run',
+          createdAt: '2026-04-16T09:00:00Z',
+          updatedAt: '2026-04-16T09:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
       expect(runStore.queuedRuns[0]?.id).toBe(runId2) // Earlier first
       expect(runStore.queuedRuns[1]?.id).toBe(runId1) // Later second
@@ -282,41 +174,27 @@ describe('RunStore', () => {
       const runId1 = 110n
       const runId2 = 111n
 
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Earlier start',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Earlier start',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Later start',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T10:00:05Z',
-        updatedAt: '2026-04-16T10:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Later start',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T10:00:05Z',
+          updatedAt: '2026-04-16T10:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       expect(runStore.inProgressRuns[0]?.id).toBe(runId2) // Later start first
       expect(runStore.inProgressRuns[1]?.id).toBe(runId1) // Earlier start second
@@ -328,61 +206,40 @@ describe('RunStore', () => {
       const runIdWithStart = 121n
 
       // Run with null runStartedAt (uses createdAt for sort)
-      runStore.applyRunEvent({
-        runId: runIdNull,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'No start time',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T10:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T10:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runIdNull,
+          displayTitle: 'No start time',
+          createdAt: '2026-04-16T10:00:00Z',
+          runStartedAt: null,
+          updatedAt: '2026-04-16T10:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
       // Transition to InProgress without runStartedAt (stays null)
-      runStore.applyRunEvent({
-        runId: runIdNull,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'No start time',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T10:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T10:00:00Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runIdNull,
+          displayTitle: 'No start time',
+          createdAt: '2026-04-16T10:00:00Z',
+          runStartedAt: null,
+          updatedAt: '2026-04-16T10:00:00Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       // Run with runStartedAt set
-      runStore.applyRunEvent({
-        runId: runIdWithStart,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'With start time',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runIdWithStart,
+          displayTitle: 'With start time',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       expect(runStore.inProgressRuns.length).toBe(2)
       // The null-fallback run (createdAt '2026-04-16T10:00:00Z') is later in time
@@ -396,41 +253,27 @@ describe('RunStore', () => {
       const runId1 = 130n
       const runId2 = 131n
 
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Earlier update',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:15Z',
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Earlier update',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:15Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Later update',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:20Z',
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Later update',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:20Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
       expect(runStore.completedRuns[0]?.id).toBe(runId2) // Later update first
       expect(runStore.completedRuns[1]?.id).toBe(runId1) // Earlier update second
@@ -443,59 +286,35 @@ describe('RunStore', () => {
       const runId3 = 2n
 
       // All have the same createdAt - ordering should be determined by id (ascending)
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 3',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T09:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Run 3',
+          createdAt: '2026-04-16T09:00:00Z',
+          updatedAt: '2026-04-16T09:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T09:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Run 1',
+          createdAt: '2026-04-16T09:00:00Z',
+          updatedAt: '2026-04-16T09:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId3,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 2',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T09:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId3,
+          displayTitle: 'Run 2',
+          createdAt: '2026-04-16T09:00:00Z',
+          updatedAt: '2026-04-16T09:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
       expect(runStore.queuedRuns[0]?.id).toBe(runId2) // 1n
       expect(runStore.queuedRuns[1]?.id).toBe(runId3) // 2n
@@ -509,59 +328,38 @@ describe('RunStore', () => {
       const runId3 = 2n
 
       // All have the same runStartedAt - ordering should be determined by id (descending)
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 3',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Run 3',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Run 1',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId3,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 2',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:05Z',
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId3,
+          displayTitle: 'Run 2',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:05Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       expect(runStore.inProgressRuns[0]?.id).toBe(runId1) // 3n (descending)
       expect(runStore.inProgressRuns[1]?.id).toBe(runId3) // 2n
@@ -575,59 +373,38 @@ describe('RunStore', () => {
       const runId3 = 2n
 
       // All have the same updatedAt - ordering should be determined by id (descending)
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 3',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:15Z',
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Run 3',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:15Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:15Z',
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Run 1',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:15Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId3,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 2',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: '2026-04-16T09:00:05Z',
-        updatedAt: '2026-04-16T09:00:15Z',
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId3,
+          displayTitle: 'Run 2',
+          createdAt: '2026-04-16T09:00:00Z',
+          runStartedAt: '2026-04-16T09:00:05Z',
+          updatedAt: '2026-04-16T09:00:15Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
       expect(runStore.completedRuns[0]?.id).toBe(runId1) // 3n (descending)
       expect(runStore.completedRuns[1]?.id).toBe(runId3) // 2n
@@ -642,41 +419,25 @@ describe('RunStore', () => {
       const runId2 = 151n
 
       // ISO-8601 timestamps: "2026-04-16T10:00:00Z" > "2026-04-16T09:00:00Z" lexically
-      runStore.applyRunEvent({
-        runId: runId1,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T10:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T10:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId1,
+          displayTitle: 'Run 1',
+          createdAt: '2026-04-16T10:00:00Z',
+          updatedAt: '2026-04-16T10:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
-      runStore.applyRunEvent({
-        runId: runId2,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 2',
-        htmlUrl: 'url',
-        createdAt: '2026-04-16T09:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2026-04-16T09:00:00Z',
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: runId2,
+          displayTitle: 'Run 2',
+          createdAt: '2026-04-16T09:00:00Z',
+          updatedAt: '2026-04-16T09:00:00Z',
+          action: { type: 'Requested' },
+        }),
+      )
 
       // Behavioral: If using direct < comparison: '2026-04-16T09:00:00Z' < '2026-04-16T10:00:00Z' = true
       // runId2 should come before runId1
