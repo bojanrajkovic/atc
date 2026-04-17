@@ -97,7 +97,7 @@ KanbanBoard (connected: reads RunStore + ConnectionStore)
 ```
 
 KanbanBoard has three-state rendering:
-1. **Loading** — While `$connectionStore.isConnecting` and no runs loaded yet
+1. **Loading** — While `connectionStore.status` is not `'connected'` and no runs loaded yet
 2. **Empty** — All three columns are empty
 3. **Populated** — Standard kanban grid with one or more cards
 
@@ -116,7 +116,7 @@ All animations defined in `src/lib/animations/kanban-transitions.ts`:
 - **Cross-column movement:** `crossfade` send/receive (fade out of source, fade in at destination)
 - **Arrival (first load):** `fly` transition (top to current position)
 - **Removal:** `fade` transition
-- **Motion constants:** `NORMAL_DURATION`, `FAST_DURATION` (milliseconds)
+- **Motion constants:** `DURATION_MOVE` (300ms), `DURATION_ARRIVE` (250ms), `DURATION_REMOVE` (200ms), `FLY_SETTLE_Y` (20px)
 - **Reduced motion:** All durations zeroed when `prefers-reduced-motion` is active
 - **Shared instance:** One crossfade pair used across all KanbanColumn instances to ensure visual continuity
 
@@ -281,7 +281,9 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/animations/kanban-transitions.ts` — Shared crossfade instance, motion constants, reduced-motion support
 
 **Testing**
+- `frontend/src/lib/**/*.test.ts` — Vitest unit tests for stores, connection, and dispatcher
+- `frontend/src/lib/**/*.browser.test.ts` — Vitest browser-mode tests for animations, store reactivity, reduced-motion support
+- `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
 - `frontend/e2e/theme.test.ts` — Playwright E2E tests: app rendering, theme switching, dark/light mode toggle
 - `frontend/e2e/app-shell.test.ts` — Playwright E2E tests: app shell rendering, runner bar pool indicators, connection indicator, settings popover
-- `frontend/src/lib/**/*.test.ts` — Vitest unit tests for stores, connection, and dispatcher
-- `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
+- `frontend/e2e/kanban.test.ts` — Playwright E2E tests: kanban board lifecycle, card movement, WebSocket event handling
