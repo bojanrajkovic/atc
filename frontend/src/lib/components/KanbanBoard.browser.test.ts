@@ -153,7 +153,7 @@ describe('KanbanBoard (browser mode)', () => {
       event: 'push',
       displayTitle: 'Test Run 3',
       status: 'Completed',
-      conclusion: 'success',
+      conclusion: 'Success',
       htmlUrl: 'https://example.com/run/3',
       createdAt: new Date().toISOString(),
       runStartedAt: new Date().toISOString(),
@@ -219,7 +219,7 @@ describe('KanbanBoard (browser mode)', () => {
       action: {
         type: 'Completed',
         data: {
-          conclusion: 'success',
+          conclusion: 'Success',
         },
       },
     })
@@ -296,7 +296,7 @@ describe('KanbanBoard (browser mode)', () => {
       event: 'push',
       displayTitle: 'Test Run 3',
       status: 'Completed',
-      conclusion: 'success',
+      conclusion: 'Success',
       htmlUrl: 'https://example.com/run/3',
       createdAt: new Date().toISOString(),
       runStartedAt: new Date().toISOString(),
@@ -361,7 +361,7 @@ describe('KanbanBoard (browser mode)', () => {
       action: {
         type: 'Completed',
         data: {
-          conclusion: 'success',
+          conclusion: 'Success',
         },
       },
     })
@@ -457,13 +457,13 @@ describe('KanbanBoard (browser mode)', () => {
         action: {
           type: 'Completed',
           data: {
-            conclusion: 'success',
+            conclusion: 'Success',
           },
         },
       })
     }
 
-    render(KanbanBoard)
+    const { container } = render(KanbanBoard)
 
     await new Promise((r) => setTimeout(r, 50))
 
@@ -472,10 +472,27 @@ describe('KanbanBoard (browser mode)', () => {
     expect(screen.getByRole('heading', { name: /IN PROGRESS/i })).toBeTruthy()
     expect(screen.getByRole('heading', { name: /COMPLETED/i })).toBeTruthy()
 
-    // Verify run counts match: 2 queued, 2 in progress, 3 completed
+    // Verify store counts: 2 queued, 2 in progress, 3 completed
     expect(runStore.queuedRuns.length).toBe(2)
     expect(runStore.inProgressRuns.length).toBe(2)
     expect(runStore.completedRuns.length).toBe(3)
+
+    // Verify RENDERED count badges match (the actual DOM output)
+    const queuedSection = container.querySelector('section[aria-labelledby="kanban-col-queued"]')
+    const queuedCountSpan = queuedSection?.querySelector('span[aria-hidden="true"]')
+    expect(queuedCountSpan?.textContent).toBe('2')
+
+    const inProgressSection = container.querySelector(
+      'section[aria-labelledby="kanban-col-in-progress"]',
+    )
+    const inProgressCountSpan = inProgressSection?.querySelector('span[aria-hidden="true"]')
+    expect(inProgressCountSpan?.textContent).toBe('2')
+
+    const completedSection = container.querySelector(
+      'section[aria-labelledby="kanban-col-completed"]',
+    )
+    const completedCountSpan = completedSection?.querySelector('span[aria-hidden="true"]')
+    expect(completedCountSpan?.textContent).toBe('3')
   })
 
   // AC7.6: Snapshot reload stability
