@@ -1,5 +1,7 @@
 import { render, screen } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RunStatus } from '$lib/types/generated/RunStatus'
+import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
 describe('KanbanColumn (browser mode)', () => {
   let KanbanColumn: typeof import('./KanbanColumn.svelte').default
@@ -11,7 +13,7 @@ describe('KanbanColumn (browser mode)', () => {
   })
 
   // Helper to create mock WorkflowRun objects
-  function createMockRun(overrides: Partial<any> = {}) {
+  function createMockRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     return {
       id: 123n,
       org: 'test-org',
@@ -23,7 +25,7 @@ describe('KanbanColumn (browser mode)', () => {
       commitMessage: 'Test commit',
       event: 'push',
       displayTitle: 'Test Run',
-      status: 'Queued',
+      status: 'Queued' as RunStatus,
       conclusion: null,
       htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/123',
       createdAt: '2024-01-01T00:00:00Z',
@@ -35,7 +37,7 @@ describe('KanbanColumn (browser mode)', () => {
 
   describe('kanban-board.AC5.3: animate:flip is applied to cards', () => {
     it('keeps card DOM identity stable across array reorder', async () => {
-      let runs = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
+      let runs: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
       const { container, rerender } = render(KanbanColumn, {
         props: {
           label: 'QUEUED',
@@ -51,13 +53,11 @@ describe('KanbanColumn (browser mode)', () => {
       expect(card2Before).toBeTruthy()
 
       // Reorder the array (swap)
-      runs = [createMockRun({ id: 200n }), createMockRun({ id: 100n })]
-      await rerender(KanbanColumn, {
-        props: {
-          label: 'QUEUED',
-          headingId: 'kanban-col-queued',
-          runs,
-        },
+      runs = [createMockRun({ id: 200n }), createMockRun({ id: 100n })] as const
+      await rerender({
+        label: 'QUEUED',
+        headingId: 'kanban-col-queued',
+        runs,
       })
 
       // Wait for animation/reactivity
@@ -117,7 +117,7 @@ describe('KanbanColumn (browser mode)', () => {
       const run2 = createMockRun({ id: 2n })
       const run3 = createMockRun({ id: 3n })
 
-      let runs = [run1, run2, run3]
+      let runs: readonly WorkflowRun[] = [run1, run2, run3]
       const { container, rerender } = render(KanbanColumn, {
         props: {
           label: 'QUEUED',
@@ -132,12 +132,10 @@ describe('KanbanColumn (browser mode)', () => {
 
       // Reorder with bigint keys
       runs = [run3, run1, run2]
-      await rerender(KanbanColumn, {
-        props: {
-          label: 'QUEUED',
-          headingId: 'kanban-col-queued',
-          runs,
-        },
+      await rerender({
+        label: 'QUEUED',
+        headingId: 'kanban-col-queued',
+        runs,
       })
 
       await new Promise((r) => setTimeout(r, 50))
@@ -155,7 +153,7 @@ describe('KanbanColumn (browser mode)', () => {
 
   describe('kanban-board.AC5.6: burst (multiple runs in one update)', () => {
     it('renders all cards correctly after single update with multiple runs', async () => {
-      let runs = [
+      let runs: readonly WorkflowRun[] = [
         createMockRun({ id: 100n }),
         createMockRun({ id: 200n }),
         createMockRun({ id: 300n }),
@@ -175,14 +173,16 @@ describe('KanbanColumn (browser mode)', () => {
       expect(container.querySelector('[data-run-id="300"]')).toBeTruthy()
 
       // Reorder all three runs in a single update (burst)
-      runs = [createMockRun({ id: 300n }), createMockRun({ id: 100n }), createMockRun({ id: 200n })]
+      runs = [
+        createMockRun({ id: 300n }),
+        createMockRun({ id: 100n }),
+        createMockRun({ id: 200n }),
+      ] as const
 
-      await rerender(KanbanColumn, {
-        props: {
-          label: 'QUEUED',
-          headingId: 'kanban-col-queued',
-          runs,
-        },
+      await rerender({
+        label: 'QUEUED',
+        headingId: 'kanban-col-queued',
+        runs,
       })
 
       // Wait for animations/reactivity to settle
@@ -211,7 +211,7 @@ describe('KanbanColumn (browser mode)', () => {
       // cards appear in their final positions with no visible animation delay.
       // This is asserted through DOM observation after reorder operations.
 
-      let runs = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
+      let runs: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
 
       const { container, rerender } = render(KanbanColumn, {
         props: {
@@ -226,14 +226,12 @@ describe('KanbanColumn (browser mode)', () => {
       expect(container.querySelector('[data-run-id="200"]')).toBeTruthy()
 
       // Reorder (this exercises FLIP and would use DURATION_MOVE)
-      runs = [createMockRun({ id: 200n }), createMockRun({ id: 100n })]
+      runs = [createMockRun({ id: 200n }), createMockRun({ id: 100n })] as const
 
-      await rerender(KanbanColumn, {
-        props: {
-          label: 'QUEUED',
-          headingId: 'kanban-col-queued',
-          runs,
-        },
+      await rerender({
+        label: 'QUEUED',
+        headingId: 'kanban-col-queued',
+        runs,
       })
 
       // Cards should still be present after reorder
