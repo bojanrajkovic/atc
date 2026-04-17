@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
-import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { runStore } from './runs.svelte'
 
 describe('RunStore', () => {
@@ -51,24 +51,19 @@ describe('RunStore', () => {
       expect(runStore.jobsByRun.size).toBe(1)
 
       // Load new snapshot
-      const newRun: WorkflowRun = {
+      const newRun = createMockRun({
         id: 51n,
-        org: 'org',
-        repo: 'repo',
         workflowName: 'CI',
         workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'newsha',
         commitMessage: 'New msg',
-        event: 'push',
         displayTitle: 'New Run',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'newurl',
         createdAt: '2025-01-02T00:00:00Z',
         runStartedAt: '2025-01-02T00:00:05Z',
         updatedAt: '2025-01-02T00:00:05Z',
-      }
+      })
 
       const newJob: Job = {
         id: 501n,
@@ -105,13 +100,10 @@ describe('RunStore', () => {
     })
 
     it('should handle loading snapshot with multiple runs and jobs', () => {
-      const run1: WorkflowRun = {
+      const run1 = createMockRun({
         id: 60n,
-        org: 'org',
-        repo: 'repo',
         workflowName: 'CI',
         workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
         headSha: 'sha1',
         commitMessage: 'msg1',
         event: 'push',
@@ -122,12 +114,10 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         runStartedAt: '2025-01-02T00:00:05Z',
         updatedAt: '2025-01-02T00:00:15Z',
-      }
+      })
 
-      const run2: WorkflowRun = {
+      const run2 = createMockRun({
         id: 61n,
-        org: 'org',
-        repo: 'repo',
         workflowName: 'Test',
         workflowPath: '.github/workflows/test.yml',
         branch: 'develop',
@@ -136,12 +126,11 @@ describe('RunStore', () => {
         event: 'pull_request',
         displayTitle: 'Run 2',
         status: 'InProgress',
-        conclusion: null,
         htmlUrl: 'url2',
         createdAt: '2025-01-02T01:00:00Z',
         runStartedAt: '2025-01-02T01:00:05Z',
         updatedAt: '2025-01-02T01:00:10Z',
-      }
+      })
 
       const job1: Job = {
         id: 600n,
@@ -198,6 +187,154 @@ describe('RunStore', () => {
       expect(runStore.jobsByRun.get(60n)!.map((j) => j.id)).toContain(600n)
       expect(runStore.jobsByRun.get(60n)!.map((j) => j.id)).toContain(601n)
       expect(runStore.jobsByRun.get(61n)!.map((j) => j.id)).toContain(602n)
+    })
+  })
+
+  // AC3.6: Sort order stability across snapshot reloads
+  describe('AC3.6: Sort order stability on snapshot reload', () => {
+    it('queuedRuns maintains same order after reload with same runs in different input order', () => {
+      // Create runs with identical createdAt (to test tie-breaker stability)
+      const run1 = createMockRun({
+        id: 200n,
+        displayTitle: 'Run 1',
+        status: 'Queued',
+        htmlUrl: 'url1',
+        createdAt: '2026-04-16T09:00:00Z',
+        updatedAt: '2026-04-16T09:00:00Z',
+      })
+
+      const run2 = createMockRun({
+        id: 201n,
+        headSha: 'sha2',
+        commitMessage: 'msg2',
+        displayTitle: 'Run 2',
+        status: 'Queued',
+        htmlUrl: 'url2',
+        createdAt: '2026-04-16T09:00:00Z',
+        updatedAt: '2026-04-16T09:00:00Z',
+      })
+
+      const run3 = createMockRun({
+        id: 202n,
+        headSha: 'sha3',
+        commitMessage: 'msg3',
+        displayTitle: 'Run 3',
+        status: 'Queued',
+        htmlUrl: 'url3',
+        createdAt: '2026-04-16T09:00:00Z',
+        updatedAt: '2026-04-16T09:00:00Z',
+      })
+
+      // Load snapshot in forward order
+      runStore.loadSnapshot([run1, run2, run3], [])
+      const firstOrderIds = runStore.queuedRuns.map((r) => r.id)
+
+      // Load snapshot again in reverse order
+      runStore.loadSnapshot([run3, run2, run1], [])
+      const secondOrderIds = runStore.queuedRuns.map((r) => r.id)
+
+      // Order should be identical (based on id tie-breaker, not Map iteration order)
+      expect(firstOrderIds).toEqual(secondOrderIds)
+      expect(firstOrderIds).toEqual([200n, 201n, 202n])
+    })
+
+    it('inProgressRuns maintains same order after reload with same runs in different input order', () => {
+      const run1 = createMockRun({
+        id: 210n,
+        displayTitle: 'Run 1',
+        status: 'InProgress',
+        htmlUrl: 'url1',
+        createdAt: '2026-04-16T09:00:00Z',
+        runStartedAt: '2026-04-16T09:00:05Z',
+        updatedAt: '2026-04-16T09:00:05Z',
+      })
+
+      const run2 = createMockRun({
+        id: 211n,
+        headSha: 'sha2',
+        commitMessage: 'msg2',
+        displayTitle: 'Run 2',
+        status: 'InProgress',
+        htmlUrl: 'url2',
+        createdAt: '2026-04-16T09:00:00Z',
+        runStartedAt: '2026-04-16T09:00:05Z',
+        updatedAt: '2026-04-16T09:00:05Z',
+      })
+
+      const run3 = createMockRun({
+        id: 212n,
+        headSha: 'sha3',
+        commitMessage: 'msg3',
+        displayTitle: 'Run 3',
+        status: 'InProgress',
+        htmlUrl: 'url3',
+        createdAt: '2026-04-16T09:00:00Z',
+        runStartedAt: '2026-04-16T09:00:05Z',
+        updatedAt: '2026-04-16T09:00:05Z',
+      })
+
+      // Load snapshot in forward order
+      runStore.loadSnapshot([run1, run2, run3], [])
+      const firstOrderIds = runStore.inProgressRuns.map((r) => r.id)
+
+      // Load snapshot again in reverse order
+      runStore.loadSnapshot([run3, run2, run1], [])
+      const secondOrderIds = runStore.inProgressRuns.map((r) => r.id)
+
+      // Order should be identical (descending id tie-breaker)
+      expect(firstOrderIds).toEqual(secondOrderIds)
+      expect(firstOrderIds).toEqual([212n, 211n, 210n])
+    })
+
+    it('completedRuns maintains same order after reload with same runs in different input order', () => {
+      const run1 = createMockRun({
+        id: 220n,
+        displayTitle: 'Run 1',
+        status: 'Completed',
+        conclusion: 'Success',
+        htmlUrl: 'url1',
+        createdAt: '2026-04-16T09:00:00Z',
+        runStartedAt: '2026-04-16T09:00:05Z',
+        updatedAt: '2026-04-16T09:00:15Z',
+      })
+
+      const run2 = createMockRun({
+        id: 221n,
+        headSha: 'sha2',
+        commitMessage: 'msg2',
+        displayTitle: 'Run 2',
+        status: 'Completed',
+        conclusion: 'Success',
+        htmlUrl: 'url2',
+        createdAt: '2026-04-16T09:00:00Z',
+        runStartedAt: '2026-04-16T09:00:05Z',
+        updatedAt: '2026-04-16T09:00:15Z',
+      })
+
+      const run3 = createMockRun({
+        id: 222n,
+        headSha: 'sha3',
+        commitMessage: 'msg3',
+        displayTitle: 'Run 3',
+        status: 'Completed',
+        conclusion: 'Success',
+        htmlUrl: 'url3',
+        createdAt: '2026-04-16T09:00:00Z',
+        runStartedAt: '2026-04-16T09:00:05Z',
+        updatedAt: '2026-04-16T09:00:15Z',
+      })
+
+      // Load snapshot in forward order
+      runStore.loadSnapshot([run1, run2, run3], [])
+      const firstOrderIds = runStore.completedRuns.map((r) => r.id)
+
+      // Load snapshot again in reverse order
+      runStore.loadSnapshot([run3, run2, run1], [])
+      const secondOrderIds = runStore.completedRuns.map((r) => r.id)
+
+      // Order should be identical (descending id tie-breaker)
+      expect(firstOrderIds).toEqual(secondOrderIds)
+      expect(firstOrderIds).toEqual([222n, 221n, 220n])
     })
   })
 })

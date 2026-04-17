@@ -265,17 +265,21 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - 111 unit/browser tests + 19 E2E tests (307 total with backend), architecture docs updated
 - Fixed SIGPIPE false positive in doc-staleness pre-push hook
 
-### Sub-Phase 3: Kanban Board
+### Sub-Phase 3: Kanban Board ✅ COMPLETE
 
-**Goal:** Three-column kanban with animated card transitions between columns.
+**Implemented in:** PR #25 (`feat/kanban-board` branch)
 
-- KanbanBoard (CSS Grid, 3 columns)
-- KanbanColumn with ColumnHeader (uppercase label + count badge)
-- CardList with `animate:flip` for within-column reordering
-- `crossfade` send/receive for cross-column card movement
-- `transition:fly` for new card arrival, `transition:fade` for removal
-- Column grouping: Queued | Running | Completed (success + failed + cancelled)
-- **Tests:** Pure component tests for KanbanColumn, ColumnHeader. Connected tests for KanbanBoard with mock RunStore. Animation tests: verify `animate:flip` key assignment, verify correct column membership after store mutation. E2E: cards appear in correct columns, new cards animate in.
+**What was built:**
+- RunStore sort refactor: deterministic per-column sort strategies on three `$derived` arrays (queued ascending by createdAt, inProgress descending by runStartedAt with null fallback, completed descending by updatedAt), bigint tie-breakers, direct lexical ISO-8601 comparison, source-level no-localeCompare assertion
+- KanbanBoard connected component with tri-state rendering (hydration placeholder gated on totalRuns, empty state, CSS Grid 3-column layout), wired into App.svelte
+- KanbanColumn pure component composing ColumnHeader + RunCard with `animate:flip` and `crossfade` send/receive keyed on bigint run.id, semantic ARIA structure (section/aria-labelledby/role=list/role=listitem)
+- ColumnHeader pure component (uppercase label + plain-text count badge, no role="status" to avoid screen-reader churn)
+- RunCard skeleton with displayTitle + three-cue accessible status indicator (OKLCH color + glyph + sr-only text), `Record<RunStatus, ...>` for type-safe exhaustiveness, scope-contract comment for Sub-Phase 4 boundaries
+- Shared animation module (`kanban-transitions.ts`): crossfade pair with fly/fade fallback, DURATION_MOVE/DURATION_ARRIVE/DURATION_REMOVE/FLY_SETTLE_Y constants, single-source `prefersReducedMotion` check zeroing all durations
+- ConnectionManager fix: `eventDispatcher.flush()` before setting 'connected' to eliminate buffered-event race
+- Dev-mode store bridge (`window.__stores`) for E2E testing
+- Shared test factories (`createMockRun`, `createMockRunEvent`) in `src/lib/test-utils/factories.ts`
+- 165 unit/browser tests (26 files) + 22 E2E tests, architecture docs updated
 
 ### Sub-Phase 4: Cards
 
