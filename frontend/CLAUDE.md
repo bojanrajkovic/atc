@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-04-15
+Last verified: 2026-04-16
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -33,11 +33,16 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/components/RunnerPool.svelte` | Pure: single pool indicator with pool name, running/queued counts, capacity bar |
 | `src/lib/components/RunnerBar.svelte` | Pure: grid of pool indicators, receives pools[] prop |
 | `src/lib/components/SettingsPopover.svelte` | Connected: theme selector popover, reads/writes UIStore |
+| `src/lib/components/KanbanBoard.svelte` | Connected: reads RunStore + ConnectionStore, renders tri-state (loading/empty/kanban grid) |
+| `src/lib/components/KanbanColumn.svelte` | Pure: receives sorted runs array, renders ColumnHeader + animated card list |
+| `src/lib/components/ColumnHeader.svelte` | Pure: uppercase label + count badge |
+| `src/lib/components/RunCard.svelte` | Pure: skeleton card with displayTitle + accessible status indicator |
+| `src/lib/animations/kanban-transitions.ts` | Shared crossfade instance, motion constants, reduced-motion support |
 | `e2e/` | Playwright E2E tests (theme rendering, switching, mode toggle, app shell rendering) |
 
 ## Status
 
-Phase 6 complete. App shell with TopBar (logo, runner pool indicators, connection indicator, settings popover), AppShell layout (100dvh flex column), and ConnectionManager service component. All app shell E2E tests passing. Architecture documentation updated with component hierarchy, data flow, and component contracts.
+Complete infrastructure and kanban board. App shell with TopBar (logo, runner pool indicators, connection indicator, settings popover), AppShell layout (100dvh flex column), ConnectionManager service component. Kanban board with three-column view (queued/in-progress/completed), card animations via shared crossfade instance, sorted derived arrays in RunStore (ascending/descending/tiebreaker), unit + browser + E2E test coverage. All tests passing.
 
 ## Commands
 
