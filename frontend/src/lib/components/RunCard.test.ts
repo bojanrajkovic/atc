@@ -111,11 +111,23 @@ describe('RunCard', () => {
   describe('RunCard — Sub-Phase 4 composition', () => {
     // AC10.1: scope-contract comment removed — reviewer-verified (see Task 3 commit).
 
-    it('AC10.2: sets --status-color to the correct CSS variable for each status', () => {
+    it('AC10.2: sets --status-color to the correct CSS variable for each of the 11 StatusKeys', () => {
+      // Every branch in resolveStatusColorVar must be exercised here —
+      // missing one means Codecov flags uncovered code AND a future refactor
+      // could silently break a single StatusKey without any test failing.
       const cases: Array<[Parameters<typeof createMockRun>[0], string]> = [
         [{ status: 'Queued' }, 'var(--queued)'],
+        [{ status: 'InProgress' }, 'var(--running)'],
         [{ status: 'Completed', conclusion: 'Success' }, 'var(--success)'],
+        [{ status: 'Completed', conclusion: 'Failure' }, 'var(--failed)'],
+        [{ status: 'Completed', conclusion: 'Cancelled' }, 'var(--cancelled)'],
         [{ status: 'Completed', conclusion: 'TimedOut' }, 'var(--timed-out)'],
+        [{ status: 'Completed', conclusion: 'ActionRequired' }, 'var(--action-required)'],
+        [{ status: 'Completed', conclusion: 'StartupFailure' }, 'var(--failed)'],
+        [{ status: 'Completed', conclusion: 'Stale' }, 'var(--neutral)'],
+        [{ status: 'Completed', conclusion: 'Neutral' }, 'var(--neutral)'],
+        [{ status: 'Completed', conclusion: 'Skipped' }, 'var(--neutral)'],
+        // bare Completed (conclusion: null) resolves to Cancelled per AC6A.4.
         [{ status: 'Completed', conclusion: null }, 'var(--cancelled)'],
       ]
 
