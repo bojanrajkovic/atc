@@ -139,7 +139,7 @@
   --action-required: oklch(50% 0.18 55);
   --neutral: oklch(45% 0.025 var(--hue));
   --accent: oklch(45% 0.2 250);
-  --halo-color: oklch(50% 0.15 80 / 0.50);
+  --halo-color: oklch(50% 0.15 80 / 0.5);
 }
 
 /* prefers-reduced-motion reset */
