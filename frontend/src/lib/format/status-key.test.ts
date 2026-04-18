@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
+import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { resolveStatusKey, STATUS_KEYS } from './status-key'
 
 describe('format/status-key', () => {
@@ -84,14 +85,20 @@ describe('format/status-key', () => {
 
   describe('run-cards.AC6A.5: Pure function with no side effects', () => {
     it('returns identical output when called twice with same input', () => {
-      const input = { status: 'Completed', conclusion: 'Success' as const }
+      const input: Pick<WorkflowRun, 'status' | 'conclusion'> = {
+        status: 'Completed',
+        conclusion: 'Success',
+      }
       const result1 = resolveStatusKey(input)
       const result2 = resolveStatusKey(input)
       expect(result1).toBe(result2)
     })
 
     it('does not mutate the input object', () => {
-      const input = { status: 'Completed', conclusion: 'Failure' as const }
+      const input: Pick<WorkflowRun, 'status' | 'conclusion'> = {
+        status: 'Completed',
+        conclusion: 'Failure',
+      }
       Object.freeze(input)
 
       const result = resolveStatusKey(input)
