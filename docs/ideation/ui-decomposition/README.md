@@ -283,7 +283,7 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 
 ### Sub-Phase 4: Cards ✅ COMPLETE
 
-**Implemented in:** PR #TBD (`feat/run-cards` branch)
+**Implemented in:** PR #30 (`feat/run-cards` branch)
 
 **What was built:**
 
