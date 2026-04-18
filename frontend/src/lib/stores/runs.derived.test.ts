@@ -1,11 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createMockRunEvent } from '$lib/test-utils/factories'
-import type { Job } from '$lib/types/generated/Job'
 import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
-import { runStore, type JobStats } from './runs.svelte'
+import { type JobStats, runStore } from './runs.svelte'
 
 describe('RunStore', () => {
   beforeEach(() => {
@@ -455,27 +454,12 @@ describe('RunStore', () => {
     })
   })
 
-  // Inline fixture helpers for jobStatsByRun tests
+  // Inline fixture helper for jobStatsByRun tests
   const runner = (name: string, id: bigint = 1n): RunnerInfo => ({
     id,
     name,
     groupId: null,
     groupName: null,
-  })
-
-  const job = (overrides: Partial<Job>): Job => ({
-    id: 1n,
-    name: 'test-job',
-    runId: 1n,
-    status: 'Queued',
-    conclusion: null,
-    runner: null,
-    labels: [],
-    steps: [],
-    createdAt: '2026-04-17T00:00:00Z',
-    startedAt: null,
-    completedAt: null,
-    ...overrides,
   })
 
   describe('runStore.jobStatsByRun', () => {
