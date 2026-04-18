@@ -106,6 +106,21 @@
   }
 }
 
+/* Compact-density overrides (hide secondary card content, shrink padding/type) */
+[data-density="compact"] .run-card-meta,
+[data-density="compact"] .run-card-progress,
+[data-density="compact"] .run-card-runner {
+  display: none;
+}
+
+[data-density="compact"] .run-card {
+  padding: 6px 10px;
+}
+
+[data-density="compact"] .run-card-name {
+  font-size: var(--text-sm);
+}
+
 /* Light mode override */
 [data-mode="light"] {
   color-scheme: light;
