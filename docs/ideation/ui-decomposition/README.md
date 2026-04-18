@@ -281,17 +281,25 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - Shared test factories (`createMockRun`, `createMockRunEvent`) in `src/lib/test-utils/factories.ts`
 - 165 unit/browser tests (26 files) + 22 E2E tests, architecture docs updated
 
-### Sub-Phase 4: Cards
+### Sub-Phase 4: Cards ✅ COMPLETE
 
-**Goal:** RunCard with compact/expanded modes, status icons, progress bars, pulsating halo.
+**Implemented in:** PR #TBD (`feat/run-cards` branch)
 
-- RunCard with two density variants (compact: icon + name + duration; expanded: full detail)
-- StatusIcon (unique color + symbol per status, WCAG AAA contrast)
-- JobHeader, JobMeta, ProgressBar (`scaleX` with CSS transition), RunnerLabel
-- Pulsating amber halo on running cards (CSS `@keyframes`, `prefers-reduced-motion` fallback)
-- 3px left accent bar colored by status (CSS pseudo-element)
-- Duration counter (live-updating via `$effect` + `setInterval`, `tabular-nums`)
-- **Tests:** Pure component tests for every card sub-component with all status variants. StatusIcon: test every status renders correct symbol and ARIA attributes. ProgressBar: test boundary values (0%, 50%, 100%). RunCard: test compact vs expanded rendering. E2E: cards render with correct status indicators, halo visible on running cards.
+**What was built:**
+
+- Three new OKLCH design tokens (`--timed-out`, `--action-required`, `--neutral`) in both dark and light modes, plus `--halo-color` with mode-aware amber override (dark 0.25 alpha, light 0.5 alpha)
+- Automated WCAG contrast-gate test (`design-tokens.test.ts`) covering all 11 status tokens × 4 theme hues × 2 modes against `--surface`; AA failures block the build, AAA misses emit `console.info`
+- Five new pure leaf components: `StatusIcon` (exhaustive 11-key glyph lookup with inherited `--status-color`), `JobHeader` (StatusIcon + title + duration row), `JobMeta` (repo · branch with null-branch elision), `ProgressBar` (role=progressbar with scaleX fill and empty-state aria-valuetext), `RunnerLabel` (⊞ summary with null-summary elision)
+- Four new pure format utilities: `format/duration.ts` (discriminated `{kind: 'static' | 'live'}` API, MM:SS and H:MM:SS ranges), `format/duration-text.ts` (state-aware formula extracted as pure function so unit tests cover AC12.1-AC12.6 without fake-timer choreography), `format/runners.ts` (single-name / N runners / null branches), `format/status-key.ts` (11-value StatusKey union + `resolveStatusKey(run)` boundary normalization)
+- `uiStore.nowMs` shared wall-clock signal (single 1s `setInterval` feeds every live-duration derivation, replacing per-card timers) + `runStore.jobStatsByRun` total-map aggregate (every runId resolves to a JobStats entry, no silent fallbacks)
+- `RunCard` evolved into full composition: root `<article>` with `data-run-id` and `data-status` PascalCase, inline `style="--status-color: ..."`, scoped `<style>` with 3px `::before` accent bar, state-aware `$derived.by` duration (static-Completed branch short-circuits before reading `nowMs` so those cards do not subscribe to the tick — AC12.7 reactivity proof via spy on `computeDurationText`)
+- `KanbanColumn` threads `jobStatsByRun: ReadonlyMap<bigint, JobStats>` to each RunCard via throwing `requireJobStats` guard (total-map invariant enforced, no silent zero-fallback); wrapper element changed from `<article role="listitem">` to `<div role="listitem">` so RunCard owns the single `<article data-run-id>` root
+- `KanbanBoard` reads `runStore.jobStatsByRun` and threads it to all three columns
+- Browser-mode tests cover the accent bar computed style, halo keyframe inspection, light-mode halo variable divergence, density `display: none` flipping, and DOM identity preservation across density toggles
+- Playwright E2E scenarios (`run-cards.test.ts`) cover all 11 StatusKey fixtures, Queued→InProgress WS transition, density toggle full-cycle, and live duration update via `page.clock.fastForward(1000)` — all using the shared `e2e/lib/ws-mock` harness
+- `just test-e2e` recipe added to `justfile`
+- Revised accessibility target formalised in `.impeccable.md`: WCAG AA (≥4.5:1) as build gate, AAA (≥7:1) as aspirational
+- 302 unit/browser tests (40 files) + 26 Playwright E2E tests, all passing; architecture docs updated
 
 ### Sub-Phase 5: Interactivity
 
