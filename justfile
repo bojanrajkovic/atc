@@ -114,6 +114,10 @@ test:
 	wait $pid2 || fail=1
 	exit $fail
 
+# Run Playwright E2E tests against the frontend dev server.
+test-e2e:
+	cd frontend && pnpm exec playwright test
+
 # Generate TypeScript types from Rust structs via ts-rs
 types:
 	#!/usr/bin/env bash
