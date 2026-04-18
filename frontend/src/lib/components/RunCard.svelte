@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { JobStats } from '$lib/stores/runs.svelte'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-  import { formatDuration, parseIso } from '$lib/format/duration'
+  import { computeDurationText } from '$lib/format/duration-text'
   import { resolveStatusKey, type StatusKey } from '$lib/format/status-key'
   import { uiStore } from '$lib/stores/ui.svelte'
   import JobHeader from './JobHeader.svelte'
@@ -20,38 +20,17 @@
   const statusColor = $derived(resolveStatusColorVar(statusKey))
 
   /**
-   * State-aware duration.
-   * Static-Completed branch MUST NOT read uiStore.nowMs — that is the
-   * mechanism by which Completed cards stop subscribing to the wall-clock
-   * tick (see AC10.7 + AC12.7 fake-timer proof).
+   * State-aware duration. The static-Completed branch inside
+   * computeDurationText does NOT read nowMs — so when `run` is a Completed
+   * non-ActionRequired run, the short-circuit returns before `uiStore.nowMs`
+   * is accessed and the derivation never registers nowMs as a dependency
+   * (AC10.7 + AC12.7).
    */
   const durationText = $derived.by<string>(() => {
     if (run.status === 'Completed' && run.conclusion !== 'ActionRequired') {
-      if (run.runStartedAt === null) return '\u2014'
-      return formatDuration({
-        kind: 'static',
-        startMs: parseIso(run.runStartedAt),
-        endMs: parseIso(run.updatedAt),
-      })
+      return computeDurationText(run, 0)
     }
-    const nowMs = uiStore.nowMs
-    if (run.status === 'Queued') {
-      return `waiting ${formatDuration({
-        kind: 'live',
-        startMs: parseIso(run.createdAt),
-        nowMs,
-      })}`
-    }
-    if (run.status === 'InProgress') {
-      const startIso = run.runStartedAt ?? run.createdAt
-      return formatDuration({ kind: 'live', startMs: parseIso(startIso), nowMs })
-    }
-    // Completed + ActionRequired
-    return `awaiting action ${formatDuration({
-      kind: 'live',
-      startMs: parseIso(run.updatedAt),
-      nowMs,
-    })}`
+    return computeDurationText(run, uiStore.nowMs)
   })
 
   function resolveStatusColorVar(key: StatusKey): string {
