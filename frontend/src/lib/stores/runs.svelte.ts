@@ -70,12 +70,8 @@ class RunStore {
    */
   jobStatsByRun = $derived.by<ReadonlyMap<bigint, JobStats>>(() => {
     const result = new Map<bigint, JobStats>()
-    // Convert to array to ensure proper dependency tracking
-    const runIds = [...this.runs.keys()]
-    const jobsByRunEntries = [...this.jobsByRun.entries()]
-    const jobsMap = new Map(jobsByRunEntries)
-    for (const runId of runIds) {
-      const jobs = jobsMap.get(runId) ?? []
+    for (const runId of this.runs.keys()) {
+      const jobs = this.jobsByRun.get(runId) ?? []
       const completed = jobs.filter((j) => j.status === 'Completed').length
       result.set(runId, {
         completed,
@@ -209,7 +205,10 @@ class RunStore {
       jobs = [...existing, newJob]
     } else {
       // Existing job: create new job object and new array for copy-on-write
-      const prev = existing[jobIndex]!
+      const prev = existing[jobIndex]
+      if (!prev) {
+        return
+      }
       const updated: Job = {
         id: jobId,
         name: envelope.name,
