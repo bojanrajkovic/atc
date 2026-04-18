@@ -108,12 +108,20 @@ describe('format/status-key', () => {
     })
 
     it('does not call console methods', () => {
-      const consoleSpy = vi.spyOn(console, 'log')
+      const consoleSpies = [
+        vi.spyOn(console, 'log'),
+        vi.spyOn(console, 'warn'),
+        vi.spyOn(console, 'error'),
+        vi.spyOn(console, 'info'),
+        vi.spyOn(console, 'debug'),
+      ]
 
       resolveStatusKey({ status: 'Queued', conclusion: null })
 
-      expect(consoleSpy).not.toHaveBeenCalled()
-      consoleSpy.mockRestore()
+      for (const spy of consoleSpies) {
+        expect(spy).not.toHaveBeenCalled()
+        spy.mockRestore()
+      }
     })
 
     it('returns every StatusKey when iterating all combinations', () => {
@@ -125,7 +133,11 @@ describe('format/status-key', () => {
       // Test InProgress (no conclusion matters)
       resultSet.add(resolveStatusKey({ status: 'InProgress', conclusion: null }))
 
-      // Test all RunConclusion values with Completed status
+      // Test all RunConclusion values with Completed status.
+      // NOTE: This array must be manually kept in sync with the switch statement in
+      // conclusionToKey() (status-key.ts). The switch is the canonical exhaustiveness
+      // gate; this array is a secondary coverage check. If ts-rs regeneration adds a
+      // new RunConclusion variant, update this array AND the switch simultaneously.
       const conclusions: RunConclusion[] = [
         'Success',
         'Failure',
