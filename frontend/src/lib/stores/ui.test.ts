@@ -36,6 +36,8 @@ describe('UIStore', () => {
   })
 
   afterEach(() => {
+    uiStore.destroy() // Phase 3 (run-cards): singleton now owns a setInterval;
+    // destroy it per-test to avoid real-timer leaks.
     mockLocalStorage.clear()
   })
 
