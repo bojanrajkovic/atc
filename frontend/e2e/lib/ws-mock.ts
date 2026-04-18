@@ -141,8 +141,6 @@ export async function sendWS(page: Page, msg: string): Promise<void> {
 
     if (seqEvent.event.type === 'Run') {
       stores.runStore.applyRunEvent(seqEvent.event.data)
-      // Force $state reactivity by reassigning the Map (triggers the setter)
-      stores.runStore.runs = new Map(stores.runStore.runs)
       return JSON.stringify({
         result: 'dispatched',
         queued: stores.runStore.queuedRuns.length,

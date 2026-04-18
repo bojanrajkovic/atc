@@ -226,8 +226,6 @@ class RunStore {
       jobs[jobIndex] = updated
     }
 
-    // Copy-on-write: delete then set to ensure $derived re-evaluates
-    this.jobsByRun.delete(runId)
     this.jobsByRun.set(runId, jobs)
   }
 
