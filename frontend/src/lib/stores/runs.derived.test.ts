@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockRunEvent } from '$lib/test-utils/factories'
-import { runStore } from './runs.svelte'
+import type { Job } from '$lib/types/generated/Job'
+import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
+import { runStore, type JobStats } from './runs.svelte'
 
 describe('RunStore', () => {
   beforeEach(() => {
@@ -450,6 +452,368 @@ describe('RunStore', () => {
         'utf-8',
       )
       expect(storeSource).not.toContain('localeCompare')
+    })
+  })
+
+  // Inline fixture helpers for jobStatsByRun tests
+  const runner = (name: string, id: bigint = 1n): RunnerInfo => ({
+    id,
+    name,
+    groupId: null,
+    groupName: null,
+  })
+
+  const job = (overrides: Partial<Job>): Job => ({
+    id: 1n,
+    name: 'test-job',
+    runId: 1n,
+    status: 'Queued',
+    conclusion: null,
+    runner: null,
+    labels: [],
+    steps: [],
+    createdAt: '2026-04-17T00:00:00Z',
+    startedAt: null,
+    completedAt: null,
+    ...overrides,
+  })
+
+  describe('runStore.jobStatsByRun', () => {
+    // AC3.1: Type shape and export
+    it('AC3.1: jobStatsByRun exports JobStats type with correct shape', () => {
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: 1n,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      const entry = runStore.jobStatsByRun.get(1n)
+      expect(entry).toBeDefined()
+
+      // Type-level assertion: variable of type JobStats
+      const stats: JobStats = entry!
+      expect(typeof stats.completed).toBe('number')
+      expect(typeof stats.total).toBe('number')
+      expect(stats.runnerSummary === null || typeof stats.runnerSummary === 'string').toBe(true)
+
+      // Shape check: for a run with no jobs, should be { completed: 0, total: 0, runnerSummary: null }
+      expect(stats.completed).toBe(0)
+      expect(stats.total).toBe(0)
+      expect(stats.runnerSummary).toBeNull()
+    })
+
+    // AC3.2: Completed job count and summary
+    it('AC3.2: completed count reflects Completed jobs; runnerSummary matches summarizeRunners', () => {
+      const runId = 200n
+
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      // Add three jobs: one Completed, two Queued
+      runStore.applyJobEvent({
+        jobId: 1n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-1',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'Queued',
+          data: { labels: [], steps: [] },
+        },
+      })
+
+      runStore.applyJobEvent({
+        jobId: 2n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-2',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'Completed',
+          data: {
+            conclusion: 'Success',
+            runner: runner('runner-a'),
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      runStore.applyJobEvent({
+        jobId: 3n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-3',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'Queued',
+          data: { labels: [], steps: [] },
+        },
+      })
+
+      const stats = runStore.jobStatsByRun.get(runId)
+      expect(stats).toBeDefined()
+      expect(stats!.completed).toBe(1)
+      expect(stats!.total).toBe(3)
+      expect(stats!.runnerSummary).toBe('runner-a')
+    })
+
+    // AC3.3: Total-map invariant — runs with no jobs get fallback entry
+    it('AC3.3: total-map invariant — every run has an entry, even with no jobs', () => {
+      const run1 = 300n
+      const run2 = 301n
+
+      // Add two runs
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: run1,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: run2,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      // Add jobs only to run1
+      runStore.applyJobEvent({
+        jobId: 1n,
+        runId: run1,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-1',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'Queued',
+          data: { labels: [], steps: [] },
+        },
+      })
+
+      // Assert total-map property
+      expect(runStore.jobStatsByRun.size).toBe(2)
+      expect(runStore.jobStatsByRun.get(run1)).toBeDefined()
+      expect(runStore.jobStatsByRun.get(run2)).toBeDefined()
+
+      // run2 without jobs should have fallback
+      const run2Stats = runStore.jobStatsByRun.get(run2)
+      expect(run2Stats).not.toBeUndefined()
+      expect(run2Stats!.completed).toBe(0)
+      expect(run2Stats!.total).toBe(0)
+      expect(run2Stats!.runnerSummary).toBeNull()
+    })
+
+    // AC3.4: Derived dependency tracking (formula correctness)
+    it('AC3.4: jobStatsByRun correctly computes counts from jobsByRun state', () => {
+      const runId = 400n
+
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      // Add three jobs with mixed statuses
+      const job1Details = {
+        jobId: 1n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+      }
+
+      const job2Details = {
+        jobId: 2n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        createdAt: '2026-04-17T00:00:01Z',
+        startedAt: '2026-04-17T00:00:05Z',
+        completedAt: null,
+      }
+
+      const job3Details = {
+        jobId: 3n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        createdAt: '2026-04-17T00:00:02Z',
+        startedAt: '2026-04-17T00:00:05Z',
+        completedAt: '2026-04-17T00:00:10Z',
+      }
+
+      // Job 1: Queued
+      runStore.applyJobEvent({
+        ...job1Details,
+        name: 'job-1',
+        action: { type: 'Queued', data: { labels: [], steps: [] } },
+      })
+
+      // Job 2: InProgress
+      runStore.applyJobEvent({
+        ...job2Details,
+        name: 'job-2',
+        action: {
+          type: 'InProgress',
+          data: { runner: null, labels: [], steps: [] },
+        },
+      })
+
+      // Job 3: Completed
+      runStore.applyJobEvent({
+        ...job3Details,
+        name: 'job-3',
+        action: {
+          type: 'Completed',
+          data: {
+            conclusion: 'Success',
+            runner: null,
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      // Verify internal state is correct
+      const jobs = runStore.jobsByRun.get(runId) || []
+      expect(jobs).toHaveLength(3)
+      expect(jobs.filter((j) => j.status === 'Queued')).toHaveLength(1)
+      expect(jobs.filter((j) => j.status === 'InProgress')).toHaveLength(1)
+      expect(jobs.filter((j) => j.status === 'Completed')).toHaveLength(1)
+
+      // Verify jobStatsByRun correctly counts completed jobs
+      const stats = runStore.jobStatsByRun.get(runId)
+      expect(stats!.total).toBe(3)
+      expect(stats!.completed).toBe(1)
+    })
+
+    // AC3.5: Integration with summarizeRunners
+    it('AC3.5: runnerSummary integrates with summarizeRunners for single runner', () => {
+      const runId = 500n
+
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      // Add jobs all on the same runner
+      runStore.applyJobEvent({
+        jobId: 1n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-1',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'InProgress',
+          data: {
+            runner: runner('runner-a'),
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      runStore.applyJobEvent({
+        jobId: 2n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-2',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'InProgress',
+          data: {
+            runner: runner('runner-a'),
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      const stats = runStore.jobStatsByRun.get(runId)
+      expect(stats!.runnerSummary).toBe('runner-a')
+    })
+
+    // AC3.5b: Integration with summarizeRunners for multiple runners
+    it('AC3.5: runnerSummary integrates with summarizeRunners for multiple runners', () => {
+      const runId = 501n
+
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          action: { type: 'Requested' },
+        }),
+      )
+
+      // Add jobs on different runners
+      runStore.applyJobEvent({
+        jobId: 1n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-1',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'InProgress',
+          data: {
+            runner: runner('runner-a'),
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      runStore.applyJobEvent({
+        jobId: 2n,
+        runId,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-2',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'InProgress',
+          data: {
+            runner: runner('runner-b'),
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      const stats = runStore.jobStatsByRun.get(runId)
+      expect(stats!.runnerSummary).toBe('2 runners')
     })
   })
 })
