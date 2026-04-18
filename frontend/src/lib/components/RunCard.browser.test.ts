@@ -226,6 +226,28 @@ describe('RunCard (browser mode)', () => {
       const el = document.querySelector('html[data-density="compact"] .run-card-meta')
       expect(el).toBeTruthy()
     })
+
+    it('AC13 (padding): compact selector actually shrinks .run-card padding', async () => {
+      const run = createMockRun({ status: 'InProgress' })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      await settle()
+
+      const card = container.querySelector('.run-card') as HTMLElement
+      expect(card).toBeTruthy()
+
+      // Comfortable (default): base rule in app.css → padding: 12px 14px.
+      expect(getComputedStyle(card).padding).toBe('12px 14px')
+
+      // Compact: [data-density="compact"] .run-card override → padding: 6px 10px.
+      document.documentElement.dataset.density = 'compact'
+      await settle()
+      expect(getComputedStyle(card).padding).toBe('6px 10px')
+
+      // Toggle back: padding returns to comfortable values.
+      resetDocumentAttrs()
+      await settle()
+      expect(getComputedStyle(card).padding).toBe('12px 14px')
+    })
   })
 })
 

@@ -72,24 +72,3 @@
   <ProgressBar completed={jobStats.completed} total={jobStats.total} />
   <RunnerLabel summary={jobStats.runnerSummary} />
 </article>
-
-<style>
-  .run-card {
-    position: relative;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    overflow: hidden;
-  }
-
-  .run-card::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: var(--status-color);
-  }
-</style>

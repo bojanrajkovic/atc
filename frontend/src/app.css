@@ -106,6 +106,31 @@
   }
 }
 
+/* Run-card base layout (global so compact-density overrides can beat it).
+   Svelte-scoped rules on `.run-card` would be hashed into a higher-specificity
+   selector and win over the [data-density] override, leaving compact mode
+   with hidden rows but full padding. */
+.run-card {
+  position: relative;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* 3px accent bar colored by the inline `--status-color` custom property set
+   on the card root (RunCard.svelte writes `style="--status-color: ..."`). */
+.run-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--status-color);
+}
+
 /* Compact-density overrides (hide secondary card content, shrink padding/type) */
 [data-density="compact"] .run-card-meta,
 [data-density="compact"] .run-card-progress,
