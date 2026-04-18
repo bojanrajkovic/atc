@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-17
+Last verified: 2026-04-18
 
 ## Purpose
 
