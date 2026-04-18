@@ -101,9 +101,10 @@ describe('StatusIcon', () => {
   describe('run-cards.AC6.5: exhaustive StatusKey lookup via satisfies', () => {
     it('renders all 11 StatusKey values without throwing', () => {
       for (const key of STATUS_KEYS) {
-        render(StatusIcon, { props: { value: key } })
-        // Verify render succeeded without error
-        expect(true).toBe(true)
+        const result = render(StatusIcon, { props: { value: key } })
+        // Verify render succeeded without error and cleanup
+        expect(result.container).toBeTruthy()
+        result.unmount()
       }
     })
 
