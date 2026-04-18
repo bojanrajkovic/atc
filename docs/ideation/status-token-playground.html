@@ -1,0 +1,1134 @@
+<!doctype html>
+<html lang="en" data-theme="radar">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATC Status Token Playground</title>
+    <style>
+      :root {
+        --hue: 155;
+        color-scheme: dark;
+
+        --bg: oklch(12% 0.063 var(--hue));
+        --surface: oklch(16% 0.063 var(--hue));
+        --surface-raised: oklch(20% 0.06 var(--hue));
+        --border: oklch(25% 0.055 var(--hue));
+        --text: oklch(85% 0.028 var(--hue));
+        --text-dim: oklch(72% 0.03 var(--hue));
+        --accent: oklch(45% 0.2 250);
+
+        --queued: oklch(72% 0.15 250);
+        --running: oklch(78% 0.16 80);
+        --success: oklch(72% 0.16 155);
+        --failed: oklch(72% 0.17 25);
+        --cancelled: var(--text-dim);
+
+        --timed-out: oklch(72% 0.15 60);
+        --action-required: oklch(82% 0.17 95);
+        --neutral: oklch(55% 0.02 var(--hue));
+
+        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --mono: "SF Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+        --text-xs: 0.625rem;
+        --text-sm: 0.75rem;
+        --text-base: 0.9375rem;
+        --tracking-wide: 0.1em;
+
+        --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      [data-theme="warm"] { --hue: 70; }
+      [data-theme="radar"] { --hue: 155; }
+      [data-theme="violet"] { --hue: 280; }
+      [data-theme="pink"] { --hue: 310; }
+
+      [data-mode="light"] {
+        color-scheme: light;
+        --bg: oklch(97% 0.022 var(--hue));
+        --surface: oklch(99% 0.013 var(--hue));
+        --surface-raised: oklch(92% 0.025 var(--hue));
+        --border: oklch(85% 0.028 var(--hue));
+        --text: oklch(16% 0.063 var(--hue));
+        --text-dim: oklch(40% 0.04 var(--hue));
+
+        --queued: oklch(45% 0.18 250);
+        --running: oklch(45% 0.15 80);
+        --success: oklch(42% 0.15 155);
+        --failed: oklch(48% 0.18 25);
+
+        --timed-out: oklch(45% 0.15 60);
+        --action-required: oklch(55% 0.17 95);
+        --neutral: oklch(40% 0.02 var(--hue));
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: var(--text-sm);
+        line-height: 1.5;
+        min-height: 100vh;
+        overflow: hidden;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        height: 100vh;
+      }
+
+      /* ============ CONTROLS ============ */
+      aside {
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 16px;
+        overflow-y: auto;
+      }
+
+      aside h1 {
+        font-family: var(--mono);
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: var(--tracking-wide);
+        color: var(--accent);
+        margin: 0 0 4px;
+      }
+
+      aside .subtitle {
+        color: var(--text-dim);
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-wide);
+        margin-bottom: 16px;
+      }
+
+      .ctrl-group {
+        padding: 12px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .ctrl-group:last-child { border-bottom: none; }
+
+      .ctrl-group h2 {
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-wide);
+        color: var(--text-dim);
+        margin: 0 0 10px;
+      }
+
+      .ctrl-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .ctrl-row label {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+
+      .ctrl-row select,
+      .ctrl-row button {
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-family: var(--font);
+        font-size: var(--text-xs);
+        cursor: pointer;
+      }
+
+      .btn-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .preset-btn {
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-size: var(--text-xs);
+        cursor: pointer;
+        font-family: var(--font);
+      }
+
+      .preset-btn:hover { border-color: var(--accent); }
+      .preset-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 20px;
+        border: none;
+        background: var(--surface-raised);
+        border-radius: 10px;
+        position: relative;
+        cursor: pointer;
+        padding: 0;
+        transition: background var(--ease-out-expo) 200ms;
+      }
+
+      .toggle.on { background: var(--accent); }
+
+      .toggle::after {
+        content: "";
+        width: 14px;
+        height: 14px;
+        background: white;
+        border-radius: 50%;
+        position: absolute;
+        left: 3px;
+        top: 3px;
+        transition: transform 200ms var(--ease-out-expo);
+      }
+
+      .toggle.on::after { transform: translateX(16px); }
+
+      .token-editor {
+        padding: 10px;
+        background: var(--surface-raised);
+        border-radius: 4px;
+        margin-bottom: 10px;
+      }
+
+      .token-editor h3 {
+        margin: 0 0 8px;
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-wide);
+        color: var(--text-dim);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .token-editor h3 .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .token-editor h3 .symbol {
+        font-family: var(--mono);
+        font-size: var(--text-base);
+        color: var(--text);
+        margin-left: auto;
+      }
+
+      .slider-row {
+        display: grid;
+        grid-template-columns: 16px 1fr 48px;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+
+      .slider-row label {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+
+      .slider-row input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+
+      .slider-row .val {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ============ MAIN ============ */
+      main {
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .main-inner {
+        padding: 16px;
+        display: grid;
+        gap: 16px;
+        flex: 1;
+      }
+
+      .section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 12px 16px;
+      }
+
+      .section h2 {
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-wide);
+        color: var(--text-dim);
+        margin: 0 0 12px;
+      }
+
+      /* ========== TOKEN GRID ========== */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+      }
+
+      .token-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        position: relative;
+      }
+
+      .token-card::before {
+        content: "";
+        position: absolute;
+        left: 0; top: 0; bottom: 0;
+        width: 3px;
+        background: var(--accent-color, transparent);
+      }
+
+      .token-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .token-symbol {
+        font-family: var(--mono);
+        font-size: var(--text-base);
+        font-weight: 600;
+        color: var(--accent-color, var(--text));
+        width: 1.25em;
+        text-align: center;
+      }
+
+      .token-name {
+        font-weight: 600;
+        color: var(--text);
+        font-size: var(--text-sm);
+      }
+
+      .token-id {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+
+      .token-value {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        margin-bottom: 8px;
+        word-break: break-all;
+      }
+
+      .contrast-pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      .contrast-cell {
+        padding: 6px 8px;
+        border-radius: 4px;
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        font-variant-numeric: tabular-nums;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .contrast-cell.on-surface { background: var(--surface); border: 1px solid var(--border); }
+      .contrast-cell.on-raised { background: var(--surface-raised); border: 1px solid var(--border); }
+
+      .contrast-cell .label-row {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .contrast-cell .label-row .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent-color, var(--text));
+      }
+
+      .contrast-cell .label-row .label-txt {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .contrast-cell .ratio {
+        font-size: var(--text-sm);
+        color: var(--text);
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-left: 4px;
+      }
+
+      .badge.aaa { background: oklch(72% 0.16 155); color: oklch(12% 0.063 155); }
+      .badge.aa { background: oklch(78% 0.16 80); color: oklch(12% 0.063 80); }
+      .badge.fail { background: oklch(72% 0.17 25); color: oklch(12% 0.063 25); }
+
+      /* ========== CARD MOCKUPS ========== */
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 10px;
+      }
+
+      .mock-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px 12px 10px 14px;
+        position: relative;
+      }
+
+      .mock-card::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--accent-color, var(--text-dim));
+      }
+
+      .mock-card .head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+
+      .mock-card .symbol {
+        color: var(--accent-color, var(--text));
+        font-family: var(--mono);
+        font-size: var(--text-base);
+        width: 1.25em;
+        text-align: center;
+      }
+
+      .mock-card .name {
+        flex: 1;
+        font-weight: 600;
+        font-size: var(--text-base);
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .mock-card .dur {
+        font-family: var(--mono);
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .mock-card .meta {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        margin-bottom: 6px;
+      }
+
+      .mock-card .progress {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .mock-card .progress-label {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .mock-card .bar {
+        flex: 1;
+        height: 4px;
+        background: var(--surface-raised);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      .mock-card .fill {
+        height: 100%;
+        background: var(--accent-color, var(--text-dim));
+        transform-origin: left;
+      }
+
+      .mock-card.halo {
+        animation: pulse-border 2s ease-in-out infinite;
+      }
+
+      @keyframes pulse-border {
+        0%, 100% { box-shadow: 0 0 0 0 oklch(78% 0.16 80 / 0); }
+        50% { box-shadow: 0 0 8px 2px oklch(78% 0.16 80 / 0.25); }
+      }
+
+      /* ============ OUTPUT ============ */
+      .output-section {
+        background: var(--surface);
+        border-top: 1px solid var(--border);
+        padding: 12px 16px;
+      }
+
+      .output-section .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .output-section h2 {
+        margin: 0;
+      }
+
+      .copy-btn {
+        background: var(--accent);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 4px 10px;
+        font-size: var(--text-xs);
+        cursor: pointer;
+        font-family: var(--font);
+      }
+
+      .copy-btn.copied { background: var(--success); color: var(--bg); }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text);
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside>
+        <h1>◆ ATC</h1>
+        <div class="subtitle">Status Token Playground</div>
+
+        <div class="ctrl-group">
+          <h2>Presets</h2>
+          <div class="btn-row" id="presets">
+            <button class="preset-btn active" data-preset="default">Default</button>
+            <button class="preset-btn" data-preset="high-contrast">High-Contrast</button>
+            <button class="preset-btn" data-preset="muted">Muted</button>
+            <button class="preset-btn" data-preset="warn-first">Warn-First</button>
+          </div>
+        </div>
+
+        <div class="ctrl-group">
+          <h2>Theme</h2>
+          <div class="ctrl-row">
+            <label>Hue</label>
+            <select id="theme-select">
+              <option value="warm">Warm (70)</option>
+              <option value="radar" selected>Radar (155)</option>
+              <option value="violet">Violet (280)</option>
+              <option value="pink">Pink (310)</option>
+            </select>
+          </div>
+          <div class="ctrl-row">
+            <label id="mode-lbl">Dark mode</label>
+            <button class="toggle on" id="mode-toggle" role="switch" aria-checked="true" aria-labelledby="mode-lbl"></button>
+          </div>
+          <div class="ctrl-row">
+            <label id="halo-lbl">Halo on running</label>
+            <button class="toggle on" id="halo-toggle" role="switch" aria-checked="true" aria-labelledby="halo-lbl"></button>
+          </div>
+        </div>
+
+        <div class="ctrl-group">
+          <h2>New Tokens (dark mode values)</h2>
+
+          <div class="token-editor" data-token="timed-out">
+            <h3><span class="swatch"></span>TimedOut <span class="symbol">⏱</span></h3>
+            <div class="slider-row">
+              <label>L</label>
+              <input type="range" min="0" max="100" step="1" data-field="L" />
+              <span class="val" data-field-out="L">72%</span>
+            </div>
+            <div class="slider-row">
+              <label>C</label>
+              <input type="range" min="0" max="0.4" step="0.005" data-field="C" />
+              <span class="val" data-field-out="C">0.150</span>
+            </div>
+            <div class="slider-row">
+              <label>H</label>
+              <input type="range" min="0" max="360" step="1" data-field="H" />
+              <span class="val" data-field-out="H">60</span>
+            </div>
+          </div>
+
+          <div class="token-editor" data-token="action-required">
+            <h3><span class="swatch"></span>ActionReq <span class="symbol">⚠</span></h3>
+            <div class="slider-row">
+              <label>L</label>
+              <input type="range" min="0" max="100" step="1" data-field="L" />
+              <span class="val" data-field-out="L">82%</span>
+            </div>
+            <div class="slider-row">
+              <label>C</label>
+              <input type="range" min="0" max="0.4" step="0.005" data-field="C" />
+              <span class="val" data-field-out="C">0.170</span>
+            </div>
+            <div class="slider-row">
+              <label>H</label>
+              <input type="range" min="0" max="360" step="1" data-field="H" />
+              <span class="val" data-field-out="H">95</span>
+            </div>
+          </div>
+
+          <div class="token-editor" data-token="neutral">
+            <h3><span class="swatch"></span>Neutral/Stale/Skipped <span class="symbol">○</span></h3>
+            <div class="slider-row">
+              <label>L</label>
+              <input type="range" min="0" max="100" step="1" data-field="L" />
+              <span class="val" data-field-out="L">55%</span>
+            </div>
+            <div class="slider-row">
+              <label>C</label>
+              <input type="range" min="0" max="0.4" step="0.005" data-field="C" />
+              <span class="val" data-field-out="C">0.020</span>
+            </div>
+            <div class="slider-row">
+              <label>H</label>
+              <input type="range" min="0" max="360" step="1" data-field="H" />
+              <span class="val" data-field-out="H">var(--hue)</span>
+            </div>
+          </div>
+
+          <div class="ctrl-row">
+            <label id="neutral-follow-lbl">Neutral follows --hue</label>
+            <button class="toggle on" id="neutral-follow-toggle" role="switch" aria-checked="true" aria-labelledby="neutral-follow-lbl"></button>
+          </div>
+        </div>
+
+        <div class="ctrl-group">
+          <h2>Reset</h2>
+          <div class="btn-row">
+            <button class="preset-btn" id="reset-btn">Reset to proposed</button>
+          </div>
+        </div>
+      </aside>
+
+      <main>
+        <div class="main-inner">
+          <section class="section">
+            <h2>Token gallery — color + symbol + contrast</h2>
+            <div class="grid" id="token-grid"></div>
+          </section>
+
+          <section class="section">
+            <h2>Mock RunCards (as they appear in the kanban)</h2>
+            <div class="card-grid" id="card-grid"></div>
+          </section>
+        </div>
+
+        <div class="output-section">
+          <div class="head">
+            <h2>CSS output — paste into frontend/src/app.css</h2>
+            <button class="copy-btn" id="copy-btn">Copy CSS</button>
+          </div>
+          <pre id="css-output"></pre>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      // Token catalog — canonical dark-mode values.
+      const EXISTING_TOKENS_DARK = {
+        queued:    { L: 72, C: 0.15,  H: 250,      sym: "◐", label: "Queued",    existing: true },
+        running:   { L: 78, C: 0.16,  H: 80,       sym: "▶", label: "Running",   existing: true },
+        success:   { L: 72, C: 0.16,  H: 155,      sym: "✓", label: "Success",   existing: true },
+        failed:    { L: 72, C: 0.17,  H: 25,       sym: "✗", label: "Failed",    existing: true },
+        cancelled: { L: 72, C: 0.03,  H: "hue",    sym: "⊘", label: "Cancelled", existing: true, dimFollows: true },
+      };
+
+      // Proposed new tokens (editable).
+      const DEFAULT_NEW_TOKENS = {
+        "timed-out":        { L: 72, C: 0.150, H: 60,    sym: "⏱", label: "TimedOut",       existing: false },
+        "action-required":  { L: 82, C: 0.170, H: 95,    sym: "⚠", label: "ActionRequired", existing: false },
+        neutral:            { L: 55, C: 0.020, H: "hue", sym: "○", label: "Neutral/Stale/Skipped", existing: false, followsHue: true },
+      };
+
+      // StartupFailure reuses --failed.
+      const STARTUP_FAILURE = { L: 72, C: 0.17, H: 25, sym: "⚡", label: "StartupFailure", existing: true, reuses: "failed" };
+
+      // Light-mode overrides for EXISTING tokens (from app.css).
+      const EXISTING_TOKENS_LIGHT = {
+        queued:    { L: 45, C: 0.18, H: 250 },
+        running:   { L: 45, C: 0.15, H: 80 },
+        success:   { L: 42, C: 0.15, H: 155 },
+        failed:    { L: 48, C: 0.18, H: 25 },
+      };
+
+      // Light-mode variants for NEW tokens are auto-computed from dark values by lowering L.
+      function lightVariantFor(dark) {
+        if (dark.H === "hue") {
+          return { L: Math.max(30, dark.L - 15), C: Math.max(0.015, dark.C * 1.0), H: "hue" };
+        }
+        return { L: Math.max(35, dark.L - 27), C: dark.C * 1.0, H: dark.H };
+      }
+
+      const PRESETS = {
+        default: structuredClone(DEFAULT_NEW_TOKENS),
+        "high-contrast": {
+          "timed-out":        { L: 75, C: 0.18, H: 60, sym: "⏱", label: "TimedOut", existing: false },
+          "action-required":  { L: 85, C: 0.19, H: 100, sym: "⚠", label: "ActionRequired", existing: false },
+          neutral:            { L: 62, C: 0.03, H: "hue", sym: "○", label: "Neutral/Stale/Skipped", existing: false, followsHue: true },
+        },
+        muted: {
+          "timed-out":        { L: 68, C: 0.10, H: 60, sym: "⏱", label: "TimedOut", existing: false },
+          "action-required":  { L: 78, C: 0.12, H: 95, sym: "⚠", label: "ActionRequired", existing: false },
+          neutral:            { L: 50, C: 0.015, H: "hue", sym: "○", label: "Neutral/Stale/Skipped", existing: false, followsHue: true },
+        },
+        "warn-first": {
+          "timed-out":        { L: 76, C: 0.18, H: 40, sym: "⏱", label: "TimedOut", existing: false },
+          "action-required":  { L: 88, C: 0.20, H: 90, sym: "⚠", label: "ActionRequired", existing: false },
+          neutral:            { L: 60, C: 0.025, H: "hue", sym: "○", label: "Neutral/Stale/Skipped", existing: false, followsHue: true },
+        },
+      };
+
+      const state = {
+        theme: "radar",
+        dark: true,
+        halo: true,
+        neutralFollowsHue: true,
+        tokens: structuredClone(DEFAULT_NEW_TOKENS),
+      };
+
+      const themeHueMap = { warm: 70, radar: 155, violet: 280, pink: 310 };
+
+      // ========================= OKLCH -> contrast math =========================
+      function oklchToLinearRgb(L100, C, hDeg) {
+        const L = L100 / 100;
+        const hRad = (hDeg * Math.PI) / 180;
+        const a = C * Math.cos(hRad);
+        const b = C * Math.sin(hRad);
+
+        const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+        const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+        const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+
+        const l = l_ ** 3, m = m_ ** 3, s = s_ ** 3;
+
+        return {
+          r: 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+          g: -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+          b: -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+        };
+      }
+
+      function luminance({ r, g, b }) {
+        r = Math.max(0, Math.min(1, r));
+        g = Math.max(0, Math.min(1, g));
+        b = Math.max(0, Math.min(1, b));
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      }
+
+      function contrast(fg, bg) {
+        const l1 = luminance(oklchToLinearRgb(fg.L, fg.C, fg.H));
+        const l2 = luminance(oklchToLinearRgb(bg.L, bg.C, bg.H));
+        const light = Math.max(l1, l2), dark = Math.min(l1, l2);
+        return (light + 0.05) / (dark + 0.05);
+      }
+
+      function contrastBadge(ratio) {
+        if (ratio >= 7) return { cls: "aaa", txt: "AAA" };
+        if (ratio >= 4.5) return { cls: "aa", txt: "AA" };
+        return { cls: "fail", txt: "FAIL" };
+      }
+
+      // Resolve a token's numeric OKLCH values given current theme/mode.
+      function resolveToken(tokenId, token) {
+        const hueForTheme = themeHueMap[state.theme];
+        if (state.dark) {
+          if (token.existing && !token.dimFollows && EXISTING_TOKENS_LIGHT[tokenId] === undefined) {
+            return { L: token.L, C: token.C, H: token.H === "hue" ? hueForTheme : token.H };
+          }
+          if (token.dimFollows) {
+            // cancelled follows --text-dim which is (72% 0.030 hue) in dark
+            return { L: 72, C: 0.03, H: hueForTheme };
+          }
+          return { L: token.L, C: token.C, H: token.H === "hue" ? hueForTheme : token.H };
+        }
+        // light mode
+        if (token.existing && EXISTING_TOKENS_LIGHT[tokenId]) {
+          const lm = EXISTING_TOKENS_LIGHT[tokenId];
+          return { L: lm.L, C: lm.C, H: lm.H };
+        }
+        if (token.dimFollows) {
+          // light-mode --text-dim = oklch(40% 0.040 hue)
+          return { L: 40, C: 0.04, H: hueForTheme };
+        }
+        const lightVariant = lightVariantFor({ L: token.L, C: token.C, H: token.H });
+        return { L: lightVariant.L, C: lightVariant.C, H: lightVariant.H === "hue" ? hueForTheme : lightVariant.H };
+      }
+
+      function surfaceTokens() {
+        const hueForTheme = themeHueMap[state.theme];
+        if (state.dark) {
+          return {
+            surface: { L: 16, C: 0.063, H: hueForTheme },
+            raised: { L: 20, C: 0.06, H: hueForTheme },
+          };
+        }
+        return {
+          surface: { L: 99, C: 0.013, H: hueForTheme },
+          raised: { L: 92, C: 0.025, H: hueForTheme },
+        };
+      }
+
+      // ============================= RENDERERS ================================
+      function allTokens() {
+        // Merged catalogue in display order, including reuses.
+        return [
+          ["queued", EXISTING_TOKENS_DARK.queued],
+          ["running", EXISTING_TOKENS_DARK.running],
+          ["success", EXISTING_TOKENS_DARK.success],
+          ["failed", EXISTING_TOKENS_DARK.failed],
+          ["startup-failure", STARTUP_FAILURE],
+          ["cancelled", EXISTING_TOKENS_DARK.cancelled],
+          ["timed-out", state.tokens["timed-out"]],
+          ["action-required", state.tokens["action-required"]],
+          ["neutral", state.tokens.neutral],
+        ];
+      }
+
+      function formatOklch(t) {
+        const H = t.H === "hue" ? "var(--hue)" : t.H;
+        return `oklch(${t.L}% ${t.C.toFixed(3)} ${H})`;
+      }
+
+      function formatOklchRaw(resolved) {
+        return `oklch(${resolved.L.toFixed(0)}% ${resolved.C.toFixed(3)} ${resolved.H.toFixed(0)})`;
+      }
+
+      function renderTokenGrid() {
+        const grid = document.getElementById("token-grid");
+        const surfaces = surfaceTokens();
+        grid.innerHTML = allTokens().map(([id, tok]) => {
+          const resolved = resolveToken(id, tok);
+          const onSurface = contrast(resolved, surfaces.surface);
+          const onRaised = contrast(resolved, surfaces.raised);
+          const bSurface = contrastBadge(onSurface);
+          const bRaised = contrastBadge(onRaised);
+          const displayValue = tok.reuses
+            ? `var(--${tok.reuses})`
+            : tok.dimFollows
+              ? "var(--text-dim)"
+              : formatOklch(tok);
+          const cssVar = `--${id}`;
+          return `
+            <div class="token-card" style="--accent-color: var(${cssVar});">
+              <div class="token-head">
+                <span class="token-symbol">${tok.sym}</span>
+                <span class="token-name">${tok.label}</span>
+                <span class="token-id">${cssVar}</span>
+              </div>
+              <div class="token-value">${displayValue}</div>
+              <div class="contrast-pair">
+                <div class="contrast-cell on-surface">
+                  <div class="label-row"><span class="dot"></span><span class="label-txt">on --surface</span></div>
+                  <span class="ratio">${onSurface.toFixed(2)}:1 <span class="badge ${bSurface.cls}">${bSurface.txt}</span></span>
+                </div>
+                <div class="contrast-cell on-raised">
+                  <div class="label-row"><span class="dot"></span><span class="label-txt">on --raised</span></div>
+                  <span class="ratio">${onRaised.toFixed(2)}:1 <span class="badge ${bRaised.cls}">${bRaised.txt}</span></span>
+                </div>
+              </div>
+            </div>`;
+        }).join("");
+      }
+
+      function renderCardGrid() {
+        const grid = document.getElementById("card-grid");
+        const mockData = [
+          { id: "queued",          name: "pnpm install",              dur: "waiting 42s", prog: 0 },
+          { id: "running",         name: "cargo test (linux)",        dur: "2m 14s",      prog: 0.5, halo: true },
+          { id: "success",         name: "lint",                      dur: "22s",         prog: 1 },
+          { id: "failed",          name: "deploy-staging",            dur: "1m 03s",      prog: 1 },
+          { id: "startup-failure", name: "container boot",            dur: "4s",          prog: 0 },
+          { id: "cancelled",       name: "e2e (macos)",               dur: "48s",         prog: 0.3 },
+          { id: "timed-out",       name: "integration (heavy)",       dur: "15m 00s",     prog: 0.9 },
+          { id: "action-required", name: "approval-gate",             dur: "waiting",     prog: 0.2 },
+          { id: "neutral",         name: "docs-only (skipped)",       dur: "—",           prog: 0 },
+        ];
+        grid.innerHTML = mockData.map(m => {
+          const cssVar = `--${m.id}`;
+          const haloCls = m.halo && state.halo ? " halo" : "";
+          return `
+            <div class="mock-card${haloCls}" style="--accent-color: var(${cssVar});">
+              <div class="head">
+                <span class="symbol">${allTokens().find(([id]) => id === m.id)[1].sym}</span>
+                <span class="name">${m.name}</span>
+                <span class="dur">${m.dur}</span>
+              </div>
+              <div class="meta">my-org/api · main</div>
+              <div class="progress">
+                <span class="progress-label">Jobs</span>
+                <div class="bar"><div class="fill" style="transform: scaleX(${m.prog})"></div></div>
+                <span class="progress-label">${Math.round(m.prog * 5)}/5</span>
+              </div>
+            </div>`;
+        }).join("");
+      }
+
+      function updateRootVars() {
+        const root = document.documentElement;
+        root.setAttribute("data-theme", state.theme);
+        root.setAttribute("data-mode", state.dark ? "dark" : "light");
+
+        // Override the editable tokens inline on :root.
+        const t = state.tokens;
+        const timedOutValue = `oklch(${t["timed-out"].L}% ${t["timed-out"].C.toFixed(3)} ${t["timed-out"].H})`;
+        const actionValue = `oklch(${t["action-required"].L}% ${t["action-required"].C.toFixed(3)} ${t["action-required"].H})`;
+        const neutralHue = state.neutralFollowsHue ? "var(--hue)" : t.neutral.H;
+        const neutralValue = `oklch(${t.neutral.L}% ${t.neutral.C.toFixed(3)} ${neutralHue})`;
+
+        root.style.setProperty("--timed-out", timedOutValue);
+        root.style.setProperty("--action-required", actionValue);
+        root.style.setProperty("--neutral", neutralValue);
+
+        // Apply dark/light mode override lookups for the editable tokens too.
+        if (!state.dark) {
+          const timedOutLight = lightVariantFor(t["timed-out"]);
+          const actionLight = lightVariantFor(t["action-required"]);
+          const neutralLight = lightVariantFor({ ...t.neutral, H: state.neutralFollowsHue ? "hue" : t.neutral.H });
+          root.style.setProperty("--timed-out", `oklch(${timedOutLight.L}% ${timedOutLight.C.toFixed(3)} ${timedOutLight.H})`);
+          root.style.setProperty("--action-required", `oklch(${actionLight.L}% ${actionLight.C.toFixed(3)} ${actionLight.H})`);
+          root.style.setProperty("--neutral", `oklch(${neutralLight.L}% ${neutralLight.C.toFixed(3)} ${neutralLight.H === "hue" ? "var(--hue)" : neutralLight.H})`);
+        }
+
+        // Update swatches in token editors.
+        document.querySelectorAll(".token-editor").forEach(ed => {
+          const id = ed.dataset.token;
+          const tok = state.tokens[id];
+          const h = id === "neutral" && state.neutralFollowsHue ? "var(--hue)" : tok.H;
+          ed.querySelector(".swatch").style.background = `oklch(${tok.L}% ${tok.C.toFixed(3)} ${h})`;
+          ed.querySelector('[data-field-out="L"]').textContent = tok.L + "%";
+          ed.querySelector('[data-field-out="C"]').textContent = tok.C.toFixed(3);
+          ed.querySelector('[data-field-out="H"]').textContent = id === "neutral" && state.neutralFollowsHue ? "var(--hue)" : tok.H;
+        });
+      }
+
+      function renderOutput() {
+        const t = state.tokens;
+        const tDark = t;
+        const tLight = {
+          "timed-out": lightVariantFor(t["timed-out"]),
+          "action-required": lightVariantFor(t["action-required"]),
+          neutral: lightVariantFor({ ...t.neutral, H: state.neutralFollowsHue ? "hue" : t.neutral.H }),
+        };
+        const fmtDark = (tok, hueLiteral) => {
+          const h = hueLiteral === "hue" ? "var(--hue)" : tok.H;
+          return `oklch(${tok.L}% ${tok.C.toFixed(3)} ${h})`;
+        };
+        const fmtLight = (tok) => {
+          const h = tok.H === "hue" ? "var(--hue)" : tok.H;
+          return `oklch(${tok.L}% ${tok.C.toFixed(3)} ${h})`;
+        };
+
+        const css = `/* --- New conclusion tokens (add to :root in app.css) --- */
+  --timed-out:        ${fmtDark(tDark["timed-out"])};  /* \u23f1 */
+  --action-required:  ${fmtDark(tDark["action-required"])};  /* \u26a0 */
+  --neutral:          ${fmtDark(tDark.neutral, state.neutralFollowsHue ? "hue" : undefined)};  /* \u25cb \u2014 shared by Stale / Neutral / Skipped */
+  /* StartupFailure reuses --failed (no new token) */
+
+/* --- Light-mode overrides (add to [data-mode="light"] block) --- */
+  --timed-out:        ${fmtLight(tLight["timed-out"])};
+  --action-required:  ${fmtLight(tLight["action-required"])};
+  --neutral:          ${fmtLight(tLight.neutral)};
+
+/* --- impeccable.md Status Symbols table additions --- */
+| TimedOut       | \u23f1 | None                        | ${fmtDark(tDark["timed-out"])} | ${fmtLight(tLight["timed-out"])} |
+| ActionRequired | \u26a0 | None                        | ${fmtDark(tDark["action-required"])} | ${fmtLight(tLight["action-required"])} |
+| StartupFailure | \u26a1 | None                        | var(--failed)           | var(--failed)           |
+| Stale          | \u25cb | None                        | var(--neutral)          | var(--neutral)          |
+| Neutral        | \u25cb | None                        | var(--neutral)          | var(--neutral)          |
+| Skipped        | \u25cb | None                        | var(--neutral)          | var(--neutral)          |
+`;
+        document.getElementById("css-output").textContent = css;
+      }
+
+      function updateAll() {
+        updateRootVars();
+        renderTokenGrid();
+        renderCardGrid();
+        renderOutput();
+      }
+
+      // =============================== WIRE UP ================================
+      document.getElementById("theme-select").addEventListener("change", e => {
+        state.theme = e.target.value;
+        updateAll();
+      });
+
+      const modeToggle = document.getElementById("mode-toggle");
+      modeToggle.addEventListener("click", () => {
+        state.dark = !state.dark;
+        modeToggle.classList.toggle("on", state.dark);
+        modeToggle.setAttribute("aria-checked", String(state.dark));
+        document.getElementById("mode-lbl").textContent = state.dark ? "Dark mode" : "Light mode";
+        updateAll();
+      });
+
+      const haloToggle = document.getElementById("halo-toggle");
+      haloToggle.addEventListener("click", () => {
+        state.halo = !state.halo;
+        haloToggle.classList.toggle("on", state.halo);
+        haloToggle.setAttribute("aria-checked", String(state.halo));
+        updateAll();
+      });
+
+      const neutralFollowToggle = document.getElementById("neutral-follow-toggle");
+      neutralFollowToggle.addEventListener("click", () => {
+        state.neutralFollowsHue = !state.neutralFollowsHue;
+        neutralFollowToggle.classList.toggle("on", state.neutralFollowsHue);
+        neutralFollowToggle.setAttribute("aria-checked", String(state.neutralFollowsHue));
+        if (state.neutralFollowsHue) {
+          state.tokens.neutral.H = "hue";
+        } else {
+          state.tokens.neutral.H = themeHueMap[state.theme];
+        }
+        syncSliders();
+        updateAll();
+      });
+
+      // Sliders
+      document.querySelectorAll(".token-editor").forEach(ed => {
+        const id = ed.dataset.token;
+        ed.querySelectorAll("input[type=range]").forEach(input => {
+          input.addEventListener("input", e => {
+            const field = e.target.dataset.field;
+            const v = parseFloat(e.target.value);
+            if (field === "H" && id === "neutral" && state.neutralFollowsHue) {
+              // Hue slider is disabled-semantic for neutral when following --hue; break the follow.
+              state.neutralFollowsHue = false;
+              neutralFollowToggle.classList.remove("on");
+              neutralFollowToggle.setAttribute("aria-checked", "false");
+            }
+            if (field === "H") state.tokens[id].H = v;
+            else if (field === "L") state.tokens[id].L = v;
+            else if (field === "C") state.tokens[id].C = v;
+            updateAll();
+          });
+        });
+      });
+
+      function syncSliders() {
+        document.querySelectorAll(".token-editor").forEach(ed => {
+          const id = ed.dataset.token;
+          const tok = state.tokens[id];
+          ed.querySelectorAll("input[type=range]").forEach(input => {
+            const field = input.dataset.field;
+            if (field === "H") {
+              input.value = id === "neutral" && state.neutralFollowsHue ? themeHueMap[state.theme] : tok.H;
+            } else if (field === "L") {
+              input.value = tok.L;
+            } else if (field === "C") {
+              input.value = tok.C;
+            }
+          });
+        });
+      }
+
+      // Presets
+      document.querySelectorAll(".preset-btn[data-preset]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const preset = btn.dataset.preset;
+          state.tokens = structuredClone(PRESETS[preset]);
+          state.neutralFollowsHue = state.tokens.neutral.H === "hue";
+          neutralFollowToggle.classList.toggle("on", state.neutralFollowsHue);
+          neutralFollowToggle.setAttribute("aria-checked", String(state.neutralFollowsHue));
+          document.querySelectorAll(".preset-btn[data-preset]").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          syncSliders();
+          updateAll();
+        });
+      });
+
+      // Reset
+      document.getElementById("reset-btn").addEventListener("click", () => {
+        state.tokens = structuredClone(DEFAULT_NEW_TOKENS);
+        state.neutralFollowsHue = true;
+        neutralFollowToggle.classList.add("on");
+        neutralFollowToggle.setAttribute("aria-checked", "true");
+        document.querySelectorAll(".preset-btn[data-preset]").forEach(b => b.classList.remove("active"));
+        document.querySelector('.preset-btn[data-preset="default"]').classList.add("active");
+        syncSliders();
+        updateAll();
+      });
+
+      // Copy
+      const copyBtn = document.getElementById("copy-btn");
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(document.getElementById("css-output").textContent).then(() => {
+          copyBtn.classList.add("copied");
+          copyBtn.textContent = "Copied!";
+          setTimeout(() => {
+            copyBtn.classList.remove("copied");
+            copyBtn.textContent = "Copy CSS";
+          }, 1500);
+        });
+      });
+
+      // First paint
+      syncSliders();
+      updateAll();
+    </script>
+  </body>
+</html>

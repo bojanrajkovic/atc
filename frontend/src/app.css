@@ -20,10 +20,14 @@
   --success: oklch(72% 0.16 155);
   --failed: oklch(72% 0.17 25);
   --cancelled: var(--text-dim);
+  --timed-out: oklch(76% 0.18 40);
+  --action-required: oklch(88% 0.2 55);
+  --neutral: oklch(60% 0.025 var(--hue));
 
   /* Accent */
   --accent: oklch(45% 0.2 250);
   --text-on-accent: white;
+  --halo-color: oklch(78% 0.16 80 / 0.25);
 
   /* Typography */
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -87,6 +91,61 @@
   --hue: 310;
 }
 
+/* Run card halo — running-state pulsating animation */
+.run-card[data-status="InProgress"] {
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 8px 2px var(--halo-color);
+  }
+}
+
+/* Run-card base layout (global so compact-density overrides can beat it).
+   Svelte-scoped rules on `.run-card` would be hashed into a higher-specificity
+   selector and win over the [data-density] override, leaving compact mode
+   with hidden rows but full padding. */
+.run-card {
+  position: relative;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* 3px accent bar colored by the inline `--status-color` custom property set
+   on the card root (RunCard.svelte writes `style="--status-color: ..."`). */
+.run-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--status-color);
+}
+
+/* Compact-density overrides (hide secondary card content, shrink padding/type) */
+[data-density="compact"] .run-card-meta,
+[data-density="compact"] .run-card-progress,
+[data-density="compact"] .run-card-runner {
+  display: none;
+}
+
+[data-density="compact"] .run-card {
+  padding: 6px 10px;
+}
+
+[data-density="compact"] .run-card-name {
+  font-size: var(--text-sm);
+}
+
 /* Light mode override */
 [data-mode="light"] {
   color-scheme: light;
@@ -101,7 +160,11 @@
   --success: oklch(42% 0.15 155);
   --failed: oklch(48% 0.18 25);
   --cancelled: var(--text-dim);
+  --timed-out: oklch(49% 0.18 40);
+  --action-required: oklch(50% 0.18 55);
+  --neutral: oklch(45% 0.025 var(--hue));
   --accent: oklch(45% 0.2 250);
+  --halo-color: oklch(50% 0.15 80 / 0.5);
 }
 
 /* prefers-reduced-motion reset */
@@ -117,6 +180,11 @@
     transition-duration: 0.01ms !important;
     /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
     scroll-behavior: auto !important;
+  }
+
+  .run-card[data-status="InProgress"] {
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    animation: none !important;
   }
 }
 

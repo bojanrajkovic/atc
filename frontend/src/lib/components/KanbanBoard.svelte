@@ -6,6 +6,7 @@
   const totalRuns = $derived(
     runStore.queuedRuns.length + runStore.inProgressRuns.length + runStore.completedRuns.length
   )
+  const jobStatsByRun = $derived(runStore.jobStatsByRun)
 </script>
 
 {#if connectionStore.status !== 'connected' && totalRuns === 0}
@@ -21,16 +22,23 @@
 {:else}
   <!-- Three-column kanban grid -->
   <div class="grid grid-cols-3 gap-4 h-full p-4" style="min-height: 0;">
-    <KanbanColumn label="QUEUED" runs={runStore.queuedRuns} headingId="kanban-col-queued" />
+    <KanbanColumn
+      label="QUEUED"
+      runs={runStore.queuedRuns}
+      headingId="kanban-col-queued"
+      {jobStatsByRun}
+    />
     <KanbanColumn
       label="IN PROGRESS"
       runs={runStore.inProgressRuns}
       headingId="kanban-col-in-progress"
+      {jobStatsByRun}
     />
     <KanbanColumn
       label="COMPLETED"
       runs={runStore.completedRuns}
       headingId="kanban-col-completed"
+      {jobStatsByRun}
     />
   </div>
 {/if}

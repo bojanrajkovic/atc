@@ -1,3 +1,4 @@
+import { summarizeRunners } from '$lib/format/runners'
 import type { Job } from '$lib/types/generated/Job'
 import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
@@ -6,6 +7,12 @@ import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
 import type { Step } from '$lib/types/generated/Step'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+
+export interface JobStats {
+  readonly completed: number
+  readonly total: number
+  readonly runnerSummary: string | null
+}
 
 class RunStore {
   runs = $state<Map<bigint, WorkflowRun>>(new Map())
@@ -52,6 +59,28 @@ class RunStore {
             : 1,
       ),
   )
+
+  /**
+   * Per-run job aggregate. Total-map: every runId present in `this.runs`
+   * has a JobStats entry, even if jobsByRun has no entry for that run
+   * (empty-jobs fallback: { completed: 0, total: 0, runnerSummary: null }).
+   *
+   * Iterates this.runs.keys() to establish the authoritative key set so
+   * KanbanColumn can call `.get(run.id)!` without null handling.
+   */
+  jobStatsByRun = $derived.by<ReadonlyMap<bigint, JobStats>>(() => {
+    const result = new Map<bigint, JobStats>()
+    for (const runId of this.runs.keys()) {
+      const jobs = this.jobsByRun.get(runId) ?? []
+      const completed = jobs.filter((j) => j.status === 'Completed').length
+      result.set(runId, {
+        completed,
+        total: jobs.length,
+        runnerSummary: summarizeRunners(jobs),
+      })
+    }
+    return result
+  })
 
   applyRunEvent(envelope: RunEventEnvelope): void {
     const runId = envelope.runId
@@ -152,12 +181,14 @@ class RunStore {
       return
     }
 
-    // Get existing job or create new one
+    // Get existing jobs array for this run
     const existing = this.jobsByRun.get(runId) ?? []
     const jobIndex = existing.findIndex((j) => j.id === jobId)
 
-    // Update existing job with new data
+    // Create or update job
+    let jobs: Job[]
     if (jobIndex === -1) {
+      // New job: push to array
       const newJob: Job = {
         id: jobId,
         name: envelope.name,
@@ -171,21 +202,33 @@ class RunStore {
         startedAt: envelope.startedAt,
         completedAt: envelope.completedAt,
       }
-      existing.push(newJob)
+      jobs = [...existing, newJob]
     } else {
-      const existingJob = existing[jobIndex]
-      if (existingJob) {
-        existingJob.status = status
-        existingJob.conclusion = conclusion ?? existingJob.conclusion
-        existingJob.runner = runner ?? existingJob.runner
-        existingJob.labels = labels
-        existingJob.steps = steps
-        existingJob.startedAt = envelope.startedAt ?? existingJob.startedAt
-        existingJob.completedAt = envelope.completedAt ?? existingJob.completedAt
+      // Existing job: create new job object and new array for copy-on-write
+      const prev = existing[jobIndex]
+      if (!prev) {
+        return
       }
+      const updated: Job = {
+        id: jobId,
+        name: envelope.name,
+        runId,
+        status,
+        conclusion: conclusion ?? prev.conclusion,
+        runner: runner ?? prev.runner,
+        labels,
+        steps,
+        createdAt: envelope.createdAt,
+        startedAt: envelope.startedAt ?? prev.startedAt,
+        completedAt: envelope.completedAt ?? prev.completedAt,
+      }
+      jobs = [...existing]
+      jobs[jobIndex] = updated
     }
 
-    this.jobsByRun.set(runId, existing)
+    // Copy-on-write: delete then set to ensure $derived re-evaluates
+    this.jobsByRun.delete(runId)
+    this.jobsByRun.set(runId, jobs)
   }
 
   loadSnapshot(runs: WorkflowRun[], jobs: Job[]): void {

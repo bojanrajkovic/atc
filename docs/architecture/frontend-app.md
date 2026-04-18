@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-16
+Last verified: 2026-04-18
 
 ## Purpose
 
@@ -135,6 +135,76 @@ Tests split across three Vitest projects and E2E tier:
 1. **Unit (jsdom, `*.test.ts`):** Store logic, sort function correctness, DOM structure, component lifecycle
 2. **Browser (Playwright chromium, `*.browser.test.ts`):** Animation behavior, FLIP transitions, crossfade send/receive, store reactivity (derived array updates), reduced-motion support
 3. **E2E (Playwright, `e2e/*.test.ts`):** Full lifecycle (connect → load runs → card renders → animate between columns), real WebSocket event handling, user interactions
+
+## Run Cards
+
+See `## App Shell` for the top-down tree from `App` down to `KanbanColumn` and `## Kanban Board` for the column-to-card handoff. This section documents `RunCard` and its five leaf children plus the supporting stores and CSS mechanics introduced in Sub-Phase 4.
+
+### Component Tree (RunCard-scoped)
+
+```
+RunCard (almost-pure: reads uiStore.nowMs only in live duration branches)
+  JobHeader (pure: StatusIcon + displayTitle + durationText row)
+    StatusIcon (pure: 11-StatusKey exhaustive glyph)
+  JobMeta (pure: repo · branch, null-branch elision)
+  ProgressBar (pure: role=progressbar with scaleX fill)
+  RunnerLabel (pure: ⊞ summary line, null-summary elision)
+```
+
+All five leaves are pure (props in, DOM out, no store reads). `RunCard` is the sole exception — its `$derived.by` for `durationText` reads `uiStore.nowMs`, but only inside the live branches. The static-Completed branch short-circuits before any reactive read, so completed non-ActionRequired cards never subscribe to the wall-clock tick (see State-Aware Duration Rules below).
+
+### Store Additions
+
+**`uiStore.nowMs` — shared wall-clock signal** (`frontend/src/lib/stores/ui.svelte.ts`)
+- `$state(Date.now())` initialised at module load; refreshed every 1000ms by a constructor-owned `setInterval`.
+- Single timer feeds every live-duration derivation across the board. Every card reads the same signal instead of each spawning its own timer.
+- `uiStore.destroy()` clears the interval. Used by fake-timer tests to prevent leaks; production never calls it.
+
+**`runStore.jobStatsByRun` — total-map aggregate** (`frontend/src/lib/stores/runs.svelte.ts`)
+- `$derived.by<ReadonlyMap<bigint, JobStats>>` that iterates `this.runs.keys()` (not `this.jobsByRun.keys()`) so every known run resolves to a `JobStats` entry, even runs with zero jobs (`{ completed: 0, total: 0, runnerSummary: null }`).
+- Consumes `summarizeRunners` from `frontend/src/lib/format/runners.ts` to compute the runner summary string (`null`, single-runner name, or `N runners`).
+- Exported `JobStats` interface gives `KanbanColumn` a named type for the prop.
+
+### State-Aware Duration Rules
+
+| Run state | Label format | Base timestamp |
+|-----------|-------------|-----------------|
+| `Queued` | `waiting MM:SS` (live) | `createdAt` |
+| `InProgress` | `MM:SS` (live) | `runStartedAt` (falls back to `createdAt` if null) |
+| `Completed` + `conclusion = ActionRequired` | `awaiting action MM:SS` (live) | `updatedAt` |
+| `Completed` + any other conclusion | `MM:SS` (static) | `updatedAt − runStartedAt` |
+
+Format: `MM:SS` under 1h, `H:MM:SS` at or above. All durations use `font-variant-numeric: tabular-nums` to prevent layout jitter.
+
+The duration formula is extracted to a pure `computeDurationText(run, nowMs): string` in `frontend/src/lib/format/duration-text.ts`. `RunCard`'s `$derived.by` short-circuits on `Completed + non-ActionRequired` and calls the pure function without reading `uiStore.nowMs`. Svelte 5's fine-grained dependency tracking means those cards never register `nowMs` as a dependency — the derivation does not re-evaluate on tick.
+
+### CSS Mechanics
+
+**Status-color propagation.** `RunCard` sets `style="--status-color: var(...)"` on its root `<article>`; children (`::before` accent bar, `StatusIcon`, `ProgressBar` fill) all read `var(--status-color)` via inherited or explicit CSS reference. The status-to-color map lives in one local `resolveStatusColorVar(key: StatusKey): string` switch inside `RunCard.svelte` — single source of truth, exhaustive over the 11-value union.
+
+**Halo animation.** Declared globally in `app.css`: `.run-card[data-status="InProgress"] { animation: pulse-border 2s ease-in-out infinite; }` with `@keyframes pulse-border` fading `box-shadow` from transparent at 0%/100% to `var(--halo-color)` (8px blur, 2px spread) at 50%. The halo is always amber (H=80) regardless of theme; `--halo-color` has a per-mode override — dark `oklch(78% 0.16 80 / 0.25)`, light `oklch(50% 0.15 80 / 0.5)` — so it stays visible on both surface contrasts. An explicit `@media (prefers-reduced-motion: reduce) { .run-card[data-status="InProgress"] { animation: none; } }` halts the animation cleanly alongside the global reduced-motion reset.
+
+**Accent bar.** `.run-card::before` in `RunCard`'s scoped `<style>` — 3px wide, `left: 0`, `top: 0`, `bottom: 0`, `background: var(--status-color)`. This is the first scoped style block in the kanban components; the halo and density rules stay in `app.css` because they need ancestor selectors (`html[data-density]`, `[data-mode="light"]`) that Svelte's scoped selectors can't cross.
+
+**Density attribute.** `UIStore`'s `$effect.root` block writes `data-density="compact"` (or removes it) on `<html>` when the setting changes. CSS selectors in `app.css` key off `[data-density="compact"]` to `display: none` the `.run-card-meta`, `.run-card-progress`, `.run-card-runner` children and shrink `.run-card` padding + `.run-card-name` font-size. Class names stay global (not Svelte-scoped) so the top-level selector still matches the compiled DOM.
+
+### Design Tokens
+
+Sub-Phase 4 added three OKLCH status tokens in both dark and light modes: `--timed-out` (H=40, amber-red), `--action-required` (H=55, warning-amber), `--neutral` (low-chroma, hue-following). A fourth token `--halo-color` is used by the halo animation; it lives in the mode-level token group, not the status group, because it's always amber.
+
+Accessibility target formalised in `.impeccable.md`: **WCAG AA (≥ 4.5:1) gates the build** via `frontend/src/lib/design-tokens.test.ts` (all 11 status tokens × 4 theme hues × 2 modes against `--surface`); **AAA (≥ 7:1) is aspirational** — misses emit `console.info` but do not fail the test.
+
+### Testing Approach
+
+`RunCard` uses a three-file test split driven by what each environment can observe:
+
+1. **`RunCard.test.ts`** (jsdom, static imports, real timers) — composition, status-color mapping, data-status PascalCase, five-leaf presence, `RunCardProps` type shape.
+2. **`RunCard.duration.test.ts`** (jsdom, static imports + direct `uiStore.nowMs` assignment) — AC12.7 reactivity proof: spy on `computeDurationText`, assert zero re-invocations when nowMs changes on a static-Completed card; contrast test on an InProgress card confirms the spy mechanism itself works.
+3. **`RunCard.browser.test.ts`** (Vitest browser project, Playwright chromium) — computed-style assertions: `::before` accent width/position/color, `animation-name: pulse-border` gating, keyframe inspection via `CSSKeyframesRule`, `--halo-color` dark-vs-light divergence, density-attribute `display: none` flipping, DOM identity preservation across density toggle.
+
+AC12.1–AC12.6 are covered by `frontend/src/lib/format/duration-text.test.ts` as input→output tests on the pure function. Extracting the formula eliminated the need for `vi.resetModules()` + fake-timer + dynamic-import choreography (which would break `@testing-library/svelte`'s shared Svelte runtime).
+
+Playwright E2E coverage lives in `frontend/e2e/run-cards.test.ts` — four scenarios using `page.clock.install` / `page.clock.fastForward` for deterministic wall-clock control, driven by the shared WS-mock harness in `frontend/e2e/lib/ws-mock.ts`.
 
 ## Store Architecture
 
@@ -271,18 +341,36 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/components/SettingsPopover.svelte` — Connected: theme selector popover, reads/writes UIStore
 
 **Kanban Board Components**
-- `frontend/src/lib/components/KanbanBoard.svelte` — Connected: tri-state (loading/empty/grid), reads RunStore + ConnectionStore, passes sorted arrays to KanbanColumn
-- `frontend/src/lib/components/KanbanColumn.svelte` — Pure: receives sorted runs array, renders ColumnHeader + animated RunCard list, applies crossfade/flip animations
+- `frontend/src/lib/components/KanbanBoard.svelte` — Connected: tri-state (loading/empty/grid), reads RunStore + ConnectionStore, threads `runStore.jobStatsByRun` to each KanbanColumn
+- `frontend/src/lib/components/KanbanColumn.svelte` — Pure: receives sorted runs + `jobStatsByRun: ReadonlyMap<bigint, JobStats>`, renders ColumnHeader + `<div role="listitem">` wrappers around RunCards, enforces total-map invariant via throwing `requireJobStats` guard, applies crossfade/flip animations
 - `frontend/src/lib/components/ColumnHeader.svelte` — Pure: uppercase column label + count badge
-- `frontend/src/lib/components/RunCard.svelte` — Pure: displays displayTitle, status indicator, applies animations on mount/removal
+- `frontend/src/lib/components/RunCard.svelte` — Composition root: root `<article>` with `--status-color` inline, `data-status` PascalCase attribute, state-aware `$derived.by` duration, five-child tree, scoped `<style>` with 3px `::before` accent bar
+
+**Run Card Leaves**
+- `frontend/src/lib/components/StatusIcon.svelte` — Pure: 11-StatusKey exhaustive glyph + sr-only label; color inherited from parent's `--status-color`
+- `frontend/src/lib/components/JobHeader.svelte` — Pure: StatusIcon + displayTitle + durationText row with tabular-nums
+- `frontend/src/lib/components/JobMeta.svelte` — Pure: `repo · branch` secondary line with null-branch elision and aria-hidden middle dot
+- `frontend/src/lib/components/ProgressBar.svelte` — Pure: track + scaleX fill, `role="progressbar"`, `aria-valuetext="No jobs"` when total is 0
+- `frontend/src/lib/components/RunnerLabel.svelte` — Pure: `⊞ summary` monospace line; renders nothing when summary is null
 
 **Animation Module**
 - `frontend/src/lib/animations/kanban-transitions.ts` — Shared crossfade instance, motion constants, reduced-motion support
+
+**Format Utilities (pure functions)**
+- `frontend/src/lib/format/duration.ts` — `formatDuration({kind: 'static' | 'live', ...})` discriminated API; `MM:SS` under 1h, `H:MM:SS` at or above; negative-diff clamp
+- `frontend/src/lib/format/duration-text.ts` — `computeDurationText(run, nowMs): string` — state-aware formula (Queued/InProgress/Completed+ActionRequired live, Completed non-ActionRequired static); called by RunCard's `$derived.by`
+- `frontend/src/lib/format/runners.ts` — `summarizeRunners(jobs): string | null` — single-name / `N runners` / null branches
+- `frontend/src/lib/format/status-key.ts` — `StatusKey` union (11 values) + `resolveStatusKey(run)` normalisation at the boundary
+
+**Design Token Tests**
+- `frontend/src/lib/design-tokens.test.ts` — Automated WCAG contrast gate: 11 status tokens × 4 themes × 2 modes against `--surface`. AA misses fail the test; AAA misses emit `console.info`.
 
 **Testing**
 - `frontend/src/lib/**/*.test.ts` — Vitest unit tests for stores, connection, and dispatcher
 - `frontend/src/lib/**/*.browser.test.ts` — Vitest browser-mode tests for animations, store reactivity, reduced-motion support
 - `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
+- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `sendWS` — intercepts `new WebSocket('/v1/ws')` and bridges store updates via `window.__stores`
 - `frontend/e2e/theme.test.ts` — Playwright E2E tests: app rendering, theme switching, dark/light mode toggle
 - `frontend/e2e/app-shell.test.ts` — Playwright E2E tests: app shell rendering, runner bar pool indicators, connection indicator, settings popover
 - `frontend/e2e/kanban.test.ts` — Playwright E2E tests: kanban board lifecycle, card movement, WebSocket event handling
+- `frontend/e2e/run-cards.test.ts` — Playwright E2E tests: RunCard rendering across all 11 StatusKeys, Queued→InProgress transition, density toggle, `page.clock.fastForward` duration updates

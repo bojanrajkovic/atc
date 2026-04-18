@@ -1,7 +1,16 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it, vi } from 'vitest'
+import type { JobStats } from '$lib/stores/runs.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+
+const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
+
+function statsMapFor(runs: readonly WorkflowRun[]): Map<bigint, JobStats> {
+  const m = new Map<bigint, JobStats>()
+  for (const r of runs) m.set(r.id, emptyStats)
+  return m
+}
 
 describe('KanbanColumn (browser mode)', () => {
   describe('kanban-board.AC5.3: animate:flip is applied to cards', () => {
@@ -15,6 +24,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
           runs,
+          jobStatsByRun: statsMapFor(runs),
         },
       })
 
@@ -30,6 +40,7 @@ describe('KanbanColumn (browser mode)', () => {
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
         runs,
+        jobStatsByRun: statsMapFor(runs),
       })
 
       // Wait for animation/reactivity
@@ -65,6 +76,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
           runs: runs1,
+          jobStatsByRun: statsMapFor(runs1),
         },
       })
 
@@ -75,6 +87,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'IN_PROGRESS',
           headingId: 'kanban-col-in-progress',
           runs: runs2,
+          jobStatsByRun: statsMapFor(runs2),
         },
       })
 
@@ -90,12 +103,14 @@ describe('KanbanColumn (browser mode)', () => {
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
         runs: runs1,
+        jobStatsByRun: statsMapFor(runs1),
       })
 
       await rerender2({
         label: 'IN_PROGRESS',
         headingId: 'kanban-col-in-progress',
         runs: runs2,
+        jobStatsByRun: statsMapFor(runs2),
       })
 
       // Wait for crossfade animation to settle
@@ -123,6 +138,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
           runs,
+          jobStatsByRun: statsMapFor(runs),
         },
       })
 
@@ -136,6 +152,7 @@ describe('KanbanColumn (browser mode)', () => {
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
         runs,
+        jobStatsByRun: statsMapFor(runs),
       })
 
       await new Promise((r) => setTimeout(r, 50))
@@ -165,6 +182,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
           runs: runsA,
+          jobStatsByRun: statsMapFor(runsA),
         },
       })
 
@@ -175,6 +193,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'IN_PROGRESS',
           headingId: 'kanban-col-in-progress',
           runs: runsB,
+          jobStatsByRun: statsMapFor(runsB),
         },
       })
 
@@ -192,12 +211,14 @@ describe('KanbanColumn (browser mode)', () => {
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
         runs: runsA,
+        jobStatsByRun: statsMapFor(runsA),
       })
 
       await rerenderB({
         label: 'IN_PROGRESS',
         headingId: 'kanban-col-in-progress',
         runs: runsB,
+        jobStatsByRun: statsMapFor(runsB),
       })
 
       // Wait for crossfade animations to settle
@@ -246,6 +267,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
           runs: runsA,
+          jobStatsByRun: statsMapFor(runsA),
         },
       })
 
@@ -256,6 +278,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'IN_PROGRESS',
           headingId: 'kanban-col-in-progress',
           runs: runsB,
+          jobStatsByRun: statsMapFor(runsB),
         },
       })
 
@@ -271,12 +294,14 @@ describe('KanbanColumn (browser mode)', () => {
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
         runs: runsA,
+        jobStatsByRun: statsMapFor(runsA),
       })
 
       await rerenderB({
         label: 'IN_PROGRESS',
         headingId: 'kanban-col-in-progress',
         runs: runsB,
+        jobStatsByRun: statsMapFor(runsB),
       })
 
       // Wait for the transition to complete
@@ -319,6 +344,7 @@ describe('KanbanColumn (browser mode)', () => {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
           runs,
+          jobStatsByRun: statsMapFor(runs),
         },
       })
 
@@ -333,6 +359,7 @@ describe('KanbanColumn (browser mode)', () => {
         label: 'QUEUED',
         headingId: 'kanban-col-queued',
         runs,
+        jobStatsByRun: statsMapFor(runs),
       })
 
       // Wait for the reorder to complete

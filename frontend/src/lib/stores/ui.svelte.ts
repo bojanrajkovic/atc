@@ -8,7 +8,21 @@ class UIStore {
   density = $state<Density>('comfortable')
   selectedRunId = $state<bigint | null>(null)
 
+  /**
+   * Current epoch milliseconds, refreshed once per second.
+   * Read this in live-duration $derived blocks so a single shared timer
+   * feeds every card rather than each card spinning up its own setInterval.
+   */
+  nowMs = $state(Date.now())
+
+  private nowMsInterval: ReturnType<typeof setInterval> | null = null
+
   constructor() {
+    // Start the wall-clock timer for nowMs (bare constructor pattern, not in $effect.root)
+    this.nowMsInterval = setInterval(() => {
+      this.nowMs = Date.now()
+    }, 1000)
+
     // Restore persisted values from localStorage
     if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('atc-theme') as Theme | null
@@ -45,6 +59,13 @@ class UIStore {
         localStorage.setItem('atc-density', this.density)
       })
     })
+  }
+
+  destroy(): void {
+    if (this.nowMsInterval !== null) {
+      clearInterval(this.nowMsInterval)
+      this.nowMsInterval = null
+    }
   }
 }
 

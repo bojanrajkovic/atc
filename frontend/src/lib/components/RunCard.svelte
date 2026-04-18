@@ -1,41 +1,74 @@
-<!--
-  SCOPE CONTRACT — Sub-Phase 3 (Kanban Board skeleton)
-
-  This component is intentionally minimal. The following are FORBIDDEN
-  in this phase and will be added in Sub-Phase 4:
-
-  - Imports: StatusIcon, ProgressBar, JobMeta, JobHeader, RunnerLabel
-  - CSS: @keyframes rules (pulsating halo)
-  - JS: setInterval or recurring $effect (duration ticker)
-  - Content: progress bar, meta (repo/branch), runner label, accent bar
-
-  This comment is temporary. Remove it as Sub-Phase 4's first task.
--->
-
 <script lang="ts">
+  import type { JobStats } from '$lib/stores/runs.svelte'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+  import { computeDurationText } from '$lib/format/duration-text'
+  import { resolveStatusKey, type StatusKey } from '$lib/format/status-key'
+  import { uiStore } from '$lib/stores/ui.svelte'
+  import JobHeader from './JobHeader.svelte'
+  import JobMeta from './JobMeta.svelte'
+  import ProgressBar from './ProgressBar.svelte'
+  import RunnerLabel from './RunnerLabel.svelte'
 
-  let { run }: { run: WorkflowRun } = $props()
-
-  import type { RunStatus } from '$lib/types/generated/RunStatus'
-
-  const STATUS_MAP: Record<RunStatus, { color: string; glyph: string; label: string }> = {
-    Queued: { color: 'var(--queued)', glyph: '\u25CB', label: 'Queued' },
-    InProgress: {
-      color: 'var(--running)',
-      glyph: '\u25B6',
-      label: 'In Progress',
-    },
-    Completed: { color: 'var(--text-dim)', glyph: '\u25CF', label: 'Completed' },
+  export interface RunCardProps {
+    run: WorkflowRun
+    jobStats: JobStats
   }
 
-  const statusInfo = $derived(STATUS_MAP[run.status])
+  let { run, jobStats }: RunCardProps = $props()
+
+  const statusKey: StatusKey = $derived(resolveStatusKey(run))
+  const statusColor = $derived(resolveStatusColorVar(statusKey))
+
+  /**
+   * State-aware duration. The static-Completed branch inside
+   * computeDurationText does NOT read nowMs — so when `run` is a Completed
+   * non-ActionRequired run, the short-circuit returns before `uiStore.nowMs`
+   * is accessed and the derivation never registers nowMs as a dependency
+   * (AC10.7 + AC12.7).
+   */
+  const durationText = $derived.by<string>(() => {
+    if (run.status === 'Completed' && run.conclusion !== 'ActionRequired') {
+      return computeDurationText(run, 0)
+    }
+    return computeDurationText(run, uiStore.nowMs)
+  })
+
+  function resolveStatusColorVar(key: StatusKey): string {
+    switch (key) {
+      case 'Queued':
+        return 'var(--queued)'
+      case 'InProgress':
+        return 'var(--running)'
+      case 'Success':
+        return 'var(--success)'
+      case 'Failure':
+        return 'var(--failed)'
+      case 'Cancelled':
+        return 'var(--cancelled)'
+      case 'TimedOut':
+        return 'var(--timed-out)'
+      case 'ActionRequired':
+        return 'var(--action-required)'
+      case 'StartupFailure':
+        return 'var(--failed)'
+      case 'Stale':
+        return 'var(--neutral)'
+      case 'Neutral':
+        return 'var(--neutral)'
+      case 'Skipped':
+        return 'var(--neutral)'
+    }
+  }
 </script>
 
-<div data-run-id={run.id} class="flex items-center gap-3">
-  <span class="inline-flex items-center gap-1" style="color: {statusInfo.color};">
-    <span>{statusInfo.glyph}</span>
-    <span class="sr-only">{statusInfo.label}</span>
-  </span>
-  <span class="text-sm">{run.displayTitle}</span>
-</div>
+<article
+  class="run-card"
+  data-run-id={run.id}
+  data-status={run.status}
+  style="--status-color: {statusColor};"
+>
+  <JobHeader displayTitle={run.displayTitle} statusValue={statusKey} {durationText} />
+  <JobMeta repo={run.repo} branch={run.branch} />
+  <ProgressBar completed={jobStats.completed} total={jobStats.total} />
+  <RunnerLabel summary={jobStats.runnerSummary} />
+</article>
