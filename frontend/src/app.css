@@ -27,6 +27,7 @@
   /* Accent */
   --accent: oklch(45% 0.2 250);
   --text-on-accent: white;
+  --halo-color: oklch(78% 0.16 80 / 0.25);
 
   /* Typography */
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -90,6 +91,21 @@
   --hue: 310;
 }
 
+/* Run card halo — running-state pulsating animation */
+.run-card[data-status="InProgress"] {
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 8px 2px var(--halo-color);
+  }
+}
+
 /* Light mode override */
 [data-mode="light"] {
   color-scheme: light;
@@ -108,6 +124,7 @@
   --action-required: oklch(50% 0.18 55);
   --neutral: oklch(45% 0.025 var(--hue));
   --accent: oklch(45% 0.2 250);
+  --halo-color: oklch(50% 0.15 80 / 0.50);
 }
 
 /* prefers-reduced-motion reset */
@@ -123,6 +140,11 @@
     transition-duration: 0.01ms !important;
     /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
     scroll-behavior: auto !important;
+  }
+
+  .run-card[data-status="InProgress"] {
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    animation: none !important;
   }
 }
 
