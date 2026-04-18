@@ -1,0 +1,55 @@
+import type { RunConclusion } from '$lib/types/generated/RunConclusion'
+import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+
+/** Every value of StatusKey, in the canonical order used by Status Symbols. */
+export const STATUS_KEYS = [
+  'Queued',
+  'InProgress',
+  'Success',
+  'Failure',
+  'Cancelled',
+  'TimedOut',
+  'ActionRequired',
+  'StartupFailure',
+  'Stale',
+  'Neutral',
+  'Skipped',
+] as const
+
+export type StatusKey = (typeof STATUS_KEYS)[number]
+
+/**
+ * Normalize a WorkflowRun's (status, conclusion) pair into one of 11 StatusKey values.
+ *
+ * Accepts Pick<WorkflowRun, 'status' | 'conclusion'> to allow lightweight test inputs.
+ */
+export function resolveStatusKey(run: Pick<WorkflowRun, 'status' | 'conclusion'>): StatusKey {
+  if (run.status === 'Queued') return 'Queued'
+  if (run.status === 'InProgress') return 'InProgress'
+  // run.status === 'Completed' — must be exhaustive on RunConclusion.
+  if (run.conclusion === null) return 'Cancelled' // bare-Completed fallback (see docs/design-plans/2026-04-17-run-cards.md, "StatusKey normalization at the boundary")
+  return conclusionToKey(run.conclusion)
+}
+
+function conclusionToKey(conclusion: RunConclusion): StatusKey {
+  switch (conclusion) {
+    case 'Success':
+      return 'Success'
+    case 'Failure':
+      return 'Failure'
+    case 'Cancelled':
+      return 'Cancelled'
+    case 'TimedOut':
+      return 'TimedOut'
+    case 'ActionRequired':
+      return 'ActionRequired'
+    case 'StartupFailure':
+      return 'StartupFailure'
+    case 'Stale':
+      return 'Stale'
+    case 'Neutral':
+      return 'Neutral'
+    case 'Skipped':
+      return 'Skipped'
+  }
+}
