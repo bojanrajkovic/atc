@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/svelte'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
+import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRunEvent } from '$lib/test-utils/factories'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 
@@ -19,6 +20,13 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
   beforeEach(() => {
     runStore.clear()
     connectionStore.status = 'connected'
+  })
+
+  // KanbanBoard → KanbanColumn → RunCard → uiStore chain starts a 1s
+  // setInterval at import time; stop it at file end so the timer does not
+  // outlive this suite.
+  afterAll(() => {
+    uiStore.destroy()
   })
 
   it('renders ProgressBar "Jobs N of M" reflecting jobStatsByRun for a threaded run', () => {

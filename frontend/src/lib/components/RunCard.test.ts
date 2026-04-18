@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/svelte'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import type { JobStats } from '$lib/stores/runs.svelte'
+import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 
 import type { RunCardProps } from './RunCard.svelte'
@@ -9,6 +10,12 @@ import RunCard from './RunCard.svelte'
 const emptyJobStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
 
 describe('RunCard', () => {
+  // Static import of RunCard transitively imports uiStore, whose constructor
+  // starts a 1s setInterval. File-scope afterAll stops it so the timer does
+  // not outlive this test file and leak into subsequent ones.
+  afterAll(() => {
+    uiStore.destroy()
+  })
   it('renders displayTitle as visible text (AC4.1)', () => {
     const run = createMockRun({ displayTitle: 'Test Workflow Run' })
     render(RunCard, {

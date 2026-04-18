@@ -1,6 +1,6 @@
 import { render } from '@testing-library/svelte'
 import { tick } from 'svelte'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as durationTextModule from '$lib/format/duration-text'
 import type { JobStats } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
@@ -33,6 +33,13 @@ describe('RunCard — AC12.7 static-Completed derivation does not re-evaluate on
   afterEach(() => {
     uiStore.nowMs = savedNowMs
     vi.restoreAllMocks()
+  })
+
+  // Static import of RunCard transitively imports uiStore, whose constructor
+  // starts a 1s setInterval. File-scope afterAll stops it so the timer does
+  // not outlive this test file and leak into subsequent ones.
+  afterAll(() => {
+    uiStore.destroy()
   })
 
   it('static-Completed card: computeDurationText not called when nowMs changes', async () => {

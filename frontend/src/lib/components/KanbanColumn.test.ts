@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/svelte'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import type { JobStats } from '$lib/stores/runs.svelte'
+import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
@@ -15,6 +16,12 @@ function statsMapFor(runs: readonly WorkflowRun[]): Map<bigint, JobStats> {
 }
 
 describe('KanbanColumn', () => {
+  // KanbanColumn → RunCard → uiStore chain starts a 1s setInterval at import
+  // time; stop it at file end so the timer does not outlive this suite.
+  afterAll(() => {
+    uiStore.destroy()
+  })
+
   describe('kanban-board.AC1.2: ARIA structure', () => {
     it('renders section with aria-labelledby referencing heading id', () => {
       const run = createMockRun()
