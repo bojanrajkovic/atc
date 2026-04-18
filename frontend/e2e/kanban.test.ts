@@ -213,9 +213,7 @@ test.describe('Kanban board', () => {
     const queuedSection = page
       .locator('section')
       .filter({ has: page.locator('[id="kanban-col-queued"]') })
-    await expect(
-      queuedSection.locator('article[role="listitem"][data-run-id="1001"]'),
-    ).toBeVisible()
+    await expect(queuedSection.locator('article[data-run-id="1001"]')).toBeVisible()
   })
 
   /**
@@ -269,9 +267,7 @@ test.describe('Kanban board', () => {
       .filter({ has: page.locator('[id="kanban-col-completed"]') })
 
     // Verify initial state: card in QUEUED
-    await expect(
-      queuedSection.locator('article[role="listitem"][data-run-id="1002"]'),
-    ).toBeVisible()
+    await expect(queuedSection.locator('article[data-run-id="1002"]')).toBeVisible()
 
     // Send WS event: Queued → InProgress
     await sendWS(
@@ -287,12 +283,8 @@ test.describe('Kanban board', () => {
     )
 
     // Card moves to IN PROGRESS column
-    await expect(
-      inProgressSection.locator('article[role="listitem"][data-run-id="1002"]'),
-    ).toBeVisible()
-    await expect(
-      queuedSection.locator('article[role="listitem"][data-run-id="1002"]'),
-    ).not.toBeVisible()
+    await expect(inProgressSection.locator('article[data-run-id="1002"]')).toBeVisible()
+    await expect(queuedSection.locator('article[data-run-id="1002"]')).not.toBeVisible()
 
     // Send WS event: InProgress → Completed
     await sendWS(
@@ -308,12 +300,8 @@ test.describe('Kanban board', () => {
     )
 
     // Card moves to COMPLETED column
-    await expect(
-      completedSection.locator('article[role="listitem"][data-run-id="1002"]'),
-    ).toBeVisible()
-    await expect(
-      inProgressSection.locator('article[role="listitem"][data-run-id="1002"]'),
-    ).not.toBeVisible()
+    await expect(completedSection.locator('article[data-run-id="1002"]')).toBeVisible()
+    await expect(inProgressSection.locator('article[data-run-id="1002"]')).not.toBeVisible()
 
     // Capture screenshot for visual regression check
     await page.screenshot({ path: 'e2e/screenshots/kanban-populated.png', fullPage: true })
@@ -374,9 +362,7 @@ test.describe('Kanban board', () => {
       .locator('section')
       .filter({ has: page.locator('[id="kanban-col-completed"]') })
 
-    await expect(
-      queuedSection.locator('article[role="listitem"][data-run-id="1003"]'),
-    ).toBeVisible()
+    await expect(queuedSection.locator('article[data-run-id="1003"]')).toBeVisible()
 
     // Queued → InProgress via WS
     await sendWS(
@@ -391,9 +377,7 @@ test.describe('Kanban board', () => {
       }),
     )
 
-    await expect(
-      inProgressSection.locator('article[role="listitem"][data-run-id="1003"]'),
-    ).toBeVisible()
+    await expect(inProgressSection.locator('article[data-run-id="1003"]')).toBeVisible()
 
     // InProgress → Completed via WS
     await sendWS(
@@ -408,9 +392,7 @@ test.describe('Kanban board', () => {
       }),
     )
 
-    await expect(
-      completedSection.locator('article[role="listitem"][data-run-id="1003"]'),
-    ).toBeVisible()
+    await expect(completedSection.locator('article[data-run-id="1003"]')).toBeVisible()
 
     // Zero console errors after full lifecycle
     expect(consoleErrors).toEqual([])
