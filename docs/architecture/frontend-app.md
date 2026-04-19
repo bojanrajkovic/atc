@@ -219,7 +219,7 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 - Holds a map of `WorkflowRun` objects indexed by `RunId` (bigint)
 - Receives and applies `RunEvent` mutations from the WebSocket
 - Derives: three sorted arrays (`queuedRuns` ascending by createdAt, `inProgressRuns` descending by runStartedAt, `completedRuns` descending by updatedAt), each with run.id tie-breaker; direct lexical ISO-8601 comparison, no Date parsing
-- Uses Svelte 5 `$state<Map>` with in-place mutation via `Map.set()`
+- Uses `SvelteMap<bigint, WorkflowRun>` and `SvelteMap<bigint, Job[]>` from `svelte/reactivity` (not plain `$state<Map>`). `SvelteMap` tracks reads per-key and per-iteration: `.get(key)` / `.set(key, v)` invalidates only consumers of that key; `.values()` / `.keys()` / `.size` invalidate iterating consumers on any structural change. Plain class fields (no `$state` wrapper) — reassignment is intentionally *not* supported since it would replace the reactive instance and silently drop subscribers; mutations go through `.set()` / `.delete()` / `.clear()`. `loadSnapshot` and `clear` call `.clear()` then re-populate, preserving the reactive instance's identity.
 
 **RunnersStore** (`src/lib/stores/runners.svelte.ts`)
 - Holds a map of `Runner` objects indexed by `RunnerId` (string)

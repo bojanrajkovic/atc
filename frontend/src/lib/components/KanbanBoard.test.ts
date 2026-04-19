@@ -104,19 +104,12 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     // Initial state: 0 of 2 jobs complete.
     expect(screen.getByText('Jobs 0 of 2')).toBeTruthy()
 
-    // Fire a JobEvent AFTER mount. Same reactivity caveat as applyRunEvent:
-    // $state<Map>.set() / delete() calls don't reliably reach subscribers in
-    // this setup, so mirror the E2E WS-bridge workaround of reassigning the
-    // underlying Map to force the derivation graph to re-run.
     runStore.applyJobEvent(completedJob(1n, 7n, 'build'))
-    runStore.jobsByRun = new Map(runStore.jobsByRun)
     await tick()
 
     expect(screen.getByText('Jobs 1 of 2')).toBeTruthy()
 
-    // Complete the second job. Subscriber must update again.
     runStore.applyJobEvent(completedJob(2n, 7n, 'test'))
-    runStore.jobsByRun = new Map(runStore.jobsByRun)
     await tick()
 
     expect(screen.getByText('Jobs 2 of 2')).toBeTruthy()
@@ -128,13 +121,6 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     // Connected + zero runs → empty state.
     expect(screen.getByText('No workflows yet.')).toBeTruthy()
 
-    // Apply a new run after mount. applyRunEvent uses `this.runs.set()` — in
-    // the current Svelte 5 setup, $state<Map> does not reliably propagate
-    // plain `.set()` mutations to subscribers; the E2E WS bridge works
-    // around this by reassigning `runStore.runs = new Map(runStore.runs)`
-    // after each apply call (see frontend/e2e/lib/ws-mock.ts). We mirror
-    // that pattern here so this test reflects the same contract production
-    // relies on.
     runStore.applyRunEvent(
       createMockRunEvent({
         runId: 99n,
@@ -142,7 +128,6 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
         displayTitle: 'New CI run',
       }),
     )
-    runStore.runs = new Map(runStore.runs)
     await tick()
 
     expect(screen.getByText('New CI run')).toBeTruthy()
