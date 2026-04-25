@@ -166,22 +166,32 @@ async fn webhook_handler(
             // must never receive events that aren't reflected in the store.
             let mut seq_guard = state.seq.lock().await;
 
-            let store_ok = match &*event {
-                atc_github::WebhookEvent::Run(envelope) => state
-                    .store
-                    .apply_run_event(envelope.clone())
-                    .await
-                    .map_err(|e| tracing::warn!(error = %e, "store run transition warning"))
-                    .is_ok(),
-                atc_github::WebhookEvent::Job(envelope) => state
-                    .store
-                    .apply_job_event(envelope.clone())
-                    .await
-                    .map_err(|e| tracing::warn!(error = %e, "store job transition warning"))
-                    .is_ok(),
+            // Outer Option: Some(...) = apply succeeded and we should broadcast;
+            //               None = apply failed, skip broadcast (AC1.5).
+            // Inner Option in Some(...): Some(vec) for Job events (AC1.1),
+            //                             None for Run events (AC1.3).
+            let pool_stats_after: Option<Option<Vec<atc_core::RunnerPoolStats>>> = match &*event {
+                atc_github::WebhookEvent::Run(envelope) => {
+                    match state.store.apply_run_event(envelope.clone()).await {
+                        Ok(_) => Some(None),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "store run transition warning");
+                            None
+                        }
+                    }
+                }
+                atc_github::WebhookEvent::Job(envelope) => {
+                    match state.store.apply_job_event(envelope.clone()).await {
+                        Ok(_) => Some(Some(state.store.pool_stats().await)),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "store job transition warning");
+                            None
+                        }
+                    }
+                }
             };
 
-            if store_ok {
+            if let Some(pool_stats_after) = pool_stats_after {
                 let seq = *seq_guard;
                 *seq_guard += 1;
 
@@ -192,7 +202,11 @@ async fn webhook_handler(
                 // to that seq have already been broadcast — no window
                 // where a snapshot cursor advertises an event that WS
                 // clients haven't received yet.
-                let seq_event = SeqEvent { seq, event: *event };
+                let seq_event = SeqEvent {
+                    seq,
+                    event: *event,
+                    pool_stats_after,
+                };
                 let _ = state.webhook_tx.send(seq_event);
 
                 tracing::info!(event_type, seq, "event processed");

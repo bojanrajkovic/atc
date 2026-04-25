@@ -97,6 +97,7 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
+          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(event, (_key, value) => {
@@ -177,6 +178,7 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
+          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(staleEvent, (_key, value) => {
@@ -256,6 +258,7 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
+          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(freshEvent, (_key, value) => {
@@ -276,6 +279,143 @@ describe('ConnectionManager', () => {
 
       // The fresh event (seq 10 >= snapshot seq 10) should have been dispatched
       expect(runStore.runs.has(777n)).toBe(true)
+
+      manager.destroy()
+    })
+  })
+
+  describe('live-pool-stats.AC2.4: Success — Pre-connect buffer applies sidecars after snapshot', () => {
+    it('buffers Job events with poolStatsAfter sidecars and applies them after snapshot load', async () => {
+      const manager = new ConnectionManager(baseUrl)
+      let resolveStateFetch: (() => void) | undefined
+
+      const statePromise = new Promise<void>((resolve) => {
+        resolveStateFetch = () => resolve()
+      })
+
+      server.use(
+        http.get('http://localhost:*/v1/state', async () => {
+          await statePromise
+          return HttpResponse.json(snapshotToJSON(defaultSnapshot))
+        }),
+      )
+
+      const connectPromise = manager.connect()
+
+      // Give the WebSocket time to connect
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      // Get the mock WebSocket and send two Job events with poolStatsAfter sidecars while state fetch is paused
+      const ws = MockWebSocket.getLastInstance()
+      if (ws) {
+        // First Job event with poolStatsAfter = P1
+        const event1: SeqEvent = {
+          seq: 10n,
+          event: {
+            type: 'Job',
+            data: {
+              jobId: 100n,
+              runId: 1n,
+              org: 'org',
+              repo: 'repo',
+              name: 'test-job-1',
+              createdAt: new Date().toISOString(),
+              startedAt: null,
+              completedAt: null,
+              action: {
+                type: 'Queued',
+                data: {
+                  labels: ['ubuntu-latest'],
+                  steps: [],
+                },
+              },
+            },
+          },
+          poolStatsAfter: [
+            {
+              labels: ['ubuntu-latest'],
+              queued: 1,
+              running: 0,
+              groupName: 'GitHub Actions',
+              isElastic: true,
+              total: null,
+            },
+          ],
+        }
+
+        ws.receiveMessage(
+          JSON.stringify(event1, (_key, value) => {
+            if (typeof value === 'bigint') {
+              return value.toString()
+            }
+            return value
+          }),
+        )
+
+        // Second Job event with poolStatsAfter = P2
+        const event2: SeqEvent = {
+          seq: 11n,
+          event: {
+            type: 'Job',
+            data: {
+              jobId: 101n,
+              runId: 1n,
+              org: 'org',
+              repo: 'repo',
+              name: 'test-job-2',
+              createdAt: new Date().toISOString(),
+              startedAt: null,
+              completedAt: null,
+              action: {
+                type: 'InProgress',
+                data: {
+                  runner: null,
+                  labels: ['ubuntu-latest'],
+                  steps: [],
+                },
+              },
+            },
+          },
+          poolStatsAfter: [
+            {
+              labels: ['ubuntu-latest'],
+              queued: 0,
+              running: 1,
+              groupName: 'GitHub Actions',
+              isElastic: true,
+              total: null,
+            },
+          ],
+        }
+
+        ws.receiveMessage(
+          JSON.stringify(event2, (_key, value) => {
+            if (typeof value === 'bigint') {
+              return value.toString()
+            }
+            return value
+          }),
+        )
+      }
+
+      // Resolve the state fetch, triggering buffer replay
+      resolveStateFetch?.()
+
+      await connectPromise
+
+      // After buffer flush, runnerStore.pools should equal P2 (last sidecar wins)
+      const expectedP2 = [
+        {
+          labels: ['ubuntu-latest'],
+          queued: 0,
+          running: 1,
+          groupName: 'GitHub Actions',
+          isElastic: true,
+          total: null,
+        },
+      ]
+
+      expect(runnerStore.pools).toEqual(expectedP2)
 
       manager.destroy()
     })

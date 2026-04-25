@@ -1,6 +1,6 @@
+import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
-import type { WebhookEvent } from '$lib/types/generated/WebhookEvent'
 
 class EventDispatcher {
   private buffer: SeqEvent[] = []
@@ -32,11 +32,12 @@ class EventDispatcher {
     const events = this.buffer
     this.buffer = []
     for (const seqEvent of events) {
-      this.routeEvent(seqEvent.event)
+      this.routeEvent(seqEvent)
     }
   }
 
-  private routeEvent(event: WebhookEvent): void {
+  private routeEvent(seqEvent: SeqEvent): void {
+    const event = seqEvent.event
     switch (event.type) {
       case 'Run':
         runStore.applyRunEvent(event.data)
@@ -44,6 +45,9 @@ class EventDispatcher {
       case 'Job':
         runStore.applyJobEvent(event.data)
         break
+    }
+    if (seqEvent.poolStatsAfter != null) {
+      runnerStore.loadPools(seqEvent.poolStatsAfter)
     }
   }
 }

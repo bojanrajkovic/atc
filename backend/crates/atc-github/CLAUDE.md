@@ -1,6 +1,6 @@
 # CLAUDE.md -- atc-github
 
-Last verified: 2026-04-14
+Last verified: 2026-04-18
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (GitHub API Integration section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -30,6 +30,7 @@ These rules are enforced by the implementation and verified by 42 tests:
 - **Serializable public types:** `WebhookEvent` and `ParseResult` derive `Clone`, `Serialize` (and `Deserialize` for `WebhookEvent`), enabling downstream broadcast and REST snapshot serialization.
 - **Adjacently-tagged serialization:** `WebhookEvent` uses `#[serde(tag = "type", content = "data")]` to produce discriminated unions in JSON/TypeScript (e.g., `{ type: "Run", data: { ... } }`).
 - **Forward compatibility:** Serde types use default deny-unknown-fields=false, so new GitHub payload fields are silently ignored.
+- **Empty `runner_group_name` normalization:** `make_runner_info` normalizes `runner_group_name: Some("")` to `None` — downstream never observes an empty-string group name.
 
 ## TypeScript Generation
 

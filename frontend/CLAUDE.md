@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-04-18
+Last verified: 2026-04-24
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -14,14 +14,15 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 |------|------|
 | `src/App.svelte` | Root component: mounts ConnectionManager and AppShell |
 | `src/app.css` | Design tokens (`@theme` block), OKLCH color definitions, base styles |
-| `src/main.ts` | Vite entry point |
+| `src/main.ts` | Vite entry point; exports stores to `window.__stores` bridge for E2E test harness |
+| `src/vite-env.d.ts` | Window type augmentation for `__stores?: { runStore?, connectionStore?, runnerStore? }` |
 | `vite.config.ts` | Build config with Tailwind v4 and Svelte plugins |
 | `vitest.config.ts` | Vitest workspace config (delegates to unit and browser projects) |
 | `vitest.config.unit.ts` | Vitest unit project (jsdom, `*.test.ts`) |
 | `vitest.config.browser.ts` | Vitest browser project (Playwright chromium, `*.browser.test.ts`) |
 | `playwright.config.ts` | Playwright E2E test configuration with webServer auto-start |
 | `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts` |
-| `src/lib/dispatcher.ts` | EventDispatcher — buffers WebSocket events and flushes to stores via requestAnimationFrame |
+| `src/lib/dispatcher.ts` | EventDispatcher — routes primitive WebSocket events to stores; applies `SeqEvent.poolStatsAfter` sidecar to `runnerStore` when present; batches via requestAnimationFrame |
 | `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
 | `src/lib/types/generated/` | ts-rs generated TypeScript types from Rust (do not hand-edit) |
 | `src/lib/components/AppShell.svelte` | Layout container: 100dvh flex column with TopBar + slot for content area |
@@ -48,7 +49,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/format/runners.ts` | Pure: `summarizeRunners(jobs)` — single / `N runners` / null branches |
 | `src/lib/format/status-key.ts` | Pure: `StatusKey` union (11 values) + `resolveStatusKey(run)` |
 | `src/lib/design-tokens.test.ts` | WCAG contrast gate: 11 status tokens × 4 themes × 2 modes against `--surface` |
-| `e2e/lib/ws-mock.ts` | Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `sendWS` |
+| `e2e/lib/ws-mock.ts` | Shared Playwright harness: `makeRunEvent`, `makeJobSeqEvent` (with `poolStatsAfter` sidecar), `sendWS` (routes Job and Run events through `window.__stores` bridge) |
 | `e2e/` | Playwright E2E tests (theme, app shell, kanban board, run cards) |
 
 ## Store Additions (Sub-Phase 4)

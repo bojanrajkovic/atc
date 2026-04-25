@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-04-15
+Last verified: 2026-04-18
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -49,6 +49,7 @@ These rules are enforced by the state machine and verified by 105 tests includin
 - **Snapshot step semantics:** `Vec<Step>` is fully replaced on each `JobEvent`, never appended.
 - **Index consistency:** Every job appears in exactly one `jobs_by_repo` set and one `jobs_by_run` set. `assert_invariants()` (test-only) verifies this.
 - **Eviction safety:** Only completed jobs past TTL are evicted. Active jobs are never removed regardless of age.
+- **Sort order:** Both `snapshot()` and `pool_stats()` return `Vec<RunnerPoolStats>` sorted by `labels` lexicographically — canonical wire order for broadcast sidecar and REST snapshot.
 
 ## Testing
 

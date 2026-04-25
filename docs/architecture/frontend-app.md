@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-18
+Last verified: 2026-04-24
 
 ## Purpose
 
@@ -221,10 +221,11 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 - Derives: three sorted arrays (`queuedRuns` ascending by createdAt, `inProgressRuns` descending by runStartedAt, `completedRuns` descending by updatedAt), each with run.id tie-breaker; direct lexical ISO-8601 comparison, no Date parsing
 - Uses `SvelteMap<bigint, WorkflowRun>` and `SvelteMap<bigint, Job[]>` from `svelte/reactivity` (not plain `$state<Map>`). `SvelteMap` tracks reads per-key and per-iteration: `.get(key)` / `.set(key, v)` invalidates only consumers of that key; `.values()` / `.keys()` / `.size` invalidate iterating consumers on any structural change. Plain class fields (no `$state` wrapper) — reassignment is intentionally *not* supported since it would replace the reactive instance and silently drop subscribers; mutations go through `.set()` / `.delete()` / `.clear()`. `loadSnapshot` and `clear` call `.clear()` then re-populate, preserving the reactive instance's identity.
 
-**RunnersStore** (`src/lib/stores/runners.svelte.ts`)
-- Holds a map of `Runner` objects indexed by `RunnerId` (string)
-- Receives and applies `RunnerEvent` mutations
-- Provides runner lookup and aggregates
+**RunnerStore** (`src/lib/stores/runners.svelte.ts`)
+- Holds `pools: RunnerPoolStats[]` as a single `$state`-backed array (single consumer — `TopBar`'s pool indicator `$derived` reads the whole collection).
+- Exposes `loadPools(pools)` (wholesale replace) and `clear()`. No per-pool update path — intentional: see `feedback_cow_semantics.md` for why `RunnerStore` uses wholesale replace while `RunStore` uses `SvelteMap` per-key reactivity.
+- Seeded at WS-connect from `StateSnapshot.poolStats` via `runnerStore.loadPools(snapshot.poolStats)` in `ConnectionManager`.
+- Updated live by the `SeqEvent.poolStatsAfter` sidecar: `EventDispatcher.routeEvent` calls `runnerStore.loadPools(seqEvent.poolStatsAfter)` whenever it is non-null. Null sidecars (Run events) are not applied. Derivation stays on the backend; the frontend never recomputes `RunnerPoolStats`.
 
 **UIStore** (`src/lib/stores/ui.svelte.ts`)
 - Transient UI state: selected run ID, selected tab, theme, dark/light mode

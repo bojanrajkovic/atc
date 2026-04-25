@@ -117,7 +117,7 @@ fn make_runner_info(job: &super::types::WorkflowJobData) -> Option<RunnerInfo> {
         id,
         name,
         group_id: job.runner_group_id,
-        group_name: job.runner_group_name.clone(),
+        group_name: job.runner_group_name.clone().filter(|s| !s.is_empty()),
     })
 }
 

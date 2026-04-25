@@ -423,10 +423,10 @@ impl StateStore {
             }
         }
 
-        (
-            QueryResult { runs, jobs },
-            stats_map.into_values().collect(),
-        )
+        let mut pool_stats: Vec<RunnerPoolStats> = stats_map.into_values().collect();
+        pool_stats.sort_by(|a, b| a.labels.cmp(&b.labels));
+
+        (QueryResult { runs, jobs }, pool_stats)
     }
 
     /// Compute runner pool statistics from current job state.
@@ -479,7 +479,9 @@ impl StateStore {
             }
         }
 
-        stats_map.into_values().collect()
+        let mut pool_stats: Vec<RunnerPoolStats> = stats_map.into_values().collect();
+        pool_stats.sort_by(|a, b| a.labels.cmp(&b.labels));
+        pool_stats
     }
 
     /// Evict completed jobs that have exceeded the configured TTL.

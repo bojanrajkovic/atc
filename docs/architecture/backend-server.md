@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-14 (updated 2026-04-14 for ts-rs type generation and adjacently-tagged serde)
+Last verified: 2026-04-18 (updated 2026-04-18 for SeqEvent pool_stats_after sidecar, runner pool sort order, and runner_group_name normalization)
 
 ## Purpose
 
@@ -22,6 +22,10 @@ The `atc-github` crate provides webhook payload parsing and HMAC-SHA256 signatur
   - `Parsed(WebhookEvent)` — Successfully translated to either `WebhookEvent::Run(RunEventEnvelope)` or `WebhookEvent::Job(JobEventEnvelope)`
   - `Skipped { event_type }` — Unrecognized event type (e.g., `push`, `pull_request`) — not an error, simply not ATC's concern
   - `Err(ParseError)` — Deserialization or translation failed
+
+#### Empty `runner_group_name` Normalization
+
+GitHub webhook payloads may carry `runner_group_name: ""` (an empty string). The translation layer normalizes this to `None` in the resulting `RunnerInfo.group_name` before constructing domain events. This ensures downstream consumers (store, pool derivation, frontend TopBar) never observe `group_name: Some("")` — an empty string and `None` are semantically equivalent and are treated uniformly as "no group."
 
 ### Error Type Contracts
 
@@ -96,6 +100,10 @@ Runner pool statistics are derived views over the store's current state, compute
 - `queued: u32` — Count of queued jobs waiting for a runner in this pool
 - `is_elastic: bool` — Derived from runner `group_id == Some(0)`. Indicates whether the pool auto-scales (true) or has fixed capacity (false).
 - `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented in a later phase. Used to render capacity bars and thresholds in the frontend.
+
+#### Sort Order Contract
+
+Both `StateStore::snapshot()` and `StateStore::pool_stats()` return `Vec<RunnerPoolStats>` sorted by `labels` lexicographically. This is the canonical wire order: sorting is centralized at these two producer sites so that every consumer (broadcast sidecar, REST endpoint, tests) receives the same deterministic order without re-sorting. Clients can perform exact `Vec<RunnerPoolStats>` equality comparisons without additional sorting logic.
 
 ## Key Decisions
 
@@ -209,6 +217,28 @@ struct AppState {
 - **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
 - **`seq`** — `tokio::sync::Mutex<u64>` counter incremented on each successfully ingested event. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across store mutation + seq assignment, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches commit order, and REST snapshots are consistent with their cursor. Resets on server restart (consistent with in-memory-only store).
+
+### SeqEvent Sidecar Contract
+
+`SeqEvent` is the broadcast envelope carrying domain events and derived state:
+
+```rust
+pub struct SeqEvent {
+    pub seq: u64,
+    pub event: WebhookEvent,
+    pub pool_stats_after: Option<Vec<RunnerPoolStats>>,
+}
+```
+
+The `pool_stats_after` field carries a snapshot of the runner pool state taken under the seq mutex immediately after a successful event application:
+
+- **Job events:** `pool_stats_after` is `Some(vec)`, containing the pool stats at that moment. The vector is sorted by `labels` lexicographically per the sort-order contract.
+- **Run events:** `pool_stats_after` is `None`. Run-level state does not derive into pool stats.
+- **Failed transitions:** No broadcast occurs and no `SeqEvent` is emitted. Clients never receive events that are not reflected in the store (per AC1.5).
+
+**Wire format:** The field serializes as `poolStatsAfter` (camelCase) in JSON via `#[serde(rename_all = "camelCase")]`. TypeScript types are emitted as `poolStatsAfter: Array<RunnerPoolStats> | null` via ts-rs.
+
+**Interaction with REST:** The `pool_stats_after` sidecar complements (does not replace) `StateSnapshot.poolStats` on `GET /v1/state`. The REST snapshot is the only consistent, atomic view a client needs to bootstrap; the WebSocket sidecar is an incremental, real-time feed for display updates.
 
 ### Webhook Ingestion (`POST /v1/webhooks/github`)
 
