@@ -1,0 +1,1417 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATC · Sub-Phase 5 Interactivity Explorer</title>
+    <style>
+      :root {
+        --hue: 155;
+        color-scheme: dark;
+
+        --bg: oklch(12% 0.063 var(--hue));
+        --surface: oklch(16% 0.063 var(--hue));
+        --surface-raised: oklch(20% 0.06 var(--hue));
+        --border: oklch(25% 0.055 var(--hue));
+
+        --text: oklch(85% 0.028 var(--hue));
+        --text-dim: oklch(72% 0.03 var(--hue));
+
+        --queued: oklch(72% 0.15 250);
+        --running: oklch(78% 0.16 80);
+        --success: oklch(72% 0.16 155);
+        --failed: oklch(72% 0.17 25);
+        --cancelled: var(--text-dim);
+        --timed-out: oklch(76% 0.18 40);
+        --action-required: oklch(88% 0.2 55);
+        --neutral: oklch(60% 0.025 var(--hue));
+
+        --accent: oklch(45% 0.2 250);
+        --halo-color: oklch(78% 0.16 80 / 0.25);
+
+        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+
+        --text-xs: 0.625rem;
+        --text-sm: 0.75rem;
+        --text-base: 0.9375rem;
+
+        --leading-tight: 1.2;
+        --leading-normal: 1.5;
+        --tracking-wide: 0.1em;
+
+        --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+        --duration-fast: 100ms;
+        --duration-normal: 200ms;
+        --duration-slow: 400ms;
+      }
+
+      [data-theme="warm"] { --hue: 70; }
+      [data-theme="radar"] { --hue: 155; }
+      [data-theme="violet"] { --hue: 280; }
+      [data-theme="pink"] { --hue: 310; }
+
+      [data-mode="light"] {
+        color-scheme: light;
+        --bg: oklch(97% 0.022 var(--hue));
+        --surface: oklch(99% 0.013 var(--hue));
+        --surface-raised: oklch(92% 0.025 var(--hue));
+        --border: oklch(85% 0.028 var(--hue));
+        --text: oklch(16% 0.063 var(--hue));
+        --text-dim: oklch(40% 0.04 var(--hue));
+        --queued: oklch(45% 0.18 250);
+        --running: oklch(45% 0.15 80);
+        --success: oklch(42% 0.15 155);
+        --failed: oklch(48% 0.18 25);
+        --timed-out: oklch(49% 0.18 40);
+        --action-required: oklch(50% 0.18 55);
+        --neutral: oklch(45% 0.025 var(--hue));
+        --halo-color: oklch(50% 0.15 80 / 0.5);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        line-height: var(--leading-normal);
+        font-size: var(--text-sm);
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        transition:
+          background var(--duration-normal) var(--ease-out-expo),
+          color var(--duration-normal) var(--ease-out-expo);
+      }
+
+      /* ===== Header / Controls ===== */
+      .controls {
+        display: grid;
+        gap: 14px 22px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .control {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .control-label {
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: var(--tracking-wide);
+        text-transform: uppercase;
+        color: var(--text-dim);
+      }
+
+      .seg {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 4px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .seg button {
+        appearance: none;
+        background: transparent;
+        color: var(--text-dim);
+        font: inherit;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 6px 10px;
+        border: 0;
+        border-radius: 5px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all var(--duration-fast) var(--ease-out-expo);
+      }
+      .seg button:hover {
+        color: var(--text);
+      }
+      .seg button[aria-pressed="true"] {
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: 0 1px 0 0 var(--border);
+      }
+
+      select {
+        appearance: none;
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 28px 6px 10px;
+        font: inherit;
+        font-size: var(--text-sm);
+        cursor: pointer;
+        background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+          linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+        background-position: calc(100% - 14px) calc(50% - 2px), calc(100% - 9px) calc(50% - 2px);
+        background-size: 5px 5px;
+        background-repeat: no-repeat;
+      }
+
+      .hints {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        letter-spacing: 0.02em;
+      }
+      .hints kbd {
+        font-family: var(--mono);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: var(--text-xs);
+      }
+
+      /* ===== Canvas ===== */
+      .canvas {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 0;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .board {
+        padding: 20px;
+        border-right: 1px solid var(--border);
+        overflow: auto;
+        background: var(--bg);
+      }
+
+      .column-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 14px;
+      }
+      .column-title {
+        font-size: var(--text-xs);
+        font-weight: 700;
+        letter-spacing: var(--tracking-wide);
+        text-transform: uppercase;
+        color: var(--text-dim);
+      }
+      .column-count {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .cards {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* ===== Run card ===== */
+      .run-card {
+        position: relative;
+        padding: 12px 14px 12px 18px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        cursor: pointer;
+        font-size: var(--text-sm);
+        line-height: var(--leading-tight);
+        overflow: hidden;
+        transition:
+          transform var(--duration-fast) var(--ease-out-expo),
+          box-shadow var(--duration-fast) var(--ease-out-expo),
+          border-color var(--duration-fast) var(--ease-out-expo);
+      }
+      .run-card:hover {
+        border-color: oklch(35% 0.05 var(--hue));
+        transform: translateY(-1px);
+      }
+      .run-card[aria-selected="true"] {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .run-card::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--status-color);
+      }
+      .run-card[data-status="InProgress"] {
+        animation: pulse-border 2s ease-in-out infinite;
+      }
+      @keyframes pulse-border {
+        0%, 100% { box-shadow: 0 0 0 0 transparent; }
+        50% { box-shadow: 0 0 8px 2px var(--halo-color); }
+      }
+
+      .run-card-name {
+        font-size: var(--text-base);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0 0 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .run-card-status-icon {
+        flex: 0 0 auto;
+        font-family: var(--mono);
+        font-size: 14px;
+        color: var(--status-color);
+        line-height: 1;
+      }
+      .run-card-title {
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .run-card-duration {
+        flex: 0 0 auto;
+        font-family: var(--mono);
+        font-size: var(--text-sm);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-dim);
+      }
+      .run-card-meta {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        margin-bottom: 6px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .run-card-progress {
+        margin-top: 8px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--surface-raised);
+        overflow: hidden;
+      }
+      .run-card-progress-fill {
+        height: 100%;
+        background: var(--status-color);
+        transform-origin: left;
+        transition: transform var(--duration-slow) var(--ease-out-expo);
+      }
+      .run-card-runner {
+        margin-top: 8px;
+        display: flex;
+        gap: 6px;
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+      .run-card-runner::before { content: "⊞"; }
+
+      /* Compact density */
+      [data-density="compact"] .run-card {
+        padding: 6px 10px 6px 14px;
+      }
+      [data-density="compact"] .run-card-meta,
+      [data-density="compact"] .run-card-progress,
+      [data-density="compact"] .run-card-runner {
+        display: none;
+      }
+      [data-density="compact"] .run-card-name {
+        font-size: var(--text-sm);
+        margin: 0;
+      }
+
+      /* Click-expand inline reveal */
+      .run-card-expanded {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--border);
+        display: none;
+      }
+      .run-card[data-expanded="true"] .run-card-expanded {
+        display: block;
+        animation: fade-in var(--duration-normal) var(--ease-out-expo);
+      }
+      @keyframes fade-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .job-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: var(--text-xs);
+      }
+      .job-row-icon {
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .job-row-name {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .job-row-duration {
+        font-family: var(--mono);
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ===== Hover popover ===== */
+      .hover-popover {
+        position: fixed;
+        z-index: 100;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: var(--text-xs);
+        line-height: var(--leading-tight);
+        box-shadow: 0 12px 30px -8px oklch(8% 0.063 var(--hue) / 0.5);
+        min-width: 220px;
+        max-width: 280px;
+        opacity: 0;
+        transform: translateY(8px);
+        pointer-events: none;
+        transition: opacity var(--duration-normal) var(--ease-out-expo),
+          transform var(--duration-normal) var(--ease-out-expo);
+      }
+      .hover-popover[data-open="true"] {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .hover-popover-title {
+        font-size: var(--text-sm);
+        font-weight: 600;
+        margin: 0 0 6px;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .hover-popover-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 2px 0;
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+      }
+      .hover-popover-row strong {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .hover-popover-hint {
+        margin-top: 8px;
+        padding-top: 6px;
+        border-top: 1px solid var(--border);
+        font-size: 10px;
+        color: var(--text-dim);
+        letter-spacing: 0.04em;
+      }
+      .hover-popover-hint kbd {
+        font-family: var(--mono);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 0 4px;
+        font-size: 10px;
+      }
+
+      /* ===== Slide-over panel ===== */
+      .panel-area {
+        position: relative;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      .panel-placeholder {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: var(--text-dim);
+        font-size: var(--text-sm);
+        text-align: center;
+        padding: 24px;
+        pointer-events: none;
+      }
+      .panel-placeholder strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .panel-placeholder span {
+        display: block;
+        margin-top: 8px;
+        font-size: var(--text-xs);
+        opacity: 0.7;
+      }
+
+      .panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(640px, 100%);
+        background: var(--surface);
+        border-left: 1px solid var(--border);
+        box-shadow: -10px 0 40px -12px oklch(8% 0.063 var(--hue) / 0.4);
+        transform: translateX(100%);
+        transition: transform var(--duration-slow) var(--ease-out-expo);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .panel[data-open="true"] {
+        transform: translateX(0);
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .panel-header-text { min-width: 0; flex: 1; }
+      .panel-eyebrow {
+        font-size: var(--text-xs);
+        letter-spacing: var(--tracking-wide);
+        color: var(--text-dim);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .panel-eyebrow .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--status-color);
+        flex: 0 0 auto;
+      }
+      .panel-title {
+        font-size: var(--text-base);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0;
+        line-height: var(--leading-tight);
+      }
+      .panel-close {
+        appearance: none;
+        background: transparent;
+        border: 1px solid transparent;
+        color: var(--text-dim);
+        font-size: 18px;
+        line-height: 1;
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .panel-close:hover {
+        color: var(--text);
+        border-color: var(--border);
+        background: var(--surface-raised);
+      }
+      .panel-close:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .panel-body {
+        flex: 1 1 auto;
+        overflow: auto;
+      }
+
+      /* metadata grid (used by single-pane and tabbed metadata tab) */
+      .meta-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px 16px;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .meta-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .meta-label {
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-wide);
+        color: var(--text-dim);
+      }
+      .meta-value {
+        font-size: var(--text-sm);
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .meta-value.mono { font-family: var(--mono); }
+
+      /* tabs */
+      .tabs {
+        display: flex;
+        gap: 2px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--border);
+      }
+      .tabs button {
+        appearance: none;
+        background: transparent;
+        color: var(--text-dim);
+        font: inherit;
+        font-size: var(--text-sm);
+        font-weight: 500;
+        padding: 12px 14px 11px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        margin-bottom: -1px;
+      }
+      .tabs button[aria-selected="true"] {
+        color: var(--text);
+        border-bottom-color: var(--accent);
+      }
+
+      /* job + steps list (shared) */
+      .job-block {
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .job-block:last-child { border-bottom: 0; }
+      .job-block-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .job-block-icon {
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1;
+        color: var(--status-color);
+      }
+      .job-block-name {
+        font-size: var(--text-base);
+        font-weight: 600;
+        margin: 0;
+        flex: 1;
+        letter-spacing: -0.01em;
+      }
+      .job-block-duration {
+        font-family: var(--mono);
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .step-list {
+        list-style: none;
+        margin: 0;
+        padding: 0 0 0 4px;
+        position: relative;
+      }
+      .step-list::before {
+        content: "";
+        position: absolute;
+        left: 9px;
+        top: 8px;
+        bottom: 8px;
+        width: 1px;
+        background: var(--border);
+      }
+      .step-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 0;
+        font-size: var(--text-sm);
+        position: relative;
+      }
+      .step-icon {
+        flex: 0 0 auto;
+        width: 18px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+        font-family: var(--mono);
+        font-size: 11px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 50%;
+        color: var(--status-color);
+        z-index: 1;
+      }
+      .step-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .step-duration {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* two-pane layout */
+      .panel-twopane {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        height: 100%;
+      }
+      .panel-twopane-rail {
+        border-right: 1px solid var(--border);
+        background: var(--bg);
+        overflow: auto;
+      }
+      .panel-twopane-job {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .panel-twopane-job[aria-selected="true"] {
+        background: var(--surface);
+      }
+      .panel-twopane-job-name {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: var(--text-sm);
+        font-weight: 500;
+      }
+      .panel-twopane-job-name .icon {
+        color: var(--status-color);
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .panel-twopane-job-meta {
+        font-size: 10px;
+        color: var(--text-dim);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .panel-twopane-content {
+        overflow: auto;
+      }
+
+      /* ===== Output ===== */
+      .output {
+        padding: 14px 24px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+      }
+      .spec {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        white-space: pre-wrap;
+        line-height: var(--leading-normal);
+      }
+      .spec strong { color: var(--text); font-weight: 600; }
+      .copy-btn {
+        appearance: none;
+        background: var(--accent);
+        color: white;
+        border: 0;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font: inherit;
+        font-size: var(--text-sm);
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: filter var(--duration-fast) var(--ease-out-expo);
+      }
+      .copy-btn:hover { filter: brightness(1.1); }
+      .copy-btn:active { transform: translateY(1px); }
+      .copy-btn[data-state="copied"] {
+        background: var(--success);
+      }
+
+      /* prefers-reduced-motion */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      /* small visual polish: scrollbars */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: var(--surface-raised);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+    </style>
+  </head>
+  <body data-theme="radar" data-mode="dark" data-density="comfortable">
+    <header class="controls" aria-label="Playground controls">
+      <div class="control">
+        <span class="control-label">Theme</span>
+        <div class="seg" role="group" aria-label="Theme">
+          <button data-control="theme" data-value="warm">Warm</button>
+          <button data-control="theme" data-value="radar" aria-pressed="true">Radar</button>
+          <button data-control="theme" data-value="violet">Violet</button>
+          <button data-control="theme" data-value="pink">Pink</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Mode</span>
+        <div class="seg" role="group" aria-label="Mode">
+          <button data-control="mode" data-value="dark" aria-pressed="true">Dark</button>
+          <button data-control="mode" data-value="light">Light</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Density</span>
+        <div class="seg" role="group" aria-label="Density">
+          <button data-control="density" data-value="comfortable" aria-pressed="true">Comfortable</button>
+          <button data-control="density" data-value="compact">Compact</button>
+        </div>
+      </div>
+
+      <div class="control" style="grid-column: span 2;">
+        <span class="control-label">Inline preview trigger</span>
+        <div class="seg" role="group" aria-label="Inline preview trigger">
+          <button data-control="trigger" data-value="none">None</button>
+          <button data-control="trigger" data-value="hover">Hover popover</button>
+          <button data-control="trigger" data-value="click-expand">Click-expand</button>
+          <button data-control="trigger" data-value="hover-peek+click-panel" aria-pressed="true">Hover peek + click panel</button>
+        </div>
+      </div>
+
+      <div class="control" style="grid-column: span 2;">
+        <span class="control-label">Slide-over layout</span>
+        <div class="seg" role="group" aria-label="Slide-over layout">
+          <button data-control="layout" data-value="single-pane" aria-pressed="true">Single-pane</button>
+          <button data-control="layout" data-value="two-pane">Two-pane</button>
+          <button data-control="layout" data-value="tabbed">Tabbed</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Preset</span>
+        <select id="preset">
+          <option value="">Custom</option>
+          <option value="linear-style">Linear-style (peek + panel, single-pane)</option>
+          <option value="click-only">Click-only minimal (none, single-pane)</option>
+          <option value="click-expand">Click-expand inline (compact)</option>
+          <option value="two-pane-explorer">Two-pane explorer (none, two-pane)</option>
+          <option value="tabbed-compact">Tabbed compact</option>
+        </select>
+      </div>
+
+      <div class="hints">
+        <span><kbd>Cmd</kbd>+<kbd>K</kbd> opens palette</span>
+        <span><kbd>Esc</kbd> closes panel</span>
+        <span>Click a card to open detail panel</span>
+        <span style="margin-left: auto; opacity: 0.7;">Cosmetic — keyboard handlers not wired</span>
+      </div>
+    </header>
+
+    <main class="canvas">
+      <section class="board" aria-label="Kanban column">
+        <div class="column-header">
+          <span class="column-title">In Progress</span>
+          <span class="column-count" id="column-count">4</span>
+        </div>
+        <div class="cards" id="cards" role="list"></div>
+      </section>
+
+      <section class="panel-area" aria-label="Detail panel area">
+        <div class="panel-placeholder" id="placeholder">
+          <strong>Click a card to open the detail panel</strong>
+          <span>The slide-over animates in from the right at 400ms ease-out-expo. Toggle layout above to compare single-pane / two-pane / tabbed.</span>
+        </div>
+        <aside class="panel" id="panel" data-open="false" role="dialog" aria-modal="false" aria-labelledby="panel-title">
+          <div id="panel-content"></div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="output" aria-label="Spec output">
+      <div class="spec" id="spec"></div>
+      <button class="copy-btn" id="copy" type="button">Copy spec</button>
+    </footer>
+
+    <div class="hover-popover" id="popover" role="tooltip" aria-hidden="true"></div>
+
+    <script>
+      // ===== Sample data =====
+      const RUNS = [
+        {
+          id: 1,
+          repo: "bojanrajkovic/atc",
+          branch: "feat/cmd-palette",
+          title: "Add command palette and detail panel",
+          status: "Queued",
+          duration: null,
+          runner: null,
+          startedAt: "—",
+          queuedAt: "14:38",
+          commitSha: "a3f8c41",
+          event: "pull_request",
+          actor: "bojanrajkovic",
+          progress: 0,
+          jobs: [
+            { name: "lint", status: "Queued", duration: null, steps: [
+              { name: "Set up job", status: "Queued", duration: null },
+              { name: "Checkout code", status: "Queued", duration: null },
+              { name: "Install pnpm", status: "Queued", duration: null },
+              { name: "Run biome lint", status: "Queued", duration: null },
+            ]},
+            { name: "test", status: "Queued", duration: null, steps: [
+              { name: "Set up job", status: "Queued", duration: null },
+              { name: "Checkout code", status: "Queued", duration: null },
+              { name: "Install dependencies", status: "Queued", duration: null },
+              { name: "Run vitest", status: "Queued", duration: null },
+              { name: "Upload coverage", status: "Queued", duration: null },
+            ]},
+          ],
+        },
+        {
+          id: 2,
+          repo: "bojanrajkovic/atc",
+          branch: "feat/run-cards",
+          title: "Render kanban cards with status colors",
+          status: "InProgress",
+          duration: "3:42",
+          runner: "ubuntu-24.04",
+          startedAt: "14:32",
+          queuedAt: "14:31",
+          commitSha: "b7e2d18",
+          event: "push",
+          actor: "bojanrajkovic",
+          progress: 0.62,
+          jobs: [
+            { name: "lint", status: "Completed", duration: "1:12", steps: [
+              { name: "Set up job", status: "Completed", duration: "0:08" },
+              { name: "Checkout code", status: "Completed", duration: "0:04" },
+              { name: "Install pnpm", status: "Completed", duration: "0:42" },
+              { name: "Run biome lint", status: "Completed", duration: "0:18" },
+            ]},
+            { name: "test", status: "InProgress", duration: "2:30", steps: [
+              { name: "Set up job", status: "Completed", duration: "0:09" },
+              { name: "Checkout code", status: "Completed", duration: "0:05" },
+              { name: "Install dependencies", status: "Completed", duration: "0:48" },
+              { name: "Run vitest", status: "InProgress", duration: "1:28" },
+              { name: "Upload coverage", status: "Queued", duration: null },
+            ]},
+          ],
+        },
+        {
+          id: 3,
+          repo: "bojanrajkovic/atc",
+          branch: "main",
+          title: "Release v0.5.0",
+          status: "Completed",
+          duration: "8:14",
+          runner: "ubuntu-24.04",
+          startedAt: "14:12",
+          queuedAt: "14:11",
+          commitSha: "c9a4f2e",
+          event: "release",
+          actor: "release-please[bot]",
+          progress: 1,
+          jobs: [
+            { name: "release", status: "Completed", duration: "8:14", steps: [
+              { name: "Set up job", status: "Completed", duration: "0:11" },
+              { name: "Checkout code", status: "Completed", duration: "0:06" },
+              { name: "Install Rust toolchain", status: "Completed", duration: "0:18" },
+              { name: "Build release artifacts", status: "Completed", duration: "5:22" },
+              { name: "Run smoke tests", status: "Completed", duration: "2:15" },
+              { name: "Publish to crates.io", status: "Completed", duration: "0:20" },
+            ]},
+          ],
+        },
+        {
+          id: 4,
+          repo: "bojanrajkovic/atc",
+          branch: "feat/types",
+          title: "Generate TypeScript types from Rust",
+          status: "Failed",
+          duration: "0:38",
+          runner: "ubuntu-24.04",
+          startedAt: "14:24",
+          queuedAt: "14:23",
+          commitSha: "d1c5a9f",
+          event: "pull_request",
+          actor: "bojanrajkovic",
+          progress: 0.42,
+          jobs: [
+            { name: "check", status: "Failed", duration: "0:38", steps: [
+              { name: "Set up job", status: "Completed", duration: "0:08" },
+              { name: "Checkout code", status: "Completed", duration: "0:05" },
+              { name: "Install Rust toolchain", status: "Completed", duration: "0:18" },
+              { name: "Run cargo check", status: "Failed", duration: "0:07" },
+            ]},
+          ],
+        },
+      ];
+
+      const STATUS = {
+        Queued: { symbol: "◐", color: "var(--queued)" },
+        InProgress: { symbol: "▶", color: "var(--running)" },
+        Completed: { symbol: "✓", color: "var(--success)" },
+        Failed: { symbol: "✗", color: "var(--failed)" },
+        TimedOut: { symbol: "⏱", color: "var(--timed-out)" },
+        Cancelled: { symbol: "⊘", color: "var(--cancelled)" },
+      };
+
+      const DEFAULTS = {
+        theme: "radar",
+        mode: "dark",
+        density: "comfortable",
+        trigger: "hover-peek+click-panel",
+        layout: "single-pane",
+        selectedRunId: null,
+        expandedRunId: null,
+        activeTab: "steps",
+        twopaneJobIdx: 0,
+      };
+
+      const PRESETS = {
+        "linear-style":      { trigger: "hover-peek+click-panel", layout: "single-pane", density: "comfortable" },
+        "click-only":        { trigger: "none",                   layout: "single-pane", density: "comfortable" },
+        "click-expand":      { trigger: "click-expand",           layout: "single-pane", density: "compact" },
+        "two-pane-explorer": { trigger: "none",                   layout: "two-pane",    density: "comfortable" },
+        "tabbed-compact":    { trigger: "none",                   layout: "tabbed",      density: "compact" },
+      };
+
+      const state = { ...DEFAULTS };
+
+      // ===== Render helpers =====
+      function escape(s) {
+        return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+      }
+
+      function jobsCount(run) {
+        return run.jobs.length;
+      }
+      function stepsTotal(run) {
+        return run.jobs.reduce((n, j) => n + j.steps.length, 0);
+      }
+      function stepsCompleted(run) {
+        return run.jobs.reduce((n, j) => n + j.steps.filter((s) => s.status === "Completed").length, 0);
+      }
+
+      // ===== Card rendering =====
+      function renderCard(run) {
+        const s = STATUS[run.status];
+        const showProgress =
+          run.status === "InProgress" || run.status === "Failed" || run.status === "Completed";
+        const expandedHTML =
+          state.trigger === "click-expand" && state.expandedRunId === run.id
+            ? renderJobRows(run)
+            : "";
+        return `
+          <article class="run-card"
+                   data-run-id="${run.id}"
+                   data-status="${run.status}"
+                   data-expanded="${state.expandedRunId === run.id}"
+                   aria-selected="${state.selectedRunId === run.id}"
+                   role="listitem"
+                   style="--status-color: ${s.color}">
+            <h3 class="run-card-name">
+              <span class="run-card-status-icon" aria-hidden="true">${s.symbol}</span>
+              <span class="run-card-title">${escape(run.title)}</span>
+              ${run.duration ? `<span class="run-card-duration">${run.duration}</span>` : ""}
+            </h3>
+            <div class="run-card-meta">${escape(run.repo)} · ${escape(run.branch)}</div>
+            ${showProgress
+              ? `<div class="run-card-progress" role="progressbar"
+                      aria-valuenow="${stepsCompleted(run)}" aria-valuemax="${stepsTotal(run)}"
+                      aria-valuetext="${stepsCompleted(run)} of ${stepsTotal(run)} steps">
+                  <div class="run-card-progress-fill" style="transform: scaleX(${run.progress})"></div>
+                </div>` : ""}
+            ${run.runner
+              ? `<div class="run-card-runner">${escape(run.runner)}</div>`
+              : ""}
+            ${expandedHTML ? `<div class="run-card-expanded">${expandedHTML}</div>` : ""}
+          </article>
+        `;
+      }
+
+      function renderJobRows(run) {
+        return run.jobs.map((job) => {
+          const s = STATUS[job.status];
+          return `
+            <div class="job-row" style="--status-color: ${s.color}">
+              <span class="job-row-icon" style="color: var(--status-color)">${s.symbol}</span>
+              <span class="job-row-name">${escape(job.name)}</span>
+              <span class="job-row-duration">${job.duration ?? "—"}</span>
+            </div>
+          `;
+        }).join("");
+      }
+
+      // ===== Hover popover =====
+      function renderPopover(run) {
+        const s = STATUS[run.status];
+        const showHint =
+          state.trigger === "hover-peek+click-panel"
+            ? `<div class="hover-popover-hint">Click for full panel · <kbd>Enter</kbd> to open</div>`
+            : "";
+        return `
+          <h4 class="hover-popover-title" style="--status-color: ${s.color}">
+            <span style="color: var(--status-color); font-family: var(--mono);">${s.symbol}</span>
+            ${escape(run.title)}
+          </h4>
+          <div class="hover-popover-row"><span>Status</span><strong>${run.status}</strong></div>
+          <div class="hover-popover-row"><span>Jobs</span><strong>${jobsCount(run)}</strong></div>
+          <div class="hover-popover-row"><span>Steps complete</span><strong>${stepsCompleted(run)}/${stepsTotal(run)}</strong></div>
+          ${run.duration ? `<div class="hover-popover-row"><span>Duration</span><strong>${run.duration}</strong></div>` : ""}
+          ${run.runner ? `<div class="hover-popover-row"><span>Runner</span><strong>${escape(run.runner)}</strong></div>` : ""}
+          ${showHint}
+        `;
+      }
+
+      // ===== Panel rendering =====
+      function renderPanel(run) {
+        if (!run) return "";
+        const s = STATUS[run.status];
+        const headerHTML = `
+          <div class="panel-header" style="--status-color: ${s.color}">
+            <div class="panel-header-text">
+              <div class="panel-eyebrow">
+                <span class="dot"></span>
+                <span>${run.status}</span>
+                <span style="opacity: 0.6">·</span>
+                <span style="font-family: var(--mono); text-transform: none; letter-spacing: 0;">${escape(run.repo)} · ${escape(run.branch)}</span>
+              </div>
+              <h2 class="panel-title" id="panel-title">${escape(run.title)}</h2>
+            </div>
+            <button class="panel-close" type="button" aria-label="Close detail panel" data-action="close">×</button>
+          </div>
+        `;
+
+        const metaHTML = `
+          <dl class="meta-grid">
+            <div class="meta-cell"><dt class="meta-label">Commit</dt><dd class="meta-value mono">${run.commitSha}</dd></div>
+            <div class="meta-cell"><dt class="meta-label">Event</dt><dd class="meta-value">${escape(run.event)}</dd></div>
+            <div class="meta-cell"><dt class="meta-label">Triggered by</dt><dd class="meta-value">${escape(run.actor)}</dd></div>
+            <div class="meta-cell"><dt class="meta-label">Started</dt><dd class="meta-value mono">${run.startedAt}</dd></div>
+            <div class="meta-cell"><dt class="meta-label">Duration</dt><dd class="meta-value mono">${run.duration ?? "—"}</dd></div>
+            <div class="meta-cell"><dt class="meta-label">Runner</dt><dd class="meta-value mono">${escape(run.runner ?? "—")}</dd></div>
+          </dl>
+        `;
+
+        const stepsHTML = run.jobs.map(renderJob).join("");
+
+        if (state.layout === "single-pane") {
+          return headerHTML + metaHTML + `<div class="panel-body">${stepsHTML}</div>`;
+        }
+        if (state.layout === "tabbed") {
+          const tab = state.activeTab;
+          return (
+            headerHTML +
+            `<div class="tabs" role="tablist">
+              <button role="tab" data-action="tab" data-tab="steps" aria-selected="${tab === "steps"}">Steps</button>
+              <button role="tab" data-action="tab" data-tab="metadata" aria-selected="${tab === "metadata"}">Metadata</button>
+              <button role="tab" data-action="tab" data-tab="runner" aria-selected="${tab === "runner"}">Runner</button>
+            </div>
+            <div class="panel-body" role="tabpanel">
+              ${tab === "steps" ? stepsHTML : ""}
+              ${tab === "metadata" ? metaHTML : ""}
+              ${tab === "runner" ? renderRunnerPanel(run) : ""}
+            </div>`
+          );
+        }
+        // two-pane
+        const job = run.jobs[Math.min(state.twopaneJobIdx, run.jobs.length - 1)];
+        const railHTML = run.jobs.map((j, idx) => {
+          const js = STATUS[j.status];
+          return `
+            <div class="panel-twopane-job" data-action="select-job" data-idx="${idx}" aria-selected="${idx === state.twopaneJobIdx}" style="--status-color: ${js.color}">
+              <div class="panel-twopane-job-name">
+                <span class="icon">${js.symbol}</span>
+                ${escape(j.name)}
+              </div>
+              <div class="panel-twopane-job-meta">${j.status} · ${j.duration ?? "—"}</div>
+            </div>
+          `;
+        }).join("");
+        return (
+          headerHTML +
+          `<div class="panel-twopane">
+            <div class="panel-twopane-rail">${railHTML}</div>
+            <div class="panel-twopane-content">${renderJob(job)}</div>
+          </div>`
+        );
+      }
+
+      function renderJob(job) {
+        const s = STATUS[job.status];
+        return `
+          <section class="job-block" style="--status-color: ${s.color}">
+            <div class="job-block-header">
+              <span class="job-block-icon">${s.symbol}</span>
+              <h3 class="job-block-name">${escape(job.name)}</h3>
+              <span class="job-block-duration">${job.duration ?? "—"}</span>
+            </div>
+            <ol class="step-list">
+              ${job.steps.map((step) => {
+                const ss = STATUS[step.status];
+                return `
+                  <li class="step-item" style="--status-color: ${ss.color}">
+                    <span class="step-icon">${ss.symbol}</span>
+                    <span class="step-name">${escape(step.name)}</span>
+                    <span class="step-duration">${step.duration ?? "—"}</span>
+                  </li>
+                `;
+              }).join("")}
+            </ol>
+          </section>
+        `;
+      }
+
+      function renderRunnerPanel(run) {
+        return `
+          <div style="padding: 14px 20px;">
+            <div class="meta-cell" style="margin-bottom: 12px;">
+              <dt class="meta-label">Runner label</dt>
+              <dd class="meta-value mono" style="font-size: var(--text-base); white-space: normal;">${escape(run.runner ?? "—")}</dd>
+            </div>
+            <div class="meta-cell" style="margin-bottom: 12px;">
+              <dt class="meta-label">Pool</dt>
+              <dd class="meta-value">GitHub Actions · default</dd>
+            </div>
+            <div class="meta-cell" style="margin-bottom: 12px;">
+              <dt class="meta-label">Capacity</dt>
+              <dd class="meta-value mono">2 / 8 running</dd>
+            </div>
+            <div class="meta-cell">
+              <dt class="meta-label">Queue depth</dt>
+              <dd class="meta-value mono">3 waiting · est. 1m 12s</dd>
+            </div>
+          </div>
+        `;
+      }
+
+      // ===== Spec / prompt =====
+      function updateSpec() {
+        const triggerLabel = {
+          "none": "None — click opens slide-over directly",
+          "hover": "Hover popover — quick metadata on hover, click opens panel",
+          "click-expand": "Click-expand — first click expands inline, second opens panel",
+          "hover-peek+click-panel": "Hover peek + click panel — both surfaces co-exist",
+        }[state.trigger];
+        const layoutLabel = {
+          "single-pane": "Single-pane — header + metadata grid + flat job/step list",
+          "two-pane": "Two-pane — left rail of jobs, right pane of selected job's steps",
+          "tabbed": "Tabbed — Steps / Metadata / Runner tabs",
+        }[state.layout];
+        const text = `Inline preview trigger: ${triggerLabel}
+Slide-over layout: ${layoutLabel}
+Theme: ${state.theme} · ${state.mode} · ${state.density}`;
+        document.getElementById("spec").innerHTML =
+          `<strong>Inline preview trigger:</strong> ${triggerLabel}\n<strong>Slide-over layout:</strong> ${layoutLabel}\n<strong>Theme:</strong> ${state.theme} · ${state.mode} · ${state.density}`;
+        return text;
+      }
+
+      // ===== Render full =====
+      function render() {
+        // root attributes drive token swap
+        document.body.setAttribute("data-theme", state.theme);
+        document.body.setAttribute("data-mode", state.mode);
+        document.body.setAttribute("data-density", state.density);
+
+        // segmented buttons
+        document.querySelectorAll("[data-control]").forEach((btn) => {
+          const ctrl = btn.dataset.control;
+          const val = btn.dataset.value;
+          btn.setAttribute("aria-pressed", state[ctrl] === val ? "true" : "false");
+        });
+
+        // cards
+        document.getElementById("cards").innerHTML = RUNS.map(renderCard).join("");
+        document.getElementById("column-count").textContent = String(RUNS.length);
+
+        // panel
+        const run = RUNS.find((r) => r.id === state.selectedRunId);
+        document.getElementById("panel-content").innerHTML = renderPanel(run);
+        const panel = document.getElementById("panel");
+        panel.setAttribute("data-open", run ? "true" : "false");
+        panel.setAttribute("aria-modal", run ? "true" : "false");
+        document.getElementById("placeholder").style.display = run ? "none" : "grid";
+
+        updateSpec();
+      }
+
+      // ===== Interactions =====
+      let popoverTimer = null;
+      function hidePopover() {
+        clearTimeout(popoverTimer);
+        const pop = document.getElementById("popover");
+        pop.setAttribute("data-open", "false");
+        pop.setAttribute("aria-hidden", "true");
+      }
+      function showPopover(card) {
+        const id = Number(card.dataset.runId);
+        const run = RUNS.find((r) => r.id === id);
+        if (!run) return;
+        const pop = document.getElementById("popover");
+        pop.innerHTML = renderPopover(run);
+        const rect = card.getBoundingClientRect();
+        // anchor to the right edge of the card
+        const left = Math.min(window.innerWidth - 290, rect.right + 12);
+        const top = Math.min(window.innerHeight - 200, rect.top);
+        pop.style.left = `${left}px`;
+        pop.style.top = `${top}px`;
+        pop.setAttribute("data-open", "true");
+        pop.setAttribute("aria-hidden", "false");
+      }
+
+      document.addEventListener("click", (e) => {
+        const ctrl = e.target.closest("[data-control]");
+        if (ctrl) {
+          state[ctrl.dataset.control] = ctrl.dataset.value;
+          if (ctrl.dataset.control === "trigger") {
+            // reset expanded if switching off click-expand
+            if (state.trigger !== "click-expand") state.expandedRunId = null;
+            hidePopover();
+          }
+          if (ctrl.dataset.control === "layout") {
+            state.activeTab = "steps";
+            state.twopaneJobIdx = 0;
+          }
+          document.getElementById("preset").value = "";
+          render();
+          return;
+        }
+
+        const action = e.target.closest("[data-action]");
+        if (action) {
+          if (action.dataset.action === "close") {
+            state.selectedRunId = null;
+            render();
+          }
+          if (action.dataset.action === "tab") {
+            state.activeTab = action.dataset.tab;
+            render();
+          }
+          if (action.dataset.action === "select-job") {
+            state.twopaneJobIdx = Number(action.dataset.idx);
+            render();
+          }
+          return;
+        }
+
+        const card = e.target.closest(".run-card");
+        if (card) {
+          const id = Number(card.dataset.runId);
+          if (state.trigger === "click-expand" && state.expandedRunId !== id) {
+            state.expandedRunId = id;
+            hidePopover();
+            render();
+            return;
+          }
+          // open panel: any other trigger, or second click on already-expanded
+          state.selectedRunId = id;
+          state.expandedRunId = null;
+          hidePopover();
+          render();
+        }
+      });
+
+      document.addEventListener("mouseover", (e) => {
+        const card = e.target.closest(".run-card");
+        if (!card) return;
+        if (state.trigger !== "hover" && state.trigger !== "hover-peek+click-panel") return;
+        clearTimeout(popoverTimer);
+        popoverTimer = setTimeout(() => showPopover(card), 250);
+      });
+      document.addEventListener("mouseout", (e) => {
+        const card = e.target.closest(".run-card");
+        if (!card) return;
+        if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+        hidePopover();
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          if (state.selectedRunId !== null) {
+            state.selectedRunId = null;
+            render();
+          } else if (state.expandedRunId !== null) {
+            state.expandedRunId = null;
+            render();
+          }
+          hidePopover();
+        }
+      });
+
+      document.getElementById("preset").addEventListener("change", (e) => {
+        const key = e.target.value;
+        if (!key) return;
+        const p = PRESETS[key];
+        Object.assign(state, p);
+        state.selectedRunId = null;
+        state.expandedRunId = null;
+        render();
+      });
+
+      document.getElementById("copy").addEventListener("click", async () => {
+        const spec = updateSpec();
+        try {
+          await navigator.clipboard.writeText(spec);
+        } catch {
+          // ignore — older browsers will just see the visual feedback fail
+        }
+        const btn = document.getElementById("copy");
+        btn.dataset.state = "copied";
+        btn.textContent = "Copied!";
+        setTimeout(() => {
+          btn.dataset.state = "";
+          btn.textContent = "Copy spec";
+        }, 1400);
+      });
+
+      // initial render
+      render();
+    </script>
+  </body>
+</html>
