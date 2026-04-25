@@ -97,6 +97,7 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
+          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(event, (_key, value) => {
@@ -177,6 +178,7 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
+          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(staleEvent, (_key, value) => {
@@ -256,6 +258,7 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
+          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(freshEvent, (_key, value) => {

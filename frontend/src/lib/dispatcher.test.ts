@@ -40,6 +40,7 @@ describe('EventDispatcher', () => {
           type: 'Run',
           data: envelope,
         },
+        poolStatsAfter: null,
       }
 
       eventDispatcher.dispatch(seqEvent)
@@ -79,6 +80,7 @@ describe('EventDispatcher', () => {
           type: 'Run',
           data: runEnvelope,
         },
+        poolStatsAfter: null,
       }
 
       eventDispatcher.dispatch(runSeqEvent)
@@ -109,6 +111,7 @@ describe('EventDispatcher', () => {
           type: 'Job',
           data: jobEnvelope,
         },
+        poolStatsAfter: null,
       }
 
       eventDispatcher.dispatch(jobSeqEvent)
@@ -153,14 +156,17 @@ describe('EventDispatcher', () => {
       const event1: SeqEvent = {
         seq: 1n,
         event: { type: 'Run', data: createRunEnvelope(1n) },
+        poolStatsAfter: null,
       }
       const event2: SeqEvent = {
         seq: 2n,
         event: { type: 'Run', data: createRunEnvelope(2n) },
+        poolStatsAfter: null,
       }
       const event3: SeqEvent = {
         seq: 3n,
         event: { type: 'Run', data: createRunEnvelope(3n) },
+        poolStatsAfter: null,
       }
 
       eventDispatcher.dispatch(event1)
