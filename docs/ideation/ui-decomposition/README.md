@@ -314,7 +314,7 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 
 ### Sub-Phase 6: Polish + Responsive
 
-**Goal:** Empty states, responsive breakpoints, reduced motion, final E2E coverage.
+**Goal:** Empty states, responsive breakpoints, reduced motion, roving-tabindex keyboard navigation, ARIA live regions for run state changes, final E2E coverage.
 
 - EmptyState component ("No workflows running" with calm illustration)
 - Responsive breakpoints: 3-column desktop (>1200px), condensed runner bar on tablet (768-1200px), tab-based single-column on mobile (<768px)
@@ -322,4 +322,11 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - Scrollbar styling (6px WebKit, theme-colored thumb)
 - Focus ring audit (2px solid accent, 2px offset on all interactive elements)
 - Performance: verify 60fps during burst WebSocket updates with 50+ cards
-- **Tests:** EmptyState rendering. Responsive: Playwright viewport tests at each breakpoint. Reduced motion: verify no animations when media query active. Performance: Playwright trace for frame budget under load. Full E2E regression suite covering all prior phases.
+- **Roving-tabindex keyboard navigation across the kanban grid** (deferred from Sub-Phase 5):
+  - 2D grid model — ArrowUp/Down within a column, ArrowLeft/Right between columns, Home/End to column ends, Tab leaves the group entirely.
+  - Suspend while the detail panel is open (focus-trapped inside the Sheet); on panel close restore focus to the triggering card and resume roving from that index.
+  - Implementation note (verified 2026-04): Bits UI does not provide a `RovingFocusGroup` primitive. Third-party survey — `svelte-roving-ux` is Svelte-4-era and not updated for runes; `jakelazaroff/roving-tabindex` is a framework-agnostic web component but adds Vite/Tailwind v4 integration risk. Default to a custom Svelte 5 context provider with explicit `tabindex` swap on a single index signal, plus one key handler attached at the kanban-board root. See `docs/design-plans/2026-04-25-interactivity.md` for the deferral context.
+- **ARIA live region for run state changes** (deferred from Sub-Phase 5):
+  - Lean — announce **every** transition (Queued → InProgress → Completed, plus terminal Failed/TimedOut/Cancelled) via `aria-live="polite"`. The dashboard is intended for wall display, so frequency matters; re-evaluate during this phase whether terminal-only reads calmer in practice before settling.
+  - Hook — a single live-region element near the kanban root receives short messages constructed from `Run` events as they flow through `EventDispatcher`. No new store; messages can derive from existing `RunStore` data.
+- **Tests:** EmptyState rendering. Responsive: Playwright viewport tests at each breakpoint. Reduced motion: verify no animations when media query active. Performance: Playwright trace for frame budget under load. Roving-tabindex: keyboard-driven E2E covering all 2D directions, Home/End, panel-open suspension, and focus restoration on panel close. Live region: assert the live element receives expected text on simulated state transitions and that messages do not pile up during bursts. Full E2E regression suite covering all prior phases.
