@@ -16,7 +16,15 @@ Sub-Phase 5: Interactivity is complete when:
 6. **Per-component tests and Playwright E2E coverage ship in the same PR** as the implementation — no test debt deferred to a polish phase.
 7. **Sub-Phase 6 carries forward** roving-tabindex keyboard navigation across cards (arrow keys, Home/End, Tab-leaves-group) and an ARIA live region for run state changes. The leaning preference for the live region is to announce every transition politely; Sub-Phase 6 re-evaluates whether terminal-only reads calmer on a wall display before settling.
 
-**Out of scope for Sub-Phase 5:** roving-tabindex (deferred to Sub-Phase 6), ARIA live region (deferred to Sub-Phase 6), log fetching, virtual scrolling, mobile breakpoints, full reduced-motion audit, persisted selection state.
+**Out of scope for Sub-Phase 5:**
+
+- Roving-tabindex keyboard navigation — deferred to Sub-Phase 6 (Polish + Responsive).
+- ARIA live region for run state changes — deferred to Sub-Phase 6.
+- Log fetching for the detail panel — tracked as #36.
+- Virtual scrolling / list windowing for the kanban columns — tracked as #37.
+- URL-based deep linking for the selected run and open panel (in lieu of localStorage-backed persistence) — tracked as #38.
+- Mobile responsive breakpoints — already part of Sub-Phase 6.
+- Full `prefers-reduced-motion` audit — already part of Sub-Phase 6 (individual Phase 5 components still respect the media query).
 
 ## Acceptance Criteria
 
