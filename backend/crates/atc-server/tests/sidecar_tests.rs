@@ -507,7 +507,9 @@ async fn failed_job_transition_produces_no_broadcast() {
     );
 
     // AC1.5: No second SeqEvent should be broadcast (no seq bump, no broadcast)
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // The HTTP response was already awaited above, which happens-after the handler
+    // dropped the seq mutex (which gates the broadcast send). So the broadcast's
+    // send() is either complete or will never happen — try_recv() is synchronous.
     match rx.try_recv() {
         Err(TryRecvError::Empty) => {
             // Expected: no broadcast for failed transition
