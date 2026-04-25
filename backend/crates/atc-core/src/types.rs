@@ -63,7 +63,7 @@ impl fmt::Display for RepoKey {
 /// Wraps a [`BTreeSet<String>`] to provide deterministic ordering and
 /// deduplication. Two label sets with the same labels in different
 /// order compare as equal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LabelSet(BTreeSet<String>);
 
@@ -232,6 +232,37 @@ mod tests {
         let mut hash_set = HashSet::new();
         hash_set.insert(set1);
         assert!(hash_set.contains(&set2));
+    }
+
+    #[test]
+    fn label_set_orders_lexicographically() {
+        // AC1.7: LabelSet implements Ord for canonical sorting
+        let set1 = LabelSet::new(["self-hosted", "linux"]);
+        let set2 = LabelSet::new(["self-hosted", "x86_64"]);
+        let set3 = LabelSet::new(["ubuntu-latest"]);
+
+        // Create a vec in non-sorted order and sort it
+        let mut sets = [set3.clone(), set1.clone(), set2.clone()];
+        sets.sort();
+
+        // After sorting, should be in lexicographic order by elements
+        assert_eq!(sets[0], set1, "set1 should come first");
+        assert_eq!(sets[1], set2, "set2 should come second");
+        assert_eq!(sets[2], set3, "set3 should come last");
+
+        // Verify: LabelSet::new(["b", "a"]) equals LabelSet::new(["a", "b"])
+        // (internal ordering independence)
+        let set_ab = LabelSet::new(["a", "b"]);
+        let set_ba = LabelSet::new(["b", "a"]);
+        assert_eq!(
+            set_ab, set_ba,
+            "Label sets with same labels in different order should be equal"
+        );
+        // And they should have the same ordering
+        assert!(
+            set_ab >= set_ba && set_ba >= set_ab,
+            "Equal sets should not be ordered"
+        );
     }
 
     // ============================================================================
