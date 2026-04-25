@@ -243,6 +243,11 @@ describe('EventDispatcher', () => {
       expect(loadPoolsSpy).toHaveBeenCalledOnce()
       expect(loadPoolsSpy).toHaveBeenCalledWith(poolStats)
 
+      // Verify routing order: primitive event applied before sidecar
+      expect(applyJobEventSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+        loadPoolsSpy.mock.invocationCallOrder[0]!,
+      )
+
       loadPoolsSpy.mockRestore()
       applyJobEventSpy.mockRestore()
     })
@@ -367,6 +372,13 @@ describe('EventDispatcher', () => {
       expect(loadPoolsSpy).toHaveBeenNthCalledWith(1, poolsP1)
       expect(loadPoolsSpy).toHaveBeenNthCalledWith(2, poolsP2)
       expect(loadPoolsSpy).toHaveBeenNthCalledWith(3, poolsP3)
+
+      // Verify routing order for each event: primitive applied before sidecar
+      for (let i = 0; i < 3; i++) {
+        expect(applyJobEventSpy.mock.invocationCallOrder[i]!).toBeLessThan(
+          loadPoolsSpy.mock.invocationCallOrder[i]!,
+        )
+      }
 
       loadPoolsSpy.mockRestore()
       applyJobEventSpy.mockRestore()
