@@ -315,3 +315,85 @@ async fn test_ac4_4_state_seq_consistency() {
         "jobs should reflect the workflow_job event"
     );
 }
+
+/// AC1.6 (serialization): SeqEvent with Some(pool_stats) serializes poolStatsAfter as camelCase array
+#[test]
+fn seq_event_serializes_populated_pool_stats_after_as_camelcase_array() {
+    use atc_core::{LabelSet, RunnerPoolStats};
+    use atc_github::ParseResult;
+
+    // Load a real webhook fixture and parse it
+    let fixture = include_bytes!("../../atc-github/tests/fixtures/workflow_run_requested.json");
+    let parse_result =
+        atc_github::parse_webhook("workflow_run", fixture).expect("fixture should parse");
+    let event = match parse_result {
+        ParseResult::Parsed(event) => *event,
+        ParseResult::Skipped { event_type } => {
+            panic!("fixture should be parsed, not skipped: {}", event_type)
+        }
+    };
+
+    // Create a minimal pool stat
+    let labels = LabelSet::new(vec!["ubuntu-latest"]);
+    let pool_stat = RunnerPoolStats {
+        labels,
+        queued: 1,
+        running: 0,
+        group_name: None,
+        is_elastic: false,
+        total: None,
+    };
+
+    // Construct SeqEvent with pool_stats_after
+    let seq_event = atc_server::state::SeqEvent {
+        seq: 1,
+        event,
+        pool_stats_after: Some(vec![pool_stat]),
+    };
+
+    let json = serde_json::to_value(&seq_event).expect("serialization should succeed");
+
+    // Assert the key exists and is an array (camelCase rendering)
+    assert!(
+        json["poolStatsAfter"].is_array(),
+        "poolStatsAfter should be serialized as camelCase array, got: {}",
+        json
+    );
+    assert_eq!(
+        json["poolStatsAfter"].as_array().unwrap().len(),
+        1,
+        "should have one pool stat"
+    );
+}
+
+/// AC1.6 (serialization): SeqEvent with None pool_stats serializes poolStatsAfter as null
+#[test]
+fn seq_event_serializes_none_pool_stats_after_as_null() {
+    use atc_github::ParseResult;
+
+    // Load a real webhook fixture and parse it
+    let fixture = include_bytes!("../../atc-github/tests/fixtures/workflow_run_requested.json");
+    let parse_result =
+        atc_github::parse_webhook("workflow_run", fixture).expect("fixture should parse");
+    let event = match parse_result {
+        ParseResult::Parsed(event) => *event,
+        ParseResult::Skipped { event_type } => {
+            panic!("fixture should be parsed, not skipped: {}", event_type)
+        }
+    };
+
+    let seq_event = atc_server::state::SeqEvent {
+        seq: 1,
+        event,
+        pool_stats_after: None,
+    };
+
+    let json = serde_json::to_value(&seq_event).expect("serialization should succeed");
+
+    // Assert the key exists and is null (camelCase rendering)
+    assert!(
+        json["poolStatsAfter"].is_null(),
+        "poolStatsAfter should be present and serialized as null, not absent. got: {}",
+        json
+    );
+}

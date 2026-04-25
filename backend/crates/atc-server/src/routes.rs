@@ -192,7 +192,11 @@ async fn webhook_handler(
                 // to that seq have already been broadcast — no window
                 // where a snapshot cursor advertises an event that WS
                 // clients haven't received yet.
-                let seq_event = SeqEvent { seq, event: *event };
+                let seq_event = SeqEvent {
+                    seq,
+                    event: *event,
+                    pool_stats_after: None,
+                };
                 let _ = state.webhook_tx.send(seq_event);
 
                 tracing::info!(event_type, seq, "event processed");

@@ -30,9 +30,15 @@ pub struct AppState {
 /// Clients use `seq` to reconcile the REST snapshot with the live event stream.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct SeqEvent {
     /// Monotonic sequence number assigned at ingestion time.
     pub seq: u64,
     /// The domain event that was ingested.
     pub event: WebhookEvent,
+    /// Snapshot of derived runner pool stats taken under the seq mutex
+    /// immediately after the event applied. Populated for Job events,
+    /// `None` for Run events. Clients wholesale-replace their pool state
+    /// from this field when populated.
+    pub pool_stats_after: Option<Vec<atc_core::RunnerPoolStats>>,
 }
