@@ -29,7 +29,12 @@
   )
 </script>
 
-<div class="flex items-center gap-2 text-sm" role="group" aria-label="{pool.label} runner pool">
+<div
+  class="flex items-center gap-2 text-sm"
+  role="group"
+  aria-label="{pool.label} runner pool"
+  data-testid="runner-pool-{pool.label}"
+>
   <!-- Status dot -->
   <span
     class="inline-block h-2 w-2 shrink-0 rounded-full"

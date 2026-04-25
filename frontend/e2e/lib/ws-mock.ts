@@ -1,4 +1,6 @@
 import type { Page } from '@playwright/test'
+import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
+import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
 
 /**
  * JS-level WebSocket mock for E2E tests.
@@ -113,10 +115,31 @@ export function makeRunEvent(
   })
 }
 
-/** Inject a run event into the app's store via the dev-mode global bridge.
+/** Helper: build a SeqEvent JSON payload for a Job event with optional pool stats sidecar. */
+export function makeJobSeqEvent(
+  seq: number,
+  opts: {
+    jobData: JobEventEnvelope
+    poolStatsAfter: RunnerPoolStats[] | null
+  },
+): string {
+  return JSON.stringify(
+    {
+      seq,
+      event: {
+        type: 'Job',
+        data: opts.jobData,
+      },
+      poolStatsAfter: opts.poolStatsAfter,
+    },
+    (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+  )
+}
+
+/** Inject a websocket event into the app's stores via the dev-mode global bridge.
  *  Tests the JSON parsing (bigint reviver) → store mutation → Svelte reactivity → DOM pipeline.
  *  Note: Playwright's routeWebSocket.send() has a known delivery issue in this
- *  Vite dev-server environment, so we access the store directly via window.__stores. */
+ *  Vite dev-server environment, so we access the stores directly via window.__stores. */
 export async function sendWS(page: Page, msg: string): Promise<void> {
   const result = await page.evaluate((data) => {
     // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
@@ -148,6 +171,18 @@ export async function sendWS(page: Page, msg: string): Promise<void> {
         completed: stores.runStore.completedRuns.length,
       })
     }
+
+    if (seqEvent.event.type === 'Job') {
+      stores.runStore.applyJobEvent(seqEvent.event.data)
+      if (seqEvent.poolStatsAfter != null) {
+        stores.runnerStore.loadPools(seqEvent.poolStatsAfter)
+      }
+      return JSON.stringify({
+        result: 'dispatched',
+        pools: stores.runnerStore?.pools?.length ?? 0,
+      })
+    }
+
     return 'unknown event type'
   }, msg)
   const parsed = JSON.parse(result)
