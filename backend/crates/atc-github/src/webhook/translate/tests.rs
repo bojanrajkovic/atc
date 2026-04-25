@@ -464,3 +464,33 @@ fn test_unknown_step_status() {
         } if context == "step 'Setup'" && value == "bogus"
     ));
 }
+
+#[test]
+fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
+    // AC1.8: Normalize empty runner_group_name to None
+    let workflow_job = WorkflowJobData {
+        id: 987_654,
+        run_id: 123_456,
+        name: "test-job".to_string(),
+        status: "in_progress".to_string(),
+        conclusion: None,
+        created_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        completed_at: None,
+        steps: vec![],
+        labels: vec!["ubuntu-latest".to_string()],
+        runner_id: Some(42),
+        runner_name: Some("runner-42".to_string()),
+        runner_group_id: Some(100),
+        runner_group_name: Some(String::new()),
+    };
+
+    let result = make_runner_info(&workflow_job);
+
+    assert!(result.is_some());
+    let info = result.unwrap();
+    assert_eq!(info.id, 42);
+    assert_eq!(info.name, "runner-42");
+    assert_eq!(info.group_id, Some(100));
+    assert_eq!(info.group_name, None);
+}
