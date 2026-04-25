@@ -371,3 +371,142 @@ async fn test_ac3_3_elastic_sticky_with_queued_jobs() {
     assert_eq!(stats[0].running, 1);
     assert_eq!(stats[0].total, None);
 }
+
+#[tokio::test]
+async fn pool_stats_returns_sorted_by_labels() {
+    // AC1.7: pool_stats() returns Vec<RunnerPoolStats> sorted by labels lexicographically
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+
+    let run_id = RunId(3000);
+    let run_envelope = make_run_event(run_id, RunEvent::Requested);
+    store.apply_run_event(run_envelope).await.unwrap();
+
+    // Create queued jobs with three different label sets
+    // Order them in a way that non-sorted would be different from sorted
+    let labels_ubuntu = vec!["ubuntu-latest".to_string()];
+    let labels_linux_self = vec!["linux".to_string(), "self-hosted".to_string()];
+    let labels_linux_x86 = vec!["linux".to_string(), "x86_64".to_string()];
+
+    // Apply in a non-alphabetical order
+    let job_id_1 = JobId(3001);
+    let envelope_1 = make_job_event(
+        job_id_1,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels_ubuntu.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_1).await.unwrap();
+
+    let job_id_2 = JobId(3002);
+    let envelope_2 = make_job_event(
+        job_id_2,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels_linux_x86.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_2).await.unwrap();
+
+    let job_id_3 = JobId(3003);
+    let envelope_3 = make_job_event(
+        job_id_3,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels_linux_self.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_3).await.unwrap();
+
+    // Get pool stats
+    let stats = store.pool_stats().await;
+
+    // Verify we have 3 pools
+    assert_eq!(stats.len(), 3);
+
+    // Verify they are sorted lexicographically by labels
+    // Expected order: ["linux", "self-hosted"] < ["linux", "x86_64"] < ["ubuntu-latest"]
+    assert_eq!(stats[0].labels, LabelSet::new(labels_linux_self));
+    assert_eq!(stats[1].labels, LabelSet::new(labels_linux_x86));
+    assert_eq!(stats[2].labels, LabelSet::new(labels_ubuntu));
+}
+
+#[tokio::test]
+async fn snapshot_returns_sorted_pool_stats_by_labels() {
+    // AC1.7: snapshot() returns pool stats sorted by labels lexicographically
+    let start_time = Utc::now();
+    let clock = Arc::new(TestClock::new(start_time));
+    let store = StateStore::new(clock, Duration::from_secs(3600));
+
+    let run_id = RunId(3100);
+    let run_envelope = make_run_event(run_id, RunEvent::Requested);
+    store.apply_run_event(run_envelope).await.unwrap();
+
+    // Create queued jobs with three different label sets
+    let labels_ubuntu = vec!["ubuntu-latest".to_string()];
+    let labels_linux_self = vec!["linux".to_string(), "self-hosted".to_string()];
+    let labels_linux_x86 = vec!["linux".to_string(), "x86_64".to_string()];
+
+    // Apply in a non-alphabetical order
+    let job_id_1 = JobId(3101);
+    let envelope_1 = make_job_event(
+        job_id_1,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels_ubuntu.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_1).await.unwrap();
+
+    let job_id_2 = JobId(3102);
+    let envelope_2 = make_job_event(
+        job_id_2,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels_linux_x86.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_2).await.unwrap();
+
+    let job_id_3 = JobId(3103);
+    let envelope_3 = make_job_event(
+        job_id_3,
+        run_id,
+        "org",
+        "repo",
+        JobEvent::Queued {
+            labels: labels_linux_self.clone(),
+            steps: vec![],
+        },
+    );
+    store.apply_job_event(envelope_3).await.unwrap();
+
+    // Get snapshot
+    let (_query_result, stats) = store.snapshot().await;
+
+    // Verify we have 3 pools
+    assert_eq!(stats.len(), 3);
+
+    // Verify they are sorted lexicographically by labels
+    // Expected order: ["linux", "self-hosted"] < ["linux", "x86_64"] < ["ubuntu-latest"]
+    assert_eq!(stats[0].labels, LabelSet::new(labels_linux_self));
+    assert_eq!(stats[1].labels, LabelSet::new(labels_linux_x86));
+    assert_eq!(stats[2].labels, LabelSet::new(labels_ubuntu));
+}
