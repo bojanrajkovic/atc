@@ -547,6 +547,7 @@
 
       .panel-body {
         flex: 1 1 auto;
+        min-height: 0;
         overflow: auto;
       }
 
@@ -686,7 +687,8 @@
       .panel-twopane {
         display: grid;
         grid-template-columns: 200px 1fr;
-        height: 100%;
+        flex: 1 1 auto;
+        min-height: 0;
       }
       .panel-twopane-rail {
         border-right: 1px solid var(--border);
@@ -866,9 +868,7 @@
           <strong>Click a card to open the detail panel</strong>
           <span>The slide-over animates in from the right at 400ms ease-out-expo. Toggle layout above to compare single-pane / two-pane / tabbed.</span>
         </div>
-        <aside class="panel" id="panel" data-open="false" role="dialog" aria-modal="false" aria-labelledby="panel-title">
-          <div id="panel-content"></div>
-        </aside>
+        <aside class="panel" id="panel" data-open="false" role="dialog" aria-modal="false" aria-labelledby="panel-title"></aside>
       </section>
     </main>
 
@@ -1272,8 +1272,8 @@ Theme: ${state.theme} · ${state.mode} · ${state.density}`;
 
         // panel
         const run = RUNS.find((r) => r.id === state.selectedRunId);
-        document.getElementById("panel-content").innerHTML = renderPanel(run);
         const panel = document.getElementById("panel");
+        panel.innerHTML = renderPanel(run);
         panel.setAttribute("data-open", run ? "true" : "false");
         panel.setAttribute("aria-modal", run ? "true" : "false");
         document.getElementById("placeholder").style.display = run ? "none" : "grid";
