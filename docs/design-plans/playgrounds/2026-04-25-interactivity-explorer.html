@@ -520,6 +520,12 @@
         margin: 0;
         line-height: var(--leading-tight);
       }
+      .panel-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: 0 0 auto;
+      }
       .panel-close {
         appearance: none;
         background: transparent;
@@ -540,9 +546,37 @@
         border-color: var(--border);
         background: var(--surface-raised);
       }
-      .panel-close:focus-visible {
+      .panel-close:focus-visible,
+      .panel-link:focus-visible {
         outline: 2px solid var(--accent);
         outline-offset: 2px;
+      }
+      .panel-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        padding: 0 10px;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--text-dim);
+        text-decoration: none;
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        white-space: nowrap;
+        transition: all var(--duration-fast) var(--ease-out-expo);
+      }
+      .panel-link:hover {
+        color: var(--text);
+        background: var(--surface-raised);
+        border-color: oklch(35% 0.05 var(--hue));
+      }
+      .panel-link .ext {
+        font-size: 12px;
+        line-height: 1;
+        opacity: 0.8;
       }
 
       .panel-body {
@@ -895,6 +929,7 @@
           commitSha: "a3f8c41",
           event: "pull_request",
           actor: "bojanrajkovic",
+          htmlUrl: "https://github.com/bojanrajkovic/atc/actions/runs/100000001",
           progress: 0,
           jobs: [
             { name: "lint", status: "Queued", duration: null, steps: [
@@ -925,6 +960,7 @@
           commitSha: "b7e2d18",
           event: "push",
           actor: "bojanrajkovic",
+          htmlUrl: "https://github.com/bojanrajkovic/atc/actions/runs/100000002",
           progress: 0.62,
           jobs: [
             { name: "lint", status: "Completed", duration: "1:12", steps: [
@@ -955,6 +991,7 @@
           commitSha: "c9a4f2e",
           event: "release",
           actor: "release-please[bot]",
+          htmlUrl: "https://github.com/bojanrajkovic/atc/actions/runs/100000003",
           progress: 1,
           jobs: [
             { name: "release", status: "Completed", duration: "8:14", steps: [
@@ -980,6 +1017,7 @@
           commitSha: "d1c5a9f",
           event: "pull_request",
           actor: "bojanrajkovic",
+          htmlUrl: "https://github.com/bojanrajkovic/atc/actions/runs/100000004",
           progress: 0.42,
           jobs: [
             { name: "check", status: "Failed", duration: "0:38", steps: [
@@ -1124,7 +1162,13 @@
               </div>
               <h2 class="panel-title" id="panel-title">${escape(run.title)}</h2>
             </div>
-            <button class="panel-close" type="button" aria-label="Close detail panel" data-action="close">×</button>
+            <div class="panel-actions">
+              <a class="panel-link" href="${escape(run.htmlUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Open run on GitHub (opens in new tab)">
+                Go to run
+                <span class="ext" aria-hidden="true">↗</span>
+              </a>
+              <button class="panel-close" type="button" aria-label="Close detail panel" data-action="close">×</button>
+            </div>
           </div>
         `;
 
