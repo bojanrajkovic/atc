@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity'
   import { Separator } from '$lib/components/ui/separator'
   import Logo from './Logo.svelte'
   import RunnerBar from './RunnerBar.svelte'
@@ -60,16 +61,37 @@
   })
 
   // Map RunnerPoolStats to RunnerPoolDisplay for RunnerBar
-  const pools = $derived(
-    runnerStore.pools.map((pool) => ({
-      key: pool.labels.join(','),
-      label: pool.groupName ?? pool.labels.join(', '),
-      running: pool.running,
-      queued: pool.queued,
-      total: pool.total,
-      isElastic: pool.isElastic,
-    }))
-  )
+  const pools = $derived.by(() => {
+    const allPools = runnerStore.pools
+
+    // Count occurrences of each non-null groupName across the current pool array.
+    const groupNameCounts = new SvelteMap<string, number>()
+    for (const pool of allPools) {
+      if (pool.groupName !== null) {
+        groupNameCounts.set(pool.groupName, (groupNameCounts.get(pool.groupName) ?? 0) + 1)
+      }
+    }
+
+    return allPools.map((pool) => {
+      let label: string
+      if (pool.groupName === null) {
+        label = pool.labels.join(', ')
+      } else if ((groupNameCounts.get(pool.groupName) ?? 0) >= 2) {
+        label = `${pool.groupName} · ${pool.labels.join(', ')}`
+      } else {
+        label = pool.groupName
+      }
+
+      return {
+        key: pool.labels.join(','),
+        label,
+        running: pool.running,
+        queued: pool.queued,
+        total: pool.total,
+        isElastic: pool.isElastic,
+      }
+    })
+  })
 </script>
 
 <header
