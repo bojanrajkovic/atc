@@ -6,6 +6,17 @@ Sub-Phase 5 adds two new interactive surfaces to the ATC dashboard — a Cmd+K c
 
 The implementation is centered on two vendored shadcn-svelte primitives — `Sheet` (slide-over) and `Command` (palette) — both built on Bits UI's portal and focus-management infrastructure. Both dialogs mount at the `App.svelte` root so they stack correctly when opened simultaneously; dialog stacking is handled entirely through Bits UI's `defer-otherwise-close` escape and outside-interaction props rather than custom event wiring. A new fifth store, `PaletteStore`, owns high-frequency typing state and sessionStorage-persisted recent runs — deliberately separated from `UIStore`'s preference semantics, which revises the codebase's prior "four stores is the ceiling" principle. Pool filtering introduces the project's first branded TypeScript type, `PoolKey`, in a pure module that flows into `KanbanColumn` via props rather than store reads. State coordination between surfaces is entirely store-mediated: palette selections write to `UIStore` fields, and components react to those fields through `$derived`. Implementation ships as six sequential phases on a single branch and PR.
 
+## Supersedes Prior Ideation
+
+This design plan supersedes `docs/ideation/ui-decomposition/README.md` Sub-Phase 5 for current scope. The following items in the ideation README do NOT ship in this phase:
+
+- **Log fetching** for the detail panel — deferred, tracked as #36.
+- **Per-card click-to-expand** (inline expansion via `transition:slide`) — replaced by the hover-peek + click-panel model documented in this plan.
+- **ARIA live regions for run state changes** — deferred to Sub-Phase 6.
+- **Roving-tabindex keyboard navigation** — deferred to Sub-Phase 6.
+
+The ideation README will be updated post-merge with the standard "What was built" pattern; in the meantime a forward-pointer banner has been added to its Sub-Phase 5 section.
+
 ## Definition of Done
 
 Sub-Phase 5: Interactivity is complete when:
@@ -34,10 +45,10 @@ Sub-Phase 5: Interactivity is complete when:
 
 - **AC1.1 Success:** `Cmd/Ctrl+K` toggles `paletteStore.paletteOpen` via `paletteStore.toggle()`. When opening, the dialog renders centered, the search input is focused, and any previously typed query is preserved.
 - **AC1.2 Success:** Typing into the palette input filters items via cmdk's command-score fuzzy match; sections with zero matches auto-hide.
-- **AC1.3 Success:** Sections render in fixed source order — Recent → Runs → Jobs → Pools → Commands — regardless of match scores. Recent contains up to 10 frecency-tracked runs from `paletteStore.recentRunIds`.
-- **AC1.4 Success:** Selecting a Run sets `uiStore.selectedRunId = run.id`, sets `paletteStore.paletteOpen = false`, and records the visit via `paletteStore.recordRunVisit(id)`.
-- **AC1.5 Success:** Selecting a Job sets BOTH `uiStore.selectedRunId = job.runId` AND `uiStore.selectedJobId = job.id`, then closes the palette.
-- **AC1.6 Success:** Selecting a Pool sets `uiStore.activePoolFilter = poolKey(pool.labels)` and closes the palette.
+- **AC1.3 Success:** Sections render in fixed source order — Recent → Runs → Jobs → Pools → Commands — regardless of match scores. Recent contains up to 10 LRU recents (recency-only; full frecency ranking is tracked as a backlog issue) from `paletteStore.recentRunIds`.
+- **AC1.4 Success:** Selecting a Run sets `uiStore.selectedRunId = run.id`, awaits one microtask via `tick()` so the Sheet mounts, then sets `paletteStore.paletteOpen = false`, and records the visit via `paletteStore.recordRunVisit(id)`. See Architecture for the full handoff sequence including `onCloseAutoFocus` ordering.
+- **AC1.5 Success:** Selecting a Job sets BOTH `uiStore.selectedRunId = job.runId` AND `uiStore.selectedJobId = job.id`, awaits `tick()` for the Sheet to mount, then closes the palette. See Architecture for handoff sequence.
+- **AC1.6 Success:** Selecting a Pool sets `uiStore.activePoolFilter = poolKey(pool.labels)` and closes the palette. (No `tick()` required — pool selection does not open the panel.)
 - **AC1.7 Success:** Selecting "Switch theme…" sets `paletteStore.subMenu = 'theme'`; palette body slide-transitions to a 4-item theme submenu; search input remains anchored.
 - **AC1.8 Success:** Selecting a theme from the submenu sets `uiStore.theme` to the chosen value, clears `paletteStore.subMenu`, and closes the palette.
 - **AC1.9 Success:** Pressing Esc inside the submenu returns to the top-level palette (clears `paletteStore.subMenu`) without closing the dialog.
@@ -55,25 +66,27 @@ Sub-Phase 5: Interactivity is complete when:
 - **AC2.4 Success:** Clicking the X button has the same effect as Esc (state mutation + focus restoration).
 - **AC2.5 Success:** Clicking outside the sheet (with no nested dialog open) closes it.
 - **AC2.6 Success:** While open, focus is trapped inside the sheet — Tab cycles only the sheet's focusable elements.
-- **AC2.7 Success:** Setting `uiStore.selectedJobId` triggers `JobBlock.scrollIntoView({ block: 'start', behavior: 'smooth' })` on the matching block; `selectedJobId` is cleared after the scroll dispatches.
+- **AC2.7 Success:** Setting `uiStore.selectedJobId` triggers `JobBlock`'s `$effect` to schedule the scroll via `requestAnimationFrame(() => block.scrollIntoView({ block: 'start', behavior: 'smooth' }))` so layout has stabilized before the call; on the same RAF callback `selectedJobId` is cleared via the parent callback prop.
 - **AC2.8 Success:** All 11 RunStatus fixtures (Queued, InProgress, Completed, Failed, TimedOut, Cancelled, ActionRequired, StartupFailure, Stale, Neutral, Skipped) render with the correct status icon glyph and `--status-color` in both panel header and step list.
-- **AC2.9 Failure:** When `selectedRunId` references a run not present in `RunStore.runs`, the panel does not open and `selectedRunId` is cleared (graceful fallback rather than a broken empty panel).
+- **AC2.9 Failure:** When `selectedRunId` references a run not present in `RunStore.runs`, the panel does not open and `selectedRunId` is cleared. Ownership: `RunDetailPanel.svelte` runs an `$effect` that, when `uiStore.selectedRunId !== null && !runStore.runs.get(uiStore.selectedRunId)`, sets `uiStore.selectedRunId = null` (graceful fallback rather than a broken empty panel).
 
 ### `interactivity.AC3`: Inline hover-peek popover
 
-- **AC3.1 Success:** Hovering a RunCard for 250 ms triggers `HoverPeekPopover` anchored to the right edge of the card; popover shows status, job count, "N of M steps complete", duration, and runner.
+- **AC3.1 Success:** On environments matching the `(hover: hover) and (pointer: fine)` media query, hovering a RunCard for 250 ms triggers `HoverPeekPopover` anchored to the right edge of the card with auto-flip to the left when the card sits in the rightmost column; popover shows status, job count, "N of M steps complete", duration, and runner. On touch-only environments (no fine pointer) the popover is gated off entirely; tap on the card opens the panel directly.
 - **AC3.2 Success:** Mouse-leave on the card immediately clears the popover (no fade-out delay).
 - **AC3.3 Success:** Click on a hovered card opens the slide-over panel; popover dismisses synchronously.
 - **AC3.4 Failure:** Hover for less than 250 ms (mouse moves out before the debounce fires) does NOT show the popover.
+- **AC3.5 Success:** `HoverPeekPopover` is implemented on a Bits UI Popover primitive (vendored as shadcn-svelte Popover from the existing component set). Portal-rendered, collision-aware. Inline `position: absolute` is NOT used.
 
 ### `interactivity.AC4`: RunCard activation
 
 - **AC4.1 Success:** RunCard's `<article>` retains `role="article"`. An inner `<button class="run-card-activate">` with `aria-label` describing the run (title + status + repo·branch) handles activation.
 - **AC4.2 Success:** Click on the inner button (or any of its non-interactive descendants via event bubbling) sets `uiStore.selectedRunId = run.id`.
-- **AC4.3 Success:** Enter on the focused inner button sets `uiStore.selectedRunId`.
-- **AC4.4 Success:** Space on the focused inner button sets `uiStore.selectedRunId`.
+- **AC4.3 Success:** Enter on the focused inner button activates it via native `<button>` semantics, which fire a `click` event that the click handler converts into `uiStore.selectedRunId = run.id`. No custom `keydown` handler is added.
+- **AC4.4 Success:** Space on the focused inner button activates it via native `<button>` semantics; same path as AC4.3.
 - **AC4.5 Success:** Tab cycles all RunCard inner buttons in DOM order (column → column → column, runs in column order); the article is not in the tab order.
 - **AC4.6 Failure:** Pointer events on text inside the article (e.g., the run title text) do not break activation — clicks still bubble to the inner button.
+- **AC4.7 Success:** Screen-reader output for a focused RunCard activator follows the form `"article, button, [aria-label]"` where the aria-label combines run title, status, and `repo·branch`. Tests assert the rendered `aria-label` text and the `<article>` + `<button>` element nesting.
 
 ### `interactivity.AC5`: Pool filter integration
 
@@ -90,7 +103,7 @@ Sub-Phase 5: Interactivity is complete when:
 - **AC6.2 Success:** Pressing Esc with both open closes the palette only; the panel remains open; focus returns to the panel's close button via `onCloseAutoFocus`.
 - **AC6.3 Success:** Pressing Esc again closes the panel; focus returns to the triggering RunCard's inner button.
 - **AC6.4 Success:** Clicking outside the palette but inside the panel area closes only the palette.
-- **AC6.5 Success:** Only one backdrop overlay element is rendered to the DOM when both dialogs are open (`[data-nested] [data-overlay] { display: none }` suppresses the inner one).
+- **AC6.5 Success:** Only one backdrop overlay element is rendered to the DOM when both dialogs are open (`[data-nested][data-dialog-overlay] { display: none }` suppresses the inner one).
 - **AC6.6 Success:** Cmd+K while palette is already open closes it (toggle behavior); dialog state mutates correctly.
 
 ## Glossary
@@ -98,7 +111,7 @@ Sub-Phase 5: Interactivity is complete when:
 - **Bits UI**: A headless Svelte component library providing low-level primitives (Dialog, Popover, Tooltip, etc.) with built-in portal rendering, focus trapping, and ARIA attribute management. shadcn-svelte's Sheet and Command are built on top of it.
 - **shadcn-svelte**: A component collection strategy where UI component source is vendored directly into the project under `frontend/src/lib/components/ui/` rather than consumed as an npm package dependency, making each component fully customizable.
 - **cmdk / command-score**: The fuzzy-matching engine that powers the command palette's search. `command-score` is its scoring algorithm — items are ranked by weighted substring match; sections with zero-scoring items auto-hide.
-- **frecency**: A hybrid ranking signal combining recency (how recently) and frequency (how often) of access. Used in the palette's Recent section to order the up-to-10 recent run IDs stored in `PaletteStore.recentRunIds`.
+- **frecency**: A hybrid ranking signal combining recency (how recently) and frequency (how often) of access. Used in the palette's Recent section to order the up-to-10 recent run IDs stored in `PaletteStore.recentRunIds`. The v1 implementation in this phase is LRU-only (recency, no frequency). Full frecency is captured as a backlog issue and not in scope for Sub-Phase 5.
 - **defer-otherwise-close**: A Bits UI interaction-outside/escape-keydown behavior value. When set on a nested dialog, it defers the event to any enclosing dialog first (e.g., Esc closes the palette before the panel), and only closes the dialog if no outer handler consumed it.
 - **`onCloseAutoFocus`**: A Bits UI Dialog/Sheet callback that fires when a dialog closes and determines where focus is restored. This phase uses it to return focus to the triggering RunCard's inner button after the panel closes, or to the panel's close button after the palette closes.
 - **branded type**: A TypeScript compile-time pattern that makes a structural alias (like `string`) nominally distinct by intersecting it with a phantom property — e.g., `type PoolKey = string & { readonly __brand: 'PoolKey' }`. Assignment of a plain `string` to `PoolKey` is a type error without calling the constructor function.
@@ -112,7 +125,7 @@ Sub-Phase 5: Interactivity is complete when:
 - **single-pane layout**: The RunDetailPanel's presentation structure — one scrollable column containing header, metadata grid, and job blocks — as opposed to a master-detail or tabbed layout. All run and job content is visible without switching views.
 - **three-state pool row**: The `PalettePoolItem` rendering contract — a pool row in the palette takes one of three visual forms: browse (single-line, truncated), query-active (wraps text, highlights matched substrings with `<mark>`), focused (wraps text regardless of query presence).
 - **`<mark>` highlight**: The HTML `<mark>` element used to visually highlight fuzzy-matched substrings within palette pool rows and run names. Styled via the `--mark-bg` / `--mark-underline` design tokens added in this phase.
-- **jobsByRunId**: A new `$derived` field on `RunStore` — a `ReadonlyMap<RunId, Job[]>` aggregating each run's jobs by run ID. Required for pool filtering, which needs the raw job label arrays rather than the summarized runner strings that `jobStatsByRun` provides.
+- **jobsByRunId**: A new `$derived` field on `RunStore` — a `ReadonlyMap<RunId, Job[]>` aggregating each run's jobs by run ID. Required for pool filtering, which needs the raw job label arrays rather than the summarized runner strings that `jobStatsByRun` provides. `jobsByRunId` recomputes the full run-to-jobs map on every job mutation, mirroring `jobStatsByRun`'s pattern (verified at scale in Sub-Phase 4). At dashboard scale (typically <100 active runs visible), this is acceptable. If profiling at higher scale shows hotspots, the escape hatch is per-run sub-stores; not in scope for this phase.
 - **kanban column**: The vertical layout unit in the KanbanBoard showing runs grouped by lifecycle state (Queued / In Progress / Completed). In this phase, `KanbanColumn` gains `activePoolFilter` and `jobsByRunId` props that determine which run cards are rendered.
 
 ## Architecture
@@ -123,7 +136,9 @@ State is owned by a 5-store layout — the existing 4 (`RunStore`, `RunnerStore`
 
 Pool filtering is implemented as a pure module at `frontend/src/lib/filters/pool.ts` with the project's first branded TypeScript type, `PoolKey`. `KanbanBoard` reads `uiStore.activePoolFilter` and `runStore.jobsByRunId` once and threads them as props to each `KanbanColumn`; each column invokes `filterRunsByPool` internally on its own `runs` prop. This keeps `RunStore` pure of UI concerns and keeps `KanbanColumn` pure of store reads — the filter flows in as data, not as a store dependency.
 
-Sheet + Command stacking is configured via Bits UI Dialog props: `escapeKeydownBehavior: 'defer-otherwise-close'` and `interactOutsideBehavior: 'defer-otherwise-close'` on both dialogs. The palette's `onCloseAutoFocus` callback returns focus to the panel's close button when both were open; the panel's `onCloseAutoFocus` returns focus to the triggering RunCard's inner button. A CSS rule `[data-nested] [data-overlay] { display: none }` suppresses the inner backdrop so only one dimming layer is visible when both dialogs are open.
+Sheet + Command stacking is configured via Bits UI Dialog props: `escapeKeydownBehavior: 'defer-otherwise-close'` and `interactOutsideBehavior: 'defer-otherwise-close'` on both dialogs. The palette's `onCloseAutoFocus` callback returns focus to the panel's close button when both were open; the panel's `onCloseAutoFocus` returns focus to the triggering RunCard's inner button. A CSS rule `[data-nested][data-dialog-overlay] { display: none }` suppresses the inner backdrop so only one dimming layer is visible when both dialogs are open. The attribute name comes from Bits UI's `createBitsAttrs` factory; see `bits-ui/dist/bits/dialog/dialog.svelte.js` for the canonical part list.
+
+When the palette dispatches a run/job selection (AC1.4–AC1.6), the order is deterministic: (1) write `selectedRunId` (and `selectedJobId` if applicable); (2) `await tick()` so Sheet's reactive `bind:open` mounts the panel and the close-button ref becomes available; (3) close the palette by setting `paletteStore.paletteOpen = false`; (4) palette's `onCloseAutoFocus` reads the panel's stored close-button ref and restores focus there. If the panel ref is null at autofocus time (graceful fallback for AC2.9 paths), suppress default restoration via `event.preventDefault()` so focus does not jump to body.
 
 The contract between the palette and the rest of the dashboard is small and store-mediated. Selecting a Run sets `uiStore.selectedRunId`. Selecting a Job sets both `selectedRunId` and `selectedJobId`. Selecting a Pool sets `uiStore.activePoolFilter`. Running a Command invokes the corresponding mutator. No component-to-component event wiring; consumers simply react to store changes via `$derived`.
 
@@ -212,12 +227,14 @@ Sub-Phase 5 implements as six sequential phases on the `feat/interactivity` bran
 
 - `frontend/src/lib/components/ui/sheet/` — vendored via `pnpm dlx shadcn-svelte@latest add sheet`
 - `frontend/src/lib/components/ui/command/` — vendored via `pnpm dlx shadcn-svelte@latest add command`
-- `frontend/src/lib/stores/palette.svelte.ts` — new `PaletteStore` class with `paletteOpen`, `paletteQuery`, `recentRunIds`, `subMenu` fields and mutators (`open`, `close`, `toggle`, `setQuery`, `recordRunVisit`, `enterSubmenu`, `exitSubmenu`); `recentRunIds` LRU cap 10, sessionStorage-persisted under key `atc.palette.recent`
+- `frontend/src/lib/stores/palette.svelte.ts` — new `PaletteStore` class with `paletteOpen`, `paletteQuery`, `recentRunIds`, `subMenu` fields and mutators (`open`, `close`, `toggle`, `setQuery`, `recordRunVisit`, `enterSubmenu`, `exitSubmenu`); `recentRunIds` LRU cap 10 (recency-only; full frecency is tracked as a separate backlog issue, out of scope for this phase), sessionStorage-persisted under key `atc.palette.recent`
 - `frontend/src/lib/stores/palette.test.ts` — PaletteStore mutator tests with sessionStorage stub
 - `frontend/src/lib/stores/ui.svelte.ts` — adds `activePoolFilter: PoolKey | null` and `selectedJobId: bigint | null`; both default to `null`; neither persisted to localStorage
 - `frontend/src/lib/stores/runs.svelte.ts` — adds `jobsByRunId: $derived<ReadonlyMap<bigint, Job[]>>` aggregating jobs from current state into per-run buckets
 - `frontend/src/lib/filters/pool.ts` — pure module with branded `PoolKey` type and `poolKey`, `jobMatchesPool`, `filterRunsByPool` functions
 - `frontend/src/lib/filters/pool.test.ts` — behavior tests (intersection, sort/join roundtrip, null-filter passthrough) AND a `@ts-expect-error` block proving raw `string` cannot be assigned to `PoolKey`
+- `frontend/src/main.ts` — extend the dev-mode `__stores` global bridge with `uiStore` and `paletteStore` so E2E tests in Phases 2/3/5 can mutate them via `window.__stores`
+- `frontend/src/vite-env.d.ts` — extend the `Window.__stores` type declaration to include `uiStore` and `paletteStore` references
 - Updates to existing tests for new store fields
 
 **Dependencies:** None (first phase).
@@ -282,8 +299,8 @@ Sub-Phase 5 implements as six sequential phases on the `feat/interactivity` bran
 
 **Components:**
 
-- `frontend/src/lib/components/RunCard.svelte` — modified: add absolutely-positioned inner `<button class="run-card-activate">` with `aria-label` derived from run title + status + repo·branch. Article retains `role="article"`. Button click + `keydown` (Enter/Space) handlers set `uiStore.selectedRunId = run.id`. Hover state managed via local `$state` timer (250 ms debounce); mouse-leave clears immediately
-- `frontend/src/lib/components/HoverPeekPopover.svelte` — pure: receives `WorkflowRun` and `JobStats` props. Renders peek content (status, job count, "N of M steps complete", duration, runner). Anchored to the right of the card via `position: absolute` relative to RunCard's positioning context; uses Bits UI Tooltip primitive for portal + positioning if a single-direction anchor is insufficient — otherwise inline absolute positioning suffices
+- `frontend/src/lib/components/RunCard.svelte` — modified: add absolutely-positioned inner `<button class="run-card-activate">` with `aria-label` derived from run title + status + repo·branch. Article retains `role="article"`. Button `click` handler sets `uiStore.selectedRunId = run.id` — Enter and Space activation rely on native `<button>` semantics, no custom keydown handler is added. Hover state managed via local `$state` timer (250 ms debounce); mouse-leave clears immediately
+- `frontend/src/lib/components/HoverPeekPopover.svelte` — pure: receives `WorkflowRun` and `JobStats` props. Renders peek content (status, job count, "N of M steps complete", duration, runner). Built on the vendored shadcn-svelte Popover primitive (Bits UI Popover under the hood) for portal rendering and collision-aware positioning. Anchored right-of-card with auto-flip left when the card sits in the rightmost column. Hover behavior is gated to `(hover: hover) and (pointer: fine)` environments via a single media-query check at the RunCard level — touch devices never instantiate the hover timer at all.
 - `frontend/src/lib/components/RunCard.test.ts` — modified: add tests for inner-button rendering with correct `aria-label`; click + keyboard activation; article role preservation; Tab order (button is focus target, not article)
 - `frontend/src/lib/components/RunCard.browser.test.ts` — modified or new: hover-debounce timing using fake timers; mouse-leave clears popover; click on a child element (e.g., status icon) bubbles to the button correctly
 - `frontend/src/lib/components/HoverPeekPopover.test.ts` — pure leaf tests
@@ -321,9 +338,9 @@ Sub-Phase 5 implements as six sequential phases on the `feat/interactivity` bran
 
 **Components:**
 
-- `frontend/src/lib/components/CommandPalette.svelte` — modified: configure `escapeKeydownBehavior: 'defer-otherwise-close'` and `interactOutsideBehavior: 'defer-otherwise-close'` on the Command dialog. Set `onCloseAutoFocus` callback that returns focus to the panel's close button when `uiStore.selectedRunId !== null` at close time, otherwise restores to body default
-- `frontend/src/lib/components/RunDetailPanel.svelte` — modified: same dismissal behavior props on the Sheet. `onCloseAutoFocus` returns focus to the triggering RunCard's inner button using a stored reference captured at open time
-- `frontend/src/app.css` — add `[data-nested] [data-overlay] { display: none }` rule to suppress double-darkening when both dialogs are open
+- `frontend/src/lib/components/CommandPalette.svelte` — modified: configure `escapeKeydownBehavior: 'defer-otherwise-close'` and `interactOutsideBehavior: 'defer-otherwise-close'` on the Command dialog. Set `onCloseAutoFocus` callback that returns focus to the panel's close button when `uiStore.selectedRunId !== null` at close time, otherwise restores to body default. The exact sequence (set selection → tick → close palette → autofocus reads stored panel ref) is documented in the Architecture section.
+- `frontend/src/lib/components/RunDetailPanel.svelte` — modified: same dismissal behavior props on the Sheet. `onCloseAutoFocus` returns focus to the triggering RunCard's inner button using a stored reference captured at open time. The exact sequence (set selection → tick → close palette → autofocus reads stored panel ref) is documented in the Architecture section.
+- `frontend/src/app.css` — add `[data-nested][data-dialog-overlay] { display: none }` rule to suppress double-darkening when both dialogs are open
 - `frontend/src/App.svelte` — modified: add a single `keydown` listener on mount that fires `paletteStore.toggle()` on `(e.metaKey || e.ctrlKey) && e.key === 'k'`. Removed on destroy. No separate Esc handler — Bits UI's `escapeKeydownBehavior` on the dialogs handles dismissal
 - Browser-mode tests: nested focus traps don't conflict, focus restoration order, only one backdrop element rendered when both dialogs open
 - `frontend/e2e/stacking.test.ts` — E2E for stacking-specific scenarios only: open panel via test harness → open palette via Cmd+K → both visible → Esc closes palette only → focus on panel close button → second Esc closes panel → focus on triggering RunCard's button. Click outside palette but inside panel area closes palette only
@@ -339,13 +356,14 @@ Per `.ed3d/design-plan-guidance.md` rule 6, every design plan must list the docu
 
 | Document | What changes |
 |----------|--------------|
-| `docs/architecture/frontend-app.md` | Component tree update (CommandPalette, RunDetailPanel, all pure leaves, HoverPeekPopover, PoolFilterPill); document new stores (PaletteStore + UIStore additions); document Sheet+Command stacking pattern with `defer-otherwise-close` semantics; **revise store-ceiling principle from 4 to 5 with rationale**; bump "Last verified" date |
-| `frontend/CLAUDE.md` | Add new components to Key Files table; PaletteStore to store list; `lib/filters/pool.ts` module reference noting first branded type in project; new design tokens (`--mark-bg`, `--mark-underline`, `--kbd-bg`, `--kbd-border`, `--text-quiet`); status section update on Sub-Phase 5 completion |
+| `docs/architecture/frontend-app.md` | Component tree update (CommandPalette, RunDetailPanel, all pure leaves, HoverPeekPopover, PoolFilterPill); document new stores (PaletteStore + UIStore additions); document Sheet+Command stacking pattern with `defer-otherwise-close` semantics; **revise store-ceiling principle from 4 to 5 with rationale**; bump "Last verified" date; document new design tokens (`--mark-bg`, `--mark-underline`, `--kbd-bg`, `--kbd-border`, `--text-quiet`) with light-mode variants |
+| `frontend/CLAUDE.md` | Add new component file paths to Key Files table; add `PaletteStore` row to the store list; add `lib/filters/pool.ts` row noting it as the first branded type in the project; bump the Status section after Sub-Phase 5 completion. Keep this file pointer-level only — design tokens and architectural detail belong in `docs/architecture/frontend-app.md`, not here. |
 | `docs/ideation/ui-decomposition/README.md` | After merge: mark Sub-Phase 5 ✅ COMPLETE with PR# and "What was built:" section in established pattern; note the store-ceiling principle revision |
 | `.impeccable.md` | New tokens for `<mark>` highlight bg (`--mark-bg`) plus underline color, palette focus ring color, hover popover surface elevation. Document the contrast extension to `--surface-raised` for palette rows |
 | `docs/test-plans/2026-04-25-interactivity.md` | New file with full AC traceability matrix (Sub-Phase 4 pattern). Posted as first PR comment per project convention; never committed inside the PR description |
 | `scripts/doc-mapping.sh` | New source paths → architecture doc mappings: `frontend/src/lib/stores/palette.svelte.ts`, `frontend/src/lib/components/CommandPalette.svelte`, `frontend/src/lib/components/RunDetailPanel.svelte`, `frontend/src/lib/filters/pool.ts` all map to `docs/architecture/frontend-app.md` |
 | `docs/architecture-decisions/00NN-first-branded-type.md` | New ADR documenting the rationale for `PoolKey` as the first branded TypeScript type (and why ts-rs IDs remain plain `bigint` aliases for now). Sets precedent for future TS-only domain types |
+| `frontend/src/main.ts` and `frontend/src/vite-env.d.ts` | Extend the dev-mode `__stores` E2E bridge to include `uiStore` and `paletteStore`; update the `Window.__stores` type to match. Required for Phase 2/3/5 E2E test harnesses. |
 
 ## Additional Considerations
 

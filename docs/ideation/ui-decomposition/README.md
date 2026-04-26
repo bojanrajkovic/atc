@@ -303,6 +303,8 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 
 ### Sub-Phase 5: Interactivity
 
+> **Superseded by [`docs/design-plans/2026-04-25-interactivity.md`](../../design-plans/2026-04-25-interactivity.md)** for current scope. Items below reflect pre-design ideation and may not match what ships. See the design plan's "Supersedes Prior Ideation" section for divergences.
+
 **Goal:** Command palette, detail panel, per-card expansion, keyboard navigation.
 
 - Copy shadcn-svelte Command component (Cmd+K search/filter)
