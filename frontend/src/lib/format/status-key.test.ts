@@ -7,6 +7,7 @@ import {
   resolveStatusKey,
   STATUS_KEYS,
   statusKeyToHumanLabel,
+  statusKeyToVar,
 } from './status-key'
 
 describe('format/status-key', () => {
@@ -218,6 +219,31 @@ describe('format/status-key', () => {
       for (const key of STATUS_KEYS) {
         expect(() => statusKeyToHumanLabel(key)).not.toThrow()
         expect(typeof statusKeyToHumanLabel(key)).toBe('string')
+      }
+    })
+  })
+
+  describe('statusKeyToVar', () => {
+    it.each([
+      ['Queued', 'queued'],
+      ['InProgress', 'running'],
+      ['Success', 'success'],
+      ['Failure', 'failed'],
+      ['Cancelled', 'cancelled'],
+      ['TimedOut', 'timed-out'],
+      ['ActionRequired', 'action-required'],
+      ['StartupFailure', 'failed'],
+      ['Stale', 'neutral'],
+      ['Neutral', 'neutral'],
+      ['Skipped', 'neutral'],
+    ] as const)('returns CSS token name "%s" for %s', (key, expected) => {
+      expect(statusKeyToVar(key)).toBe(expected)
+    })
+
+    it('covers all STATUS_KEYS', () => {
+      for (const key of STATUS_KEYS) {
+        expect(() => statusKeyToVar(key)).not.toThrow()
+        expect(typeof statusKeyToVar(key)).toBe('string')
       }
     })
   })

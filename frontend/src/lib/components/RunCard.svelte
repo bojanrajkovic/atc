@@ -2,7 +2,7 @@
   import type { JobStats } from '$lib/stores/runs.svelte'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
   import { computeDurationText } from '$lib/format/duration-text'
-  import { resolveStatusKey, type StatusKey } from '$lib/format/status-key'
+  import { resolveStatusKey, statusKeyToVar, type StatusKey } from '$lib/format/status-key'
   import { uiStore } from '$lib/stores/ui.svelte'
   import JobHeader from './JobHeader.svelte'
   import JobMeta from './JobMeta.svelte'
@@ -17,7 +17,6 @@
   let { run, jobStats }: RunCardProps = $props()
 
   const statusKey: StatusKey = $derived(resolveStatusKey(run))
-  const statusColor = $derived(resolveStatusColorVar(statusKey))
 
   /**
    * State-aware duration. The static-Completed branch inside
@@ -32,40 +31,13 @@
     }
     return computeDurationText(run, uiStore.nowMs)
   })
-
-  function resolveStatusColorVar(key: StatusKey): string {
-    switch (key) {
-      case 'Queued':
-        return 'var(--queued)'
-      case 'InProgress':
-        return 'var(--running)'
-      case 'Success':
-        return 'var(--success)'
-      case 'Failure':
-        return 'var(--failed)'
-      case 'Cancelled':
-        return 'var(--cancelled)'
-      case 'TimedOut':
-        return 'var(--timed-out)'
-      case 'ActionRequired':
-        return 'var(--action-required)'
-      case 'StartupFailure':
-        return 'var(--failed)'
-      case 'Stale':
-        return 'var(--neutral)'
-      case 'Neutral':
-        return 'var(--neutral)'
-      case 'Skipped':
-        return 'var(--neutral)'
-    }
-  }
 </script>
 
 <article
   class="run-card"
   data-run-id={run.id}
   data-status={run.status}
-  style="--status-color: {statusColor};"
+  style="--status-color: var(--{statusKeyToVar(statusKey)});"
 >
   <JobHeader displayTitle={run.displayTitle} statusValue={statusKey} {durationText} />
   <JobMeta repo={run.repo} branch={run.branch} />

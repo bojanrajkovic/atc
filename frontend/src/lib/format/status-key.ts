@@ -49,6 +49,37 @@ export function statusKeyToHumanLabel(key: StatusKey): string {
 }
 
 /**
+ * Returns the CSS custom property token name (without `var(--…)` wrapper) for the given StatusKey.
+ * Use as: style="--status-color: var(--{statusKeyToVar(key)});"
+ */
+export function statusKeyToVar(key: StatusKey): string {
+  switch (key) {
+    case 'Queued':
+      return 'queued'
+    case 'InProgress':
+      return 'running'
+    case 'Success':
+      return 'success'
+    case 'Failure':
+      return 'failed'
+    case 'Cancelled':
+      return 'cancelled'
+    case 'TimedOut':
+      return 'timed-out'
+    case 'ActionRequired':
+      return 'action-required'
+    case 'StartupFailure':
+      return 'failed'
+    case 'Stale':
+      return 'neutral'
+    case 'Neutral':
+      return 'neutral'
+    case 'Skipped':
+      return 'neutral'
+  }
+}
+
+/**
  * Normalize a WorkflowRun's (status, conclusion) pair into one of 11 StatusKey values.
  *
  * Accepts Pick<WorkflowRun, 'status' | 'conclusion'> to allow lightweight test inputs.
