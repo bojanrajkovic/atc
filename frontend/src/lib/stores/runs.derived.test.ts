@@ -800,4 +800,123 @@ describe('RunStore', () => {
       expect(stats!.runnerSummary).toBe('2 runners')
     })
   })
+
+  describe('runStore.jobsByRunId', () => {
+    // AC3.6: jobsByRunId snapshot view
+    it('AC3.6: jobsByRunId returns a readonly map of jobs per run', () => {
+      const run1 = 600n
+      const run2 = 601n
+      const unknownId = 999n
+
+      // Create and apply run events
+      runStore.applyRunEvent(createMockRunEvent({ runId: run1, action: { type: 'Requested' } }))
+      runStore.applyRunEvent(createMockRunEvent({ runId: run2, action: { type: 'Requested' } }))
+
+      // Add jobs via applyJobEvent to populate jobsByRun
+      // Job 1: Queued for run1
+      runStore.applyJobEvent({
+        jobId: 1n,
+        runId: run1,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-1',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: {
+          type: 'Queued',
+          data: { labels: [], steps: [] },
+        },
+      })
+
+      // Job 2: Completed for run1
+      runStore.applyJobEvent({
+        jobId: 2n,
+        runId: run1,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-2',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: '2026-04-17T00:00:10Z',
+        action: {
+          type: 'Completed',
+          data: {
+            conclusion: 'Success',
+            runner: null,
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      // Job 3: InProgress for run2
+      runStore.applyJobEvent({
+        jobId: 3n,
+        runId: run2,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-3',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: '2026-04-17T00:00:05Z',
+        completedAt: null,
+        action: {
+          type: 'InProgress',
+          data: {
+            runner: null,
+            labels: [],
+            steps: [],
+          },
+        },
+      })
+
+      // Assert jobsByRunId snapshot structure
+      expect(runStore.jobsByRunId.size).toBe(2)
+      expect(runStore.jobsByRunId.get(run1)?.length).toBe(2)
+      expect(runStore.jobsByRunId.get(run2)?.length).toBe(1)
+      expect(runStore.jobsByRunId.get(unknownId)).toBeUndefined()
+    })
+
+    // AC3.7: jobsByRunId reactivity to job mutations
+    it('AC3.7: jobsByRunId reflects job mutations in real time', () => {
+      const run1 = 700n
+
+      runStore.applyRunEvent(createMockRunEvent({ runId: run1, action: { type: 'Requested' } }))
+
+      // Initially no jobs
+      expect(runStore.jobsByRunId.get(run1)).toBeUndefined()
+
+      // Add a job
+      runStore.applyJobEvent({
+        jobId: 1n,
+        runId: run1,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-1',
+        createdAt: '2026-04-17T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        action: { type: 'Queued', data: { labels: [], steps: [] } },
+      })
+
+      // Now the job should be in jobsByRunId
+      expect(runStore.jobsByRunId.get(run1)?.length).toBe(1)
+
+      // Add another job
+      runStore.applyJobEvent({
+        jobId: 2n,
+        runId: run1,
+        org: 'test-org',
+        repo: 'test-repo',
+        name: 'job-2',
+        createdAt: '2026-04-17T00:00:01Z',
+        startedAt: null,
+        completedAt: null,
+        action: { type: 'Queued', data: { labels: [], steps: [] } },
+      })
+
+      // Now we should have two jobs
+      expect(runStore.jobsByRunId.get(run1)?.length).toBe(2)
+    })
+  })
 })
