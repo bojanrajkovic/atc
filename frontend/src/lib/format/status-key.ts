@@ -53,6 +53,10 @@ function conclusionToKey(conclusion: RunConclusion): StatusKey {
       return 'Neutral'
     case 'Skipped':
       return 'Skipped'
+    default: {
+      const _exhaustive: never = conclusion
+      throw new Error(`Unhandled run conclusion: ${String(_exhaustive)}`)
+    }
   }
 }
 
@@ -88,5 +92,9 @@ function jobConclusionToKey(conclusion: JobConclusion): StatusKey {
       return 'Neutral'
     case 'Skipped':
       return 'Skipped'
+    default: {
+      const _exhaustive: never = conclusion
+      throw new Error(`Unhandled job conclusion: ${String(_exhaustive)}`)
+    }
   }
 }

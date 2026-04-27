@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-import { resolveStatusKey, STATUS_KEYS } from './status-key'
+import { resolveJobStatusKey, resolveStatusKey, STATUS_KEYS } from './status-key'
 
 describe('format/status-key', () => {
   describe('run-cards.AC6A.1: Queued status returns Queued key', () => {
@@ -162,6 +163,32 @@ describe('format/status-key', () => {
       for (const key of STATUS_KEYS) {
         expect(resultSet.has(key)).toBe(true)
       }
+    })
+  })
+
+  describe('exhaustiveness defense at runtime', () => {
+    // These tests guard against off-shape input slipping past the TypeScript
+    // boundary (test fixtures with loose types, JSON over the wire). Without a
+    // runtime default branch, the switch silently returns undefined and the
+    // failure cascades into broken renders that don't surface a useful error.
+    // See feedback_exhaustive_switches_at_boundaries.md.
+
+    it('throws when conclusionToKey receives an unknown RunConclusion value', () => {
+      expect(() =>
+        resolveStatusKey({
+          status: 'Completed',
+          conclusion: 'success' as RunConclusion, // wrong casing — what the e2e fixtures used to send
+        }),
+      ).toThrow(/unhandled run conclusion/i)
+    })
+
+    it('throws when jobConclusionToKey receives an unknown JobConclusion value', () => {
+      expect(() =>
+        resolveJobStatusKey({
+          status: 'Completed',
+          conclusion: 'failure' as JobConclusion, // wrong casing
+        }),
+      ).toThrow(/unhandled job conclusion/i)
     })
   })
 })
