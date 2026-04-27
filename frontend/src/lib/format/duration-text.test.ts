@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createMockRun } from '$lib/test-utils/factories'
-import { computeDurationText } from './duration-text'
+import { createMockJob, createMockRun } from '$lib/test-utils/factories'
+import { computeDurationText, computeJobDurationText } from './duration-text'
 
 const T0 = new Date('2026-04-17T10:00:00Z').getTime()
 
@@ -86,5 +86,85 @@ describe('computeDurationText', () => {
       updatedAt: '2026-04-17T09:30:45Z',
     })
     expect(computeDurationText(run, T0)).toBe('1:30:45')
+  })
+})
+
+describe('computeJobDurationText', () => {
+  it('Queued job returns "waiting MM:SS" relative to nowMs', () => {
+    const job = createMockJob({
+      status: 'Queued',
+      createdAt: '2026-04-17T09:59:00Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('waiting 1:00')
+    expect(computeJobDurationText(job, T0 + 1000)).toBe('waiting 1:01')
+  })
+
+  it('Waiting job returns "waiting MM:SS" relative to nowMs', () => {
+    const job = createMockJob({
+      status: 'Waiting',
+      createdAt: '2026-04-17T09:59:00Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('waiting 1:00')
+  })
+
+  it('InProgress job returns elapsed MM:SS from startedAt', () => {
+    const job = createMockJob({
+      status: 'InProgress',
+      startedAt: '2026-04-17T09:58:00Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('2:00')
+    expect(computeJobDurationText(job, T0 + 1000)).toBe('2:01')
+  })
+
+  it('InProgress with null startedAt falls back to createdAt', () => {
+    const job = createMockJob({
+      status: 'InProgress',
+      startedAt: null,
+      createdAt: '2026-04-17T09:59:00Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('1:00')
+  })
+
+  it('Completed+Success returns static MM:SS that ignores nowMs', () => {
+    const job = createMockJob({
+      status: 'Completed',
+      conclusion: 'Success',
+      startedAt: '2026-04-17T09:00:00Z',
+      completedAt: '2026-04-17T09:02:14Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('2:14')
+    expect(computeJobDurationText(job, T0 + 10_000)).toBe('2:14')
+    expect(computeJobDurationText(job, 0)).toBe('2:14')
+  })
+
+  it('Completed+Success with null startedAt returns em dash', () => {
+    const job = createMockJob({
+      status: 'Completed',
+      conclusion: 'Success',
+      startedAt: null,
+      completedAt: '2026-04-17T09:02:14Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('—')
+  })
+
+  it('Completed+ActionRequired returns "awaiting action MM:SS" live from completedAt', () => {
+    const job = createMockJob({
+      status: 'Completed',
+      conclusion: 'ActionRequired',
+      startedAt: '2026-04-17T09:58:00Z',
+      completedAt: '2026-04-17T09:59:30Z',
+    })
+    expect(computeJobDurationText(job, T0)).toBe('awaiting action 0:30')
+    expect(computeJobDurationText(job, T0 + 1000)).toBe('awaiting action 0:31')
+  })
+
+  it('Completed+ActionRequired with null completedAt returns em dash', () => {
+    const job = createMockJob({
+      status: 'Completed',
+      conclusion: 'ActionRequired',
+      startedAt: '2026-04-17T09:58:00Z',
+      completedAt: null,
+    })
+    expect(computeJobDurationText(job, T0)).toBe('—')
   })
 })
