@@ -1,5 +1,6 @@
 import './app.css'
 import { mount } from 'svelte'
+import { poolKey } from '$lib/filters/pool'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { paletteStore } from '$lib/stores/palette.svelte'
 import { runnerStore } from '$lib/stores/runners.svelte'
@@ -10,7 +11,14 @@ import App from './App.svelte'
 // Expose stores for E2E testing (harmless no-op in production)
 if (import.meta.env.DEV) {
   // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
-  ;(window as any).__stores = { runStore, connectionStore, runnerStore, uiStore, paletteStore }
+  ;(window as any).__stores = {
+    runStore,
+    connectionStore,
+    runnerStore,
+    uiStore,
+    paletteStore,
+    poolKey,
+  }
 }
 
 const appElement = document.getElementById('app')

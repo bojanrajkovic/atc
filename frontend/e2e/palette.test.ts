@@ -86,6 +86,68 @@ test.describe('Command palette', () => {
     expect(headings).toContain('Commands')
   })
 
+  test('AC1.3 sections render in fixed source order: Recent → Runs → Jobs → Runner Pools → Commands', async ({
+    page,
+  }) => {
+    // Extra settle time to ensure all stores are ready
+    await page.waitForTimeout(500)
+
+    // Seed a run via WS (required before recordRunVisit so recentRunIds is populated)
+    const run = makeRunEvent(1, {
+      runId: 1,
+      displayTitle: 'AC1.3 Test Run',
+      createdAt: new Date().toISOString(),
+      runStartedAt: null,
+      updatedAt: new Date().toISOString(),
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    await sendWS(page, run)
+    await page.waitForTimeout(500)
+
+    // Add a job so the Jobs section appears
+    await page.evaluate(() => {
+      window.__stores!.runStore!.jobsByRun.set(1n, [
+        {
+          id: 200n,
+          runId: 1n,
+          name: 'ac13-job',
+          status: 'Completed' as const,
+          conclusion: 'Success' as const,
+          runner: null,
+          labels: [],
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        },
+      ])
+    })
+
+    // Seed a runner pool so the Runner Pools section appears
+    await page.evaluate(() => {
+      window.__stores!.runnerStore!.loadPools([
+        {
+          labels: ['linux'],
+          running: 1,
+          queued: 0,
+          total: 2,
+          isElastic: false,
+          groupName: 'linux',
+        },
+      ])
+    })
+
+    // Record a recent visit so the Recent section appears
+    await page.evaluate(() => window.__stores!.paletteStore!.recordRunVisit(1n))
+
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // Read the section headings in DOM order — they must match the fixed source order
+    const headings = await page.locator('[data-command-group-heading]').allInnerTexts()
+    expect(headings).toEqual(['Recent', 'Runs', 'Jobs', 'Runner Pools', 'Commands'])
+  })
+
   test('AC1.2 filter behavior: typing into searchbox via keyboard updates paletteQuery', async ({
     page,
   }) => {
@@ -235,16 +297,20 @@ test.describe('Command palette', () => {
     expect(paletteOpen).toBe(false)
   })
 
-  test('AC1.7 enterSubmenu slides to theme options with appropriate items visible', async ({
+  test('AC1.7 clicking Switch theme… sets subMenu=theme and slides to theme options', async ({
     page,
   }) => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
-    await page.evaluate(() => window.__stores!.paletteStore!.enterSubmenu('theme'))
+    await expect(page.getByRole('dialog')).toBeVisible()
 
+    // Click the real "Switch theme…" command item — exercises the actual UI interaction
+    await page.getByRole('option', { name: /Switch theme/ }).click()
+
+    // subMenu should now be 'theme' (set via enterThemeSubmenu handler)
     const subMenu = await page.evaluate(() => window.__stores!.paletteStore!.subMenu)
     expect(subMenu).toBe('theme')
 
-    // Verify the slide transition rendered the theme options
+    // Slide transition renders the theme submenu heading and all four theme options
     await expect(page.getByText('Switch theme')).toBeVisible()
     await expect(page.getByRole('option', { name: /Warm/ })).toBeVisible()
     await expect(page.getByRole('option', { name: /Radar/ })).toBeVisible()
@@ -252,11 +318,20 @@ test.describe('Command palette', () => {
     await expect(page.getByRole('option', { name: /Pink/ })).toBeVisible()
   })
 
-  test('AC1.8 selecting a theme sets uiStore.theme via real click', async ({ page }) => {
+  test('AC1.8 selecting a theme via click sets uiStore.theme, clears subMenu, closes palette', async ({
+    page,
+  }) => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
-    await page.evaluate(() => window.__stores!.paletteStore!.enterSubmenu('theme'))
+    await expect(page.getByRole('dialog')).toBeVisible()
 
-    // Click the Violet theme option
+    // Enter the theme submenu via real click (same path as AC1.7)
+    await page.getByRole('option', { name: /Switch theme/ }).click()
+
+    // Verify we're in the submenu before clicking a theme
+    const subMenuBefore = await page.evaluate(() => window.__stores!.paletteStore!.subMenu)
+    expect(subMenuBefore).toBe('theme')
+
+    // Click the Violet theme option in the submenu
     await page.getByRole('option', { name: /Violet/ }).click()
 
     const theme = await page.evaluate(() => window.__stores!.uiStore!.theme)
@@ -299,16 +374,26 @@ test.describe('Command palette', () => {
     })
     await expect(page.getByRole('dialog')).toBeVisible()
 
-    // Verify exact empty state message with curly quotes
-    await expect(page.getByText('Nothing in flight matching "xyz123nonexistent".')).toBeVisible()
+    // Verify exact empty state message with curly quotes (U+201C and U+201D, matching the Svelte source)
+    await expect(page.getByText('Nothing in flight matching “xyz123nonexistent”.')).toBeVisible()
   })
 
   test('AC1.11 pool rows show three states (browse / query-active / focused) via CSS', async ({
     page,
   }) => {
-    // Seed a pool with many labels to force wrapping/truncation
+    // Seed THREE pools. Bits UI Command auto-selects the first option in the list
+    // (sets data-selected on it). Probing pool #2 guarantees it does NOT carry
+    // data-selected, so the browse-state nowrap assertion is valid.
     await page.evaluate(() => {
       window.__stores!.runnerStore!.loadPools([
+        {
+          labels: ['windows', 'x64'],
+          running: 0,
+          queued: 0,
+          total: 2,
+          isElastic: false,
+          groupName: 'windows',
+        },
         {
           labels: ['linux', 'self-hosted', 'x86', 'big-runners'],
           running: 2,
@@ -316,6 +401,14 @@ test.describe('Command palette', () => {
           total: 4,
           isElastic: true,
           groupName: 'foo',
+        },
+        {
+          labels: ['macos', 'arm64'],
+          running: 1,
+          queued: 0,
+          total: 3,
+          isElastic: false,
+          groupName: 'macos',
         },
       ])
     })
@@ -326,11 +419,15 @@ test.describe('Command palette', () => {
     // Verify pool section exists
     await expect(page.getByText('Runner Pools')).toBeVisible()
 
-    // Pool items should exist and render labels
+    // Pool #2 (linux/self-hosted/x86/big-runners) is NOT the first option in the list —
+    // it will NOT have data-selected auto-applied by Bits UI Command.
     const poolOption = page.locator('[role="option"]').filter({ hasText: /linux.*self-hosted/ })
     await expect(poolOption).toBeVisible()
 
-    // Verify browse state: labels have white-space: nowrap (when no query)
+    // Confirm this row does NOT carry data-selected (belt-and-braces guard)
+    await expect(poolOption).not.toHaveAttribute('data-selected', '')
+
+    // Verify browse state: labels have white-space: nowrap (no query, no selection)
     const labelsElement = poolOption.locator('.labels')
     const computedStyle = await labelsElement.evaluate(
       (el) => window.getComputedStyle(el).whiteSpace,
@@ -350,11 +447,9 @@ test.describe('Command palette', () => {
     const clearPoolCommand = page.getByRole('option', { name: /Clear pool filter/ })
     await expect(clearPoolCommand).not.toBeVisible()
 
-    // Set activePoolFilter using the poolKey formula (labels sorted, pipe-separated)
+    // Set activePoolFilter using the poolKey helper exposed on the __stores bridge
     await page.evaluate(() => {
-      // Simulate poolKey(['linux']): sort and join with |
-      // The PoolKey type is a branded string, but TypeScript will accept string assignment at runtime
-      ;(window.__stores!.uiStore!.activePoolFilter as any) = 'linux'
+      window.__stores!.uiStore!.activePoolFilter = window.__stores!.poolKey!(['linux'])
     })
     await page.waitForTimeout(200)
 

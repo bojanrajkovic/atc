@@ -9,6 +9,7 @@ declare global {
       runnerStore?: typeof import('$lib/stores/runners.svelte')['runnerStore']
       uiStore?: typeof import('$lib/stores/ui.svelte')['uiStore']
       paletteStore?: typeof import('$lib/stores/palette.svelte')['paletteStore']
+      poolKey?: typeof import('$lib/filters/pool')['poolKey']
     }
   }
 }
