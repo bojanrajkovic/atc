@@ -29,6 +29,7 @@
 >
   <span class="icon">⊞</span>
   {#if isQueryActive}
+    <!-- eslint-disable-next-line svelte/no-at-html-tags -->
     <span class="labels">{@html labelHtml}</span>
   {:else}
     <span class="labels">{labelText}</span>
