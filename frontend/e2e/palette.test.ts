@@ -32,7 +32,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { status: 'completed' },
+      action: { type: 'Completed', data: { conclusion: 'success' } },
     })
     await sendWS(page, run)
 
@@ -82,7 +82,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { status: 'completed' },
+      action: { type: 'Completed', data: { conclusion: 'success' } },
     })
     const run2 = makeRunEvent(2, {
       runId: 2,
@@ -90,7 +90,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { status: 'completed' },
+      action: { type: 'Completed', data: { conclusion: 'success' } },
     })
 
     await sendWS(page, run1)
@@ -117,7 +117,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { status: 'completed' },
+      action: { type: 'Completed', data: { conclusion: 'success' } },
     })
     await sendWS(page, run)
 
@@ -268,7 +268,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { status: 'completed' },
+      action: { type: 'Completed', data: { conclusion: 'success' } },
     })
     const run2 = makeRunEvent(2, {
       runId: 2,
@@ -276,7 +276,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { status: 'completed' },
+      action: { type: 'Completed', data: { conclusion: 'success' } },
     })
 
     await sendWS(page, run1)
