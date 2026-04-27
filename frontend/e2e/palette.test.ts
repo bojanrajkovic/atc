@@ -52,7 +52,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { type: 'Completed', data: { conclusion: 'success' } },
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
     await sendWS(page, run)
 
@@ -110,7 +110,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { type: 'Completed', data: { conclusion: 'success' } },
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
     const run2 = makeRunEvent(2, {
       runId: 2,
@@ -118,7 +118,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { type: 'Completed', data: { conclusion: 'success' } },
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
 
     await sendWS(page, run1)
@@ -135,9 +135,11 @@ test.describe('Command palette', () => {
     const query = await page.evaluate(() => (window as any).__stores!.paletteStore!.paletteQuery)
     expect(query).toBe('feat')
 
-    // Only the 'feat' run should be visible in results
-    await expect(page.getByText('feat: add feature')).toBeVisible()
-    await expect(page.getByText('fix: bug fix')).not.toBeVisible()
+    // Only the 'feat' run should be visible in results — scope to the dialog
+    // so we don't collide with the same titles also rendered in the kanban board.
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('feat: add feature')).toBeVisible()
+    await expect(dialog.getByText('fix: bug fix')).not.toBeVisible()
   })
 
   test('AC1.4 selecting a run sets selectedRunId and records the visit', async ({ page }) => {
@@ -150,7 +152,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { type: 'Completed', data: { conclusion: 'success' } },
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
     await sendWS(page, run)
     // Give Svelte reactivity time to process the state update after sendWS, then settle before opening palette
@@ -308,7 +310,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { type: 'Completed', data: { conclusion: 'success' } },
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
     const run2 = makeRunEvent(2, {
       runId: 2,
@@ -316,7 +318,7 @@ test.describe('Command palette', () => {
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
-      action: { type: 'Completed', data: { conclusion: 'success' } },
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
 
     await sendWS(page, run1)
@@ -335,7 +337,7 @@ test.describe('Command palette', () => {
     await expect(recentHeading).toBeVisible()
 
     // Verify run 2 is in the recent section
-    const runOptions = await page.getByRole('option', { name: /Run 2/ }).allLocations()
-    expect(runOptions.length).toBeGreaterThan(0)
+    const runOptionCount = await page.getByRole('option', { name: /Run 2/ }).count()
+    expect(runOptionCount).toBeGreaterThan(0)
   })
 })
