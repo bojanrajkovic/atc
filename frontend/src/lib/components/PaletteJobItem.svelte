@@ -23,7 +23,7 @@
   {onSelect}
 >
   <span class="status" style="--status-color: var(--{statusKeyToVar(statusKey)});">
-    <StatusIcon {statusKey} />
+    <StatusIcon value={statusKey} />
   </span>
   <span class="title">{job.name}</span>
   <span class="meta">in {parentRun.displayTitle}</span>

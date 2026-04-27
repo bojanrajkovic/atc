@@ -23,7 +23,7 @@
 
 <Command.Item
   value={`pool-${pool.labels.slice().sort().join('|')}`}
-  keywords={pool.labels}
+  keywords={[...pool.labels]}
   {onSelect}
   data-query-active={isQueryActive ? '' : undefined}
 >
