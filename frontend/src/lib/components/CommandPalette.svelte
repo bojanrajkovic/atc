@@ -153,7 +153,7 @@
   <Command.Input
     bind:ref={inputEl}
     value={paletteStore.paletteQuery}
-    onchange={(e) => {
+    oninput={(e) => {
       const target = e.target as HTMLInputElement
       paletteStore.setQuery(target.value)
     }}

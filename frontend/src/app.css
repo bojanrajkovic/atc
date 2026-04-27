@@ -13,11 +13,11 @@
   /* Text */
   --text: oklch(85% 0.028 var(--hue));
   --text-dim: oklch(72% 0.03 var(--hue));
-  --text-quiet: oklch(0.55 0.02 var(--hue));
-  --kbd-bg: oklch(0.18 0.015 var(--hue));
-  --kbd-border: oklch(0.3 0.02 var(--hue));
-  --mark-bg: oklch(0.4 0.2 80);
-  --mark-underline: oklch(0.65 0.22 80);
+  --text-quiet: oklch(55% 0.02 var(--hue));
+  --kbd-bg: oklch(18% 0.015 var(--hue));
+  --kbd-border: oklch(30% 0.02 var(--hue));
+  --mark-bg: oklch(40% 0.2 80);
+  --mark-underline: oklch(65% 0.22 80);
 
   /* Status colors — fixed hues, theme-independent */
   --queued: oklch(72% 0.15 250);
@@ -160,11 +160,11 @@
   --border: oklch(85% 0.028 var(--hue));
   --text: oklch(16% 0.063 var(--hue));
   --text-dim: oklch(40% 0.04 var(--hue));
-  --text-quiet: oklch(0.55 0.02 var(--hue));
-  --kbd-bg: oklch(0.95 0.01 var(--hue));
-  --kbd-border: oklch(0.85 0.02 var(--hue));
-  --mark-bg: oklch(0.85 0.22 80);
-  --mark-underline: oklch(0.55 0.3 80);
+  --text-quiet: oklch(55% 0.02 var(--hue));
+  --kbd-bg: oklch(95% 0.01 var(--hue));
+  --kbd-border: oklch(85% 0.02 var(--hue));
+  --mark-bg: oklch(85% 0.22 80);
+  --mark-underline: oklch(55% 0.3 80);
   --queued: oklch(45% 0.18 250);
   --running: oklch(45% 0.15 80);
   --success: oklch(42% 0.15 155);

@@ -13,7 +13,9 @@ export function highlightMatches(text: string, query: string): string {
   const escapedQuery = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re = new RegExp(`(${escapedQuery})`, 'gi')
   const parts = escapeHtml(text).split(re)
-  return parts.map((part) => (re.test(part) ? `<mark>${part}</mark>` : part)).join('')
+  // In split results with capturing group, matches always sit at odd indices (1, 3, 5, ...)
+  // non-matches at even indices (0, 2, 4, ...). No need to test with stateful regex.
+  return parts.map((part, idx) => (idx % 2 === 1 ? `<mark>${part}</mark>` : part)).join('')
 }
 
 function escapeHtml(s: string): string {

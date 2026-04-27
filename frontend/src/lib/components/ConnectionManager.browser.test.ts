@@ -45,48 +45,59 @@ describe('ConnectionManager — reconnect effect (browser mode)', () => {
     connectionStore = connModule.connectionStore
   })
 
-  it('effect watches reconnectRequested counter and triggers reconnect', async () => {
-    // Since the effect is reactive, we can verify the mechanism by checking
-    // that the effect properly tracks the counter. We'll render the component
-    // and verify the effect updates lastSeen.
-    const { default: ConnectionManager } = await import('./ConnectionManager.svelte')
+  it('effect invokes manager.reconnect when reconnectRequested counter changes', async () => {
+    const connModule = await import('$lib/connection')
+    const reconnectSpy = vi.spyOn(connModule.ConnectionManager.prototype, 'reconnect')
 
-    // Render the component (which sets up the effect)
+    const { default: ConnectionManager } = await import('./ConnectionManager.svelte')
     render(ConnectionManager)
 
-    // Get initial counter value
-    const initialCounter = connectionStore.reconnectRequested
+    // Initial state: no reconnects should have been called yet
+    const initialCallCount = reconnectSpy.mock.calls.length
+    expect(initialCallCount).toBe(0)
 
-    // Request a reconnect via the store
+    // Request a reconnect
     connectionStore.requestReconnect()
+    await new Promise((resolve) => setTimeout(resolve, 100))
 
-    // Wait for effects to settle
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // The effect should have called manager.reconnect()
+    expect(reconnectSpy.mock.calls.length).toBe(initialCallCount + 1)
 
-    // Verify the reconnectRequested counter incremented
-    expect(connectionStore.reconnectRequested).toBe(initialCounter + 1)
+    // Request another reconnect
+    connectionStore.requestReconnect()
+    await new Promise((resolve) => setTimeout(resolve, 100))
 
-    // The effect should have tracked this (we can't directly access lastSeen,
-    // but we verify the counter incremented, which proves the mutation worked)
+    // The effect should have called manager.reconnect() again
+    expect(reconnectSpy.mock.calls.length).toBe(initialCallCount + 2)
+
+    reconnectSpy.mockRestore()
   })
 
-  it('effect correctly increments counter multiple times', async () => {
-    const { default: ConnectionManager } = await import('./ConnectionManager.svelte')
+  it('effect correctly increments reconnect call count on multiple requests', async () => {
+    const connModule = await import('$lib/connection')
+    const reconnectSpy = vi.spyOn(connModule.ConnectionManager.prototype, 'reconnect')
 
+    const { default: ConnectionManager } = await import('./ConnectionManager.svelte')
     render(ConnectionManager)
 
     const initial = connectionStore.reconnectRequested
+    const initialCallCount = reconnectSpy.mock.calls.length
 
     connectionStore.requestReconnect()
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(connectionStore.reconnectRequested).toBe(initial + 1)
+    expect(reconnectSpy.mock.calls.length).toBe(initialCallCount + 1)
 
     connectionStore.requestReconnect()
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(connectionStore.reconnectRequested).toBe(initial + 2)
+    expect(reconnectSpy.mock.calls.length).toBe(initialCallCount + 2)
 
     connectionStore.requestReconnect()
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(connectionStore.reconnectRequested).toBe(initial + 3)
+    expect(reconnectSpy.mock.calls.length).toBe(initialCallCount + 3)
+
+    reconnectSpy.mockRestore()
   })
 })

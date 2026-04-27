@@ -83,11 +83,10 @@ describe('PalettePoolItem (browser mode)', () => {
       },
     })
 
-    const labels = container.querySelector('.labels') as HTMLElement
-    if (labels) {
-      const computed = window.getComputedStyle(labels)
-      expect(computed.whiteSpace).toBe('nowrap')
-    }
+    const labels = container.querySelector<HTMLElement>('.labels')
+    expect(labels).not.toBeNull()
+    const computed = window.getComputedStyle(labels!)
+    expect(computed.whiteSpace).toBe('nowrap')
   })
 
   it('query-active state: renders with white-space: normal when query is active', () => {
@@ -103,11 +102,10 @@ describe('PalettePoolItem (browser mode)', () => {
       },
     })
 
-    const labels = container.querySelector('.labels') as HTMLElement
-    if (labels) {
-      const computed = window.getComputedStyle(labels)
-      expect(computed.whiteSpace).toBe('normal')
-    }
+    const labels = container.querySelector<HTMLElement>('.labels')
+    expect(labels).not.toBeNull()
+    const computed = window.getComputedStyle(labels!)
+    expect(computed.whiteSpace).toBe('normal')
   })
 
   it('meta column maintains min-width gutter', () => {
@@ -123,10 +121,9 @@ describe('PalettePoolItem (browser mode)', () => {
       },
     })
 
-    const meta = container.querySelector('.meta') as HTMLElement
-    if (meta) {
-      const computed = window.getComputedStyle(meta)
-      expect(computed.minWidth).toBeTruthy()
-    }
+    const meta = container.querySelector<HTMLElement>('.meta')
+    expect(meta).not.toBeNull()
+    const computed = window.getComputedStyle(meta!)
+    expect(computed.minWidth).toBeTruthy()
   })
 })

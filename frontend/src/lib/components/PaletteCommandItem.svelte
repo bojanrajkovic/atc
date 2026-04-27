@@ -16,7 +16,7 @@
   <span class="label">{label}</span>
   {#if shortcut}
     <span class="shortcut">
-      {#each shortcut as key (key)}
+      {#each shortcut as key, i (i)}
         <kbd>{key}</kbd>
       {/each}
     </span>
