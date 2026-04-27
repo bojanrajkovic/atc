@@ -12,6 +12,18 @@
   // fields below are extracted from the destructure so they do NOT bleed
   // into restProps (which spreads onto <Dialog.Root> and <Command>, neither
   // of which accepts these content-level props).
+  //
+  // `strip` removes undefined keys from a forwarded-prop object so the spread
+  // satisfies `exactOptionalPropertyTypes`: bits-ui types these props as
+  // optional (`T?`, not `T | undefined`), which under EOPT means present
+  // with value T or absent — never present-with-undefined. Destructuring an
+  // optional prop without a default yields `T | undefined`, so we must strip
+  // undefined keys before forwarding.
+  function strip<T extends object>(obj: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+    return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as {
+      [K in keyof T]?: Exclude<T[K], undefined>
+    }
+  }
   let {
     open = $bindable(false),
     ref = $bindable(null),
@@ -49,12 +61,14 @@
   </Dialog.Header>
   <Dialog.Content
     class={cn('rounded-xl! top-1/3 translate-y-0 overflow-hidden p-0', className)}
-    {showCloseButton}
-    portalProps={portalProps as any}
-    escapeKeydownBehavior={escapeKeydownBehavior as any}
-    interactOutsideBehavior={interactOutsideBehavior as any}
-    onCloseAutoFocus={onCloseAutoFocus as any}
-    onOpenAutoFocus={onOpenAutoFocus as any}
+    {...strip({
+      showCloseButton,
+      portalProps,
+      escapeKeydownBehavior,
+      interactOutsideBehavior,
+      onCloseAutoFocus,
+      onOpenAutoFocus,
+    })}
   >
     <Command {...restProps} bind:value bind:ref {children} />
   </Dialog.Content>
