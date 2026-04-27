@@ -20,6 +20,34 @@ export const STATUS_KEYS = [
 
 export type StatusKey = (typeof STATUS_KEYS)[number]
 
+/** Maps a StatusKey to a human-readable label (title-cased, space-separated). */
+export function statusKeyToHumanLabel(key: StatusKey): string {
+  switch (key) {
+    case 'Queued':
+      return 'Queued'
+    case 'InProgress':
+      return 'In progress'
+    case 'Success':
+      return 'Success'
+    case 'Failure':
+      return 'Failure'
+    case 'Cancelled':
+      return 'Cancelled'
+    case 'TimedOut':
+      return 'Timed out'
+    case 'ActionRequired':
+      return 'Action required'
+    case 'StartupFailure':
+      return 'Startup failure'
+    case 'Stale':
+      return 'Stale'
+    case 'Neutral':
+      return 'Neutral'
+    case 'Skipped':
+      return 'Skipped'
+  }
+}
+
 /**
  * Normalize a WorkflowRun's (status, conclusion) pair into one of 11 StatusKey values.
  *

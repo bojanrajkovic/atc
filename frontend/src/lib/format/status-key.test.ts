@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-import { resolveJobStatusKey, resolveStatusKey, STATUS_KEYS } from './status-key'
+import {
+  resolveJobStatusKey,
+  resolveStatusKey,
+  STATUS_KEYS,
+  statusKeyToHumanLabel,
+} from './status-key'
 
 describe('format/status-key', () => {
   describe('run-cards.AC6A.1: Queued status returns Queued key', () => {
@@ -189,6 +194,31 @@ describe('format/status-key', () => {
           conclusion: 'failure' as JobConclusion, // wrong casing
         }),
       ).toThrow(/unhandled job conclusion/i)
+    })
+  })
+
+  describe('statusKeyToHumanLabel', () => {
+    it.each([
+      ['Queued', 'Queued'],
+      ['InProgress', 'In progress'],
+      ['Success', 'Success'],
+      ['Failure', 'Failure'],
+      ['Cancelled', 'Cancelled'],
+      ['TimedOut', 'Timed out'],
+      ['ActionRequired', 'Action required'],
+      ['StartupFailure', 'Startup failure'],
+      ['Stale', 'Stale'],
+      ['Neutral', 'Neutral'],
+      ['Skipped', 'Skipped'],
+    ] as const)('returns "%s" for %s', (key, expected) => {
+      expect(statusKeyToHumanLabel(key)).toBe(expected)
+    })
+
+    it('covers all STATUS_KEYS', () => {
+      for (const key of STATUS_KEYS) {
+        expect(() => statusKeyToHumanLabel(key)).not.toThrow()
+        expect(typeof statusKeyToHumanLabel(key)).toBe('string')
+      }
     })
   })
 })
