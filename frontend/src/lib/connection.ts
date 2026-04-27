@@ -137,6 +137,26 @@ export class ConnectionManager {
     }, delay)
   }
 
+  /**
+   * Cancel any pending reconnect timer, reset the backoff counter, close the
+   * current WebSocket, and begin a fresh connect cycle. Used by the
+   * "Reconnect" command in the command palette via the
+   * connectionStore.reconnectRequested trigger.
+   */
+  reconnect(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    connectionStore.reconnectAttempt = 0
+    if (this.ws) {
+      this.ws.onclose = null
+      this.ws.close()
+      this.ws = null
+    }
+    this.connect().catch(() => {})
+  }
+
   destroy(): void {
     // Abort any in-flight connect (fetch, WS open wait)
     this.abortController?.abort()
