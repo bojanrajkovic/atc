@@ -39,6 +39,9 @@ catalogs:
     clsx:
       specifier: ^2.1.1
       version: 2.1.1
+    command-score:
+      specifier: ^0.1.2
+      version: 0.1.2
     eslint:
       specifier: ^10.1.0
       version: 10.1.0
@@ -86,6 +89,9 @@ importers:
       clsx:
         specifier: 'catalog:'
         version: 2.1.1
+      command-score:
+        specifier: 'catalog:'
+        version: 0.1.2
       shadcn-svelte:
         specifier: 'catalog:'
         version: 1.2.7(svelte@5.55.0)
@@ -912,6 +918,9 @@ packages:
 
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
+
+  command-score@0.1.2:
+    resolution: {integrity: sha512-VtDvQpIJBvBatnONUsPzXYFVKQQAhuf3XTNOAsdBxCNO/QCtUUd8LSgjn0GVarBkCad6aJCZfXgrjYbl/KRr7w==}
 
   commander@14.0.3:
     resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
@@ -2574,6 +2583,8 @@ snapshots:
       color-name: 1.1.4
 
   color-name@1.1.4: {}
+
+  command-score@0.1.2: {}
 
   commander@14.0.3: {}
 

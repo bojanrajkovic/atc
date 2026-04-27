@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "clsx": "catalog:",
+    "command-score": "catalog:",
     "shadcn-svelte": "catalog:",
     "svelte": "catalog:",
     "tailwind-merge": "catalog:"
