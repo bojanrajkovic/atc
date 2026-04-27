@@ -29,5 +29,5 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["node", "svelte", "vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts", "e2e/**/*.ts"]
 }

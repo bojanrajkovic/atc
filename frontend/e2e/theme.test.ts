@@ -187,19 +187,20 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
         // Read all status color values
         for (const colorVar of Object.keys(colors)) {
           const value = await getColorValue(page, colorVar)
-          colors[colorVar].push(value)
+          colors[colorVar]?.push(value)
         }
       }
 
       // Verify all themes produce identical values for each status color
       // (status colors have fixed hues, independent of theme)
       for (const [colorVar, values] of Object.entries(colors)) {
-        const firstValue = values[0]
-        for (const value of values.slice(1)) {
-          expect(value).toBe(
-            firstValue,
+        const [firstValue, ...rest] = values
+        if (firstValue === undefined) continue
+        for (const value of rest) {
+          expect(
+            value,
             `${colorVar} should be constant across themes, but got different values`,
-          )
+          ).toBe(firstValue)
         }
       }
     })
