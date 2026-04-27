@@ -1,3 +1,5 @@
+import type { Job } from '$lib/types/generated/Job'
+import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
@@ -45,6 +47,41 @@ function conclusionToKey(conclusion: RunConclusion): StatusKey {
       return 'ActionRequired'
     case 'StartupFailure':
       return 'StartupFailure'
+    case 'Stale':
+      return 'Stale'
+    case 'Neutral':
+      return 'Neutral'
+    case 'Skipped':
+      return 'Skipped'
+  }
+}
+
+/**
+ * Normalize a Job's (status, conclusion) pair into one of 11 StatusKey values.
+ *
+ * Accepts Pick<Job, 'status' | 'conclusion'> to allow lightweight test inputs.
+ */
+export function resolveJobStatusKey(job: Pick<Job, 'status' | 'conclusion'>): StatusKey {
+  if (job.status === 'Queued') return 'Queued'
+  if (job.status === 'Waiting') return 'InProgress'
+  if (job.status === 'InProgress') return 'InProgress'
+  // job.status === 'Completed' — must be exhaustive on JobConclusion.
+  if (job.conclusion === null) return 'Cancelled' // bare-Completed fallback
+  return jobConclusionToKey(job.conclusion)
+}
+
+function jobConclusionToKey(conclusion: JobConclusion): StatusKey {
+  switch (conclusion) {
+    case 'Success':
+      return 'Success'
+    case 'Failure':
+      return 'Failure'
+    case 'Cancelled':
+      return 'Cancelled'
+    case 'TimedOut':
+      return 'TimedOut'
+    case 'ActionRequired':
+      return 'ActionRequired'
     case 'Stale':
       return 'Stale'
     case 'Neutral':

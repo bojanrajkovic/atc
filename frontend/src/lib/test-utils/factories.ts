@@ -1,3 +1,5 @@
+import type { Job } from '$lib/types/generated/Job'
+import type { JobStatus } from '$lib/types/generated/JobStatus'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { RunStatus } from '$lib/types/generated/RunStatus'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
@@ -24,6 +26,27 @@ export function createMockRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun
     createdAt: '2026-04-16T10:00:00Z',
     runStartedAt: null,
     updatedAt: '2026-04-16T10:00:00Z',
+    ...overrides,
+  }
+}
+
+/**
+ * Create a mock Job with sensible defaults for testing.
+ * All fields can be overridden via the partial parameter.
+ */
+export function createMockJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: 1n,
+    name: 'test-job',
+    runId: 1n,
+    status: 'Queued' as JobStatus,
+    conclusion: null,
+    runner: null,
+    labels: [],
+    steps: [],
+    createdAt: '2026-04-16T10:00:00Z',
+    startedAt: null,
+    completedAt: null,
     ...overrides,
   }
 }
