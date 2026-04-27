@@ -802,8 +802,7 @@ describe('RunStore', () => {
   })
 
   describe('runStore.jobsByRunId', () => {
-    // AC3.6: jobsByRunId snapshot view
-    it('AC3.6: jobsByRunId returns a readonly map of jobs per run', () => {
+    it('jobsByRunId returns a readonly map of jobs per run', () => {
       const run1 = 600n
       const run2 = 601n
       const unknownId = 999n
@@ -877,8 +876,7 @@ describe('RunStore', () => {
       expect(runStore.jobsByRunId.get(unknownId)).toBeUndefined()
     })
 
-    // AC3.7: jobsByRunId reactivity to job mutations
-    it('AC3.7: jobsByRunId reflects job mutations in real time', () => {
+    it('jobsByRunId reflects job mutations in real time', () => {
       const run1 = 700n
 
       runStore.applyRunEvent(createMockRunEvent({ runId: run1, action: { type: 'Requested' } }))
