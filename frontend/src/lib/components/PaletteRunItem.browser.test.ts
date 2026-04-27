@@ -1,51 +1,49 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
-import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
+import { createMockRun } from '$lib/test-utils/factories'
 import Wrapper from './test-utils/PaletteRunItemWrapper.svelte'
 
-const queuedRun: WorkflowRun = {
+const queuedRun = createMockRun({
   id: 1n,
   repo: 'actions/toolkit',
   branch: 'main',
   displayTitle: 'Test run',
   status: 'Queued',
-  conclusion: null,
-  createdAt: new Date().toISOString(),
-  completedAt: null,
-  queuedDurationMs: null,
-  runDurationMs: null,
-}
+})
 
-const inProgressRun: WorkflowRun = {
-  ...queuedRun,
+const inProgressRun = createMockRun({
   id: 2n,
+  repo: 'actions/toolkit',
+  branch: 'main',
   status: 'InProgress',
   displayTitle: 'Deploy to prod',
-}
+})
 
-const completedSuccessRun: WorkflowRun = {
-  ...queuedRun,
+const completedSuccessRun = createMockRun({
   id: 3n,
+  repo: 'actions/toolkit',
+  branch: 'main',
   status: 'Completed',
   conclusion: 'Success',
   displayTitle: 'CI checks',
-}
+})
 
-const completedFailureRun: WorkflowRun = {
-  ...queuedRun,
+const completedFailureRun = createMockRun({
   id: 4n,
+  repo: 'actions/toolkit',
+  branch: 'main',
   status: 'Completed',
   conclusion: 'Failure',
   displayTitle: 'Build failed',
-}
+})
 
-const noBranchRun: WorkflowRun = {
-  ...queuedRun,
+const noBranchRun = createMockRun({
   id: 5n,
+  repo: 'actions/toolkit',
   branch: null,
   displayTitle: 'Detached head',
-}
+})
 
 describe('PaletteRunItem (browser)', () => {
   it('renders the run displayTitle', () => {
@@ -65,8 +63,7 @@ describe('PaletteRunItem (browser)', () => {
         onSelect: () => {},
       },
     })
-    expect(screen.getByText('actions/toolkit')).toBeTruthy()
-    expect(screen.getByText(/main/)).toBeTruthy()
+    expect(screen.getByText(/actions\/toolkit.*main/)).toBeTruthy()
   })
 
   it('renders repo only when branch is null', () => {

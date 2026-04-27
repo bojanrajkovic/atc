@@ -1,8 +1,8 @@
+import { render } from '@testing-library/svelte'
 import { describe, expect, it, vi } from 'vitest'
 
-import { render } from '@testing-library/svelte'
-import PaletteJobItem from './PaletteJobItem.svelte'
 import { createMockJob, createMockRun } from '$lib/test-utils/factories'
+import Wrapper from './test-utils/PaletteJobItemWrapper.svelte'
 
 describe('PaletteJobItem (browser mode)', () => {
   it('renders status icon with correct StatusKey for each Job status', () => {
@@ -14,9 +14,8 @@ describe('PaletteJobItem (browser mode)', () => {
     })
     const onSelect = vi.fn()
 
-    render(PaletteJobItem, {
+    render(Wrapper, {
       props: { job, parentRun, onSelect },
-      context: new Map([['cmdk-root', { value: 'test', open: true }]]),
     })
 
     // Verify component renders (rest verified by resolveJobStatusKey tests in status-key.test.ts)
@@ -28,9 +27,8 @@ describe('PaletteJobItem (browser mode)', () => {
     const job = createMockJob({ name: 'test-job' })
     const onSelect = vi.fn()
 
-    render(PaletteJobItem, {
+    render(Wrapper, {
       props: { job, parentRun, onSelect },
-      context: new Map([['cmdk-root', { value: 'test', open: true }]]),
     })
 
     // Bits UI Command context setup would happen here in integration tests
