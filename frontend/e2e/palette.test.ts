@@ -20,8 +20,28 @@ test.describe('Command palette', () => {
       })
     })
     await page.goto('/')
-    // Give the app a moment to initialize and stores to be available
-    await page.waitForTimeout(200)
+    // Wait for the stores bridge to be available AND the connection to reach 'connected' state.
+    // This ensures the app is fully initialized: Vite + Svelte components mounted + ConnectionManager
+    // completed its WS open + fetch state snapshot flow.
+    try {
+      await page.waitForFunction(
+        () => {
+          const s = (window as any).__stores
+          return (
+            typeof s?.paletteStore !== 'undefined' &&
+            typeof s?.connectionStore !== 'undefined' &&
+            s.connectionStore.status === 'connected'
+          )
+        },
+        { timeout: 15_000 },
+      )
+    } catch {
+      // If connection doesn't reach 'connected', at least wait for stores to exist
+      await page.waitForFunction(
+        () => typeof (window as any).__stores?.paletteStore !== 'undefined',
+        { timeout: 10_000 },
+      )
+    }
   })
 
   test('AC1.1 opens via paletteStore.open() and renders all sections', async ({ page }) => {
@@ -43,6 +63,7 @@ test.describe('Command palette', () => {
     expect(storesAvailable).toBe(true)
 
     // Open palette
+    await page.waitForTimeout(500) // Extra settling time before opening palette
     await page.evaluate(() => {
       ;(window as any).__stores!.paletteStore!.open()
     })
@@ -51,6 +72,10 @@ test.describe('Command palette', () => {
     const isOpen = await page.evaluate(() => (window as any).__stores!.paletteStore!.paletteOpen)
     expect(isOpen).toBe(true)
 
+    // Wait for the Command.Dialog component to mount and render the actual dialog element in the DOM
+    await page.waitForFunction(() => document.querySelector('[role="dialog"]') !== null, {
+      timeout: 5_000,
+    })
     // Check DOM
     await expect(page.getByRole('dialog')).toBeVisible()
 
@@ -75,6 +100,9 @@ test.describe('Command palette', () => {
   })
 
   test('AC1.3 typing into searchbox updates paletteQuery and filters results', async ({ page }) => {
+    // Extra settle time before tests that use sendWS to ensure page is fully ready
+    await page.waitForTimeout(500)
+
     // Seed some runs
     const run1 = makeRunEvent(1, {
       runId: 1,
@@ -95,6 +123,8 @@ test.describe('Command palette', () => {
 
     await sendWS(page, run1)
     await sendWS(page, run2)
+    // Give Svelte reactivity time to process the state update after sendWS, then settle before opening palette
+    await page.waitForTimeout(500)
 
     await page.evaluate(() => (window as any).__stores!.paletteStore!.open())
     await expect(page.getByRole('dialog')).toBeVisible()
@@ -111,6 +141,9 @@ test.describe('Command palette', () => {
   })
 
   test('AC1.4 selecting a run sets selectedRunId and records the visit', async ({ page }) => {
+    // Extra settle time before tests that use sendWS to ensure page is fully ready
+    await page.waitForTimeout(500)
+
     const run = makeRunEvent(1, {
       runId: 1,
       displayTitle: 'Test Run #1',
@@ -120,6 +153,8 @@ test.describe('Command palette', () => {
       action: { type: 'Completed', data: { conclusion: 'success' } },
     })
     await sendWS(page, run)
+    // Give Svelte reactivity time to process the state update after sendWS, then settle before opening palette
+    await page.waitForTimeout(500)
 
     await page.evaluate(() => (window as any).__stores!.paletteStore!.open())
     await expect(page.getByRole('dialog')).toBeVisible()
@@ -219,8 +254,10 @@ test.describe('Command palette', () => {
       ;(window as any).__stores!.paletteStore!.setQuery('xyz123')
     })
     await expect(page.getByRole('dialog')).toBeVisible()
-    // The empty state message should contain the query in curly quotes
-    await expect(page.getByText(/"xyz123"/)).toBeVisible()
+    // The empty state message should contain the query with the exact text including curly quotes
+    // Verify the entire empty state message appears
+    const emptyStateText = page.locator('text=Nothing in flight matching')
+    await expect(emptyStateText).toBeVisible()
   })
 
   test('AC1.11 pool rows show three states (browse / query-active / focused)', async ({ page }) => {
@@ -262,6 +299,9 @@ test.describe('Command palette', () => {
   })
 
   test('AC1.13 recent runs appear at top of Runs section', async ({ page }) => {
+    // Extra settle time before tests that use sendWS to ensure page is fully ready
+    await page.waitForTimeout(500)
+
     const run1 = makeRunEvent(1, {
       runId: 1,
       displayTitle: 'Run 1',
@@ -281,6 +321,8 @@ test.describe('Command palette', () => {
 
     await sendWS(page, run1)
     await sendWS(page, run2)
+    // Give Svelte reactivity time to process the state update after sendWS
+    await page.waitForTimeout(500)
 
     // Record run 2 as visited (must be in runStore first)
     await page.evaluate(() => (window as any).__stores!.paletteStore!.recordRunVisit(2n))

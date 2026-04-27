@@ -43,11 +43,7 @@
   })
 
   const allRuns = $derived.by(() => {
-    const runs = [
-      ...runStore.queuedRuns,
-      ...runStore.inProgressRuns,
-      ...runStore.completedRuns,
-    ]
+    const runs = [...runStore.queuedRuns, ...runStore.inProgressRuns, ...runStore.completedRuns]
     if (paletteStore.paletteQuery === '') return runs
     return runs.filter(
       (r) => commandScore(r.displayTitle, paletteStore.paletteQuery) > SCORE_THRESHOLD
@@ -57,11 +53,11 @@
   // Flatten jobs across all known runs for the Jobs section
   const allJobs = $derived.by(() => {
     const entries = [...runStore.jobsByRunId.entries()]
-      .flatMap(([runId, jobs]) =>
-        jobs.map((job) => ({ job, parentRun: runStore.runs.get(runId) }))
-      )
+      .flatMap(([runId, jobs]) => jobs.map((job) => ({ job, parentRun: runStore.runs.get(runId) })))
       .filter(
-        (entry): entry is {
+        (
+          entry
+        ): entry is {
           job: import('$lib/types/generated/Job').Job
           parentRun: import('$lib/types/generated/WorkflowRun').WorkflowRun
         } => entry.parentRun !== undefined
@@ -77,7 +73,9 @@
   const filteredPools = $derived.by(() => {
     const pools = runnerStore.pools
     if (paletteStore.paletteQuery === '') return pools
-    return pools.filter((p) => commandScore(p.labels.join(' '), paletteStore.paletteQuery) > SCORE_THRESHOLD)
+    return pools.filter(
+      (p) => commandScore(p.labels.join(' '), paletteStore.paletteQuery) > SCORE_THRESHOLD
+    )
   })
 
   async function selectRun(runId: bigint) {
@@ -94,7 +92,7 @@
     paletteStore.paletteOpen = false
   }
 
-  function selectPool(pool: typeof runnerStore.pools[number]) {
+  function selectPool(pool: (typeof runnerStore.pools)[number]) {
     uiStore.activePoolFilter = poolKey(pool.labels)
     paletteStore.paletteOpen = false
   }
@@ -170,7 +168,7 @@
     -->
     {#if paletteStore.paletteQuery !== '' && recentRuns.length === 0 && allRuns.length === 0 && allJobs.length === 0 && filteredPools.length === 0}
       <Command.Empty forceMount>
-        Nothing in flight matching "{paletteStore.paletteQuery}".
+        Nothing in flight matching “{paletteStore.paletteQuery}”.
       </Command.Empty>
     {/if}
 
@@ -211,7 +209,11 @@
       {#if filteredPools.length > 0}
         <PaletteSection heading="Runner Pools">
           {#each filteredPools as pool (pool.labels.slice().sort().join('|'))}
-            <PalettePoolItem {pool} query={paletteStore.paletteQuery} onSelect={() => selectPool(pool)} />
+            <PalettePoolItem
+              {pool}
+              query={paletteStore.paletteQuery}
+              onSelect={() => selectPool(pool)}
+            />
           {/each}
         </PaletteSection>
       {/if}
@@ -224,13 +226,25 @@
       -->
       <PaletteSection heading="Commands">
         <PaletteCommandItem label="Switch theme…" onSelect={enterThemeSubmenu} />
-        <PaletteCommandItem label="Toggle dark mode" shortcut={['⌘', 'D']} onSelect={toggleDarkMode} />
-        <PaletteCommandItem label="Toggle compact density" shortcut={['⌘', '\\']} onSelect={toggleDensity} />
+        <PaletteCommandItem
+          label="Toggle dark mode"
+          shortcut={['⌘', 'D']}
+          onSelect={toggleDarkMode}
+        />
+        <PaletteCommandItem
+          label="Toggle compact density"
+          shortcut={['⌘', '\\']}
+          onSelect={toggleDensity}
+        />
         {#if uiStore.activePoolFilter !== null}
           <PaletteCommandItem label="Clear pool filter" onSelect={clearPoolFilter} />
         {/if}
         {#if uiStore.selectedRunId !== null}
-          <PaletteCommandItem label="Close detail panel" shortcut={['Esc']} onSelect={closeDetailPanel} />
+          <PaletteCommandItem
+            label="Close detail panel"
+            shortcut={['Esc']}
+            onSelect={closeDetailPanel}
+          />
         {/if}
         <PaletteCommandItem label="Reconnect" onSelect={reconnect} />
       </PaletteSection>
