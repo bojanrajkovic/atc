@@ -1,0 +1,55 @@
+import { fireEvent, render, screen } from '@testing-library/svelte'
+import { describe, expect, it, vi } from 'vitest'
+
+import PanelActions from './PanelActions.svelte'
+
+describe('PanelActions', () => {
+  const htmlUrl = 'https://github.com/owner/repo/actions/runs/12345'
+
+  it('interactivity.AC2.2 renders the Go-to-run anchor with the correct href', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    const link = screen.getByRole('link', { name: 'Go to run' })
+    expect(link.getAttribute('href')).toBe(htmlUrl)
+  })
+
+  it('interactivity.AC2.2 sets target="_blank" on the Go-to-run anchor', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    const link = screen.getByRole('link', { name: 'Go to run' })
+    expect(link.getAttribute('target')).toBe('_blank')
+  })
+
+  it('interactivity.AC2.2 sets rel="noopener noreferrer" on the Go-to-run anchor', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    const link = screen.getByRole('link', { name: 'Go to run' })
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
+  it('interactivity.AC2.2 anchor accessible name is "Go to run"', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    // getByRole('link', { name: '...' }) would throw if accessible name did not match.
+    // Querying here just proves the element is findable by that name.
+    const link = screen.getByRole('link', { name: 'Go to run' })
+    expect(link).toBeTruthy()
+  })
+
+  it('clicking the close button invokes the onClose callback', async () => {
+    const onClose = vi.fn()
+    render(PanelActions, { props: { htmlUrl, onClose } })
+
+    const button = screen.getByRole('button', { name: 'Close detail panel' })
+    await fireEvent.click(button)
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('close button has aria-label="Close detail panel"', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    const button = screen.getByRole('button', { name: 'Close detail panel' })
+    expect(button.getAttribute('aria-label')).toBe('Close detail panel')
+  })
+})
