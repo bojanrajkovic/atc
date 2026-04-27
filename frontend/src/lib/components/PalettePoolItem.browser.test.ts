@@ -1,6 +1,6 @@
+import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
 
-import { render, screen } from '@testing-library/svelte'
 import Wrapper from './test-utils/PalettePoolItemWrapper.svelte'
 
 describe('PalettePoolItem (browser mode)', () => {
