@@ -4,7 +4,8 @@
   import type { Job } from '$lib/types/generated/Job'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
-  let { job, parentRun, onSelect }: { job: Job; parentRun: WorkflowRun; onSelect: () => void } = $props()
+  let { job, parentRun, onSelect }: { job: Job; parentRun: WorkflowRun; onSelect: () => void } =
+    $props()
 </script>
 
 <Command.Root>
