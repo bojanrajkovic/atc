@@ -117,6 +117,10 @@ const LIGHT_TOKENS: Record<TokenName, OklchTriple | 'hue-following'> = {
 const DARK_SURFACE: OklchTriple = { L: 16, C: 0.063, H: Number.NaN } // follows theme hue
 const LIGHT_SURFACE: OklchTriple = { L: 99, C: 0.013, H: Number.NaN } // follows theme hue
 
+// --surface-raised values from frontend/src/app.css (brighter hovered/focused row surface)
+const DARK_SURFACE_RAISED: OklchTriple = { L: 20, C: 0.06, H: Number.NaN } // follows theme hue
+const LIGHT_SURFACE_RAISED: OklchTriple = { L: 92, C: 0.025, H: Number.NaN } // follows theme hue
+
 // Resolve a token to its concrete OKLCH triple, substituting theme hue where needed
 function resolveToken(token: OklchTriple, theme: ThemeName): OklchTriple {
   return {
@@ -168,6 +172,39 @@ describe('WCAG contrast gate', () => {
           if (ratio < 7) {
             // biome-ignore lint/suspicious/noConsole: informational output for maintainers
             console.info(`[AAA miss] ${mode}/${theme}/${tokenName} = ${ratio.toFixed(2)}:1`)
+          }
+        }
+      })
+    }
+  }
+
+  for (const mode of modes) {
+    for (const theme of themes) {
+      it(`${mode} ${theme} - all tokens meet AA on --surface-raised`, () => {
+        const tokens = mode === 'dark' ? DARK_TOKENS : LIGHT_TOKENS
+        const surfaceRaised = mode === 'dark' ? DARK_SURFACE_RAISED : LIGHT_SURFACE_RAISED
+
+        // Resolve surface-raised to concrete triple (substitute theme hue)
+        const surfaceRaisedResolved = resolveToken(surfaceRaised, theme)
+
+        for (const tokenName of tokenNames) {
+          const tokenDef = tokens[tokenName]
+          if (!tokenDef || tokenDef === 'hue-following') {
+            throw new Error(`Token ${tokenName} not found in ${mode} tokens`)
+          }
+
+          const tokenResolved = resolveToken(tokenDef, theme)
+          const ratio = contrast(tokenResolved, surfaceRaisedResolved)
+
+          // AA (4.5:1) is the gate — must pass for all combinations
+          expect(ratio).toBeGreaterThanOrEqual(4.5)
+
+          // AAA (7:1) is aspirational — report misses as informational output
+          if (ratio < 7) {
+            // biome-ignore lint/suspicious/noConsole: informational output for maintainers
+            console.info(
+              `[AAA miss] ${mode}/${theme}/${tokenName} (on --surface-raised) = ${ratio.toFixed(2)}:1`,
+            )
           }
         }
       })
