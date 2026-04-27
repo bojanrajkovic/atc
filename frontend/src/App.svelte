@@ -3,6 +3,7 @@
   import AppShell from '$lib/components/AppShell.svelte'
   import KanbanBoard from '$lib/components/KanbanBoard.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
+  import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
 </script>
 
 <ConnectionManager />
@@ -10,3 +11,4 @@
   <KanbanBoard />
 </AppShell>
 <CommandPalette />
+<RunDetailPanel />
