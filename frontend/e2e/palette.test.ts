@@ -259,14 +259,25 @@ test.describe('Command palette', () => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
     await expect(page.getByRole('dialog')).toBeVisible()
 
+    // Install scrollIntoView spy before clicking the job item.
+    // JobBlock's $effect calls scrollIntoView only when selectedJobId === job.id,
+    // so a 'job-100' entry in __scrolledIds proves the dispatch wrote selectedJobId = 100n.
+    await page.evaluate(() => {
+      window.__scrolledIds = []
+      const original = Element.prototype.scrollIntoView
+      Element.prototype.scrollIntoView = function (options?: ScrollIntoViewOptions | boolean) {
+        window.__scrolledIds!.push((this as Element).id)
+        original.call(this, options)
+      }
+    })
+
     // Click the job item
     await page.getByRole('option', { name: /test-job/ }).click()
 
-    // selectedRunId is set; the palette closed.
-    // Note: selectedJobId is consumed by RunDetailPanel's JobBlock scroll effect
-    // (AC2.7) once the panel opens and scrolls job 100n into view. The
-    // selectedJobId dispatch works correctly — it's cleared as part of the
-    // scroll confirmation, not lost.
+    // Wait for RAF + scroll to fire (the $effect schedules inside requestAnimationFrame).
+    await page.waitForTimeout(200)
+
+    // selectedRunId is set and palette closed.
     const selectedRunId = await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)
     expect(selectedRunId).toBe(1n)
 
@@ -275,6 +286,11 @@ test.describe('Command palette', () => {
 
     // The panel should have opened (run 1 exists in the store).
     await expect(page.getByRole('dialog')).toBeVisible()
+
+    // selectedJobId = 100n was dispatched: JobBlock's $effect scrolled job-100 into view,
+    // proving the CommandPalette.svelte dispatch wrote uiStore.selectedJobId = job.id.
+    const scrolled = await page.evaluate(() => window.__scrolledIds!)
+    expect(scrolled).toContain('job-100')
   })
 
   test('AC1.6 selecting a pool sets activePoolFilter and closes palette', async ({ page }) => {

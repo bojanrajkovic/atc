@@ -11,6 +11,8 @@ declare global {
       paletteStore?: typeof import('$lib/stores/palette.svelte')['paletteStore']
       poolKey?: typeof import('$lib/filters/pool')['poolKey']
     }
+    /** Spy accumulator: element IDs passed to scrollIntoView, populated by e2e test harness. */
+    __scrolledIds?: string[]
   }
 }
 
