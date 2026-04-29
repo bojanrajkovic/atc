@@ -221,6 +221,12 @@ test.describe('Pool filter integration', () => {
     }, noMatchKey)
 
     await expect(page.locator('.run-card')).toHaveCount(0)
-    await expect(page.locator('.pool-filter-pill')).toBeVisible()
+    const pill = page.locator('.pool-filter-pill')
+    await expect(pill).toBeVisible()
+    // Lock the fallback rendering contract: when the filter key has no matching
+    // pool in runnerStore.pools, KanbanBoard's `activeFilterLabelText` falls
+    // back to splitting the brand on '|' and joining with ' · '. For a single
+    // label that produces just the label text itself.
+    await expect(pill).toContainText('nonexistent-label')
   })
 })
