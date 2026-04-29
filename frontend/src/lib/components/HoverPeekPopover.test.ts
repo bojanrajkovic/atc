@@ -18,7 +18,7 @@ function makeAnchor(): HTMLElement {
 }
 
 describe('HoverPeekPopover', () => {
-  it('AC3.1: renders status label when open=true', () => {
+  it('AC3.1: renders status label in the Status row when open=true', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'Queued' })
     render(HoverPeekPopover, {
@@ -35,14 +35,34 @@ describe('HoverPeekPopover', () => {
       },
     })
 
-    // Status label renders inside .status-label span (distinct from the sr-only span in StatusIcon).
+    // Status label renders inside .status-label (value cell of Status row).
     // The popover is portal-rendered to document.body so we query the full document.
     const statusLabelEl = document.querySelector('.status-label')
     expect(statusLabelEl).toBeTruthy()
     expect(statusLabelEl?.textContent?.trim()).toBe('Queued')
   })
 
-  it('AC3.1: renders "{stepsCompleted} of {stepsTotal} steps complete"', () => {
+  it('AC3.1: renders title row with run displayTitle', () => {
+    const anchor = makeAnchor()
+    const run = createMockRun({ status: 'InProgress', displayTitle: 'My workflow run' })
+    render(HoverPeekPopover, {
+      props: {
+        run,
+        statusLabel: 'In progress',
+        totalJobs: 2,
+        stepsCompleted: 1,
+        stepsTotal: 4,
+        durationText: '0:45',
+        runnerSummary: null,
+        anchor,
+        open: true,
+      },
+    })
+
+    expect(screen.getByText('My workflow run')).toBeTruthy()
+  })
+
+  it('AC3.1: renders Steps complete row as "{stepsCompleted}/{stepsTotal}"', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     render(HoverPeekPopover, {
@@ -59,10 +79,12 @@ describe('HoverPeekPopover', () => {
       },
     })
 
-    expect(screen.getByText('7 of 20 steps complete')).toBeTruthy()
+    // Label "Steps complete" and value "7/20" render as separate elements
+    expect(screen.getByText('Steps complete')).toBeTruthy()
+    expect(screen.getByText('7/20')).toBeTruthy()
   })
 
-  it('AC3.1: renders "Duration: {durationText}"', () => {
+  it('AC3.1: renders Duration row with durationText value', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     render(HoverPeekPopover, {
@@ -79,10 +101,12 @@ describe('HoverPeekPopover', () => {
       },
     })
 
-    expect(screen.getByText('Duration: 3:15')).toBeTruthy()
+    // Label "Duration" and value "3:15" render as separate elements
+    expect(screen.getByText('Duration')).toBeTruthy()
+    expect(screen.getByText('3:15')).toBeTruthy()
   })
 
-  it('AC3.1: renders runner summary row when runnerSummary is non-null', () => {
+  it('AC3.1: renders Runner row when runnerSummary is non-null', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     render(HoverPeekPopover, {
@@ -99,10 +123,11 @@ describe('HoverPeekPopover', () => {
       },
     })
 
-    expect(screen.getByText('Runner: 2 runners')).toBeTruthy()
+    expect(screen.getByText('Runner')).toBeTruthy()
+    expect(screen.getByText('2 runners')).toBeTruthy()
   })
 
-  it('AC3.1: omits runner row when runnerSummary is null', () => {
+  it('AC3.1: omits Runner row when runnerSummary is null', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'Queued' })
     render(HoverPeekPopover, {
@@ -119,7 +144,30 @@ describe('HoverPeekPopover', () => {
       },
     })
 
-    expect(screen.queryByText(/Runner:/)).toBeNull()
+    expect(screen.queryByText('Runner')).toBeNull()
+  })
+
+  it('AC3.1: renders keyboard hint footer', () => {
+    const anchor = makeAnchor()
+    const run = createMockRun({ status: 'Queued' })
+    render(HoverPeekPopover, {
+      props: {
+        run,
+        statusLabel: 'Queued',
+        totalJobs: 1,
+        stepsCompleted: 0,
+        stepsTotal: 2,
+        durationText: '0:10',
+        runnerSummary: null,
+        anchor,
+        open: true,
+      },
+    })
+
+    const hint = document.querySelector('.peek-hint')
+    expect(hint).toBeTruthy()
+    expect(hint?.textContent).toContain('Click for full panel')
+    expect(hint?.textContent).toContain('Enter')
   })
 
   it('AC3.5: popover content is portal-rendered (not inside mount container)', () => {

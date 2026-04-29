@@ -53,17 +53,41 @@
     avoidCollisions={true}
     collisionPadding={8}
   >
-    <div class="peek-row" style="--status-color: {statusCssVar};">
+    <!-- Title row: icon + displayTitle (mirrors playground hover-popover-title) -->
+    <h4 class="peek-title" style="--status-color: {statusCssVar};">
       <StatusIcon value={statusKey} />
-      <span class="status-label">{statusLabel}</span>
-    </div>
-    <div class="peek-meta">
-      <div>{totalJobs} {totalJobs === 1 ? 'job' : 'jobs'}</div>
-      <div>{stepsCompleted} of {stepsTotal} steps complete</div>
-      <div>Duration: {durationText}</div>
+      <span class="peek-title-text">{run.displayTitle}</span>
+    </h4>
+
+    <!-- Label/value rows (mirrors playground .hover-popover-row structure) -->
+    <div class="peek-rows">
+      <div class="peek-row">
+        <span class="peek-label">Status</span>
+        <strong class="peek-value status-label">{statusLabel}</strong>
+      </div>
+      <div class="peek-row">
+        <span class="peek-label">Jobs</span>
+        <strong class="peek-value">{totalJobs}</strong>
+      </div>
+      <div class="peek-row">
+        <span class="peek-label">Steps complete</span>
+        <strong class="peek-value">{stepsCompleted}/{stepsTotal}</strong>
+      </div>
+      <div class="peek-row">
+        <span class="peek-label">Duration</span>
+        <strong class="peek-value">{durationText}</strong>
+      </div>
       {#if runnerSummary != null}
-        <div>Runner: {runnerSummary}</div>
+        <div class="peek-row">
+          <span class="peek-label">Runner</span>
+          <strong class="peek-value">{runnerSummary}</strong>
+        </div>
       {/if}
+    </div>
+
+    <!-- Keyboard hint footer (mirrors playground .hover-popover-hint) -->
+    <div class="peek-hint">
+      Click for full panel · <kbd>Enter</kbd> to open
     </div>
   </Popover.Content>
 </Popover.Root>
@@ -74,26 +98,79 @@
     background: var(--surface-raised);
     border: 1px solid var(--border);
     border-radius: 0.5rem;
-    padding: 0.75rem;
-    min-width: 12rem;
+    padding: 0.625rem 0.75rem;
+    min-width: 14rem;
+    max-width: 17.5rem;
     box-shadow: 0 4px 12px oklch(0 0 0 / 0.2);
+    font-size: 0.75rem;
+  }
+
+  /* Title row */
+  .peek-title {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0 0 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+  }
+
+  .peek-title-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Label/value rows */
+  .peek-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
   }
 
   .peek-row {
     display: flex;
-    align-items: center;
+    justify-content: space-between;
+    align-items: baseline;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin: 0.125rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .peek-label {
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .peek-value {
+    color: var(--text);
     font-weight: 500;
+    text-align: right;
   }
 
   .status-label {
     color: var(--status-color);
   }
 
-  .peek-meta > div {
-    color: var(--text-dim);
-    font-size: 0.875rem;
-    line-height: 1.5;
+  /* Keyboard hint footer */
+  .peek-hint {
+    margin-top: 0.5rem;
+    padding-top: 0.375rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.625rem;
+    color: var(--text-quiet);
+    letter-spacing: 0.04em;
+  }
+
+  .peek-hint kbd {
+    font-family: var(--mono);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 0.625rem;
   }
 </style>
