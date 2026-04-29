@@ -90,6 +90,13 @@
     canHover = mq.matches
     const handler = (e: MediaQueryListEvent) => {
       canHover = e.matches
+      if (!e.matches) {
+        if (hoverTimer !== null) {
+          clearTimeout(hoverTimer)
+          hoverTimer = null
+        }
+        popoverOpen = false
+      }
     }
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
