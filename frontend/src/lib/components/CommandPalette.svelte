@@ -132,7 +132,25 @@
 <Command.Dialog
   bind:open={paletteStore.paletteOpen}
   shouldFilter={false}
+  escapeKeydownBehavior="defer-otherwise-close"
+  interactOutsideBehavior="defer-otherwise-close"
   onOpenAutoFocus={(e) => e.preventDefault()}
+  onCloseAutoFocus={(event) => {
+    // When the palette closes and the panel is open underneath, return focus to
+    // the panel's close button. Otherwise, the default behavior (restore to body
+    // or the previously-focused element) is fine.
+    if (uiStore.selectedRunId !== null) {
+      event.preventDefault()
+      // Look up the panel's close button by aria-label (set in PanelActions.svelte).
+      // As long as the panel is open, exactly one element in the DOM has this
+      // aria-label — query-selector is a pragmatic alternative to threading refs
+      // across component boundaries via stores.
+      const closeButton = document.querySelector<HTMLElement>(
+        'button[aria-label="Close detail panel"]'
+      )
+      closeButton?.focus()
+    }
+  }}
   onkeydown={(e) => {
     if (e.key === 'Escape' && paletteStore.subMenu !== null) {
       e.preventDefault()
