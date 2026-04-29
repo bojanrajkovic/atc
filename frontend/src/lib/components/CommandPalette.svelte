@@ -132,8 +132,6 @@
 <Command.Dialog
   bind:open={paletteStore.paletteOpen}
   shouldFilter={false}
-  escapeKeydownBehavior="defer-otherwise-close"
-  interactOutsideBehavior="defer-otherwise-close"
   onOpenAutoFocus={(e) => e.preventDefault()}
   onCloseAutoFocus={(event) => {
     // When the palette closes and the panel is open underneath, return focus to

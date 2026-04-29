@@ -199,12 +199,17 @@
 }
 
 /*
- * Hide the inner backdrop overlay when a Dialog is nested inside another open Dialog.
- * Bits UI sets data-nested on the inner overlay element when DialogRootState.parent !== null
- * (verified at bits-ui dialog.svelte.ts:432). With both palette + panel open, only the
- * outer backdrop renders, preventing double-darkening of the kanban behind both.
+ * Hide subsequent backdrop overlays when multiple Bits UI Dialogs are open.
+ * Bits UI portals every overlay to document.body in mount order, so with palette
+ * opened on top of panel both overlays are siblings under <body>. The general
+ * sibling combinator (~) hides every overlay after the first, preventing
+ * double-darkening of the kanban behind a stacked palette+panel.
+ *
+ * Note: Bits UI's `data-nested` attribute (set when DialogRootState.parent !== null)
+ * does NOT fire for sibling components — DialogRootContext is lexical Svelte context,
+ * not portal-runtime. The mount-order approach is the equivalent for siblings.
  */
-[data-nested][data-dialog-overlay] {
+[data-dialog-overlay] ~ [data-dialog-overlay] {
   display: none;
 }
 
