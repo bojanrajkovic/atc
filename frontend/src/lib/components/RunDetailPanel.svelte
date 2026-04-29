@@ -43,7 +43,27 @@
 
 {#if run}
   <Sheet.Root open={true} onOpenChange={handleOpenChange}>
-    <Sheet.Content side="right" class="run-detail-panel">
+    <Sheet.Content
+      side="right"
+      class="run-detail-panel"
+      escapeKeydownBehavior="defer-otherwise-close"
+      interactOutsideBehavior="defer-otherwise-close"
+      onCloseAutoFocus={(event) => {
+        // Restore focus to the triggering RunCard's inner button after the panel closes.
+        // Guard: only fire when truly closing (selectedRunId has been cleared by handleOpenChange).
+        if (uiStore.selectedRunId === null) {
+          const lastTriggerRunId = uiStore.lastTriggerRunId
+          if (lastTriggerRunId !== null) {
+            event.preventDefault()
+            const trigger = document.querySelector<HTMLElement>(
+              `.run-card[data-run-id="${lastTriggerRunId}"] .run-card-activate`
+            )
+            trigger?.focus()
+            uiStore.lastTriggerRunId = null
+          }
+        }
+      }}
+    >
       {@const statusKey = resolveStatusKey(run)}
       <PanelHeader
         {statusKey}
