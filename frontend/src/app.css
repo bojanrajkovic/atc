@@ -198,6 +198,16 @@
   }
 }
 
+/*
+ * Hide the inner backdrop overlay when a Dialog is nested inside another open Dialog.
+ * Bits UI sets data-nested on the inner overlay element when DialogRootState.parent !== null
+ * (verified at bits-ui dialog.svelte.ts:432). With both palette + panel open, only the
+ * outer backdrop renders, preventing double-darkening of the kanban behind both.
+ */
+[data-nested][data-dialog-overlay] {
+  display: none;
+}
+
 /* @theme block — Tailwind v4 bridge */
 @theme {
   --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
