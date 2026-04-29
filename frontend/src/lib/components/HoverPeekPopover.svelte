@@ -53,11 +53,9 @@
     avoidCollisions={true}
     collisionPadding={8}
   >
-    <div class="peek-row">
-      <span class="status-icon-wrap" style="color: {statusCssVar};">
-        <StatusIcon value={statusKey} />
-      </span>
-      <span class="status-label" style="color: {statusCssVar};">{statusLabel}</span>
+    <div class="peek-row" style="--status-color: {statusCssVar};">
+      <StatusIcon value={statusKey} />
+      <span class="status-label">{statusLabel}</span>
     </div>
     <div class="peek-meta">
       <div>{totalJobs} {totalJobs === 1 ? 'job' : 'jobs'}</div>
@@ -87,6 +85,10 @@
     gap: 0.5rem;
     margin-bottom: 0.5rem;
     font-weight: 500;
+  }
+
+  .status-label {
+    color: var(--status-color);
   }
 
   .peek-meta > div {
