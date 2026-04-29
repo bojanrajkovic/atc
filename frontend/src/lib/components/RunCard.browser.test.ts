@@ -1,6 +1,8 @@
 import { render } from '@testing-library/svelte'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { tick } from 'svelte'
+import { afterEach, beforeEach, describe, expect, it, test, vi } from 'vitest'
 import type { JobStats } from '$lib/stores/runs.svelte'
+import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 
 // Must import app.css so global rules (@keyframes pulse-border, .run-card[data-status]
@@ -248,6 +250,186 @@ describe('RunCard (browser mode)', () => {
       await settle()
       expect(getComputedStyle(card).padding).toBe('12px 14px')
     })
+  })
+})
+
+/**
+ * Helper: sets up a matchMedia mock that returns `matches: true` for the
+ * hover+pointer-fine media query (indicating a pointer device, not touch).
+ */
+function mockMatchMediaHover(): void {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(hover: hover) and (pointer: fine)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
+}
+
+/**
+ * Helper: sets up a matchMedia mock that returns `matches: false` for all
+ * queries — simulating a touch device.
+ */
+function mockMatchMediaTouch(): void {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
+}
+
+describe('RunCard hover-peek behavior', () => {
+  beforeEach(() => {
+    // Reset uiStore state so tests do not bleed into each other
+    uiStore.selectedRunId = null
+    uiStore.lastTriggerRunId = null
+    mockLocalStorage.clear()
+    resetDocumentAttrs()
+    mockMatchMediaHover()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test('AC3.4 hover for less than 250 ms does NOT show popover', async () => {
+    const run = createMockRun({ status: 'InProgress' })
+    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    // Flush the $effect that sets canHover from matchMedia
+    await tick()
+
+    const article = container.querySelector('article.run-card') as HTMLElement
+    article.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+
+    // Advance 200 ms — timer has not fired yet (debounce is 250 ms)
+    vi.advanceTimersByTime(200)
+    await tick()
+
+    // Mouse leaves before the timer fires — clears the debounce timer
+    article.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
+
+    // Advance well past the debounce threshold — timer was already cancelled
+    vi.advanceTimersByTime(500)
+    await tick()
+    await tick()
+
+    // Popover must NOT be open — bits-ui may keep the element in DOM
+    // but data-state must NOT be "open"
+    expect(document.querySelector('.hover-peek-popover[data-state="open"]')).toBeNull()
+  })
+
+  test('AC3.1 + AC3.5 hover for 250 ms shows popover portal-rendered to <body>', async () => {
+    const run = createMockRun({ status: 'InProgress' })
+    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    // Flush the $effect that sets canHover from matchMedia
+    await tick()
+
+    const article = container.querySelector('article.run-card') as HTMLElement
+    article.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+
+    // Advance exactly 250 ms — debounce fires
+    vi.advanceTimersByTime(250)
+    // Let Svelte reactivity + bits-ui portal mount settle
+    await tick()
+    await tick()
+
+    const popover = document.querySelector('.hover-peek-popover')
+    // AC3.1: popover is present after 250 ms hover and is open
+    expect(popover).not.toBeNull()
+    expect(popover!.getAttribute('data-state')).toBe('open')
+    // AC3.5: popover is portal-rendered directly into <body>, not nested inside the article
+    expect(popover!.closest('article.run-card')).toBeNull()
+    expect(popover!.parentElement?.tagName).toBe('DIV')
+    // The portal ancestor chain: popover → div (floating-ui container) → body
+    expect(popover!.parentElement?.parentElement).toBe(document.body)
+  })
+
+  test('AC3.2 mouse-leave immediately clears popover', async () => {
+    const run = createMockRun({ status: 'InProgress' })
+    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    await tick()
+
+    const article = container.querySelector('article.run-card') as HTMLElement
+    article.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+
+    vi.advanceTimersByTime(250)
+    await tick()
+    await tick()
+
+    // Confirm popover is open (data-state="open") before mouseleave
+    const popover = document.querySelector('.hover-peek-popover')
+    expect(popover).not.toBeNull()
+    expect(popover!.getAttribute('data-state')).toBe('open')
+
+    // Mouse leaves — popoverOpen flips to false synchronously
+    article.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
+    await tick()
+    await tick()
+
+    // Popover must be in closed state immediately (no fade-out delay)
+    // bits-ui keeps the element in DOM with data-state="closed"
+    expect(document.querySelector('.hover-peek-popover[data-state="open"]')).toBeNull()
+  })
+
+  test('AC3.3 click during hover closes popover and sets selectedRunId', async () => {
+    const run = createMockRun({ status: 'InProgress' })
+    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    await tick()
+
+    const article = container.querySelector('article.run-card') as HTMLElement
+    article.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+
+    vi.advanceTimersByTime(250)
+    await tick()
+    await tick()
+
+    // Confirm popover is open (data-state="open")
+    expect(document.querySelector('.hover-peek-popover[data-state="open"]')).not.toBeNull()
+
+    // Click the inner activator button
+    const activator = container.querySelector('button.run-card-activate') as HTMLElement
+    activator.click()
+    await tick()
+    await tick()
+
+    // Popover must be in closed state — bits-ui keeps the element but sets data-state="closed"
+    expect(document.querySelector('.hover-peek-popover[data-state="open"]')).toBeNull()
+    // selectedRunId must be set to the run's id
+    expect(uiStore.selectedRunId).toBe(run.id)
+  })
+
+  test('touch device (no hover/pointer) does NOT instantiate popover', async () => {
+    // Override matchMedia to return matches: false (touch device)
+    mockMatchMediaTouch()
+
+    const run = createMockRun({ status: 'InProgress' })
+    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    // Flush $effect — canHover will be false from the touch mock
+    await tick()
+
+    const article = container.querySelector('article.run-card') as HTMLElement
+    article.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+
+    // Advance well past debounce — timer should never have been set
+    vi.advanceTimersByTime(500)
+    await tick()
+    await tick()
+
+    // On touch devices: {#if canHover} is false so HoverPeekPopover is NOT rendered.
+    // No .hover-peek-popover element exists in the DOM at all.
+    expect(document.querySelector('.hover-peek-popover')).toBeNull()
   })
 })
 
