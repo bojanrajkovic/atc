@@ -9,10 +9,12 @@
     type StatusKey,
   } from '$lib/format/status-key'
   import { uiStore } from '$lib/stores/ui.svelte'
+  import { runStore } from '$lib/stores/runs.svelte'
   import JobHeader from './JobHeader.svelte'
   import JobMeta from './JobMeta.svelte'
   import ProgressBar from './ProgressBar.svelte'
   import RunnerLabel from './RunnerLabel.svelte'
+  import HoverPeekPopover from './HoverPeekPopover.svelte'
 
   export interface RunCardProps {
     run: WorkflowRun
@@ -49,12 +51,90 @@
   })
 
   /**
+   * Step aggregations for the hover-peek popover (AC3.1).
+   * Reads jobsByRunId derived from runStore to get the raw Job[] for this run.
+   * "Completed" is the exact StepStatus variant confirmed from StepStatus.ts.
+   */
+  const jobs = $derived(runStore.jobsByRunId.get(run.id) ?? [])
+  const stepsTotal = $derived(jobs.reduce((acc, j) => acc + j.steps.length, 0))
+  const stepsCompleted = $derived(
+    jobs.reduce((acc, j) => acc + j.steps.filter((s) => s.status === 'Completed').length, 0)
+  )
+
+  /** Reference to the article element — passed as anchor to HoverPeekPopover. */
+  let articleEl: HTMLElement | undefined = $state()
+
+  /** Whether the hover-peek popover is currently open. */
+  let popoverOpen = $state(false)
+
+  /**
+   * Non-reactive hover debounce timer. Not in $state because the timer id
+   * itself doesn't need to drive any reactive computation.
+   */
+  let hoverTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * Whether the device supports hover (matches the media query).
+   * Single source of truth at the card level — touch devices never
+   * instantiate the timer or the popover (AC3.1).
+   */
+  let canHover = $state(false)
+
+  /**
+   * Media query subscription for hover capability.
+   * Runs on mount; the returned arrow cleans up the listener on destroy.
+   */
+  $effect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(hover: hover) and (pointer: fine)')
+    canHover = mq.matches
+    const handler = (e: MediaQueryListEvent) => {
+      canHover = e.matches
+    }
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  })
+
+  /**
+   * Cleanup effect — clears any pending hover timer on component destroy.
+   * Outer body has no reactive reads so it runs once; the returned arrow
+   * runs on unmount.
+   */
+  $effect(() => () => {
+    if (hoverTimer !== null) clearTimeout(hoverTimer)
+  })
+
+  function handleMouseEnter() {
+    if (!canHover) return
+    if (hoverTimer !== null) clearTimeout(hoverTimer)
+    hoverTimer = setTimeout(() => {
+      popoverOpen = true
+      hoverTimer = null
+    }, 250)
+  }
+
+  function handleMouseLeave() {
+    if (!canHover) return
+    if (hoverTimer !== null) {
+      clearTimeout(hoverTimer)
+      hoverTimer = null
+    }
+    popoverOpen = false
+  }
+
+  /**
    * Handles activation of the inner button (click, or Enter/Space via native
-   * button semantics). Sets both lastTriggerRunId (for Phase 6 focus
-   * restoration) and selectedRunId (opens RunDetailPanel).
+   * button semantics). Clears hover timer + closes popover synchronously,
+   * then sets both lastTriggerRunId (for Phase 6 focus restoration) and
+   * selectedRunId (opens RunDetailPanel).
    * No custom keydown handler — native <button> fires click on Enter/Space.
    */
   function handleActivate() {
+    if (hoverTimer !== null) {
+      clearTimeout(hoverTimer)
+      hoverTimer = null
+    }
+    popoverOpen = false
     uiStore.lastTriggerRunId = run.id
     uiStore.selectedRunId = run.id
   }
@@ -62,9 +142,12 @@
 
 <article
   class="run-card"
+  bind:this={articleEl}
   data-run-id={run.id}
   data-status={run.status}
   style="--status-color: var(--{statusKeyToVar(statusKey)});"
+  onmouseenter={handleMouseEnter}
+  onmouseleave={handleMouseLeave}
 >
   <button class="run-card-activate" type="button" aria-label={ariaLabel} onclick={handleActivate}
   ></button>
@@ -73,6 +156,20 @@
   <ProgressBar completed={jobStats.completed} total={jobStats.total} />
   <RunnerLabel summary={jobStats.runnerSummary} />
 </article>
+
+{#if canHover}
+  <HoverPeekPopover
+    {run}
+    statusLabel={statusKeyToHumanLabel(statusKey)}
+    totalJobs={jobStats.total}
+    {stepsCompleted}
+    {stepsTotal}
+    {durationText}
+    runnerSummary={jobStats.runnerSummary}
+    anchor={articleEl ?? null}
+    bind:open={popoverOpen}
+  />
+{/if}
 
 <style>
   /* Inner activator button — covers the entire card surface via absolute
