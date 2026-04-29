@@ -156,6 +156,36 @@ test.describe('RunCard interactivity', () => {
   })
 
   // -----------------------------------------------------------------------
+  // AC4.6 — Clicks on title text (child element) bubble through the
+  //          transparent overlay button to activate the card.
+  //          The overlay button (.run-card-activate) covers the card with
+  //          z-index:1; clicking any child element must hit the button since
+  //          it is the topmost element at those coordinates.
+  // -----------------------------------------------------------------------
+  test('interactivity.AC4.6 click on title text bubbles through transparent overlay to inner button', async ({
+    page,
+  }) => {
+    const card = page.locator('.run-card').first()
+    // .run-card-name is the span inside JobHeader that shows the displayTitle.
+    // It sits underneath the absolutely-positioned .run-card-activate overlay
+    // (z-index: 1). Playwright's actionability check correctly identifies the
+    // button as intercepting pointer events and blocks locator.click() on the
+    // child span. Instead, use page.mouse.click() at the title's center
+    // coordinates — this is a raw browser-level pointer event that lands on
+    // the topmost element at those coordinates (the overlay button), exactly
+    // as a real user click would. This exercises the z-stack contract: a click
+    // anywhere on the card visual surface activates the inner button.
+    const titleEl = card.locator('.run-card-name')
+    const box = await titleEl.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+    // Behavioral outcome: RunDetailPanel opened (dialog visible) AND selectedRunId set
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
+    const selectedRunId = await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)
+    expect(selectedRunId).not.toBeNull()
+  })
+
+  // -----------------------------------------------------------------------
   // AC3.1 — Hover for 250 ms shows popover anchored to the right of the card
   // -----------------------------------------------------------------------
   test('interactivity.AC3.1 hover 250ms shows popover anchored to the right of the card', async ({
