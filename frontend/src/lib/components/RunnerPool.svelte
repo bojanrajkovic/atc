@@ -10,7 +10,12 @@
     isElastic: boolean
   }
 
-  let { pool }: { pool: RunnerPoolDisplay } = $props()
+  export interface Props {
+    pool: RunnerPoolDisplay
+    isActiveFilter?: boolean
+  }
+
+  let { pool, isActiveFilter = false }: Props = $props()
 
   const utilization = $derived(
     pool.total !== null && pool.total > 0 ? pool.running / pool.total : null
@@ -30,7 +35,8 @@
 </script>
 
 <div
-  class="flex items-center gap-2 text-sm"
+  class="runner-pool flex items-center gap-2 text-sm"
+  class:is-active-filter={isActiveFilter}
   role="group"
   aria-label="{pool.label} runner pool"
   data-testid="runner-pool-{pool.label}"
@@ -68,3 +74,12 @@
     </Badge>
   {/if}
 </div>
+
+<style>
+  .runner-pool.is-active-filter {
+    box-shadow: 0 0 0 2px var(--accent);
+    background: var(--surface-raised);
+    border-radius: 4px;
+    padding-inline: 4px;
+  }
+</style>
