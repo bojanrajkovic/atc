@@ -7,6 +7,8 @@
   import SettingsPopover from './SettingsPopover.svelte'
   import { connectionStore } from '$lib/stores/connection.svelte'
   import { runnerStore } from '$lib/stores/runners.svelte'
+  import { uiStore } from '$lib/stores/ui.svelte'
+  import { poolKey } from '$lib/filters/pool'
 
   type IndicatorState = 'live' | 'stale' | 'connecting' | 'disconnected'
 
@@ -72,6 +74,8 @@
       }
     }
 
+    const activeFilter = uiStore.activePoolFilter
+
     return allPools.map((pool) => {
       let label: string
       if (pool.groupName === null) {
@@ -89,6 +93,10 @@
         queued: pool.queued,
         total: pool.total,
         isElastic: pool.isElastic,
+        // AC5.2: matching pool indicator highlights when active filter is set.
+        // Computed here (where original pool.labels is in scope) so RunnerBar
+        // stays pure — no uiStore read in the leaf-grid component.
+        isActiveFilter: activeFilter !== null && poolKey(pool.labels) === activeFilter,
       }
     })
   })
