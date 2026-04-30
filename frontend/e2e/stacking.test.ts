@@ -10,6 +10,27 @@ const cmdOrCtrl = process.platform === 'darwin' ? 'Meta' : 'Control'
 /** Standard page setup: inject WS mock, stub /v1/state, navigate, wait for connected. */
 async function setupPage(page: import('@playwright/test').Page) {
   await page.addInitScript(WS_MOCK_INIT_SCRIPT)
+  // Stub matchMedia so HoverPeekPopover's canHover flag is always false.
+  // This prevents the 250ms hover timer from firing during keyboard-driven tests
+  // and stealing focus from the element that onCloseAutoFocus just restored.
+  await page.addInitScript(() => {
+    const original = window.matchMedia
+    window.matchMedia = (query: string): MediaQueryList => {
+      if (query === '(hover: hover) and (pointer: fine)') {
+        return {
+          matches: false,
+          media: query,
+          addListener: () => {},
+          removeListener: () => {},
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          dispatchEvent: () => false,
+          onchange: null,
+        } as unknown as MediaQueryList
+      }
+      return original.call(window, query)
+    }
+  })
   await page.route('**/v1/state', (route) => {
     route.fulfill({
       contentType: 'application/json',
@@ -139,11 +160,6 @@ test.describe('Sheet + Command stacking', () => {
       'Close detail panel',
     )
 
-    // Park the virtual mouse before second Esc to prevent HoverPeekPopover's
-    // 250ms hover timer from re-firing mouseenter on the now-unoccluded card
-    // and stealing focus in headless Chromium.
-    await page.mouse.move(0, 0)
-
     // Second Esc: closes the panel (AC6.3)
     await page.keyboard.press('Escape')
 
@@ -156,19 +172,9 @@ test.describe('Sheet + Command stacking', () => {
     ).toBe(true)
   })
 
-  // -----------------------------------------------------------------------
-  // AC6.4 — Click outside palette (and outside panel) closes only palette
-  //
-  // The AC spec says "click outside palette but inside panel area". In practice,
-  // Bits UI's dismissable-layer treats clicks inside any registered dialog's
-  // content element as "still inside a dialog" — so a click literally inside the
-  // panel content box does NOT trigger the palette's interact-outside callback.
-  // What does work: clicking in the kanban region (outside BOTH dialog content
-  // boxes). Dismissable-layer fires on the panel (defer-otherwise-close → defers
-  // because palette is still up) and on the palette (default close → closes).
-  // The panel's defer keeps it open; palette closes. This is the observable
-  // implementation of the AC6.4 semantic: only the palette closes.
-  // -----------------------------------------------------------------------
+  // AC6.4: click outside palette content closes the palette only; panel defers.
+  // See docs/architecture/frontend-app.md "Sheet + Command Dialog Stacking" for
+  // how bits-ui's dismissable-layer treats clicks inside vs. outside content refs.
   test('interactivity.AC6.4 click outside palette closes palette while panel stays open', async ({
     page,
   }) => {

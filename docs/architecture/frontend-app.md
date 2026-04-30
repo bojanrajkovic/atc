@@ -327,6 +327,12 @@ This mechanism is what actually enables sibling palette + panel stacking:
 - **CommandPalette** — leaves `escapeKeydownBehavior` and `interactOutsideBehavior` at their default (`"close"`). After the palette is opened on top of the panel, it is the last-registered layer; `findLast` finds it first. First Esc closes the palette only.
 - **RunDetailPanel** — uses `escapeKeydownBehavior="defer-otherwise-close"` and `interactOutsideBehavior="defer-otherwise-close"`. With only the panel open (palette unregistered), `findLast` finds only the panel; the `defer-otherwise-close` policy falls through to `layersArr[0]` (the panel itself) and closes it. Second Esc closes the panel.
 
+### What "outside" means for dismissable-layer
+
+bits-ui's dismissable-layer fires `onInteractOutside` when the click target is outside the dialog's own content ref (checked via `isOrContainsTarget`), regardless of overlay z-order or CSS stacking context. With the palette as the topmost close-layer in the global stack and the panel set to `defer-otherwise-close`, any click whose target is outside the palette's content ref — including the panel's modal scrim, the visible kanban behind both dialogs, or any other DOM region not inside the palette's content box — fires the palette's `onInteractOutside` and closes the palette only.
+
+The one case that does NOT close the palette: a click directly on the panel content box itself. bits-ui's `isOrContainsTarget` check sees that target as "inside the panel's content ref"; the palette's `onInteractOutside` does not fire for that click. This distinction is why AC6.4's E2E test clicks the QUEUED column (far-left kanban, outside both content boxes) rather than inside the panel slide-over: the QUEUED region is outside both content refs and reliably triggers the observable behavior — palette closes, panel stays open via `defer-otherwise-close`. See `frontend/e2e/stacking.test.ts` AC6.4 test for the verified interaction path.
+
 ### Backdrop suppression
 
 Both portal overlays are appended to `document.body` in mount order: panel's overlay first, then palette's overlay. The CSS rule in `app.css` uses the general sibling combinator to hide every overlay after the first:
