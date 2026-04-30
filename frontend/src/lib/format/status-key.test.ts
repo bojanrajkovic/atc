@@ -172,6 +172,37 @@ describe('format/status-key', () => {
     })
   })
 
+  describe('resolveJobStatusKey', () => {
+    it('returns Queued when status is Queued', () => {
+      expect(resolveJobStatusKey({ status: 'Queued', conclusion: null })).toBe('Queued')
+    })
+
+    it('returns InProgress when status is Waiting', () => {
+      expect(resolveJobStatusKey({ status: 'Waiting', conclusion: null })).toBe('InProgress')
+    })
+
+    it('returns InProgress when status is InProgress', () => {
+      expect(resolveJobStatusKey({ status: 'InProgress', conclusion: null })).toBe('InProgress')
+    })
+
+    it('returns Cancelled when Completed with null conclusion (bare-Completed fallback)', () => {
+      expect(resolveJobStatusKey({ status: 'Completed', conclusion: null })).toBe('Cancelled')
+    })
+
+    it.each([
+      ['Success', 'Success'],
+      ['Failure', 'Failure'],
+      ['Cancelled', 'Cancelled'],
+      ['TimedOut', 'TimedOut'],
+      ['ActionRequired', 'ActionRequired'],
+      ['Stale', 'Stale'],
+      ['Neutral', 'Neutral'],
+      ['Skipped', 'Skipped'],
+    ] as const)('Completed + %s conclusion → %s key', (conclusion, expected) => {
+      expect(resolveJobStatusKey({ status: 'Completed', conclusion })).toBe(expected)
+    })
+  })
+
   describe('exhaustiveness defense at runtime', () => {
     // These tests guard against off-shape input slipping past the TypeScript
     // boundary (test fixtures with loose types, JSON over the wire). Without a
