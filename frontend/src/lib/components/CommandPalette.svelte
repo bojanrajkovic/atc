@@ -130,7 +130,8 @@
 </script>
 
 <Command.Dialog
-  bind:open={paletteStore.paletteOpen}
+  open={paletteStore.paletteOpen}
+  onOpenChange={(open) => (open ? paletteStore.open() : paletteStore.close())}
   shouldFilter={false}
   onOpenAutoFocus={(e) => e.preventDefault()}
   onCloseAutoFocus={(event) => {

@@ -388,6 +388,35 @@ test.describe('Command palette', () => {
     await expect(page.getByRole('dialog')).toBeVisible()
   })
 
+  test('palette submenu state clears on external dismiss (backdrop click)', async ({ page }) => {
+    // Regression: previously, Bits UI dialog mechanics (backdrop click, X button) only
+    // mutated paletteOpen via bind:open and never cleared subMenu, so reopening landed
+    // on the stale theme submenu. Routing close through onOpenChange → paletteStore.close()
+    // ensures both fields reset together.
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // Enter the theme submenu
+    await page.evaluate(() => window.__stores!.paletteStore!.enterSubmenu('theme'))
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBe('theme')
+
+    // Simulate backdrop click — Bits UI portals the overlay with data-dialog-overlay
+    await page
+      .locator('[data-dialog-overlay]')
+      .first()
+      .click({ position: { x: 5, y: 5 } })
+
+    // Both fields should clear together
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.paletteOpen)).toBe(false)
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBeNull()
+
+    // Reopening should land on top-level (Switch theme… command), not the theme list
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('option', { name: /Switch theme/ })).toBeVisible()
+  })
+
   test('AC1.10 empty state shows curly-quoted query when no items match', async ({ page }) => {
     // Open palette and set query via store directly
     await page.evaluate(() => {
