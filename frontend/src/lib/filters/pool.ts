@@ -9,6 +9,27 @@ export function poolKey(labels: readonly string[]): PoolKey {
   return [...labels].sort().join('|') as PoolKey
 }
 
+/**
+ * Runtime validator for a `PoolKey` deserialized from an untrusted source
+ * (URL state, storage, etc.). Returns the branded value on canonical input,
+ * `null` on anything else. The brand is compile-time only, so any boundary
+ * crossing this module must funnel through `parsePoolKey` to preserve the
+ * invariant that callers never see a fake-branded string.
+ *
+ * Canonical form: non-empty `'|'`-separated segments in ascending sort order
+ * with no empty segments. `parsePoolKey(poolKey(x)) === poolKey(x)` for every
+ * non-empty `x`.
+ */
+export function parsePoolKey(s: string): PoolKey | null {
+  if (s === '') return null
+  const parts = s.split('|')
+  if (parts.some((p) => p === '')) return null
+  for (let i = 1; i < parts.length; i++) {
+    if (parts[i]! < parts[i - 1]!) return null
+  }
+  return s as PoolKey
+}
+
 /** True iff every label in poolLabels is present in jobLabels (intersection check). */
 export function jobMatchesPool(
   jobLabels: readonly string[],

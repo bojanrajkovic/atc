@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
-import { filterRunsByPool, jobMatchesPool, type PoolKey, poolKey } from './pool'
+import { filterRunsByPool, jobMatchesPool, type PoolKey, parsePoolKey, poolKey } from './pool'
 
 describe('pool filter', () => {
   describe('poolKey', () => {
@@ -18,6 +18,44 @@ describe('pool filter', () => {
     it('handles empty label array', () => {
       const empty: PoolKey = poolKey([])
       expect(empty).toBe('')
+    })
+  })
+
+  describe('parsePoolKey', () => {
+    it('returns the branded value for a canonical input', () => {
+      const canonical = poolKey(['linux', 'x86'])
+      expect(parsePoolKey(canonical)).toBe(canonical)
+    })
+
+    it('round-trips poolKey output', () => {
+      const labels = ['amd64', 'large', 'self-hosted', 'ubuntu-latest']
+      const canonical = poolKey(labels)
+      expect(parsePoolKey(canonical)).toBe(canonical)
+    })
+
+    it('rejects empty string', () => {
+      expect(parsePoolKey('')).toBeNull()
+    })
+
+    it('rejects empty segments (leading separator)', () => {
+      expect(parsePoolKey('|linux')).toBeNull()
+    })
+
+    it('rejects empty segments (trailing separator)', () => {
+      expect(parsePoolKey('linux|')).toBeNull()
+    })
+
+    it('rejects empty segments (consecutive separators)', () => {
+      expect(parsePoolKey('linux||x86')).toBeNull()
+    })
+
+    it('rejects unsorted input even though characters are valid', () => {
+      // 'x86|linux' is the unsorted form; canonical is 'linux|x86'
+      expect(parsePoolKey('x86|linux')).toBeNull()
+    })
+
+    it('accepts a single-label canonical form', () => {
+      expect(parsePoolKey('linux')).toBe('linux')
     })
   })
 
