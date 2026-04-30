@@ -303,6 +303,89 @@ test.describe('Run detail panel', () => {
   }
 
   // -----------------------------------------------------------------------
+  // Panel-scroll regression: long job lists must scroll inside .job-blocks,
+  // not spill past the viewport. Sheet.Content has no built-in scroll prop;
+  // the fix is `flex-1 min-h-0 overflow-y-auto` on the .job-blocks container.
+  // -----------------------------------------------------------------------
+  test('panel job list scrolls when content exceeds viewport', async ({ page }) => {
+    await sendWS(
+      page,
+      makeRunEvent(1, {
+        runId: 1,
+        displayTitle: 'CI — main',
+        createdAt: new Date().toISOString(),
+        runStartedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        action: { type: 'InProgress' },
+      }),
+    )
+
+    // Seed enough jobs+steps so the panel body overflows ~600px viewport space.
+    // Each JobBlock with 8 steps takes ~250px; 6 such blocks ~ 1500px content.
+    const stepNames = Array.from({ length: 8 }, (_, i) => `step-${i + 1}`)
+    for (let i = 1; i <= 6; i++) {
+      await sendWS(
+        page,
+        makeJobSeqEvent(i + 1, {
+          jobData: {
+            jobId: BigInt(i),
+            runId: 1n,
+            org: 'test-org',
+            repo: 'test-repo',
+            name: `job-${i}-with-a-fairly-long-name-to-force-vertical-rhythm`,
+            createdAt: new Date().toISOString(),
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            action: {
+              type: 'InProgress',
+              data: {
+                runner: null,
+                labels: ['linux'],
+                steps: stepNames.map((name, idx) => ({
+                  number: idx + 1,
+                  name,
+                  status: 'Completed' as const,
+                  conclusion: 'Success' as const,
+                  startedAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                })),
+              },
+            },
+          },
+          poolStatsAfter: null,
+        }),
+      )
+    }
+
+    // Open the panel.
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.selectedRunId = 1n
+    })
+    await page.waitForSelector('[role="dialog"]', { timeout: 5_000 })
+
+    // The .job-blocks container should overflow and be scrollable.
+    const jobBlocks = page.locator('.job-blocks')
+    const geometry = await jobBlocks.evaluate((el) => ({
+      scrollH: el.scrollHeight,
+      clientH: el.clientHeight,
+      overflowY: getComputedStyle(el).overflowY,
+      flex: getComputedStyle(el).flex,
+      minH: getComputedStyle(el).minHeight,
+    }))
+    expect(geometry.overflowY).toBe('auto')
+    expect(geometry.minH).toBe('0px')
+    // flex shorthand can normalize differently across browsers — assert numeric pieces
+    expect(geometry.flex).toMatch(/^1\s+1\s/)
+    expect(geometry.scrollH).toBeGreaterThan(geometry.clientH)
+
+    // Programmatic scroll must move scrollTop (proves the container is the
+    // scroll region, not the surrounding Sheet.Content).
+    await jobBlocks.evaluate((el) => el.scrollTo({ top: 200, behavior: 'instant' }))
+    const scrollTop = await jobBlocks.evaluate((el) => el.scrollTop)
+    expect(scrollTop).toBeGreaterThan(0)
+  })
+
+  // -----------------------------------------------------------------------
   // AC2.9 — Missing-run fallback: selectedRunId for non-existent run is cleared
   // -----------------------------------------------------------------------
   test('interactivity.AC2.9 setting selectedRunId to a non-existent id is cleared without opening panel', async ({
