@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-24
+Last verified: 2026-04-29
 
 ## Purpose
 
@@ -9,11 +9,11 @@ The frontend app is a standalone Svelte 5 single-page application built with Vit
 - The user interface for the ATC dashboard
 - A complete OKLCH-based design system with four themes (warm, radar, violet, pink) and dark/light mode
 - Real-time WebSocket client with event buffering, batching via RAF, and exponential backoff reconnect
-- State management via Svelte 5 rune-class stores (runs, runners, connection, ui)
+- State management via Svelte 5 rune-class stores (runs, runners, connection, ui, palette)
 - Comprehensive test coverage with Vitest (unit tests) and Playwright (E2E tests)
 - A static build output (`frontend/dist/`) that the backend embeds into its release binary via rust-embed
 
-Complete infrastructure and kanban board implementation: design system renders correctly, theme switching works, stores initialize with sorted derived arrays, WS client connects and buffers events, kanban board renders in app shell with three-column layout (queued/in-progress/completed), cards animate within and across columns with shared crossfade instance, and comprehensive test coverage spans unit (jsdom), browser-mode (Playwright chromium), and E2E tiers.
+Complete through Sub-Phase 5: design system renders correctly, theme switching works, stores initialize with sorted derived arrays, WS client connects and buffers events, kanban board renders in app shell with three-column layout (queued/in-progress/completed), cards animate within and across columns with shared crossfade instance. Sub-Phase 5 adds: Cmd+K command palette (five sections — Recent/Runs/Jobs/Pools/Commands; theme submenu), slide-over detail panel (Sheet with header, action row, metadata grid, job blocks with step timeline), RunCard activation (inner button overlay + hover-peek popover gated by `(hover: hover) and (pointer: fine)`), pool filter integration (palette → `activePoolFilter` → kanban columns + RunnerPool accent + PoolFilterPill), nested-dialog stacking with global Cmd+K listener, and the first branded TypeScript type (`PoolKey`). Test coverage spans unit (jsdom), browser-mode (Playwright chromium), and E2E tiers.
 
 ## Key Decisions
 
@@ -33,10 +33,14 @@ Complete infrastructure and kanban board implementation: design system renders c
 **Alternatives considered:** ESLint + Prettier for everything, Biome for everything
 **Rationale:** Biome is significantly faster than ESLint/Prettier for TypeScript/JavaScript but does not yet support Svelte file syntax. The split approach uses each tool where it's strongest: Biome for .ts/.js (fast, zero-config), eslint-plugin-svelte for .svelte linting (understands Svelte template syntax), prettier-plugin-svelte for .svelte formatting (handles script/style/markup ordering).
 
+**Decision:** Vendored `Command.Dialog` wrapper extended (not theming-modified) to forward content-level dismissal props
+**Alternatives considered:** Raw `Dialog.Root` + `Dialog.Portal` + `Dialog.Overlay` + `Dialog.Content` + `Command.Root` composition inlined in `CommandPalette.svelte` (no vendor change at all)
+**Rationale:** The shadcn-svelte 1.2.7 `command-dialog.svelte` wrapper types its `restProps` as `DialogPrimitive.RootProps & CommandPrimitive.RootProps`, which deliberately excludes content-level dismissal props — `escapeKeydownBehavior`, `interactOutsideBehavior`, `onCloseAutoFocus`, `onOpenAutoFocus` — because they live on `Dialog.Content`. Sub-Phase 5's nested-dialog stacking (palette over slide-over panel) needs all four on the inner `<Dialog.Content>`. We extend the vendored wrapper with explicit pass-through fields for the four props rather than inlining ~30 lines of raw Dialog composition in `CommandPalette.svelte`. Project guidance Rule 7 (no vendor modification) is for *theming* changes; API-surface extensions are permitted, with an in-source comment citing the rationale. The four props are extracted from destructuring so they do NOT bleed into `restProps` (which spreads onto `<Dialog.Root>` and `<Command>`, neither of which accepts content-level props). A `strip<T>()` helper removes undefined keys before spreading onto `<Dialog.Content>`, satisfying `exactOptionalPropertyTypes` (EOPT): Bits UI types optional props as absent-or-present-with-value, not present-with-undefined. Patch lives at `frontend/src/lib/components/ui/command/command-dialog.svelte`. **Re-running `pnpm dlx shadcn-svelte@latest add command` will clobber the patch — re-apply after any future re-vendoring.**
+
 ## Boundaries
 
 **Owns:** UI rendering, design tokens (OKLCH system), theme switching, Tailwind configuration, Svelte component structure, frontend build output, WebSocket client, state stores, event dispatching, testing infrastructure
-**Does not own:** Card detail views, responsive breakpoints, advanced filter/search, routing (future phase), backend serving logic
+**Does not own:** Responsive breakpoints, advanced analytics, routing (future phase), backend serving logic
 **Prohibitions:** Do not import backend code. Do not add SvelteKit. Do not use PostCSS for Tailwind (use @tailwindcss/vite). Do not let Biome process .svelte files (use eslint/prettier for those). Do not hand-edit types in `src/lib/types/generated/` (these are generated by ts-rs).
 
 ## App Shell
@@ -44,26 +48,58 @@ Complete infrastructure and kanban board implementation: design system renders c
 ### Component Tree
 
 ```
-App.svelte
+App.svelte                          (global Cmd/Ctrl+K listener via onMount; toggles PaletteStore)
   ConnectionManager.svelte          (service: onMount → connect, onDestroy → destroy)
   AppShell.svelte                   (layout: 100dvh flex column)
     TopBar.svelte                   (connected: reads ConnectionStore, RunnerStore, UIStore)
       Logo.svelte                   (pure: "ATC" monospace text mark)
       Separator                     (shadcn: vertical divider)
       RunnerBar.svelte              (pure: receives pools[] as prop)
-        RunnerPool.svelte           (pure: single pool indicator)
+        RunnerPool.svelte           (pure: single pool indicator; isActiveFilter prop adds accent border)
           CapacityBar.svelte        (pure: horizontal fill bar with color thresholds)
+      PoolFilterPill.svelte         (pure: shown when activePoolFilter non-null; clear button)
       Separator                     (shadcn: vertical divider)
       ConnectionIndicator.svelte    (pure: colored dot + Tooltip)
       SettingsPopover.svelte        (connected: reads/writes UIStore)
     <slot />                        (content area: KanbanBoard mounted here)
+  CommandPalette.svelte             (connected: reads PaletteStore + stores; portals to body)
+    PaletteSection.svelte           (pure: group wrapper with heading)
+    PaletteRunItem.svelte           (pure: run row with status icon + highlight)
+    PaletteJobItem.svelte           (pure: job row with parent run label + highlight)
+    PalettePoolItem.svelte          (pure: pool row with label highlight)
+    PaletteCommandItem.svelte       (pure: command row with optional keyboard shortcut badge)
+  RunDetailPanel.svelte             (connected: reads UIStore + RunStore; Sheet portals to body)
+    PanelHeader.svelte              (pure: status icon + run title)
+    PanelActions.svelte             (pure: open-in-GitHub link + close button aria-label="Close detail panel")
+    MetaGrid.svelte                 (pure: two-column CSS grid wrapper)
+      MetaCell.svelte × N           (pure: label/value pair; null value → em-dash)
+    JobBlock.svelte × N             (connected: reads uiStore.selectedJobId; scrolls on $effect)
+      StepList.svelte               (pure: ordered list of steps)
+        StepItem.svelte × N         (pure: step row with status icon + name + duration)
+```
+
+**RunCard tree (within KanbanColumn):**
+
+```
+RunCard.svelte                      (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId)
+  JobHeader.svelte                  (pure: StatusIcon + displayTitle + durationText row)
+    StatusIcon.svelte               (pure: 11-StatusKey exhaustive glyph)
+  JobMeta.svelte                    (pure: repo · branch secondary line)
+  ProgressBar.svelte                (pure: role=progressbar with scaleX fill)
+  RunnerLabel.svelte                (pure: ⊞ summary line)
+  HoverPeekPopover.svelte           (pure: Popover with status/steps/runner summary; gated by (hover: hover) and (pointer: fine))
+  <button class="run-card-activate"> (inner overlay button: sets lastTriggerRunId + selectedRunId on click)
 ```
 
 ### Data Flow
 
 - **ConnectionStore → TopBar → ConnectionIndicator** — TopBar reads `ConnectionStore` connection status and derives `IndicatorState` (live/stale/connecting/disconnected) to pass to ConnectionIndicator
-- **RunnerStore → TopBar → RunnerBar → RunnerPool → CapacityBar** — TopBar reads `RunnerStore` to compute pool statistics, passes pools[] array to RunnerBar, which renders RunnerPool items. Each RunnerPool passes used/total to CapacityBar for rendering fill percentage.
+- **RunnerStore → TopBar → RunnerBar → RunnerPool → CapacityBar** — TopBar reads `RunnerStore` to compute pool statistics, passes pools[] array to RunnerBar, which renders RunnerPool items. Each RunnerPool passes used/total to CapacityBar for rendering fill percentage. RunnerPool receives `isActiveFilter` prop from RunnerBar (derived from `uiStore.activePoolFilter`) and shows accent border when true.
 - **UIStore ↔ SettingsPopover** — SettingsPopover reads/writes `UIStore` to persist theme and dark/light mode selections directly
+- **UIStore.activePoolFilter → TopBar → PoolFilterPill** — PoolFilterPill is shown when `activePoolFilter` is non-null; its clear button sets `uiStore.activePoolFilter = null`
+- **PaletteStore ↔ CommandPalette** — CommandPalette reads/writes `PaletteStore` for open state, query text, recent run IDs, and submenu. Cmd+K from App.svelte calls `paletteStore.toggle()`.
+- **UIStore.selectedRunId → RunDetailPanel** — Panel is rendered when `selectedRunId !== null`. Setting `selectedRunId = null` (via handleOpenChange or PanelActions) unmounts the Sheet.
+- **RunCard → UIStore** — `handleActivate` sets both `uiStore.lastTriggerRunId` and `uiStore.selectedRunId` at click time to enable focus restoration after panel close.
 
 ### Component Contracts
 
@@ -138,20 +174,22 @@ Tests split across three Vitest projects and E2E tier:
 
 ## Run Cards
 
-See `## App Shell` for the top-down tree from `App` down to `KanbanColumn` and `## Kanban Board` for the column-to-card handoff. This section documents `RunCard` and its five leaf children plus the supporting stores and CSS mechanics introduced in Sub-Phase 4.
+See `## App Shell` for the top-down tree from `App` down to `KanbanColumn` and `## Kanban Board` for the column-to-card handoff. This section documents `RunCard`, its leaf children, and the supporting stores and CSS mechanics.
 
 ### Component Tree (RunCard-scoped)
 
 ```
-RunCard (almost-pure: reads uiStore.nowMs only in live duration branches)
+RunCard (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId; owns popoverOpen + hover timer)
   JobHeader (pure: StatusIcon + displayTitle + durationText row)
     StatusIcon (pure: 11-StatusKey exhaustive glyph)
   JobMeta (pure: repo · branch, null-branch elision)
   ProgressBar (pure: role=progressbar with scaleX fill)
   RunnerLabel (pure: ⊞ summary line, null-summary elision)
+  HoverPeekPopover (pure: status + step progress + runner summary; anchored to article element)
+  <button class="run-card-activate"> (inner overlay button; sets lastTriggerRunId + selectedRunId)
 ```
 
-All five leaves are pure (props in, DOM out, no store reads). `RunCard` is the sole exception — its `$derived.by` for `durationText` reads `uiStore.nowMs`, but only inside the live branches. The static-Completed branch short-circuits before any reactive read, so completed non-ActionRequired cards never subscribe to the wall-clock tick (see State-Aware Duration Rules below).
+Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the orchestrator — its `$derived.by` for `durationText` reads `uiStore.nowMs` (but only in live branches; completed non-ActionRequired cards never subscribe to the tick), and it reads `runStore.jobsByRunId` for step aggregation. Sub-Phase 5 added the hover-peek popover (gated by `(hover: hover) and (pointer: fine)` media query) and the inner activation button (opens RunDetailPanel).
 
 ### Store Additions
 
@@ -159,6 +197,11 @@ All five leaves are pure (props in, DOM out, no store reads). `RunCard` is the s
 - `$state(Date.now())` initialised at module load; refreshed every 1000ms by a constructor-owned `setInterval`.
 - Single timer feeds every live-duration derivation across the board. Every card reads the same signal instead of each spawning its own timer.
 - `uiStore.destroy()` clears the interval. Used by fake-timer tests to prevent leaks; production never calls it.
+
+**`uiStore.lastTriggerRunId` — activation ref for focus restoration** (`frontend/src/lib/stores/ui.svelte.ts`)
+- Set by RunCard's `handleActivate` to the clicked run's id at click time.
+- Consumed by RunDetailPanel's `onCloseAutoFocus` to focus the originating card's `.run-card-activate` button after the panel closes.
+- Cleared after use. See `## Sheet + Command Dialog Stacking` for the full focus-restoration chain.
 
 **`runStore.jobStatsByRun` — total-map aggregate** (`frontend/src/lib/stores/runs.svelte.ts`)
 - `$derived.by<ReadonlyMap<bigint, JobStats>>` that iterates `this.runs.keys()` (not `this.jobsByRun.keys()`) so every known run resolves to a `JobStats` entry, even runs with zero jobs (`{ completed: 0, total: 0, runnerSummary: null }`).
@@ -192,6 +235,18 @@ The duration formula is extracted to a pure `computeDurationText(run, nowMs): st
 
 Sub-Phase 4 added three OKLCH status tokens in both dark and light modes: `--timed-out` (H=40, amber-red), `--action-required` (H=55, warning-amber), `--neutral` (low-chroma, hue-following). A fourth token `--halo-color` is used by the halo animation; it lives in the mode-level token group, not the status group, because it's always amber.
 
+Sub-Phase 5 added five tokens in `app.css` for the command palette and keyboard shortcut badges:
+
+| Token | Dark | Light | Use |
+|-------|------|-------|-----|
+| `--text-quiet` | `oklch(55% 0.02 var(--hue))` | `oklch(55% 0.02 var(--hue))` | Tertiary text (placeholder, section labels) |
+| `--kbd-bg` | `oklch(18% 0.015 var(--hue))` | `oklch(95% 0.01 var(--hue))` | Keyboard shortcut badge background |
+| `--kbd-border` | `oklch(30% 0.02 var(--hue))` | `oklch(85% 0.02 var(--hue))` | Keyboard shortcut badge border |
+| `--mark-bg` | `oklch(40% 0.2 80)` | `oklch(85% 0.22 80)` | Search match highlight background |
+| `--mark-underline` | `oklch(65% 0.22 80)` | `oklch(55% 0.3 80)` | Search match underline accent |
+
+All five are hue-following for the surface tokens (`--kbd-bg`, `--kbd-border`, `--text-quiet`) and fixed to H=80 (amber) for the match highlight pair (`--mark-bg`, `--mark-underline`). Light-mode overrides live in the `[data-mode="light"]` block.
+
 Accessibility target formalised in `.impeccable.md`: **WCAG AA (≥ 4.5:1) gates the build** via `frontend/src/lib/design-tokens.test.ts` (all 11 status tokens × 4 theme hues × 2 modes against `--surface`); **AAA (≥ 7:1) is aspirational** — misses emit `console.info` but do not fail the test.
 
 ### Testing Approach
@@ -209,6 +264,8 @@ Playwright E2E coverage lives in `frontend/e2e/run-cards.test.ts` — four scena
 ## Store Architecture
 
 The frontend uses Svelte 5 rune-class stores as module-level singletons. All stores are defined in `src/lib/stores/` and are initialized on app mount.
+
+**Store-ceiling principle:** Five stores is the ceiling. `PaletteStore` exists as a fifth store (alongside ConnectionStore, RunsStore, RunnerStore, UIStore) because it separates high-frequency typing state (`paletteQuery` changes on every keystroke) and session-scoped recent-items lifecycle (sessionStorage, not localStorage) from UIStore's low-frequency preference-state semantics. Introducing a sixth store requires justification at the same level of design specificity.
 
 **ConnectionStore** (`src/lib/stores/connection.svelte.ts`)
 - Tracks connection status (`disconnected`, `connecting`, `connected`, `reconnecting`)
@@ -228,13 +285,72 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 - Updated live by the `SeqEvent.poolStatsAfter` sidecar: `EventDispatcher.routeEvent` calls `runnerStore.loadPools(seqEvent.poolStatsAfter)` whenever it is non-null. Null sidecars (Run events) are not applied. Derivation stays on the backend; the frontend never recomputes `RunnerPoolStats`.
 
 **UIStore** (`src/lib/stores/ui.svelte.ts`)
-- Transient UI state: selected run ID, selected tab, theme, dark/light mode
+- Transient UI state: theme, dark/light mode, density, and selections
 - Does not persist to WebSocket (local-only state)
+- Sub-Phase 5 additions:
+  - `selectedRunId: bigint | null` — which run's detail panel is open (null = panel closed)
+  - `selectedJobId: bigint | null` — set by the palette when opening a run via a job row; consumed by JobBlock to scroll the job into view, then cleared
+  - `lastTriggerRunId: bigint | null` — set by RunCard's `handleActivate` at click time; consumed by RunDetailPanel's `onCloseAutoFocus` to restore focus to the triggering card's inner button via `document.querySelector('.run-card[data-run-id="${id}"] .run-card-activate')`; then cleared
+  - `activePoolFilter: PoolKey | null` — the active pool filter (null = no filter); `PoolKey` is a branded type (see ADR 0001 at `docs/architecture-decisions/0001-pool-key-branded-type.md`)
+
+**PaletteStore** (`src/lib/stores/palette.svelte.ts`)
+- High-frequency palette state, separated from UIStore to keep keystroke-rate mutations from co-locating with low-frequency preference state
+- `paletteOpen: boolean` — controlled by `open()`, `close()`, `toggle()` methods; `toggle()` is called by the global Cmd/Ctrl+K listener in App.svelte
+- `paletteQuery: string` — live search string, updated on every keystroke via `setQuery()`
+- `recentRunIds: bigint[]` — LRU list of the last 10 visited run IDs, persisted to sessionStorage under `"atc.palette.recent"` (dot-separated key namespace, distinct from UIStore's dash-separated localStorage keys)
+- `subMenu: 'theme' | null` — active palette submenu; only `'theme'` exists in v1
+- Methods: `open()`, `close()`, `toggle()`, `setQuery(q)`, `recordRunVisit(id)`, `enterSubmenu(name)`, `exitSubmenu()`
 
 **Derived State**
 - Each store exports derived stores (via `$derived`) for filtered views, counts, and computed properties
 - RunsStore exports three derived arrays: `queuedRuns`, `inProgressRuns`, `completedRuns` (pre-sorted)
-- Example: KanbanBoard reads `$runsStore.queuedRuns` to render the queued column
+- KanbanBoard applies `filterRunsByPool` (from `src/lib/filters/pool.ts`) to each sorted array when `uiStore.activePoolFilter` is non-null before threading them to KanbanColumn
+
+## Sheet + Command Dialog Stacking
+
+CommandPalette (a `Command.Dialog`) and RunDetailPanel (a `Sheet`, which is itself a Bits UI Dialog) can be open simultaneously. Both portal their overlay and content to `document.body`. Getting Esc-unwind, click-outside, and backdrop suppression right requires understanding two independent stacking mechanisms Bits UI provides.
+
+### Two independent stacking mechanisms
+
+**1. `DialogRootContext` (lexical Svelte `getContext`/`setContext`) — drives `data-nested`**
+
+When a Bits UI Dialog is rendered inside another Dialog's component tree, the inner dialog's `DialogRootState` sees a non-null parent (set via Svelte context). Bits UI then sets `data-nested` on the inner overlay element. This drives the `--bits-dialog-depth` CSS variable and related depth tracking.
+
+**This mechanism does NOT fire for siblings.** CommandPalette and RunDetailPanel are siblings in App.svelte — they are both children of `<body>` after portal, but not children of each other in Svelte's component tree. No `DialogRootContext` parent is ever established. As a result, `data-nested` never appears on either overlay when both are open — the planned `[data-nested][data-dialog-overlay] { display: none }` rule would have silently done nothing for this use case.
+
+**2. `globalThis.bitsEscapeLayers` + `bitsDismissableLayers` (global mount-order Maps) — drive Esc and interact-outside behavior**
+
+Bits UI maintains global insertion-order Maps of registered dialog layers regardless of component nesting. Each dialog pushes itself into these maps on mount and removes itself on unmount. The behavior logic uses `findLast(closeOrIgnore) || layersArr[0]` — the topmost registered layer handles the event first.
+
+This mechanism is what actually enables sibling palette + panel stacking:
+
+- **CommandPalette** — leaves `escapeKeydownBehavior` and `interactOutsideBehavior` at their default (`"close"`). After the palette is opened on top of the panel, it is the last-registered layer; `findLast` finds it first. First Esc closes the palette only.
+- **RunDetailPanel** — uses `escapeKeydownBehavior="defer-otherwise-close"` and `interactOutsideBehavior="defer-otherwise-close"`. With only the panel open (palette unregistered), `findLast` finds only the panel; the `defer-otherwise-close` policy falls through to `layersArr[0]` (the panel itself) and closes it. Second Esc closes the panel.
+
+### Backdrop suppression
+
+Both portal overlays are appended to `document.body` in mount order: panel's overlay first, then palette's overlay. The CSS rule in `app.css` uses the general sibling combinator to hide every overlay after the first:
+
+```css
+[data-dialog-overlay] ~ [data-dialog-overlay] {
+  display: none;
+}
+```
+
+This prevents double-darkening of the kanban behind a stacked palette + panel. Because `data-nested` is absent (sibling architecture), `[data-nested][data-dialog-overlay]` would not have matched — the sibling combinator is the correct selector for this topology.
+
+### Focus restoration
+
+Focus restoration after each dialog closes uses an id-then-querySelector pattern rather than stored element refs (RunCard instances unmount/remount when runs change columns, making element refs dangle):
+
+- **Palette closes (panel still open):** `onCloseAutoFocus` queries `button[aria-label="Close detail panel"]` (stable aria-label set by PanelActions.svelte) and focuses it.
+- **Panel closes:** `onCloseAutoFocus` reads `uiStore.lastTriggerRunId`, queries `.run-card[data-run-id="${lastTriggerRunId}"] .run-card-activate` (set by RunCard as `data-run-id` on the `<article>`), focuses the inner button, and clears `lastTriggerRunId`. The `data-run-id` attribute survives remounts; the element ref would not.
+
+See Phase 6 plan Note 4 (`docs/implementation-plans/2026-04-25-interactivity/phase_06.md`) for the rationale comparing alternative approaches (element-ref-on-store, default Bits UI focus-scope).
+
+### Global Cmd/Ctrl+K listener
+
+A single `window.addEventListener('keydown', ...)` is mounted via `onMount` in App.svelte and removed on destroy. It calls `paletteStore.toggle()` when the chord fires from any context other than an editable field outside the palette. No separate Esc handler exists in App.svelte — Esc dismissal is delegated entirely to Bits UI's escape-keydown wiring on each dialog.
 
 ## Connection Protocol
 
@@ -321,7 +437,8 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/stores/connection.svelte.ts` — ConnectionStore: WebSocket lifecycle and status
 - `frontend/src/lib/stores/runs.svelte.ts` — RunsStore: WorkflowRun state and mutations
 - `frontend/src/lib/stores/runners.svelte.ts` — RunnersStore: Runner state and mutations
-- `frontend/src/lib/stores/ui.svelte.ts` — UIStore: Local UI state (theme, mode, selections)
+- `frontend/src/lib/stores/ui.svelte.ts` — UIStore: Local UI state (theme, mode, density, selectedRunId, selectedJobId, lastTriggerRunId, activePoolFilter, nowMs)
+- `frontend/src/lib/stores/palette.svelte.ts` — PaletteStore: command palette open/query/recent/submenu state
 
 **Event Handling**
 - `frontend/src/lib/connection.ts` — ConnectionManager: WebSocket client with WS-first protocol, pre-connect buffering, exponential backoff reconnect
@@ -332,20 +449,29 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 
 **App Shell Components**
 - `frontend/src/lib/components/AppShell.svelte` — Layout container: 100dvh flex column with TopBar + slot
-- `frontend/src/lib/components/TopBar.svelte` — Header bar: Logo, RunnerBar, ConnectionIndicator, SettingsPopover
+- `frontend/src/lib/components/TopBar.svelte` — Header bar: Logo, RunnerBar, PoolFilterPill, ConnectionIndicator, SettingsPopover
 - `frontend/src/lib/components/ConnectionManager.svelte` — Service component: connects WebSocket on mount, disconnects on destroy
 - `frontend/src/lib/components/Logo.svelte` — Pure: "ATC" monospace text mark
 - `frontend/src/lib/components/CapacityBar.svelte` — Pure: horizontal fill bar with color thresholds (unused/normal/warning/critical)
 - `frontend/src/lib/components/ConnectionIndicator.svelte` — Pure: colored dot + tooltip showing connection state
-- `frontend/src/lib/components/RunnerPool.svelte` — Pure: single pool indicator with pool name, running/queued counts, capacity bar
+- `frontend/src/lib/components/RunnerPool.svelte` — Pure: single pool indicator with pool name, running/queued counts, capacity bar; `isActiveFilter` prop adds accent border
 - `frontend/src/lib/components/RunnerBar.svelte` — Pure: grid of pool indicators, receives pools[] prop
+- `frontend/src/lib/components/PoolFilterPill.svelte` — Pure: active-filter badge showing label text + clear button; shown when `activePoolFilter` is non-null
 - `frontend/src/lib/components/SettingsPopover.svelte` — Connected: theme selector popover, reads/writes UIStore
 
+**Command Palette Components**
+- `frontend/src/lib/components/CommandPalette.svelte` — Connected: reads PaletteStore + RunStore + RunnerStore + UIStore; renders Command.Dialog portaled to body; five sections (Recent/Runs/Jobs/Pools/Commands) + theme submenu
+- `frontend/src/lib/components/PaletteSection.svelte` — Pure: Command.Group wrapper with heading
+- `frontend/src/lib/components/PaletteRunItem.svelte` — Pure: Command.Item row for a workflow run with status icon and highlighted match
+- `frontend/src/lib/components/PaletteJobItem.svelte` — Pure: Command.Item row for a job with parent run label and highlighted match
+- `frontend/src/lib/components/PalettePoolItem.svelte` — Pure: Command.Item row for a runner pool with label highlight
+- `frontend/src/lib/components/PaletteCommandItem.svelte` — Pure: Command.Item row for a utility command with optional keyboard shortcut badge
+
 **Kanban Board Components**
-- `frontend/src/lib/components/KanbanBoard.svelte` — Connected: tri-state (loading/empty/grid), reads RunStore + ConnectionStore, threads `runStore.jobStatsByRun` to each KanbanColumn
+- `frontend/src/lib/components/KanbanBoard.svelte` — Connected: tri-state (loading/empty/grid), reads RunStore + ConnectionStore + UIStore, applies `filterRunsByPool` when `activePoolFilter` set, threads `runStore.jobStatsByRun` to each KanbanColumn
 - `frontend/src/lib/components/KanbanColumn.svelte` — Pure: receives sorted runs + `jobStatsByRun: ReadonlyMap<bigint, JobStats>`, renders ColumnHeader + `<div role="listitem">` wrappers around RunCards, enforces total-map invariant via throwing `requireJobStats` guard, applies crossfade/flip animations
 - `frontend/src/lib/components/ColumnHeader.svelte` — Pure: uppercase column label + count badge
-- `frontend/src/lib/components/RunCard.svelte` — Composition root: root `<article>` with `--status-color` inline, `data-status` PascalCase attribute, state-aware `$derived.by` duration, five-child tree, scoped `<style>` with 3px `::before` accent bar
+- `frontend/src/lib/components/RunCard.svelte` — Composition root: root `<article>` with `--status-color` inline, `data-status` and `data-run-id` attributes, state-aware `$derived.by` duration, inner activation button, hover-peek popover
 
 **Run Card Leaves**
 - `frontend/src/lib/components/StatusIcon.svelte` — Pure: 11-StatusKey exhaustive glyph + sr-only label; color inherited from parent's `--status-color`
@@ -353,15 +479,30 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/components/JobMeta.svelte` — Pure: `repo · branch` secondary line with null-branch elision and aria-hidden middle dot
 - `frontend/src/lib/components/ProgressBar.svelte` — Pure: track + scaleX fill, `role="progressbar"`, `aria-valuetext="No jobs"` when total is 0
 - `frontend/src/lib/components/RunnerLabel.svelte` — Pure: `⊞ summary` monospace line; renders nothing when summary is null
+- `frontend/src/lib/components/HoverPeekPopover.svelte` — Pure: Popover with status, step progress, and runner summary; parent (RunCard) gates instantiation behind `(hover: hover) and (pointer: fine)` media query check
+
+**Detail Panel Components**
+- `frontend/src/lib/components/RunDetailPanel.svelte` — Connected: reads UIStore + RunStore; Sheet portaled to body; `escapeKeydownBehavior="defer-otherwise-close"` + `interactOutsideBehavior="defer-otherwise-close"` for correct Esc-unwind behind palette
+- `frontend/src/lib/components/PanelHeader.svelte` — Pure: status icon + run title
+- `frontend/src/lib/components/PanelActions.svelte` — Pure: open-in-GitHub link + close button with `aria-label="Close detail panel"` (stable selector used by CommandPalette focus restoration)
+- `frontend/src/lib/components/MetaGrid.svelte` — Pure: two-column CSS grid wrapper
+- `frontend/src/lib/components/MetaCell.svelte` — Pure: label/value pair; null value renders em-dash
+- `frontend/src/lib/components/JobBlock.svelte` — Connected: reads `uiStore.selectedJobId`; scrolls into view via `$effect` when id matches; calls `onSelectedJobIdConsumed` after scroll to prevent re-scroll
+- `frontend/src/lib/components/StepList.svelte` — Pure: ordered list of steps
+- `frontend/src/lib/components/StepItem.svelte` — Pure: step row with status icon, name, and duration
 
 **Animation Module**
 - `frontend/src/lib/animations/kanban-transitions.ts` — Shared crossfade instance, motion constants, reduced-motion support
 
+**Filter Utilities (pure functions)**
+- `frontend/src/lib/filters/pool.ts` — `PoolKey` branded type + `poolKey(labels)` constructor + `filterRunsByPool(runs, jobsByRunId, poolFilter)` filter; first branded TypeScript type in the codebase — see ADR `docs/architecture-decisions/0001-pool-key-branded-type.md` for rationale
+
 **Format Utilities (pure functions)**
 - `frontend/src/lib/format/duration.ts` — `formatDuration({kind: 'static' | 'live', ...})` discriminated API; `MM:SS` under 1h, `H:MM:SS` at or above; negative-diff clamp
-- `frontend/src/lib/format/duration-text.ts` — `computeDurationText(run, nowMs): string` — state-aware formula (Queued/InProgress/Completed+ActionRequired live, Completed non-ActionRequired static); called by RunCard's `$derived.by`
+- `frontend/src/lib/format/duration-text.ts` — `computeDurationText(run, nowMs): string` and `computeJobDurationText(job, nowMs): string` — state-aware formulas; called by RunCard's `$derived.by` and RunDetailPanel
 - `frontend/src/lib/format/runners.ts` — `summarizeRunners(jobs): string | null` — single-name / `N runners` / null branches
 - `frontend/src/lib/format/status-key.ts` — `StatusKey` union (11 values) + `resolveStatusKey(run)` normalisation at the boundary
+- `frontend/src/lib/format/timestamp.ts` — `formatTimestamp(iso: string): string` — locale-aware date/time formatting for the detail panel metadata grid
 
 **Design Token Tests**
 - `frontend/src/lib/design-tokens.test.ts` — Automated WCAG contrast gate: 11 status tokens × 4 themes × 2 modes against `--surface`. AA misses fail the test; AAA misses emit `console.info`.
@@ -370,8 +511,12 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/**/*.test.ts` — Vitest unit tests for stores, connection, and dispatcher
 - `frontend/src/lib/**/*.browser.test.ts` — Vitest browser-mode tests for animations, store reactivity, reduced-motion support
 - `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
-- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `sendWS` — intercepts `new WebSocket('/v1/ws')` and bridges store updates via `window.__stores`
+- `frontend/src/lib/components/BackdropSuppression.browser.test.ts` — Browser-mode test: verifies the `[data-dialog-overlay] ~ [data-dialog-overlay] { display: none }` CSS rule hides the second overlay when both Sheet and Command.Dialog are open
+- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobSeqEvent`, `sendWS` — intercepts `new WebSocket('/v1/ws')` and bridges store updates via `window.__stores`
 - `frontend/e2e/theme.test.ts` — Playwright E2E tests: app rendering, theme switching, dark/light mode toggle
 - `frontend/e2e/app-shell.test.ts` — Playwright E2E tests: app shell rendering, runner bar pool indicators, connection indicator, settings popover
 - `frontend/e2e/kanban.test.ts` — Playwright E2E tests: kanban board lifecycle, card movement, WebSocket event handling
 - `frontend/e2e/run-cards.test.ts` — Playwright E2E tests: RunCard rendering across all 11 StatusKeys, Queued→InProgress transition, density toggle, `page.clock.fastForward` duration updates
+- `frontend/e2e/palette.test.ts` — Playwright E2E tests: Cmd+K open/close, query filtering across sections, pool filter selection, theme submenu, command actions
+- `frontend/e2e/pool-filter.test.ts` — Playwright E2E tests: pool filter pill shows/clears, kanban filters by pool, RunnerPool accent border
+- `frontend/e2e/stacking.test.ts` — Playwright E2E tests: palette+panel Esc-unwind order, single backdrop with both open, click-outside-palette-inside-panel, Cmd+K toggle while palette open
