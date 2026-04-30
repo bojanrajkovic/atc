@@ -122,4 +122,36 @@ describe('PaletteStore', () => {
     expect(store.subMenu).toBeNull()
     expect(store.paletteOpen).toBe(true)
   })
+
+  // Test 13: sessionStorage SecurityError on getItem doesn't crash construction
+  it('survives sessionStorage.getItem throwing on construction', () => {
+    const original = Storage.prototype.getItem
+    Storage.prototype.getItem = () => {
+      throw new DOMException('storage blocked', 'SecurityError')
+    }
+    try {
+      const testStore = new PaletteStore()
+      expect(testStore.recentRunIds).toEqual([])
+    } finally {
+      Storage.prototype.getItem = original
+    }
+  })
+
+  // Test 14: sessionStorage QuotaExceededError on setItem doesn't propagate
+  it('survives sessionStorage.setItem throwing on persistence', async () => {
+    const original = Storage.prototype.setItem
+    Storage.prototype.setItem = () => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError')
+    }
+    try {
+      const testStore = new PaletteStore()
+      // Should not throw — the effect catches the storage error silently
+      expect(() => testStore.recordRunVisit(1n)).not.toThrow()
+      await new Promise((r) => setTimeout(r, 0))
+      // Internal state is updated even though persistence dropped
+      expect(testStore.recentRunIds).toEqual([1n])
+    } finally {
+      Storage.prototype.setItem = original
+    }
+  })
 })

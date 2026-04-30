@@ -22,25 +22,33 @@ export class PaletteStore {
   subMenu = $state<'theme' | null>(null)
 
   constructor() {
-    // Restore persisted recentRunIds from sessionStorage
+    // Restore persisted recentRunIds from sessionStorage. Storage access can
+    // throw `SecurityError` (Safari private mode, sandboxed iframe, cookies
+    // disabled) or `QuotaExceededError`; treat persistence as best-effort so
+    // app boot never fails on a storage quirk.
     if (typeof window !== 'undefined') {
-      const saved = sessionStorage.getItem('atc.palette.recent')
-      if (saved) {
-        try {
+      try {
+        const saved = sessionStorage.getItem('atc.palette.recent')
+        if (saved) {
           const parsed = JSON.parse(saved) as string[]
           this.recentRunIds = parsed.map((s) => BigInt(s))
-        } catch {
-          // Malformed or invalid JSON; ignore and start fresh
-          this.recentRunIds = []
         }
+      } catch {
+        // SecurityError on getItem, malformed JSON, or invalid BigInt — ignore
+        this.recentRunIds = []
       }
     }
 
-    // Persist recentRunIds to sessionStorage whenever it changes
+    // Persist recentRunIds to sessionStorage whenever it changes (best-effort)
     $effect.root(() => {
       $effect(() => {
-        const serialized = JSON.stringify(this.recentRunIds.map(String))
-        sessionStorage.setItem('atc.palette.recent', serialized)
+        if (typeof window === 'undefined') return
+        try {
+          const serialized = JSON.stringify(this.recentRunIds.map(String))
+          sessionStorage.setItem('atc.palette.recent', serialized)
+        } catch {
+          // SecurityError or QuotaExceededError — silently drop the write
+        }
       })
     })
   }
