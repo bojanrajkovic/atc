@@ -80,7 +80,8 @@
       "!!**/pnpm-lock.yaml",
       "!!**/src/lib/types/generated",
       "!!**/test-results",
-      "!!**/playwright-report"
+      "!!**/playwright-report",
+      "!!**/coverage"
     ]
   },
   "overrides": [
