@@ -1,8 +1,7 @@
 <script lang="ts">
   import * as Command from '$lib/components/ui/command'
   import StatusIcon from './StatusIcon.svelte'
-  import { resolveStatusKey } from '$lib/format/status-key'
-  import { statusKeyToVar } from '$lib/format/status-key-var'
+  import { resolveStatusKey, statusKeyToVar } from '$lib/format/status-key'
   import type { StatusKey } from '$lib/format/status-key'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
