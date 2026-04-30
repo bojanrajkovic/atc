@@ -12,7 +12,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 
 | File | Role |
 |------|------|
-| `src/App.svelte` | Root component: mounts ConnectionManager and AppShell |
+| `src/App.svelte` | Root component: mounts ConnectionManager + AppShell, plus CommandPalette and RunDetailPanel as portal-target siblings; owns the global `window` keydown listener that calls `paletteStore.toggle()` on Cmd/Ctrl+K (skipping editable contexts outside the palette input) |
 | `src/app.css` | Design tokens (`@theme` block), OKLCH color definitions, base styles |
 | `src/main.ts` | Vite entry point; exports stores to `window.__stores` bridge for E2E test harness |
 | `src/vite-env.d.ts` | Window type augmentation for `__stores` bridge (runStore, connectionStore, runnerStore, uiStore, paletteStore, poolKey) |
@@ -45,7 +45,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/components/JobMeta.svelte` | Pure: `repo · branch` secondary line with null-branch elision |
 | `src/lib/components/ProgressBar.svelte` | Pure: `role="progressbar"` with scaleX fill; `aria-valuetext="No jobs"` when total is 0 |
 | `src/lib/components/RunnerLabel.svelte` | Pure: `⊞ summary` monospace line; null-summary elision |
-| `src/lib/components/CommandPalette.svelte` | Connected: Cmd+K command palette (Bits UI Command.Dialog); reads paletteStore + runStore + runnerStore + uiStore; configured with `defer-otherwise-close` stacking props |
+| `src/lib/components/CommandPalette.svelte` | Connected: Cmd+K command palette (Bits UI Command.Dialog); reads paletteStore + runStore + runnerStore + uiStore; suppresses default auto-focus via `onOpenAutoFocus` and re-focuses the input in a tick; on close, returns focus to the panel's "Close detail panel" button via `onCloseAutoFocus` when a panel is open underneath. No `defer-otherwise-close` — sibling dialogs don't establish a Bits UI parent context, so the palette is simply the topmost close-layer in mount order (see `docs/architecture/frontend-app.md` § Sheet + Command Dialog Stacking) |
 | `src/lib/components/PaletteSection.svelte` | Pure leaf: section header wrapper with optional item count badge |
 | `src/lib/components/PaletteRunItem.svelte` | Pure leaf: run row (repo, branch, status glyph, duration) inside palette |
 | `src/lib/components/PaletteJobItem.svelte` | Pure leaf: job row (job name, run context) inside palette |
@@ -53,7 +53,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/components/PaletteCommandItem.svelte` | Pure leaf: command row (label + optional keyboard shortcut badge) inside palette |
 | `src/lib/components/HoverPeekPopover.svelte` | Pure: 250ms-delayed popover anchored to RunCard; dismissed on mouse-leave or card click; touch-suppressed |
 | `src/lib/components/PoolFilterPill.svelte` | Pure: active filter indicator rendered in TopBar; shows sorted labels + clear button; absent when no filter |
-| `src/lib/components/RunDetailPanel.svelte` | Connected: slide-over Sheet panel (Bits UI Sheet); reads uiStore.selectedRunId; configured with `defer-otherwise-close` stacking props and focus-restoration via `lastTriggerRunId` |
+| `src/lib/components/RunDetailPanel.svelte` | Connected: slide-over Sheet panel (Bits UI Sheet); reads uiStore.selectedRunId + runStore; uses `escapeKeydownBehavior="defer-otherwise-close"` and `interactOutsideBehavior="defer-otherwise-close"` so a topmost dialog (palette) absorbs Esc/click-outside first; restores focus to the originating RunCard's `.run-card-activate` button via `uiStore.lastTriggerRunId` |
 | `src/lib/components/PanelHeader.svelte` | Pure leaf: panel title row with StatusIcon, repo/branch, run number; `data-status-key` attribute |
 | `src/lib/components/PanelActions.svelte` | Pure leaf: "Close detail panel" button (aria-label stable selector for focus restoration) + "Go to run" link |
 | `src/lib/components/MetaGrid.svelte` | Pure leaf: two-column definition-list grid of key/value metadata pairs |
