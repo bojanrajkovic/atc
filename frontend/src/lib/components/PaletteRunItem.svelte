@@ -8,14 +8,21 @@
   export interface Props {
     run: WorkflowRun
     onSelect: () => void
+    /**
+     * Section prefix for the Command.Item's `value` field. cmdk uses `value`
+     * as a unique selection key; the same run can appear in both Recent and
+     * Runs sections, so the parent must pass a prefix that distinguishes the
+     * two render paths. Defaults to `'run'` for the canonical Runs section.
+     */
+    valuePrefix?: string
   }
 
-  let { run, onSelect }: Props = $props()
+  let { run, onSelect, valuePrefix = 'run' }: Props = $props()
   const statusKey: StatusKey = $derived(resolveStatusKey(run))
 </script>
 
 <Command.Item
-  value={`run-${run.id}`}
+  value={`${valuePrefix}-${run.id}`}
   keywords={[run.repo, run.branch ?? '', run.displayTitle]}
   {onSelect}
 >

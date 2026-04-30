@@ -631,4 +631,46 @@ test.describe('Command palette', () => {
     const runOptionCount = await page.getByRole('option', { name: /Run 2/ }).count()
     expect(runOptionCount).toBeGreaterThan(0)
   })
+
+  test('a run rendered in both Recent and Runs has distinct Command.Item values', async ({
+    page,
+  }) => {
+    // Regression: previously both `recentRuns` and `allRuns` rendered
+    // PaletteRunItem with `value="run-${run.id}"`, so the same run produced
+    // duplicate Command.Item values when present in both sections. cmdk uses
+    // `value` as a unique selection key, so duplicates broke keyboard
+    // navigation and selection state. Fix scopes the value with a section
+    // prefix (`recent-run-` vs `run-`).
+    await page.waitForTimeout(300)
+
+    await sendWS(
+      page,
+      makeRunEvent(1, {
+        runId: 1,
+        displayTitle: 'Dup Run',
+        createdAt: new Date().toISOString(),
+        runStartedAt: null,
+        updatedAt: new Date().toISOString(),
+        action: { type: 'Completed', data: { conclusion: 'Success' } },
+      }),
+    )
+    await page.waitForTimeout(300)
+    await page.evaluate(() => window.__stores!.paletteStore!.recordRunVisit(1n))
+
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // Run 1 should appear twice — once under Recent, once under Runs.
+    const dupOptions = page.getByRole('option', { name: /Dup Run/ })
+    await expect(dupOptions).toHaveCount(2)
+
+    // Each Command.Item carries its `value` on a `data-value` attribute. The
+    // two rows must report distinct values so cmdk treats them as separate
+    // selection targets.
+    const values = await dupOptions.evaluateAll((els) =>
+      els.map((el) => el.getAttribute('data-value')),
+    )
+    expect(new Set(values).size).toBe(2)
+    expect(values).toEqual(expect.arrayContaining(['recent-run-1', 'run-1']))
+  })
 })

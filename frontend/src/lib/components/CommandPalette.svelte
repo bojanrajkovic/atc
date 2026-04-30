@@ -216,7 +216,7 @@
       {#if recentRuns.length > 0}
         <PaletteSection heading="Recent">
           {#each recentRuns as run (run.id)}
-            <PaletteRunItem {run} onSelect={() => selectRun(run.id)} />
+            <PaletteRunItem {run} valuePrefix="recent-run" onSelect={() => selectRun(run.id)} />
           {/each}
         </PaletteSection>
       {/if}
