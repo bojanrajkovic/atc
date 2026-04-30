@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-04-24
+Last verified: 2026-04-29
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -15,13 +15,15 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/App.svelte` | Root component: mounts ConnectionManager and AppShell |
 | `src/app.css` | Design tokens (`@theme` block), OKLCH color definitions, base styles |
 | `src/main.ts` | Vite entry point; exports stores to `window.__stores` bridge for E2E test harness |
-| `src/vite-env.d.ts` | Window type augmentation for `__stores?: { runStore?, connectionStore?, runnerStore? }` |
+| `src/vite-env.d.ts` | Window type augmentation for `__stores` bridge (runStore, connectionStore, runnerStore, uiStore, paletteStore, poolKey) |
 | `vite.config.ts` | Build config with Tailwind v4 and Svelte plugins |
 | `vitest.config.ts` | Vitest workspace config (delegates to unit and browser projects) |
 | `vitest.config.unit.ts` | Vitest unit project (jsdom, `*.test.ts`) |
 | `vitest.config.browser.ts` | Vitest browser project (Playwright chromium, `*.browser.test.ts`) |
 | `playwright.config.ts` | Playwright E2E test configuration with webServer auto-start |
-| `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts` |
+| `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts`, `palette.svelte.ts` |
+| `src/lib/stores/palette.svelte.ts` | PaletteStore — `paletteOpen`, `paletteQuery`, `recentRunIds`; separate store for high-frequency typing state and recent-items lifecycle (see `docs/architecture/frontend-app.md`) |
+| `src/lib/filters/pool.ts` | `PoolKey` branded type + `poolKey()` factory + `filterRunsByPool()` — first branded TypeScript type in the codebase; see ADR `docs/architecture-decisions/0001-pool-key-branded-type.md` |
 | `src/lib/dispatcher.ts` | EventDispatcher — routes primitive WebSocket events to stores; applies `SeqEvent.poolStatsAfter` sidecar to `runnerStore` when present; batches via requestAnimationFrame |
 | `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
 | `src/lib/types/generated/` | ts-rs generated TypeScript types from Rust (do not hand-edit) |
@@ -43,6 +45,22 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/components/JobMeta.svelte` | Pure: `repo · branch` secondary line with null-branch elision |
 | `src/lib/components/ProgressBar.svelte` | Pure: `role="progressbar"` with scaleX fill; `aria-valuetext="No jobs"` when total is 0 |
 | `src/lib/components/RunnerLabel.svelte` | Pure: `⊞ summary` monospace line; null-summary elision |
+| `src/lib/components/CommandPalette.svelte` | Connected: Cmd+K command palette (Bits UI Command.Dialog); reads paletteStore + runStore + runnerStore + uiStore; configured with `defer-otherwise-close` stacking props |
+| `src/lib/components/PaletteSection.svelte` | Pure leaf: section header wrapper with optional item count badge |
+| `src/lib/components/PaletteRunItem.svelte` | Pure leaf: run row (repo, branch, status glyph, duration) inside palette |
+| `src/lib/components/PaletteJobItem.svelte` | Pure leaf: job row (job name, run context) inside palette |
+| `src/lib/components/PalettePoolItem.svelte` | Pure leaf: runner pool row (sorted labels, running/queued counts) inside palette |
+| `src/lib/components/PaletteCommandItem.svelte` | Pure leaf: command row (label + optional keyboard shortcut badge) inside palette |
+| `src/lib/components/HoverPeekPopover.svelte` | Pure: 250ms-delayed popover anchored to RunCard; dismissed on mouse-leave or card click; touch-suppressed |
+| `src/lib/components/PoolFilterPill.svelte` | Pure: active filter indicator rendered in TopBar; shows sorted labels + clear button; absent when no filter |
+| `src/lib/components/RunDetailPanel.svelte` | Connected: slide-over Sheet panel (Bits UI Sheet); reads uiStore.selectedRunId; configured with `defer-otherwise-close` stacking props and focus-restoration via `lastTriggerRunId` |
+| `src/lib/components/PanelHeader.svelte` | Pure leaf: panel title row with StatusIcon, repo/branch, run number; `data-status-key` attribute |
+| `src/lib/components/PanelActions.svelte` | Pure leaf: "Close detail panel" button (aria-label stable selector for focus restoration) + "Go to run" link |
+| `src/lib/components/MetaGrid.svelte` | Pure leaf: two-column definition-list grid of key/value metadata pairs |
+| `src/lib/components/MetaCell.svelte` | Pure leaf: single labeled cell inside MetaGrid |
+| `src/lib/components/JobBlock.svelte` | Pure leaf: expandable job section (status, name, duration) with scroll-into-view when selectedJobId matches |
+| `src/lib/components/StepList.svelte` | Pure leaf: ordered list of steps inside a JobBlock |
+| `src/lib/components/StepItem.svelte` | Pure leaf: single step row (outcome glyph, name, duration) |
 | `src/lib/animations/kanban-transitions.ts` | Shared crossfade instance, motion constants, reduced-motion support |
 | `src/lib/format/duration.ts` | Pure: `formatDuration({kind:'static'|'live', ...})` — `MM:SS` under 1h, `H:MM:SS` at or above |
 | `src/lib/format/duration-text.ts` | Pure: `computeDurationText(run, nowMs): string` — state-aware formula called by RunCard's `$derived.by` |
@@ -50,7 +68,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/format/status-key.ts` | Pure: `StatusKey` union (11 values) + `resolveStatusKey(run)` |
 | `src/lib/design-tokens.test.ts` | WCAG contrast gate: 11 status tokens × 4 themes × 2 modes against `--surface` |
 | `e2e/lib/ws-mock.ts` | Shared Playwright harness: `makeRunEvent`, `makeJobSeqEvent` (with `poolStatsAfter` sidecar), `sendWS` (routes Job and Run events through `window.__stores` bridge) |
-| `e2e/` | Playwright E2E tests (theme, app shell, kanban board, run cards) |
+| `e2e/` | Playwright E2E tests (see directory: theme, app-shell, kanban, run-cards, run-card-interactivity, palette, pool-filter, pool-indicators, run-detail-panel, stacking) |
 
 ## Store Additions (Sub-Phase 4)
 
@@ -59,7 +77,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 
 ## Status
 
-Complete infrastructure, kanban board, and run cards. App shell with TopBar (logo, runner pool indicators, connection indicator, settings popover). Kanban board with three-column view, card animations via shared crossfade, sorted derived arrays. RunCard composes five leaves (StatusIcon/JobHeader/JobMeta/ProgressBar/RunnerLabel) with `--status-color` inline, `data-status` attribute, state-aware `$derived.by` duration (static-Completed does not subscribe to tick), 3px `::before` accent bar, halo animation on InProgress cards, compact-density CSS, and a three-file test split (jsdom composition + jsdom reactivity proof + browser-mode computed-style). All 302 unit/browser tests + 26 E2E tests passing.
+Complete through Sub-Phase 5 (interactivity). App shell with TopBar (logo, runner pool indicators with active-filter highlight, PoolFilterPill, connection indicator, settings popover). Kanban board with three-column view, card animations via shared crossfade, sorted derived arrays. RunCard composes five leaves with `--status-color` inline, state-aware `$derived.by` duration, halo animation on InProgress cards, hover-peek popover (HoverPeekPopover), and keyboard-activatable inner button for panel-open. Sub-Phase 5 added: Cmd+K command palette (CommandPalette + pure palette leaves), slide-over run detail panel (RunDetailPanel + panel leaves: PanelHeader/PanelActions/MetaGrid/MetaCell/JobBlock/StepList/StepItem), pool filter integration (PoolFilterPill, PoolKey branded type), and Bits UI dialog stacking with `defer-otherwise-close` semantics and single-backdrop CSS suppression. See `docs/architecture/frontend-app.md` for dialog stacking pattern, store-ceiling rationale, and new design tokens. All 547 unit/browser tests + 79 E2E tests passing.
 
 ## Commands
 
