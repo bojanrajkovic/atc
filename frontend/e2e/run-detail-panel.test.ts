@@ -342,7 +342,7 @@ test.describe('Run detail panel', () => {
                 runner: null,
                 labels: ['linux'],
                 steps: stepNames.map((name, idx) => ({
-                  number: idx + 1,
+                  number: BigInt(idx + 1),
                   name,
                   status: 'Completed' as const,
                   conclusion: 'Success' as const,
