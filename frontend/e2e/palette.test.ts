@@ -388,6 +388,45 @@ test.describe('Command palette', () => {
     await expect(page.getByRole('dialog')).toBeVisible()
   })
 
+  test('recentRunIds prunes ids whose runs were evicted from runStore', async ({ page }) => {
+    // Seed two runs and record visits for both
+    const a = makeRunEvent(1, {
+      runId: 1,
+      displayTitle: 'Recent A',
+      createdAt: new Date().toISOString(),
+      runStartedAt: null,
+      updatedAt: new Date().toISOString(),
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    const b = makeRunEvent(2, {
+      runId: 2,
+      displayTitle: 'Recent B',
+      createdAt: new Date().toISOString(),
+      runStartedAt: null,
+      updatedAt: new Date().toISOString(),
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    await sendWS(page, a)
+    await sendWS(page, b)
+    await page.waitForTimeout(200)
+    await page.evaluate(() => {
+      window.__stores!.paletteStore!.recordRunVisit(1n)
+      window.__stores!.paletteStore!.recordRunVisit(2n)
+    })
+
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.recentRunIds.length)).toBe(2)
+
+    // Evict run 1 from the run store (simulating TTL eviction)
+    await page.evaluate(() => window.__stores!.runStore!.runs.delete(1n))
+    await page.waitForTimeout(50) // let the prune effect run
+
+    // recentRunIds should be pruned to only the surviving id
+    const remaining = await page.evaluate(() =>
+      window.__stores!.paletteStore!.recentRunIds.map((b) => b.toString()),
+    )
+    expect(remaining).toEqual(['2'])
+  })
+
   test('palette submenu state clears on external dismiss (backdrop click)', async ({ page }) => {
     // Regression: previously, Bits UI dialog mechanics (backdrop click, X button) only
     // mutated paletteOpen via bind:open and never cleared subMenu, so reopening landed

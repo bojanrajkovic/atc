@@ -25,6 +25,20 @@
     }
   })
 
+  // Prune evicted run ids from the LRU. The derivation below already filters
+  // out missing runs so users never see stale entries, but the storage backing
+  // (sessionStorage-persisted recentRunIds) would otherwise hold them
+  // indefinitely until displaced by 10 fresh visits. This effect runs whenever
+  // runStore.runs changes and writes back a filtered list when eviction has
+  // occurred — guarded by a length check so it doesn't loop on the write.
+  $effect(() => {
+    const ids = paletteStore.recentRunIds
+    const present = ids.filter((id) => runStore.runs.has(id))
+    if (present.length !== ids.length) {
+      paletteStore.recentRunIds = present
+    }
+  })
+
   // SCORE_THRESHOLD: command-score returns 0 for no match; any positive score is a match.
   // Tune upward later if zero-relevance items surface too often.
   const SCORE_THRESHOLD = 0.0
