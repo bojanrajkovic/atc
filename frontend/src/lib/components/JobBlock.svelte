@@ -42,19 +42,28 @@
     <span class="name">{job.name}</span>
     <span class="duration">{durationText}</span>
   </header>
-  <StepList>
-    {#each job.steps as step (step.number)}
-      <StepItem
-        name={step.name}
-        statusKey={computeStepStatusKey(step)}
-        durationText={computeStepDurationText(step)}
-      />
-    {/each}
-  </StepList>
+  {#if job.steps.length > 0}
+    <StepList>
+      {#each job.steps as step (step.number)}
+        <StepItem
+          name={step.name}
+          statusKey={computeStepStatusKey(step)}
+          durationText={computeStepDurationText(step)}
+        />
+      {/each}
+    </StepList>
+  {/if}
 </section>
 
 <style>
   .job-block {
+    /* Flex column with gap (instead of margin-bottom on .job-header) so the
+       header is vertically centered between the top and bottom dividers when
+       the job has no steps — gap only applies between siblings, so an absent
+       StepList contributes no spacing. */
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
     padding: 0.75rem 1.5rem;
     border-top: 1px solid var(--border);
   }
@@ -62,7 +71,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
   }
   .status {
     color: var(--status-color);

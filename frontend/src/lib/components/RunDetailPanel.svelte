@@ -45,7 +45,8 @@
   <Sheet.Root open={true} onOpenChange={handleOpenChange}>
     <Sheet.Content
       side="right"
-      class="run-detail-panel"
+      showCloseButton={false}
+      class="run-detail-panel data-[side=right]:sm:max-w-xl"
       escapeKeydownBehavior="defer-otherwise-close"
       interactOutsideBehavior="defer-otherwise-close"
       onCloseAutoFocus={(event) => {
@@ -65,12 +66,14 @@
       }}
     >
       {@const statusKey = resolveStatusKey(run)}
-      <PanelHeader
-        {statusKey}
-        statusLabel={statusKeyToHumanLabel(statusKey)}
-        title={run.displayTitle}
-      />
-      <PanelActions htmlUrl={run.htmlUrl} onClose={() => (uiStore.selectedRunId = null)} />
+      <div class="panel-top">
+        <PanelHeader
+          {statusKey}
+          statusLabel={statusKeyToHumanLabel(statusKey)}
+          title={run.displayTitle}
+        />
+        <PanelActions htmlUrl={run.htmlUrl} onClose={() => (uiStore.selectedRunId = null)} />
+      </div>
       <MetaGrid>
         <MetaCell label="Commit" value={run.headSha.slice(0, 7)} />
         <MetaCell label="Event" value={run.event} />
@@ -95,3 +98,12 @@
     </Sheet.Content>
   </Sheet.Root>
 {/if}
+
+<style>
+  .panel-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+</style>

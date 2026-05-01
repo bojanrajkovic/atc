@@ -111,6 +111,28 @@
     if (hoverTimer !== null) clearTimeout(hoverTimer)
   })
 
+  /**
+   * While the hover-peek popover is open, Enter activates the panel — matching
+   * the popover's "Enter to open" hint. The activator <button> only fires Enter
+   * when keyboard-focused, but hovering doesn't focus, so the hint was inert
+   * without this listener.
+   *
+   * Skipped when focus is inside an editable context (palette input, etc.) so
+   * Enter retains its default semantics there.
+   */
+  $effect(() => {
+    if (!popoverOpen) return
+    function handleEnter(e: KeyboardEvent) {
+      if (e.key !== 'Enter') return
+      const target = e.target as HTMLElement | null
+      if (target?.matches?.('input, textarea, [contenteditable="true"]')) return
+      e.preventDefault()
+      handleActivate()
+    }
+    window.addEventListener('keydown', handleEnter)
+    return () => window.removeEventListener('keydown', handleEnter)
+  })
+
   function handleMouseEnter() {
     if (!canHover) return
     if (hoverTimer !== null) clearTimeout(hoverTimer)

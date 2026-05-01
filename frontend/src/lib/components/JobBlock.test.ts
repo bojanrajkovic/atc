@@ -82,16 +82,17 @@ describe('JobBlock', () => {
     expect(screen.getByText('Run tests')).toBeTruthy()
   })
 
-  it('interactivity.AC2.1 renders no step items when job.steps is empty', () => {
+  it('interactivity.AC2.1 omits the step list entirely when job.steps is empty', () => {
+    // The empty <ol> used to render with a 0.5rem header margin-bottom that
+    // produced asymmetric vertical spacing inside .job-block. The block now
+    // omits StepList when there are no steps and uses flex `gap` for spacing,
+    // so an empty job is symmetrically padded between its top/bottom borders.
     const job = createMockJob({ steps: [] })
     const { container } = render(JobBlock, {
       props: { job, durationText: '—', selectedJobId: null },
     })
 
-    // step-list ol is present but empty
-    const ol = container.querySelector('ol.step-list')
-    expect(ol).not.toBeNull()
-    expect(ol!.children).toHaveLength(0)
+    expect(container.querySelector('ol.step-list')).toBeNull()
   })
 
   it('interactivity.AC2.1 sets data-status-key attribute to the resolved status key', () => {
