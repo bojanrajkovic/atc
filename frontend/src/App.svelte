@@ -23,11 +23,13 @@
 
       // Cmd+D toggles dark mode. preventDefault is required because Cmd+D is the
       // browser's "bookmark this page" shortcut and would otherwise win even when
-      // the palette is open.
+      // the palette is open. close() routes through the store so subMenu resets
+      // alongside paletteOpen — a direct write to paletteOpen would leave the
+      // theme submenu sticky and reopen the palette into stale state.
       if (e.key === 'd') {
         e.preventDefault()
         uiStore.mode = uiStore.mode === 'dark' ? 'light' : 'dark'
-        if (paletteStore.paletteOpen) paletteStore.paletteOpen = false
+        if (paletteStore.paletteOpen) paletteStore.close()
         return
       }
 
@@ -35,7 +37,7 @@
       if (e.key === '\\') {
         e.preventDefault()
         uiStore.density = uiStore.density === 'comfortable' ? 'compact' : 'comfortable'
-        if (paletteStore.paletteOpen) paletteStore.paletteOpen = false
+        if (paletteStore.paletteOpen) paletteStore.close()
         return
       }
 

@@ -268,6 +268,39 @@ describe('ConnectionManager', () => {
       vi.useRealTimers()
     })
 
+    it('aborts in-flight connect handshake when reconnect is called pre-open', async () => {
+      // Regression: reconnect() previously nulled this.ws.onclose then close()d
+      // the WebSocket. If a prior connect() was still awaiting open, that wait
+      // depended on the temporary onclose rejector — with onclose nulled and
+      // (in real browsers) onopen never firing on a closed socket, the original
+      // connect() Promise stranded forever, leaking the async frame and
+      // accumulating with each manual reconnect during a slow handshake.
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+
+      // Start connect() but do NOT drain microtasks — the WebSocket is in
+      // CONNECTING state, the open-wait Promise is pending.
+      const connectPromise = manager.connect()
+      let connectError: unknown = null
+      connectPromise.catch((err) => {
+        connectError = err
+      })
+
+      // Synchronously force a reconnect. The original handshake's open-wait
+      // must reject (rather than strand) so the orphan async frame settles.
+      manager.reconnect()
+
+      await vi.runAllTimersAsync()
+
+      expect(connectError).not.toBeNull()
+      const err = connectError as Error & { name?: string }
+      expect(err.name === 'AbortError' || /abort/i.test(err.message)).toBe(true)
+
+      manager.destroy()
+      vi.useRealTimers()
+    })
+
     it('transitions to connecting state immediately', async () => {
       vi.useFakeTimers()
 

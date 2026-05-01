@@ -64,8 +64,19 @@ export class ConnectionManager {
     this.ws.onerror = () => {} // onclose fires after onerror
 
     // Step 2: Wait for WS to open
+    //
+    // The abort listener is the third settle path alongside onopen/onclose.
+    // It exists for the manual reconnect case: reconnect() nulls this.ws.onclose
+    // before close()-ing the socket, so the rejector below cannot fire, and a
+    // real browser will not fire onopen on a closed socket either. Without the
+    // abort listener the Promise stranded, leaking the async frame.
     await new Promise<void>((resolve, reject) => {
       if (!this.ws) return reject(new Error('No WebSocket'))
+      if (signal.aborted) return reject(new DOMException('Aborted', 'AbortError'))
+
+      const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+      signal.addEventListener('abort', onAbort, { once: true })
+
       this.ws.onopen = () => resolve()
       const originalOnclose = this.ws.onclose
       const ws = this.ws

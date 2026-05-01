@@ -98,6 +98,11 @@
   })
 
   async function selectRun(runId: bigint) {
+    // Mirror RunCard.handleActivate's convention so lastTriggerRunId tracks
+    // the run currently in the panel. Without this, navigating from card A
+    // to run B via the palette leaves lastTriggerRunId pointing at A, and
+    // closing the panel restores focus to the wrong card.
+    uiStore.lastTriggerRunId = runId
     uiStore.selectedRunId = runId
     await tick() // let Sheet mount
     paletteStore.paletteOpen = false
@@ -105,6 +110,7 @@
   }
 
   async function selectJob(job: import('$lib/types/generated/Job').Job) {
+    uiStore.lastTriggerRunId = job.runId
     uiStore.selectedRunId = job.runId
     uiStore.selectedJobId = job.id
     await tick() // let Sheet mount and JobBlock $effect see selectedJobId

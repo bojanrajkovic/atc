@@ -222,6 +222,53 @@ test.describe('Command palette', () => {
     expect(recentRunIds[0]).toBe(1n)
   })
 
+  test('selecting a different run from palette updates lastTriggerRunId', async ({ page }) => {
+    // Regression: previously, selectRun() only wrote selectedRunId. When the
+    // panel was already open from a RunCard click (lastTriggerRunId = A) and
+    // the user navigated to run B via the palette, lastTriggerRunId stayed
+    // pointing at A. Closing the panel then restored focus to the original
+    // card on the kanban instead of the run currently being viewed.
+    await page.waitForTimeout(500)
+
+    const a = makeRunEvent(1, {
+      runId: 1,
+      displayTitle: 'Run A',
+      createdAt: new Date().toISOString(),
+      runStartedAt: null,
+      updatedAt: new Date().toISOString(),
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    const b = makeRunEvent(2, {
+      runId: 2,
+      displayTitle: 'Run B',
+      createdAt: new Date().toISOString(),
+      runStartedAt: null,
+      updatedAt: new Date().toISOString(),
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    await sendWS(page, a)
+    await sendWS(page, b)
+    await page.waitForTimeout(500)
+
+    // Simulate prior RunCard click for run A — panel open, trigger source = A.
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.lastTriggerRunId = 1n
+      window.__stores!.uiStore!.selectedRunId = 1n
+    })
+
+    // Open palette and pick run B. With the panel already open, role=dialog
+    // resolves to two elements (panel + palette) — assert on the palette's
+    // input selector instead, matching the stacking-test convention.
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.locator('[data-slot="command-input"]')).toBeVisible()
+    await page.getByRole('option', { name: /Run B/ }).click()
+
+    expect(await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)).toBe(2n)
+    // The trigger source must follow the panel: closing the panel should
+    // restore focus to run B's card, not run A's.
+    expect(await page.evaluate(() => window.__stores!.uiStore!.lastTriggerRunId)).toBe(2n)
+  })
+
   test('AC1.5 selecting a job sets selectedRunId and selectedJobId', async ({ page }) => {
     // Seed a run with a job via store mutation
     const run = makeRunEvent(1, {
@@ -454,6 +501,42 @@ test.describe('Command palette', () => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
     await expect(page.getByRole('dialog')).toBeVisible()
     await expect(page.getByRole('option', { name: /Switch theme/ })).toBeVisible()
+  })
+
+  test('palette submenu state clears when Cmd+D closes the palette', async ({ page }) => {
+    // Regression: the global Cmd+D handler in App.svelte previously closed the
+    // palette by writing paletteOpen = false directly, bypassing close() and
+    // leaving subMenu === 'theme'. Reopening then landed on the stale theme
+    // submenu instead of the top-level command list.
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    await page.evaluate(() => window.__stores!.paletteStore!.enterSubmenu('theme'))
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBe('theme')
+
+    await page.keyboard.press('Meta+d')
+
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.paletteOpen)).toBe(false)
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBeNull()
+
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('option', { name: /Switch theme/ })).toBeVisible()
+  })
+
+  test('palette submenu state clears when Cmd+\\ closes the palette', async ({ page }) => {
+    // Same regression as the Cmd+D case, for the density-toggle chord.
+    await page.evaluate(() => window.__stores!.paletteStore!.open())
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    await page.evaluate(() => window.__stores!.paletteStore!.enterSubmenu('theme'))
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBe('theme')
+
+    await page.keyboard.press('Meta+\\')
+
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.paletteOpen)).toBe(false)
+    expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBeNull()
   })
 
   test('AC1.10 empty state shows curly-quoted query when no items match', async ({ page }) => {
