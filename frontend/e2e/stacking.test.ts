@@ -183,13 +183,26 @@ test.describe('Sheet + Command stacking', () => {
 
     // Wait until BOTH dialog contents have transitioned to data-state="open".
     // `[data-slot="command-input"]` becoming visible only confirms the input
-    // node is in the DOM; Bits UI's dismissable-layer registers its global
+    // is in the DOM; Bits UI's dismissable-layer registers its global
     // pointerdown listener inside an $effect that runs after the dialog
-    // content is mounted. On slower machines (CI) the synthetic click below
-    // can land before that listener attaches, in which case neither dialog
-    // dismisses — observable as a 3 s timeout on the assertion at the end.
-    // Polling for both dialogs' data-state stabilizes the race.
+    // content mounts. data-state="open" is set synchronously when the dialog
+    // primitive's open prop flips, so it can be observed BEFORE the $effect
+    // has flushed.
     await expect(page.locator('[data-dialog-content][data-state="open"]')).toHaveCount(2)
+
+    // Wait one rAF + a microtask drain inside the page so Svelte's effect
+    // queue runs and Bits UI's dismissable-layer binds its pointerdown
+    // listener. This is what makes the click below land deterministically.
+    // We avoid retrying the click because once the palette closes, the panel
+    // becomes the topmost layer and a follow-up click would trigger its
+    // defer-otherwise-close fallback (close, since nothing's above it),
+    // tearing down the panel and breaking this test's invariant.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    )
 
     // Use absolute viewport coordinates rather than a region-relative click
     // with force:true. The panel overlay sits on top of the kanban in the
@@ -197,24 +210,13 @@ test.describe('Sheet + Command stacking', () => {
     // click also shift when panel/palette CSS changes. Direct coords at
     // (5,5) are unambiguously outside both dialogs (panel: right slide-over,
     // palette: centered) regardless of layout.
-    //
-    // The click is wrapped in a poll loop because Bits UI's dismissable-layer
-    // attaches its pointerdown listener inside an $effect that runs after
-    // the dialog mounts; even after `data-state="open"` is observable on
-    // both dialogs, there is a microtask window where the listener has not
-    // yet bound. Retrying is cheaper than picking an arbitrary waitForTimeout
-    // value that has to absorb worst-case CI scheduling jitter.
-    await expect
-      .poll(
-        async () => {
-          await page.mouse.click(5, 5)
-          return await page.evaluate(() => window.__stores!.paletteStore!.paletteOpen)
-        },
-        { timeout: 5_000, intervals: [50, 100, 200, 400] },
-      )
-      .toBe(false)
+    await page.mouse.click(5, 5)
 
-    // Panel's defer-otherwise-close keeps it open
+    // Palette closes (default 'close' on the topmost layer); the panel's
+    // 'defer-otherwise-close' defers because the palette is above it.
+    await page.waitForFunction(() => window.__stores!.paletteStore!.paletteOpen === false, {
+      timeout: 3_000,
+    })
     expect(await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)).not.toBeNull()
   })
 })
