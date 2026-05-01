@@ -51,7 +51,7 @@ describe('RunnerBar', () => {
       props: { pools: [] },
     })
 
-    const emptyText = screen.getByText('No pools')
+    const emptyText = screen.getByText('No active runners')
     expect(emptyText).toBeTruthy()
   })
 

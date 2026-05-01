@@ -27,6 +27,6 @@
     </div>
   {/each}
   {#if pools.length === 0}
-    <span class="text-sm" style="color: var(--text-dim);">No pools</span>
+    <span class="text-sm" style="color: var(--text-dim);">No active runners</span>
   {/if}
 </div>
