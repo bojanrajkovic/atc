@@ -43,6 +43,11 @@
   // Tune upward later if zero-relevance items surface too often.
   const SCORE_THRESHOLD = 0.0
 
+  // BROWSE_LIMIT caps each data section when no query is active so the palette
+  // stays compact at rest. With a query, all matches are shown — the user is
+  // explicitly searching and expects to see everything that matches.
+  const BROWSE_LIMIT = 5
+
   // All runs in source order: queued + inProgress + completed (Recent section takes priority above).
   // With shouldFilter={false}, we filter manually via command-score.
   const recentRuns = $derived.by(() => {
@@ -50,7 +55,7 @@
     const runs = ids
       .map((id) => runStore.runs.get(id))
       .filter((r): r is import('$lib/types/generated/WorkflowRun').WorkflowRun => r !== undefined)
-    if (paletteStore.paletteQuery === '') return runs
+    if (paletteStore.paletteQuery === '') return runs.slice(0, BROWSE_LIMIT)
     return runs.filter(
       (r) => commandScore(r.displayTitle, paletteStore.paletteQuery) > SCORE_THRESHOLD
     )
@@ -58,7 +63,7 @@
 
   const allRuns = $derived.by(() => {
     const runs = [...runStore.queuedRuns, ...runStore.inProgressRuns, ...runStore.completedRuns]
-    if (paletteStore.paletteQuery === '') return runs
+    if (paletteStore.paletteQuery === '') return runs.slice(0, BROWSE_LIMIT)
     return runs.filter(
       (r) => commandScore(r.displayTitle, paletteStore.paletteQuery) > SCORE_THRESHOLD
     )
@@ -76,7 +81,7 @@
           parentRun: import('$lib/types/generated/WorkflowRun').WorkflowRun
         } => entry.parentRun !== undefined
       )
-    if (paletteStore.paletteQuery === '') return entries
+    if (paletteStore.paletteQuery === '') return entries.slice(0, BROWSE_LIMIT)
     return entries.filter(
       ({ job, parentRun }) =>
         commandScore(job.name, paletteStore.paletteQuery) > SCORE_THRESHOLD ||
@@ -86,7 +91,7 @@
 
   const filteredPools = $derived.by(() => {
     const pools = runnerStore.pools
-    if (paletteStore.paletteQuery === '') return pools
+    if (paletteStore.paletteQuery === '') return pools.slice(0, BROWSE_LIMIT)
     return pools.filter(
       (p) => commandScore(p.labels.join(' '), paletteStore.paletteQuery) > SCORE_THRESHOLD
     )
@@ -190,7 +195,7 @@
     }}
     placeholder="Search runs, jobs, pools, commands…"
   />
-  <Command.List>
+  <Command.List class="max-h-[28rem]">
     <!--
       Manual empty-state: with shouldFilter={false}, <Command.Empty> does not
       auto-fire when nothing matches. Gate it manually: show only when a query is

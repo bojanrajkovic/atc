@@ -54,7 +54,12 @@ describe('PaletteCommandItem (browser mode)', () => {
     expect(kbdElements[1]?.textContent).toBe('K')
   })
 
-  it('does not render shortcut span when shortcut is not provided', () => {
+  it('renders empty shortcut wrapper (data-slot=command-shortcut) when shortcut is not provided', () => {
+    // The wrapper is always rendered with data-slot="command-shortcut" so the
+    // upstream CheckIcon in command-item.svelte hides via its
+    // `:has([data-slot=command-shortcut])` selector. Empty wrappers collapse via
+    // `display: none` in the component's `.shortcut:empty` rule, so they are
+    // visually absent but structurally present.
     const { container } = render(Wrapper, {
       props: {
         label: 'Command',
@@ -62,7 +67,10 @@ describe('PaletteCommandItem (browser mode)', () => {
       },
     })
 
-    expect(container.querySelector('.shortcut')).toBeFalsy()
+    const shortcut = container.querySelector('.shortcut')
+    expect(shortcut).toBeTruthy()
+    expect(shortcut?.getAttribute('data-slot')).toBe('command-shortcut')
+    expect(shortcut?.children.length).toBe(0)
   })
 
   it('renders with all properties together', () => {
