@@ -67,40 +67,63 @@ Test the store mutations they produce, not DOM output.
 ### Component Tree
 
 ```
-App.svelte
+App.svelte                          (owns global Cmd+K / Cmd+D / Cmd+\ keydown listener)
   ConnectionManager.svelte          (service: WS lifecycle)
   AppShell.svelte                   (connected: layout container)
-    TopBar.svelte                   (connected: reads ConnectionStore, UIStore)
+    TopBar.svelte                   (connected: reads ConnectionStore, UIStore, PaletteStore)
       Logo.svelte                   (pure)
-      RunnerBar.svelte              (connected: reads RunnerStore)
-        RunnerPool.svelte           (pure: dot + label + bar + count)
+      RunnerBar.svelte              (connected: reads RunnerStore + UIStore.activePoolFilter)
+        RunnerPool.svelte           (pure: dot + label + bar + count + isActiveFilter)
+      PoolFilterPill.svelte         (pure: "Filtering by [labels] · ✕")
       ConnectionIndicator.svelte    (pure: live/stale/disconnected)
-      ThemeControls.svelte          (connected: reads/writes UIStore)
-    KanbanBoard.svelte              (connected: reads RunStore)
-      KanbanColumn.svelte           (pure: receives filtered run array)
+      SettingsPopover.svelte        (connected: reads/writes UIStore)
+    KanbanBoard.svelte              (connected: reads RunStore + UIStore.activePoolFilter)
+      KanbanColumn.svelte           (pure: receives filtered run array + jobsByRunId)
         ColumnHeader.svelte         (pure: title + count)
-        RunCard.svelte              (pure: single run)
+        RunCard.svelte              (composition: status-color, density, halo, inner activator button)
           StatusIcon.svelte         (pure)
           JobHeader.svelte          (pure)
           JobMeta.svelte            (pure)
           ProgressBar.svelte        (pure)
           RunnerLabel.svelte        (pure)
+          HoverPeekPopover.svelte   (pure: 250ms-debounced peek; touch-suppressed)
       EmptyState.svelte             (pure)
-    DetailPanel.svelte              (connected: reads UIStore.selectedRun)
+  CommandPalette.svelte             (connected: portal-mounted Cmd+K dialog)
+    PaletteSection.svelte           (pure: section header + group wrapper)
+    PaletteRunItem.svelte           (pure)
+    PaletteJobItem.svelte           (pure)
+    PalettePoolItem.svelte          (pure: 3-state browse/query-active/focused)
+    PaletteCommandItem.svelte       (pure: label + optional <kbd> chord)
+  RunDetailPanel.svelte             (connected: portal-mounted slide-over Sheet)
+    PanelHeader.svelte              (pure: status eyebrow + title)
+    PanelActions.svelte             (pure: Go-to-run + Close)
+    MetaGrid.svelte                 (pure: 2-col definition list)
+      MetaCell.svelte               (pure)
+    JobBlock.svelte                 (pure: header + scroll-into-view on selectedJobId)
+      StepList.svelte               (pure)
+        StepItem.svelte             (pure)
 ```
 
-### Store Architecture (4 stores, no more)
+CommandPalette and RunDetailPanel are App-level siblings (not nested under AppShell) so their Bits UI portals mount at the document root and stack predictably when both are open.
+
+### Store Architecture (5 stores, no more)
 
 ```
 stores/
   runs.svelte.ts        RunStore: Map<RunId, WorkflowRun>
-                         $derived: queuedRuns, runningRuns, completedRuns
+                         $derived: queuedRuns, runningRuns, completedRuns,
+                                   jobStatsByRun, jobsByRunId
   runners.svelte.ts     RunnerStore: pool capacities, utilization
   connection.svelte.ts  ConnectionStore: ws status, last update, reconnect
-  ui.svelte.ts          UIStore: theme, density, selectedRun, panelOpen
+  ui.svelte.ts          UIStore: theme, density, mode, nowMs, selectedRunId,
+                                 selectedJobId, activePoolFilter, lastTriggerRunId
+  palette.svelte.ts     PaletteStore: paletteOpen, paletteQuery, subMenu,
+                                      recentRunIds (LRU 10, sessionStorage)
 ```
 
-**Store boundary rule:** Stores are for cross-cutting concerns only. Parent-to-child data flow uses props. If a leaf component reads a store, it's either not pure or the store is too granular. Four stores is the ceiling — if you feel the need for a fifth, you're probably over-granularizing.
+**Store boundary rule:** Stores are for cross-cutting concerns only. Parent-to-child data flow uses props. If a leaf component reads a store, it's either not pure or the store is too granular. Five stores is the ceiling — if you feel the need for a sixth, you're probably over-granularizing.
+
+**Why a fifth store (revised in Sub-Phase 5):** The original "four stores is the ceiling" principle was revised when PaletteStore landed. Palette state has fundamentally different lifecycle properties from UIStore preferences — high-frequency mutation per keystroke, ephemeral session-scoped recent-items tracking, and submenu state that doesn't survive logical navigation. Consolidating into UIStore would either force a semantic split (same problem with different boundaries) or accept mixed concerns in a single store (the principle was meant to prevent exactly this). The store ceiling moves up because the new dimension is real, not because the discipline is loosening.
 
 **Prop drilling guidance:** If a prop passes through a component that doesn't use it, that's either a missing store (for cross-cutting data like theme) or a sign the tree is too deep. With ~20 components and max 4 levels of nesting, passthrough props should not occur. If they do, reconsider the tree.
 
@@ -301,18 +324,29 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - Revised accessibility target formalised in `.impeccable.md`: WCAG AA (≥4.5:1) as build gate, AAA (≥7:1) as aspirational
 - 302 unit/browser tests (40 files) + 26 Playwright E2E tests, all passing; architecture docs updated
 
-### Sub-Phase 5: Interactivity
+### Sub-Phase 5: Interactivity ✅ COMPLETE
 
-> **Superseded by [`docs/design-plans/2026-04-25-interactivity.md`](../../design-plans/2026-04-25-interactivity.md)** for current scope. Items below reflect pre-design ideation and may not match what ships. See the design plan's "Supersedes Prior Ideation" section for divergences.
+**Implemented in:** PR #41 (`feat/interactivity` branch), per design plan [`docs/design-plans/2026-04-25-interactivity.md`](../../design-plans/2026-04-25-interactivity.md).
 
-**Goal:** Command palette, detail panel, per-card expansion, keyboard navigation.
+**What was built:**
 
-- Copy shadcn-svelte Command component (Cmd+K search/filter)
-- Sheet (slide-over detail panel) for run deep-dive: full job list, step list, log output
-- Per-card click-to-expand (inline expansion with `transition:slide`)
-- Keyboard navigation: arrow keys between cards, Enter to expand, Escape to close
-- ARIA live regions for real-time status changes (screen reader announcements)
-- **Tests:** Command palette: test search filtering, keyboard navigation (up/down/enter/escape). Sheet: test open/close, content rendering. Keyboard nav: test focus management, arrow key movement. E2E: Cmd+K opens palette, typing filters results, Enter selects. Click card opens detail panel.
+- **Cmd+K command palette** (`CommandPalette` + 5 pure leaves: `PaletteSection`, `PaletteRunItem`, `PaletteJobItem`, `PalettePoolItem`, `PaletteCommandItem`) on vendored shadcn-svelte `Command` (Bits UI). Five sections in fixed source order — Recent / Runs / Jobs / Runner Pools / Commands — with cmdk command-score fuzzy matching, theme submenu with sliding transition, three-state pool row rendering (browse / query-active with `<mark>` highlights / focused), and typographic-curly-quote empty state. Browse mode caps each data section at 5 entries; typing reveals all matches. Run/Job selections await `tick()` so the Sheet mounts before the palette closes.
+- **Slide-over detail panel** (`RunDetailPanel` + 7 pure leaves: `PanelHeader`, `PanelActions`, `MetaGrid`, `MetaCell`, `JobBlock`, `StepList`, `StepItem`) on vendored shadcn-svelte `Sheet`. Single-pane layout: status eyebrow + title, 2-column metadata grid, flat list of job blocks each containing its step list. "Go to run" external link opens `WorkflowRun.htmlUrl` in a new tab. Focus restoration to the originating RunCard via `uiStore.lastTriggerRunId` + `onCloseAutoFocus`. **Log fetching deferred** (issue #36).
+- **Hover-peek popover on RunCard** (`HoverPeekPopover`) — 250 ms hover debounce, anchored to the right edge of the card with auto-flip. Touch-device gating via `(hover: hover) and (pointer: fine)` media queries. RunCard wraps an absolutely-positioned inner button (`.run-card-activate`) for keyboard activation, preserving the `<article>` landmark.
+- **Pool filter** — `PoolFilterPill` + `RunnerPool.isActiveFilter` + filter-aware kanban derivation via the new pure `lib/filters/pool.ts` module. `PoolKey` is the codebase's first branded TypeScript type (a pure string proven at compile time to come from `poolKey(labels)`); `RunStore.jobsByRunId` derived map exposes raw labels for filtering. ADR `docs/architecture-decisions/0001-pool-key-branded-type.md`.
+- **Dialog stacking** — Bits UI sibling-dialog mechanics: panel uses `escapeKeydownBehavior="defer-otherwise-close"` and `interactOutsideBehavior="defer-otherwise-close"` so a topmost palette absorbs Esc/click-outside first; first Esc closes palette, second Esc unwinds panel. A `[data-dialog-overlay] ~ [data-dialog-overlay] { display: none }` rule prevents double-darkening when both backdrops mount under `<body>`.
+- **Global keyboard chords** in `App.svelte` — single `window` keydown listener dispatches Cmd/Ctrl+K (palette toggle), Cmd/Ctrl+D (dark mode toggle, `preventDefault`s the browser bookmark default), and Cmd/Ctrl+\ (density toggle). All three share an allow-from-palette-input / block-from-other-editables guard.
+- **PaletteStore** — fifth Svelte 5 rune-class store (`palette.svelte.ts`), separated from `UIStore` because typing state mutates per-keystroke and shouldn't drag preference consumers along. `recentRunIds` is an LRU of size 10, sessionStorage-backed under key `atc.palette.recent`. **The 4-store ceiling principle in this README is revised to 5** — see Store Architecture above.
+- **TypeScript bridge expansion** — dev-mode `window.__stores` extended with `uiStore`, `paletteStore`, and `poolKey` so Playwright E2E tests can drive store state and construct `PoolKey` values directly.
+- **App.css bridge** — `@theme inline { --color-*: var(--*) }` block bridges shadcn-svelte color aliases (`bg-popover`, `bg-card`, `bg-muted`, `text-muted-foreground`, etc.) into Tailwind v4. Without it, ~30 utilities silently dropped at compile time and the panel rendered with a transparent background.
+- **47 acceptance criteria, 47/47 covered by automated tests** (1 — touch-device gating — flagged for manual verification per `docs/test-plans/2026-04-25-interactivity.md`). Per-component tests (jsdom + browser-mode), full Playwright E2E test files for palette, panel, run-card interactivity, pool filter, and dialog stacking. Architecture docs (`docs/architecture/frontend-app.md`) and `frontend/CLAUDE.md` updated alongside.
+
+**Divergences from prior ideation** (the items below from the original Sub-Phase 5 plan did NOT ship in this form):
+
+- Per-card click-to-expand (inline `transition:slide`) — replaced by the hover-peek + click-to-open-panel model.
+- ARIA live regions for run state changes — deferred to Sub-Phase 6.
+- Roving-tabindex keyboard navigation across the kanban — deferred to Sub-Phase 6 (Tab cycles cards in DOM order via the inner activator buttons in this phase).
+- Log fetching for the detail panel — tracked as issue #36.
 
 ### Sub-Phase 6: Polish + Responsive
 
