@@ -181,21 +181,40 @@ test.describe('Sheet + Command stacking', () => {
     await page.keyboard.press(`${cmdOrCtrl}+k`)
     await expect(page.locator('[data-slot="command-input"]')).toBeVisible()
 
-    // Click in the QUEUED column header area — a stable locator outside both
-    // dialog content boxes. The panel is a right-side slide-over; the palette
-    // is a centered modal; the QUEUED column is in the far-left of the kanban.
-    // force:true bypasses Playwright's actionability intercept check (the panel
-    // overlay sits on top of the QUEUED region in the compositing order), so the
-    // synthetic pointerdown lands at the resolved coordinates — which Bits UI's
-    // document-level listener picks up as "outside" both dialog content boxes.
-    await page
-      .getByRole('region', { name: 'QUEUED' })
-      .click({ position: { x: 5, y: 5 }, force: true })
+    // Wait until BOTH dialog contents have transitioned to data-state="open".
+    // `[data-slot="command-input"]` becoming visible only confirms the input
+    // node is in the DOM; Bits UI's dismissable-layer registers its global
+    // pointerdown listener inside an $effect that runs after the dialog
+    // content is mounted. On slower machines (CI) the synthetic click below
+    // can land before that listener attaches, in which case neither dialog
+    // dismisses — observable as a 3 s timeout on the assertion at the end.
+    // Polling for both dialogs' data-state stabilizes the race.
+    await expect(page.locator('[data-dialog-content][data-state="open"]')).toHaveCount(2)
 
-    // Palette closes; panel's defer-otherwise-close keeps it open
-    await page.waitForFunction(() => window.__stores!.paletteStore!.paletteOpen === false, {
-      timeout: 3_000,
-    })
+    // Use absolute viewport coordinates rather than a region-relative click
+    // with force:true. The panel overlay sits on top of the kanban in the
+    // compositing order; the resolved coordinates of any region-targeted
+    // click also shift when panel/palette CSS changes. Direct coords at
+    // (5,5) are unambiguously outside both dialogs (panel: right slide-over,
+    // palette: centered) regardless of layout.
+    //
+    // The click is wrapped in a poll loop because Bits UI's dismissable-layer
+    // attaches its pointerdown listener inside an $effect that runs after
+    // the dialog mounts; even after `data-state="open"` is observable on
+    // both dialogs, there is a microtask window where the listener has not
+    // yet bound. Retrying is cheaper than picking an arbitrary waitForTimeout
+    // value that has to absorb worst-case CI scheduling jitter.
+    await expect
+      .poll(
+        async () => {
+          await page.mouse.click(5, 5)
+          return await page.evaluate(() => window.__stores!.paletteStore!.paletteOpen)
+        },
+        { timeout: 5_000, intervals: [50, 100, 200, 400] },
+      )
+      .toBe(false)
+
+    // Panel's defer-otherwise-close keeps it open
     expect(await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)).not.toBeNull()
   })
 })
