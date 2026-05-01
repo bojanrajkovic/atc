@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-04-29
+Last verified: 2026-04-30
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -12,7 +12,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 
 | File | Role |
 |------|------|
-| `src/App.svelte` | Root component: mounts ConnectionManager + AppShell, plus CommandPalette and RunDetailPanel as portal-target siblings; owns the global `window` keydown listener that calls `paletteStore.toggle()` on Cmd/Ctrl+K (skipping editable contexts outside the palette input) |
+| `src/App.svelte` | Root component: mounts ConnectionManager + AppShell, plus CommandPalette and RunDetailPanel as portal-target siblings; owns the global `window` keydown listener that handles Cmd/Ctrl+K (palette toggle), Cmd/Ctrl+D (dark mode toggle, preventDefaults the browser bookmark shortcut), and Cmd/Ctrl+\\ (density toggle), all with the same allow-from-palette / block-from-other-editables guard |
 | `src/app.css` | Design tokens (`@theme` block), OKLCH color definitions, base styles |
 | `src/main.ts` | Vite entry point; exports stores to `window.__stores` bridge for E2E test harness |
 | `src/vite-env.d.ts` | Window type augmentation for `__stores` bridge (runStore, connectionStore, runnerStore, uiStore, paletteStore, poolKey) |

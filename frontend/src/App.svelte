@@ -6,18 +6,45 @@
   import CommandPalette from '$lib/components/CommandPalette.svelte'
   import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
   import { paletteStore } from '$lib/stores/palette.svelte'
+  import { uiStore } from '$lib/stores/ui.svelte'
 
   onMount(() => {
     function handleKeydown(e: KeyboardEvent) {
-      if (!((e.metaKey || e.ctrlKey) && e.key === 'k')) return
+      if (!(e.metaKey || e.ctrlKey)) return
+
+      // Allow shortcuts from inside the palette input (data-slot="command-input").
+      // Block from other editable contexts so future text inputs don't fire chord
+      // shortcuts that conflict with normal typing.
       const target = e.target as HTMLElement | null
-      // Allow Cmd+K from inside the palette (which has data-slot="command-input") to toggle/close it.
-      // Block Cmd+K from other editable contexts so future inputs don't double-toggle.
-      if (target && target.closest('[data-slot="command-input"]') === null) {
-        if (target.matches?.('input, textarea, [contenteditable="true"]')) return
+      const inPaletteInput = target?.closest('[data-slot="command-input"]') !== null
+      if (!inPaletteInput && target?.matches?.('input, textarea, [contenteditable="true"]')) {
+        return
       }
-      e.preventDefault()
-      paletteStore.toggle()
+
+      // Cmd+D toggles dark mode. preventDefault is required because Cmd+D is the
+      // browser's "bookmark this page" shortcut and would otherwise win even when
+      // the palette is open.
+      if (e.key === 'd') {
+        e.preventDefault()
+        uiStore.mode = uiStore.mode === 'dark' ? 'light' : 'dark'
+        if (paletteStore.paletteOpen) paletteStore.paletteOpen = false
+        return
+      }
+
+      // Cmd+\ toggles compact density.
+      if (e.key === '\\') {
+        e.preventDefault()
+        uiStore.density = uiStore.density === 'comfortable' ? 'compact' : 'comfortable'
+        if (paletteStore.paletteOpen) paletteStore.paletteOpen = false
+        return
+      }
+
+      // Cmd+K toggles the palette.
+      if (e.key === 'k') {
+        e.preventDefault()
+        paletteStore.toggle()
+        return
+      }
     }
     window.addEventListener('keydown', handleKeydown)
     return () => window.removeEventListener('keydown', handleKeydown)

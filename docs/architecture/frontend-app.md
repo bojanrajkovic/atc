@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-29
+Last verified: 2026-04-30
 
 ## Purpose
 
@@ -354,9 +354,17 @@ Focus restoration after each dialog closes uses an id-then-querySelector pattern
 
 See Phase 6 plan Note 4 (`docs/implementation-plans/2026-04-25-interactivity/phase_06.md`) for the rationale comparing alternative approaches (element-ref-on-store, default Bits UI focus-scope).
 
-### Global Cmd/Ctrl+K listener
+### Global keyboard chord listener
 
-A single `window.addEventListener('keydown', ...)` is mounted via `onMount` in App.svelte and removed on destroy. It calls `paletteStore.toggle()` when the chord fires from any context other than an editable field outside the palette. No separate Esc handler exists in App.svelte — Esc dismissal is delegated entirely to Bits UI's escape-keydown wiring on each dialog.
+A single `window.addEventListener('keydown', ...)` is mounted via `onMount` in App.svelte and removed on destroy. It dispatches three Cmd/Ctrl chords:
+
+- **Cmd+K** — calls `paletteStore.toggle()` to open or close the command palette.
+- **Cmd+D** — toggles `uiStore.mode` between `'dark'` and `'light'`. `preventDefault()` is essential here because Cmd+D is the browser's "bookmark this page" default, which would otherwise win even when the palette is open. If the palette is open, it closes after the toggle so keyboard and click paths produce identical end states (the palette's "Toggle dark mode" command also closes the palette).
+- **Cmd+\\** — toggles `uiStore.density` between `'comfortable'` and `'compact'`, with the same close-palette behavior.
+
+All three chords share an editable-context guard: `e.target.closest('[data-slot="command-input"]')` is allowed (so chords still fire from inside the palette input), but other `input/textarea/[contenteditable]` elements opt out so future text inputs don't accidentally trigger global actions while the user is typing.
+
+No separate Esc handler exists in App.svelte — Esc dismissal is delegated entirely to Bits UI's escape-keydown wiring on each dialog.
 
 ## Connection Protocol
 
