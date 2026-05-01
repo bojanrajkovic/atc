@@ -2,7 +2,7 @@
 
 ## Summary
 
-This design plan extracts roving-tabindex keyboard navigation from the Sub-Phase 6 polish bundle and ships it as a focused standalone deliverable. It adds 2D arrow-key navigation across the kanban board — ArrowUp/ArrowDown within a column, ArrowLeft/ArrowRight between non-empty columns (skipping empties), Home/End within a column — along with the APG no-wrap-at-edges convention and modifier-key delegation back to the existing window-level handlers. A single entry point (Tab into the kanban from outside) lands on the first card of the first non-empty column; Tab from within the kanban exits the grid as a group. The implementation also fixes an existing latent bug in `RunDetailPanel.svelte` where the `onCloseAutoFocus` callback calls `event.preventDefault()` and then silently short-circuits on a null querySelector result, stranding focus on `<body>` when the source card has been TTL-evicted while the panel was open.
+This design plan extracts roving-tabindex keyboard navigation from the Sub-Phase 6 polish bundle and ships it as a focused standalone deliverable. It adds 2D arrow-key navigation across the kanban board — ArrowUp/ArrowDown within a column, ArrowLeft/ArrowRight between non-empty columns (skipping empties), Home/End within a column — with no-wrap at edges and modifier-key delegation back to the existing window-level handlers. The keyboard model is a custom list-of-buttons interaction (it does not adopt the WAI-ARIA grid or listbox role contract). A single entry point (Tab into the kanban from outside) lands on the first card of the first non-empty column; Tab from within the kanban exits the grid as a group. The implementation also fixes an existing latent bug in `RunDetailPanel.svelte` where the `onCloseAutoFocus` callback calls `event.preventDefault()` and then silently short-circuits on a null querySelector result, stranding focus on `<body>` when the source card has been TTL-evicted while the panel was open.
 
 The architectural approach is a new `roving/` module containing pure-function geometry (`geometry.ts`), a Svelte 5 action (`action.ts`), a context shape (`context.ts`), and a `RovingFocusProvider.svelte` wrapper component. Roving state — which card is focused and whether the kanban subtree currently holds document focus — is component-scoped via Svelte 5 `setContext`/`getContext` rather than a sixth module-singleton store, matching the lifecycle of the kanban itself. The `<RovingFocusProvider>` wraps `<AppShell>`, `<CommandPalette>`, and `<RunDetailPanel>` in the `App.svelte` component tree; because Svelte context propagates by component tree rather than DOM tree, the Bits UI portals those dialogs use do not break context access. Focus suspension when dialogs are open is structural — the action's `keydown` listener is scoped to the provider's root element, so focus moving into a portaled Bits UI dialog naturally silences the handler without any explicit coordination flag. Cross-column card-stable focus follows run identity via a `data-run-id` attribute already on each `<article>`; `RunCard.svelte`'s mount-time `$effect` calls `.focus()` on the bound button whenever `isFocused && kanbanHasFocus` becomes true, which handles both user-initiated arrow navigation and FLIP/crossfade migrations in one mechanism.
 
@@ -12,7 +12,7 @@ This design plan extracts roving-tabindex keyboard navigation out of the Sub-Pha
 
 It is complete when:
 
-1. **2D arrow navigation across the kanban grid.** ArrowUp / ArrowDown move within a column. ArrowLeft / ArrowRight move between non-empty columns (empty columns are skipped). Home / End jump to the first / last card of the current column. APG no-wrap at edges — ArrowDown at the bottom of a column is a no-op, ArrowRight past the last non-empty column is a no-op. Tab leaves the kanban as a single group (the next focusable element after the kanban root receives focus).
+1. **2D arrow navigation across the kanban grid.** ArrowUp / ArrowDown move within a column. ArrowLeft / ArrowRight move between non-empty columns (empty columns are skipped). Home / End jump to the first / last card of the current column. No-wrap at edges — ArrowDown at the bottom of a column is a no-op, ArrowRight past the last non-empty column is a no-op. Tab leaves the kanban as a single group (the next focusable element after the kanban root receives focus). The keyboard model is a custom list-of-buttons interaction pattern — it does **not** adopt the WAI-ARIA Authoring Practices Guide's `grid` pattern (no `role="grid"` / `role="gridcell"`), and Home / End are column-local rather than grid-wide.
 
 2. **ARIA semantics preserved.** The existing `<section>` / `<div role="list">` / `<div role="listitem">` structure stays. Focus management layers on externally via a single root-mounted key handler plus per-card `tabindex` swap (`-1` for non-focused, `0` for the active focusable target). No `role="grid"` or `role="gridcell"` adoption.
 
@@ -35,6 +35,14 @@ It is complete when:
 11. **Tests ship in the same PR.** Per-component tests (jsdom unit + browser-mode for any keyboard / focus / DOM-state behavior that requires a real browser) and Playwright E2E tests covering: all four arrow directions, Home / End, panel-open suspension (verified by inspecting the listener's active state, not just visually), focus restoration on panel close in both healthy and evicted-card paths, and card-stable reorder during a burst of WS events using the existing `e2e/lib/ws-mock.ts` harness (`makeRunEvent` / `makeJobSeqEvent` / `sendWS`). No test debt deferred to a polish phase.
 
 ## Acceptance Criteria
+
+The AC matrix below covers the **behavioral** DoD items. Non-behavioral DoD items are tracked elsewhere and are not represented as AC entries:
+
+- DoD 7 (library re-evaluation is concrete): tracked as narrative content in Additional Considerations, not a behavioral test.
+- DoD 8 (ARIA live region out of scope): a scope statement, not a behavior. Verified by absence — implementation phases add no `aria-live` elements.
+- DoD 9 (documentation updates): tracked in the Documents to Update table.
+- DoD 10 (playground deliverable): tracked as a Phase 4 deliverable in Documents to Update.
+- DoD 11 (tests ship in same PR): a meta-AC implicit in every behavioral phase's "Done when" clause.
 
 ### `kanban-keyboard-nav.AC1`: Initial focus and tabindex correctness
 
@@ -87,8 +95,8 @@ It is complete when:
 ### `kanban-keyboard-nav.AC6`: Card-stable reorder
 
 - **kanban-keyboard-nav.AC6.1 Success:** In-column reorder (e.g., another Queued card's sort key changes): focus persists on the same `data-run-id`, same DOM node (verified via reference equality, mirroring `KanbanColumn.browser.test.ts:18-67`).
-- **kanban-keyboard-nav.AC6.2 Success:** Cross-column move via crossfade: focus migrates to the new `<button>` in the destination column with the same `data-run-id`. Verified via `document.activeElement.closest('[data-run-id]')` after `tick()`.
-- **kanban-keyboard-nav.AC6.3 Success:** During the crossfade transition window, focus is on the new node from `tick()` onward; the old node's outro completes and unmounts without affecting focus.
+- **kanban-keyboard-nav.AC6.2 Success:** Cross-column move via crossfade: after the WS event applies and `tick()` resolves, `document.activeElement` is the bound button of the new node in the destination column (queryable via `data-run-id`).
+- **kanban-keyboard-nav.AC6.3 Success:** After a cross-column move, the previously focused button is no longer `document.activeElement`. (Whether both nodes coexist in DOM during the outgoing crossfade is an implementation detail not asserted by this AC.)
 - **kanban-keyboard-nav.AC6.4 Success:** With `kanbanHasFocus === false`, a cross-column move does NOT cause focus to migrate (RunCard's `$effect` is guarded).
 - **kanban-keyboard-nav.AC6.5 Edge:** Burst WS events reorder cards while user holds ArrowDown. Final focus state matches user intent: card-stable across the burst.
 
@@ -103,8 +111,8 @@ It is complete when:
 
 ## Glossary
 
-- **roving tabindex**: A focus-management pattern where a container makes exactly one child focusable (`tabindex="0"`) at a time, with all others set to `tabindex="-1"`. Tab enters and exits the container as a single group; arrow keys move the "roving" `tabindex="0"` to the next target. Described by the WAI-ARIA Authoring Practices Guide (APG) for grid, listbox, and toolbar widgets.
-- **APG (WAI-ARIA Authoring Practices Guide)**: W3C specification published by the ARIA Working Group that documents interaction patterns and keyboard conventions for accessible UI widgets. The "no-wrap at edges" rule in this design — ArrowDown at the last card is a no-op rather than wrapping to the first — comes from the APG grid pattern.
+- **roving tabindex**: A focus-management pattern where a container makes exactly one child focusable (`tabindex="0"`) at a time, with all others set to `tabindex="-1"`. Tab enters and exits the container as a single group; arrow keys move the "roving" `tabindex="0"` to the next target. The pattern is referenced by the WAI-ARIA Authoring Practices Guide for several widget types (grid, listbox, toolbar); this design adopts the focus-management mechanic without conforming to any single APG widget contract — see the Custom keyboard model entry below.
+- **Custom keyboard model (this design)**: This plan implements roving tabindex as a list-of-buttons keyboard interaction rather than an APG `grid` (no `role="grid"` / `role="gridcell"`) or `listbox` (no `role="listbox"` / `role="option"`). Arrow direction semantics, no-wrap at edges, and column-skipping are project-specific behavior choices, not citations of an APG normative pattern. This is documented for future contributors who might otherwise expect grid-like screen-reader announcements (column position, row index) that are intentionally not delivered.
 - **`tabindex`**: An HTML attribute controlling keyboard focus order. `tabindex="0"` makes an element naturally focusable and puts it in the document's tab sequence. `tabindex="-1"` removes it from the tab sequence but keeps it programmatically focusable via `.focus()`.
 - **Svelte 5 action**: A function `(node: HTMLElement, params) => { destroy() }` that attaches imperative behavior to a DOM element via the `use:` directive. Actions are Svelte's escape hatch for direct DOM event listener management. This plan introduces the first action in the ATC codebase.
 - **`setContext` / `getContext`**: Svelte's built-in mechanism for sharing state down a component tree without prop-drilling. `setContext(key, value)` registers a value in the current component; `getContext(key)` retrieves it from any descendant. State propagates by Svelte component tree, not by DOM tree — so Bits UI portal-rendered descendants still receive context from their Svelte parent.
@@ -120,7 +128,6 @@ It is complete when:
 - **light-DOM web component**: A custom HTML element (`<tag-name>`) whose children are rendered directly in the document's main DOM tree, as opposed to shadow-DOM components whose internals are isolated in a shadow root. `jakelazaroff/roving-tabindex` is a light-DOM web component, meaning Tailwind utility classes and CSS custom properties pass through to it without the isolation issues shadow DOM would introduce.
 - **Bits UI**: A headless Svelte component library providing accessible primitives (Dialog, Sheet, Popover, etc.) with built-in portal rendering into `<body>`, focus trapping, and ARIA attribute management. The detail panel and command palette are both built on Bits UI; their portaled DOM placement is why the action's DOM-scoped `keydown` handler naturally silences when those dialogs have focus.
 - **`data-run-id`**: A `data-*` attribute on each `<article class="run-card">` holding the run's `bigint` ID as a string. Serves as the stable identity anchor for focus management — the roving system keys on run identity via this attribute rather than on DOM position, so focus follows a card through column transitions and in-column reorders.
-- **`display: contents`**: A CSS value that makes an element's box invisible to layout — the element participates in neither block formatting nor flex/grid layout, and its children are laid out as if the wrapper did not exist. Applied via Tailwind's `contents` class on `<RovingFocusProvider>`'s root `<div>` so the wrapper does not disrupt the existing flex/grid structure of `AppShell` and `KanbanBoard`.
 
 ## Architecture
 
@@ -157,6 +164,8 @@ export interface RovingFocusContext {
 
   /** Set the explicit focus target. Pass null to clear and fall back to initialFocusRunId. */
   setFocus(id: bigint | null): void
+  /** Set the kanbanHasFocus flag. Called by the action's focusin/focusout listeners. */
+  setKanbanHasFocus(value: boolean): void
   /** Restore focus to first card in first non-empty column. Used by eviction + lost-trigger paths. */
   restoreFocusToInitial(): void
 }
@@ -191,7 +200,7 @@ export function resolveTarget(
 ): bigint | null
 ```
 
-`locate` is O(n) where n is total visible runs; at dashboard scale (typically <100), single-digit microseconds per keypress. The alternative (a `Map<RunId, Position>` `$derived` rebuilt on every WS event) shifts cost to the wrong axis for our access pattern.
+`locate` is O(n) where n is total visible runs; at dashboard scale (typically <100), the per-keypress cost is negligible. The alternative (a `Map<RunId, Position>` `$derived` rebuilt on every WS event) shifts cost to the wrong axis for our access pattern.
 
 ### Action contract
 
@@ -205,76 +214,31 @@ export function roving(node: HTMLElement, ctx: RovingFocusContext): {
 
 The action installs three event listeners on `node`:
 
-- **`focusin`** — sets `ctx.kanbanHasFocus = true`. If `event.target` is inside a `.run-card-activate`, reads the ancestor `[data-run-id]`, parses to `bigint`, calls `ctx.setFocus(id)` to keep `focusedRunId` in sync with whatever card just received focus (Tab into kanban, click, programmatic focus from panel close).
-- **`focusout`** — if `event.relatedTarget` is not contained by `node`, sets `ctx.kanbanHasFocus = false`. Skipped when relatedTarget is still inside the kanban (intra-kanban focus moves don't toggle the flag).
+- **`focusin`** — calls `ctx.setKanbanHasFocus(true)`. If `event.target` is inside a `.run-card-activate`, reads the ancestor `[data-run-id]`, parses to `bigint`, calls `ctx.setFocus(id)` to keep `focusedRunId` in sync with whatever card just received focus (Tab into kanban, click, programmatic focus from panel close). If `event.target` is NOT inside a `.run-card-activate` (defensive: a non-card focusable somehow inside the action's node), the focus-id sync is skipped — only the `kanbanHasFocus` flag is set.
+- **`focusout`** — if `event.relatedTarget` is not contained by `node`, calls `ctx.setKanbanHasFocus(false)`. Skipped when relatedTarget is still inside the kanban (intra-kanban focus moves don't toggle the flag).
 - **`keydown`** — modifier-guard-first: returns immediately on `metaKey || ctrlKey || altKey || shiftKey` (delegates Cmd+K/D/\ and shift/Cmd+arrow to App.svelte's window-level handler and the browser default). Then matches `event.key` against `ArrowUp/Down/Left/Right/Home/End`. Calls `resolveTarget(ctx.currentFocusRunId, key, columnsSnapshot())`. If the target is non-null and different from current, calls `ctx.setFocus(targetRunId)` and `event.preventDefault()`. Does NOT call `.focus()` directly — RunCard's mount/update `$effect` handles the actual focus call once `currentFocusRunId` propagates.
 
 `columnsSnapshot()` is a small inline helper that reads `runStore.queuedRuns`, `inProgressRuns`, `completedRuns` and returns them as a `Columns` tuple per keypress.
 
 ### Provider component
 
-```svelte
-<!-- frontend/src/lib/components/roving/RovingFocusProvider.svelte -->
-<script lang="ts">
-  import { tick } from 'svelte'
-  import { runStore } from '$lib/stores/runs.svelte'
-  import { setRovingContext, type RovingFocusContext } from './context'
-  import { locate, type Columns } from './geometry'
-  import { roving } from './action'
+`RovingFocusProvider.svelte` is a context-provider only — no DOM wrapper element. It owns the rune state, exposes the context, and renders children directly. Specifically it:
 
-  let { children } = $props()
+- Owns two `$state` fields: `focusedRunId: bigint | null` and `kanbanHasFocus: boolean`.
+- Derives `initialFocusRunId` from `runStore.queuedRuns[0]?.id ?? inProgressRuns[0]?.id ?? completedRuns[0]?.id ?? null`.
+- Derives `currentFocusRunId` as `focusedRunId ?? initialFocusRunId`.
+- Constructs the context object with reactive getters (so consumers' `$derived` reads track the underlying rune state) and explicit setters that mutate the local rune state.
+- Calls `setRovingContext(ctx)`.
+- Renders `{@render children()}` with no surrounding element.
+- Owns one `$effect` that watches `focusedRunId` against `locate(focusedRunId, columnsSnapshot())`; when locate returns null (the focused run was evicted), calls `restoreFocusToInitial()`.
 
-  let focusedRunId = $state<bigint | null>(null)
-  let kanbanHasFocus = $state(false)
+`restoreFocusToInitial()` clears `focusedRunId` (so `currentFocusRunId` falls back to `initialFocusRunId`), then asynchronously focuses the resolved target via `tick()` + querySelector against `[data-run-id="…"] .run-card-activate`. The bypass of the `kanbanHasFocus` guard is intentional — eviction and panel-close-with-evicted-source are involuntary focus-loss paths that must restore unconditionally.
 
-  const initialFocusRunId = $derived<bigint | null>(
-    runStore.queuedRuns[0]?.id
-      ?? runStore.inProgressRuns[0]?.id
-      ?? runStore.completedRuns[0]?.id
-      ?? null
-  )
-  const currentFocusRunId = $derived(focusedRunId ?? initialFocusRunId)
+### Action attachment site
 
-  function columnsSnapshot(): Columns {
-    return [runStore.queuedRuns, runStore.inProgressRuns, runStore.completedRuns]
-  }
+`use:roving={ctx}` is applied **not** at the provider but at `KanbanBoard.svelte`'s existing grid container — the `<div class="grid grid-cols-3 gap-4 h-full p-4">` that wraps the three KanbanColumn instances. That element is the natural kanban-only DOM scope: focusin/focusout fire only when focus enters or leaves the three-column region, and the keydown handler bubbles up only from card descendants. The `getRovingContext()` lookup happens in KanbanBoard's script, propagating from the App-level provider through the component tree.
 
-  function restoreFocusToInitial(): void {
-    focusedRunId = null
-    const target = initialFocusRunId
-    if (target === null) return
-    tick().then(() => {
-      const el = document.querySelector<HTMLElement>(
-        `.run-card[data-run-id="${target}"] .run-card-activate`
-      )
-      el?.focus()
-    })
-  }
-
-  const ctx: RovingFocusContext = {
-    get focusedRunId() { return focusedRunId },
-    get initialFocusRunId() { return initialFocusRunId },
-    get currentFocusRunId() { return currentFocusRunId },
-    get kanbanHasFocus() { return kanbanHasFocus },
-    setFocus(id) { focusedRunId = id },
-    restoreFocusToInitial,
-  }
-  setRovingContext(ctx)
-
-  // Eviction: focusedRunId points to a run no longer in any column → restore.
-  $effect(() => {
-    if (focusedRunId !== null && locate(focusedRunId, columnsSnapshot()) === null) {
-      restoreFocusToInitial()
-    }
-  })
-</script>
-
-<div class="contents" use:roving={ctx}>
-  {@render children()}
-</div>
-```
-
-The `contents` Tailwind class collapses the wrapper from layout (`display: contents`) so existing flex/grid/min-h-0 behavior in `AppShell` and `KanbanBoard` is unaffected. Internal kanbanHasFocus updates are driven by the action listening on this same `<div>` element.
+Consequence: `kanbanHasFocus` does **not** become true when focus is on TopBar, RunnerBar, the Settings popover, the connection indicator, or the PoolFilterPill ✕ button — those elements are siblings of `KanbanBoard` under `<AppShell>`, not descendants of the action's node.
 
 ### App.svelte tree change
 
@@ -287,74 +251,38 @@ The `contents` Tailwind class collapses the wrapper from layout (`display: conte
 </RovingFocusProvider>
 ```
 
-`CommandPalette` and `RunDetailPanel` are intentionally inside the provider. Svelte context propagates by component tree, not DOM tree, so the Bits UI portals these dialogs use to mount their DOM into `<body>` do not break `getRovingContext()`. RunDetailPanel needs the context to call `restoreFocusToInitial()` from `onCloseAutoFocus`; CommandPalette does not currently consume it, but inclusion is free and future-proof.
+`CommandPalette` and `RunDetailPanel` are intentionally inside the provider so they can call `getRovingContext()`. The provider produces no DOM wrapper element — it sits in the component tree purely to scope the context. Svelte context propagates by component tree, not DOM tree, so the Bits UI portals these dialogs use to mount their DOM into `<body>` do not break `getRovingContext()`. RunDetailPanel needs the context to call `restoreFocusToInitial()` from `onCloseAutoFocus`; CommandPalette does not currently consume it, but inclusion is free and future-proof.
 
 ### RunCard modifications
 
-```svelte
-<!-- frontend/src/lib/components/RunCard.svelte (modifications only) -->
-<script lang="ts">
-  import { getRovingContext } from './roving/context'
-  // ...existing imports...
+`RunCard.svelte` gains four additions, all reactive and declarative:
 
-  const ctx = getRovingContext()
-  const isFocused = $derived(ctx.currentFocusRunId === run.id)
-  let buttonEl: HTMLButtonElement | undefined = $state()
+- An import of `getRovingContext` and a single `getRovingContext()` call binding `ctx` at component scope.
+- A `$derived` value `isFocused = ctx.currentFocusRunId === run.id`.
+- A `bind:this` binding to the inner `<button class="run-card-activate">`, capturing the element ref in a `$state` cell.
+- A `tabindex={isFocused ? 0 : -1}` attribute on that button.
+- A `$effect` that, when `isFocused && ctx.kanbanHasFocus` and the bound element is non-null, calls `.focus()` on it. The guard prevents focus-stealing on initial page load and during eviction-while-focus-is-elsewhere scenarios.
 
-  $effect(() => {
-    if (isFocused && ctx.kanbanHasFocus && buttonEl) {
-      buttonEl.focus()
-    }
-  })
-</script>
+The single `$effect` covers two scenarios: (1) user-initiated arrow nav (the action calls `ctx.setFocus(targetId)`, the new card's `isFocused` flips, the effect fires); (2) cross-column move via crossfade (a fresh RunCard mounts with `isFocused === true` because `currentFocusRunId === run.id` is unchanged, the effect runs on mount and focuses the new bound button). The observable contract is AC6.2: `document.activeElement` is the new node after `tick()`. No claims about Svelte's transition lifecycle ordering.
 
-<article class="run-card" bind:this={articleEl} data-run-id={run.id} ...>
-  <button
-    bind:this={buttonEl}
-    class="run-card-activate"
-    type="button"
-    tabindex={isFocused ? 0 : -1}
-    aria-label={ariaLabel}
-    onclick={handleActivate}
-  ></button>
-  <!-- ...existing children... -->
-</article>
-```
-
-The `$effect` handles two scenarios with one mechanism: (1) user-initiated arrow nav, where the action calls `ctx.setFocus(targetId)` and the new card's `isFocused` flips to true; (2) cross-column move via crossfade, where a fresh RunCard mounts with `isFocused === true` because `currentFocusRunId === run.id` is unchanged — the effect runs on mount and focuses the new bound button before the outgoing crossfade completes. The `kanbanHasFocus` guard prevents focus-stealing on initial page load and during eviction-while-focus-is-elsewhere scenarios.
-
-The `tabindex` attribute is `$derived`-driven, declarative, and follows the component naturally if the DOM shape is later refactored.
+`tabindex` is `$derived`-driven, declarative, and survives DOM refactors that move the inner button.
 
 ### RunDetailPanel onCloseAutoFocus rewrite
 
-```typescript
-// frontend/src/lib/components/RunDetailPanel.svelte (callback only)
-const ctx = getRovingContext()
+`RunDetailPanel.svelte` imports `getRovingContext` and binds `ctx` at component scope. The `onCloseAutoFocus` callback (currently lines 52–66) is rewritten to follow this contract:
 
-onCloseAutoFocus={(event) => {
-  if (uiStore.selectedRunId !== null) return  // panel closing for a different reason; defer
+1. If `uiStore.selectedRunId !== null`, return (panel is closing for an unrelated reason; defer).
+2. Read and consume `uiStore.lastTriggerRunId` (set to null after read).
+3. If `triggerId` is null, return without `preventDefault` (no trigger recorded; browser-default focus restoration handles it).
+4. Otherwise, `event.preventDefault()`, then attempt to query the trigger's `.run-card-activate` button:
+   - If present (happy path): focus it.
+   - If absent (source evicted while panel open — the existing-bug case): call `ctx.restoreFocusToInitial()`.
 
-  const triggerId = uiStore.lastTriggerRunId
-  uiStore.lastTriggerRunId = null
-  if (triggerId === null) return  // no trigger recorded; let browser handle restoration
-
-  event.preventDefault()
-  const trigger = document.querySelector<HTMLElement>(
-    `.run-card[data-run-id="${triggerId}"] .run-card-activate`
-  )
-  if (trigger !== null) {
-    trigger.focus()  // happy path: source card still mounted
-  } else {
-    ctx.restoreFocusToInitial()  // bug fix: source evicted while panel open
-  }
-}}
-```
-
-The new `else` branch is the existing-bug fix. Previously the optional-chained `?.focus()` short-circuited on null and left focus on `<body>` because `event.preventDefault()` had already run. Routing through `restoreFocusToInitial()` ensures focus always lands on a visible card.
+The new branch on (4)-absent is the existing-bug fix. Previously the optional-chained `?.focus()` short-circuited on null and left focus on `<body>` because `event.preventDefault()` had already run. Routing through `restoreFocusToInitial()` ensures focus always lands on a visible card.
 
 ### Suspension is structural
 
-The action installs `keydown` via `node.addEventListener('keydown', handler)` on the provider's `<div class="contents">`. Bubble-phase scoping means the handler only fires when the focused element is a descendant of that node. When `CommandPalette` opens, Bits UI moves focus into the palette input (which is portaled into `<body>` — outside the provider's `<div>` in DOM terms, but reachable from the same context tree). When `RunDetailPanel` opens, Bits UI's Sheet focus trap moves focus into the Sheet content (also portaled, also outside the provider's `<div>`). Either way, focus leaves the kanban subtree, the kanban listener silences naturally, and the dialogs own the keyboard. No explicit suspension flag, no coordination with `paletteStore.paletteOpen` or `uiStore.selectedRunId`.
+The action installs `keydown` via `node.addEventListener('keydown', handler)` on KanbanBoard's grid `<div>`. Bubble-phase scoping means the handler only fires when the focused element is a descendant of that grid. When `CommandPalette` opens, Bits UI moves focus into the palette input (portaled into `<body>` — outside the kanban grid). When `RunDetailPanel` opens, Bits UI's Sheet focus trap moves focus into the Sheet content (also portaled into `<body>`, also outside the kanban grid). Either way, focus leaves the kanban subtree, the listener silences naturally, and the dialogs own the keyboard. No explicit suspension flag, no coordination with `paletteStore.paletteOpen` or `uiStore.selectedRunId`. The TopBar / RunnerBar / SettingsPopover / PoolFilterPill region is also outside the action's node, so focus on those siblings under `<AppShell>` does not toggle `kanbanHasFocus`.
 
 ### Lost-trigger restoration is centralized
 
@@ -420,9 +348,10 @@ Four phases on the `feat/kanban-keyboard-nav` branch, all merged in one PR. Each
 
 **Components:**
 
-- `frontend/src/lib/components/roving/RovingFocusProvider.svelte` — wrapper component per Architecture. Owns `focusedRunId` + `kanbanHasFocus` rune state. Exposes context per the contract. Includes the eviction `$effect` (validates `locate`, calls `restoreFocusToInitial` on null).
-- `frontend/src/lib/components/roving/RovingFocusProvider.browser.test.ts` — browser-mode test: mount provider with a fixture, dispatch focusin/focusout on inner button, assert `kanbanHasFocus` toggles correctly; assert `currentFocusRunId` falls back to `initialFocusRunId` when `focusedRunId` is null; assert eviction `$effect` calls `restoreFocusToInitial` when a focused run is removed from the columns.
+- `frontend/src/lib/components/roving/RovingFocusProvider.svelte` — context-only wrapper component per Architecture (no DOM wrapper element). Owns `focusedRunId` + `kanbanHasFocus` rune state. Exposes context per the contract including `setKanbanHasFocus`. Includes the eviction `$effect` (validates `locate`, calls `restoreFocusToInitial` on null).
+- `frontend/src/lib/components/roving/RovingFocusProvider.browser.test.ts` — browser-mode test mounted alongside a stub kanban-grid host that applies `use:roving`. Dispatch focusin/focusout on inner button, assert `kanbanHasFocus` toggles correctly; assert `currentFocusRunId` falls back to `initialFocusRunId` when `focusedRunId` is null; assert eviction `$effect` calls `restoreFocusToInitial` when a focused run is removed from the columns.
 - `frontend/src/App.svelte` — wrap the existing `<AppShell>`/`<CommandPalette>`/`<RunDetailPanel>` block in `<RovingFocusProvider>`. ConnectionManager stays outside (it's a service component, no DOM, no children).
+- `frontend/src/lib/components/KanbanBoard.svelte` — import `getRovingContext`; apply `use:roving={ctx}` to the existing `<div class="grid grid-cols-3 gap-4 h-full p-4">` grid element. No layout changes.
 - `frontend/src/lib/components/RunCard.svelte` — import `getRovingContext`, derive `isFocused`, add `bind:this={buttonEl}`, change inner button `tabindex` to `{isFocused ? 0 : -1}`.
 - `frontend/src/lib/components/RunCard.test.ts` — extend with tabindex-derivation tests using a mock context: focused-run gets `tabindex=0`, non-focused gets `tabindex=-1`; tabindex flips when context's `currentFocusRunId` changes.
 - `frontend/src/lib/components/KanbanColumn.test.ts` — add a test that confirms exactly one card has `tabindex=0` per kanban (initial-focus invariant) when the provider is mounted with mock data.
@@ -476,7 +405,6 @@ Four phases on the `feat/kanban-keyboard-nav` branch, all merged in one PR. Each
   - `### Sub-Phase 6b: Polish + Responsive` (renamed; goal line trimmed to drop "roving-tabindex keyboard navigation"; bulleted list trimmed to remove the roving-tabindex item and its nested implementation note; tests bullet trimmed to remove roving-tabindex E2E coverage)
 - `docs/architecture/frontend-app.md` — add a Roving Focus section: context shape, geometry contract, action lifecycle, kanbanHasFocus mechanic, eviction + lost-trigger restoration, RunCard integration. Update the Component Tree diagram to show `<RovingFocusProvider>` between `App.svelte` root and `AppShell` / `CommandPalette` / `RunDetailPanel`. Bump "Last verified" to 2026-05-01.
 - `frontend/CLAUDE.md` — pointer-level update: add `lib/components/roving/` directory to the Key Files table; add `RovingFocusProvider.svelte` row; update the `RunCard.svelte` row to mention the new tabindex/focus integration; update the Status section to reference Sub-Phase 6a completion. No architectural detail — that lives in `docs/architecture/frontend-app.md`.
-- `scripts/doc-mapping.sh` — add new mappings: `frontend/src/lib/components/roving/*` → `docs/architecture/frontend-app.md`; `frontend/src/lib/components/roving/RovingFocusProvider.svelte` → same.
 - `docs/design-plans/playgrounds/2026-05-01-kanban-keyboard-nav-explorer.html` — NEW. Self-contained HTML playground produced via `/impeccable:frontend-design` (visual quality) + `/playground:playground` (single-file wrapper). Scope: theme + mode + density picker; static three-column kanban with mock cards; live arrow-key driving via inlined geometry; "simulate reorder" button; asymmetric-column toggle. Excludes WS mocking, shadcn-svelte components, Tailwind v4 — framework-free focus-behavior explorer.
 - `docs/test-plans/2026-05-01-kanban-keyboard-nav.md` — NEW. AC traceability matrix mirroring Sub-Phase 4 + 5 patterns. Maps each `kanban-keyboard-nav.AC*` to its automated test file. Posted as the first PR comment per project convention; never committed inside the PR description.
 
@@ -497,7 +425,7 @@ Per `.ed3d/design-plan-guidance.md` rule 6, every design plan must list the docu
 | `frontend/src/App.svelte` | Wrap `<AppShell>`/`<CommandPalette>`/`<RunDetailPanel>` block in `<RovingFocusProvider>`. ConnectionManager stays outside the provider. |
 | `frontend/src/lib/components/RunCard.svelte` | Add `bind:this={buttonEl}`, `let buttonEl: HTMLButtonElement | undefined = $state()`, `tabindex={isFocused ? 0 : -1}` on `.run-card-activate`, mount-time `$effect` calling `buttonEl.focus()` when `isFocused && ctx.kanbanHasFocus`. Import `getRovingContext` and derive `isFocused`. |
 | `frontend/src/lib/components/RunDetailPanel.svelte` | Bug fix: rewrite `onCloseAutoFocus` (current lines 52–66) to call `ctx.restoreFocusToInitial()` when the trigger-card querySelector returns null. Import `getRovingContext` and bind `ctx` at component scope. |
-| `scripts/doc-mapping.sh` | Add mappings: `frontend/src/lib/components/roving/*` → `docs/architecture/frontend-app.md`; `frontend/src/lib/components/roving/RovingFocusProvider.svelte` → same. |
+| `frontend/src/lib/components/KanbanBoard.svelte` | Apply `use:roving={ctx}` to the existing `<div class="grid grid-cols-3 gap-4 h-full p-4">` element. Import `getRovingContext` in the script. No structural changes to the grid layout itself. |
 | `docs/design-plans/playgrounds/2026-05-01-kanban-keyboard-nav-explorer.html` | NEW. Self-contained focus-behavior explorer. Theme + mode + density picker; static three-column kanban with mock cards; live arrow-key driving; simulate-reorder + asymmetric-column toggles. Created via `/impeccable:frontend-design` + `/playground:playground`. |
 | `docs/test-plans/2026-05-01-kanban-keyboard-nav.md` | NEW. AC traceability matrix. Posted as first PR comment per project convention; never committed inside the PR description. |
 
@@ -516,4 +444,6 @@ The custom Svelte 5 implementation is preferred not because the library is unvia
 
 **Reduced motion.** The design adds no animations. The focus ring is the existing `:focus-visible` outline at `RunCard.svelte:217-221` (`outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px`). No transitions on focus changes; respects `prefers-reduced-motion` by virtue of being motion-free.
 
-**Performance.** `locate()` is O(n) where n is total visible runs (~100 typical). Per-keypress cost is single-digit microseconds. The provider's eviction `$effect` runs whenever any column derived array changes — i.e., on every WS event affecting runs. Inside the effect, `locate()` runs once if `focusedRunId !== null`. At a worst-case burst of 10 events/RAF (per `dispatcher.ts` batching), that's 10 × 100 = 1000 array comparisons per frame — still negligible. No micro-optimization warranted at current scale.
+**Performance.** `locate()` is O(n) where n is total visible runs (typically <100 at dashboard scale). Per-keypress cost is negligible. The provider's eviction `$effect` runs whenever any column-derived array changes — i.e., on every WS event affecting runs. Inside the effect, `locate()` runs at most once per change if `focusedRunId !== null`. Burst load through the dispatcher's RAF batching is also bounded and negligible at current scale. No micro-optimization warranted; revisit if profiling at higher run counts shows hotspots.
+
+**Sub-Phase 6a/6b naming convention.** This is a one-time scoped split of an existing phase into the previously-deferred work (6a, ships now) and the residual polish (6b, ships later). It is not a precedent for general phase numbering — future phases stay flat (Sub-Phase 7, Sub-Phase 8, etc.) unless a similar extraction is justified.
