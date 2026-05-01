@@ -205,4 +205,26 @@ describe('ConnectionStore', () => {
       expect(typeof connectionStore.reconnectAttempt).toBe('number')
     })
   })
+
+  describe('requestReconnect behavior', () => {
+    it('should initialize reconnectRequested at 0', () => {
+      expect(connectionStore.reconnectRequested).toBe(0)
+    })
+
+    it('should increment reconnectRequested when requestReconnect is called', () => {
+      const initial = connectionStore.reconnectRequested
+      connectionStore.requestReconnect()
+      expect(connectionStore.reconnectRequested).toBe(initial + 1)
+    })
+
+    it('should maintain monotonic counter across multiple calls', () => {
+      const initial = connectionStore.reconnectRequested
+      connectionStore.requestReconnect()
+      expect(connectionStore.reconnectRequested).toBe(initial + 1)
+      connectionStore.requestReconnect()
+      expect(connectionStore.reconnectRequested).toBe(initial + 2)
+      connectionStore.requestReconnect()
+      expect(connectionStore.reconnectRequested).toBe(initial + 3)
+    })
+  })
 })

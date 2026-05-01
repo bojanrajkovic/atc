@@ -1,3 +1,5 @@
+import type { PoolKey } from '$lib/filters/pool'
+
 type Theme = 'warm' | 'radar' | 'violet' | 'pink'
 type Mode = 'dark' | 'light'
 type Density = 'compact' | 'comfortable'
@@ -7,6 +9,9 @@ class UIStore {
   mode = $state<Mode>('dark')
   density = $state<Density>('comfortable')
   selectedRunId = $state<bigint | null>(null)
+  selectedJobId = $state<bigint | null>(null)
+  lastTriggerRunId = $state<bigint | null>(null)
+  activePoolFilter = $state<PoolKey | null>(null)
 
   /**
    * Current epoch milliseconds, refreshed once per second.

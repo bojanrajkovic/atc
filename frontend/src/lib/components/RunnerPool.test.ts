@@ -161,4 +161,61 @@ describe('RunnerPool', () => {
     const group = screen.getByRole('group', { name: /linux runner pool/i })
     expect(group).toBeTruthy()
   })
+
+  // AC5.2: isActiveFilter prop and visual treatment
+  it('AC5.2 — omitting isActiveFilter leaves is-active-filter class absent', () => {
+    const { container } = render(RunnerPool, {
+      props: {
+        pool: {
+          label: 'linux',
+          running: 3,
+          queued: 0,
+          total: 10,
+          isElastic: false,
+        },
+      },
+    })
+
+    const root = container.querySelector('.runner-pool')
+    expect(root).not.toBeNull()
+    expect(root!.classList.contains('is-active-filter')).toBe(false)
+  })
+
+  it('AC5.2 — isActiveFilter={false} leaves is-active-filter class absent', () => {
+    const { container } = render(RunnerPool, {
+      props: {
+        pool: {
+          label: 'linux',
+          running: 3,
+          queued: 0,
+          total: 10,
+          isElastic: false,
+        },
+        isActiveFilter: false,
+      },
+    })
+
+    const root = container.querySelector('.runner-pool')
+    expect(root).not.toBeNull()
+    expect(root!.classList.contains('is-active-filter')).toBe(false)
+  })
+
+  it('AC5.2 — isActiveFilter={true} adds is-active-filter class to root', () => {
+    const { container } = render(RunnerPool, {
+      props: {
+        pool: {
+          label: 'linux',
+          running: 3,
+          queued: 0,
+          total: 10,
+          isElastic: false,
+        },
+        isActiveFilter: true,
+      },
+    })
+
+    const root = container.querySelector('.runner-pool')
+    expect(root).not.toBeNull()
+    expect(root!.classList.contains('is-active-filter')).toBe(true)
+  })
 })

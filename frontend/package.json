@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "clsx": "catalog:",
+    "command-score": "catalog:",
     "shadcn-svelte": "catalog:",
     "svelte": "catalog:",
     "tailwind-merge": "catalog:"
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@biomejs/biome": "catalog:",
     "@internationalized/date": "catalog:",
+    "@lucide/svelte": "catalog:",
     "@playwright/test": "^1.59.1",
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@tailwindcss/vite": "catalog:",

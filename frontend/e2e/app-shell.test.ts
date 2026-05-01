@@ -17,8 +17,8 @@ test.describe('App shell', () => {
   test('runner bar shows empty state without backend', async ({ page }) => {
     await page.goto('/')
 
-    // RunnerBar exists with "No pools" when no data
-    await expect(page.getByText('No pools')).toBeVisible()
+    // RunnerBar shows the empty-state copy when no runners have reported.
+    await expect(page.getByText('No active runners')).toBeVisible()
   })
 
   test('runner bar renders pool indicators with mock data', async ({ page }) => {

@@ -7,6 +7,7 @@ class ConnectionStore {
   status = $state<ConnectionStatus>('disconnected')
   lastEventAt = $state<number | null>(null)
   reconnectAttempt = $state(0)
+  reconnectRequested = $state(0)
 
   // Reactive tick counter — incremented by a setInterval to trigger
   // periodic re-evaluation of isStale. $derived only re-evaluates when
@@ -32,6 +33,10 @@ class ConnectionStore {
 
   recordEvent(): void {
     this.lastEventAt = Date.now()
+  }
+
+  requestReconnect(): void {
+    this.reconnectRequested += 1
   }
 
   destroy(): void {

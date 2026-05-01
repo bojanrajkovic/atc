@@ -105,6 +105,59 @@ test.describe('Dark/light mode toggle', () => {
   })
 })
 
+test.describe('Keyboard shortcut chords', () => {
+  // Cross-platform Cmd/Ctrl: Meta on macOS, Control on CI (Linux).
+  const cmdOrCtrl = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+  test('Cmd+D toggles dark mode (palette closed)', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForTimeout(100)
+
+    // Default is dark — no data-mode attribute on <html>.
+    expect(await page.locator('html').getAttribute('data-mode')).toBeNull()
+
+    await page.keyboard.press(`${cmdOrCtrl}+d`)
+    await page.waitForTimeout(100)
+
+    expect(await page.locator('html').getAttribute('data-mode')).toBe('light')
+  })
+
+  test('Cmd+D toggles dark mode AND closes the open palette', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForTimeout(100)
+
+    // Open palette via Cmd+K, confirm it's open.
+    await page.keyboard.press(`${cmdOrCtrl}+k`)
+    await expect(page.getByRole('dialog')).toBeVisible()
+
+    // Cmd+D from inside the palette toggles theme and closes the palette.
+    await page.keyboard.press(`${cmdOrCtrl}+d`)
+    await page.waitForTimeout(100)
+
+    expect(await page.locator('html').getAttribute('data-mode')).toBe('light')
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+  })
+
+  test('Cmd+\\ toggles compact density', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForTimeout(100)
+
+    // Default is comfortable — no data-density attribute.
+    expect(await page.locator('html').getAttribute('data-density')).toBeNull()
+
+    await page.keyboard.press(`${cmdOrCtrl}+\\`)
+    await page.waitForTimeout(100)
+
+    expect(await page.locator('html').getAttribute('data-density')).toBe('compact')
+
+    // Toggle back.
+    await page.keyboard.press(`${cmdOrCtrl}+\\`)
+    await page.waitForTimeout(100)
+
+    expect(await page.locator('html').getAttribute('data-density')).toBeNull()
+  })
+})
+
 test.describe('fe-foundation.AC1.1: Dark mode default and OKLCH chroma', () => {
   test('dark mode is default with no data-mode attribute', async ({ page }) => {
     await page.goto('/')
@@ -187,19 +240,20 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
         // Read all status color values
         for (const colorVar of Object.keys(colors)) {
           const value = await getColorValue(page, colorVar)
-          colors[colorVar].push(value)
+          colors[colorVar]?.push(value)
         }
       }
 
       // Verify all themes produce identical values for each status color
       // (status colors have fixed hues, independent of theme)
       for (const [colorVar, values] of Object.entries(colors)) {
-        const firstValue = values[0]
-        for (const value of values.slice(1)) {
-          expect(value).toBe(
-            firstValue,
+        const [firstValue, ...rest] = values
+        if (firstValue === undefined) continue
+        for (const value of rest) {
+          expect(
+            value,
             `${colorVar} should be constant across themes, but got different values`,
-          )
+          ).toBe(firstValue)
         }
       }
     })

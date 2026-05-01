@@ -3,6 +3,8 @@
   import { cubicOut } from 'svelte/easing'
   import type { JobStats } from '$lib/stores/runs.svelte'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+  import type { Job } from '$lib/types/generated/Job'
+  import { filterRunsByPool, type PoolKey } from '$lib/filters/pool'
   import { DURATION_MOVE, receive, send } from '$lib/animations/kanban-transitions'
   import ColumnHeader from './ColumnHeader.svelte'
   import RunCard from './RunCard.svelte'
@@ -12,12 +14,19 @@
     runs,
     headingId,
     jobStatsByRun,
+    activePoolFilter,
+    jobsByRunId,
   }: {
     label: string
     runs: readonly WorkflowRun[]
     headingId: string
     jobStatsByRun: ReadonlyMap<bigint, JobStats>
+    activePoolFilter: PoolKey | null
+    jobsByRunId: ReadonlyMap<bigint, readonly Job[]>
   } = $props()
+
+  // Apply pool filter — when activePoolFilter is null, returns runs unchanged (identity)
+  const visibleRuns = $derived(filterRunsByPool(runs, jobsByRunId, activePoolFilter))
 
   function requireJobStats(id: bigint): JobStats {
     const stats = jobStatsByRun.get(id)
@@ -32,9 +41,9 @@
 </script>
 
 <section aria-labelledby={headingId} class="flex flex-col min-h-0">
-  <ColumnHeader {label} count={runs.length} {headingId} />
+  <ColumnHeader {label} count={visibleRuns.length} {headingId} />
   <div role="list" class="flex flex-col gap-2 overflow-y-auto min-h-0 p-2">
-    {#each runs as run (run.id)}
+    {#each visibleRuns as run (run.id)}
       <div
         role="listitem"
         animate:flip={{ duration: DURATION_MOVE, easing: cubicOut }}

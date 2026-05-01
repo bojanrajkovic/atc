@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
+import type { RunEvent } from '$lib/types/generated/RunEvent'
 import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
 
 /**
@@ -87,7 +88,11 @@ export function makeRunEvent(
     createdAt: string
     runStartedAt: string | null
     updatedAt: string
-    action: Record<string, unknown>
+    // Strictly typed via the generated discriminated union so that wrong
+    // casings (e.g. `conclusion: 'success'` instead of `'Success'`) fail at
+    // compile time rather than silently breaking renders at runtime. See
+    // feedback_exhaustive_switches_at_boundaries.md for the original incident.
+    action: RunEvent
   },
 ): string {
   return JSON.stringify({
@@ -132,9 +137,19 @@ export function makeJobSeqEvent(
       },
       poolStatsAfter: opts.poolStatsAfter,
     },
-    (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
+    bigintReplacer,
   )
 }
+
+/**
+ * JSON.stringify replacer that emits bigint values as strings. Use when
+ * stringifying any payload that includes ts-rs `RunId` / `JobId` / `seq`
+ * fields (which are bigint in-memory). The matching reviver in
+ * `connection.ts` accepts both number and string and converts back to
+ * bigint, so wire round-trip is preserved.
+ */
+export const bigintReplacer = (_key: string, value: unknown): unknown =>
+  typeof value === 'bigint' ? value.toString() : value
 
 /** Inject a websocket event into the app's stores via the dev-mode global bridge.
  *  Tests the JSON parsing (bigint reviver) → store mutation → Svelte reactivity → DOM pipeline.

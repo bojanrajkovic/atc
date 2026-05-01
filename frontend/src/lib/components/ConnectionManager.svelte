@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { ConnectionManager } from '$lib/connection'
+  import { connectionStore } from '$lib/stores/connection.svelte'
 
   // Base URL from current location. In dev, access via the backend port (e.g.
   // http://localhost:3000) — the backend's dev_proxy (atc-server/src/assets.rs)
@@ -10,6 +11,7 @@
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
 
   let manager: ConnectionManager | null = null
+  let lastSeen = $state(0)
 
   onMount(() => {
     manager = new ConnectionManager(baseUrl)
@@ -22,6 +24,14 @@
   onDestroy(() => {
     manager?.destroy()
     manager = null
+  })
+
+  $effect(() => {
+    const requested = connectionStore.reconnectRequested
+    if (requested > lastSeen && manager !== null) {
+      lastSeen = requested
+      manager.reconnect()
+    }
   })
 </script>
 

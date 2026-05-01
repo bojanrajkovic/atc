@@ -1,7 +1,7 @@
 import type { Route } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
-import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { bigintReplacer, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 test.describe('Kanban board', () => {
   test.beforeEach(async ({ page }) => {
@@ -28,12 +28,10 @@ test.describe('Kanban board', () => {
     // Step 2: Fulfill empty snapshot → "No workflows yet."
     await stateRoute!.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({
-        seq: 1,
-        runs: [],
-        jobs: [],
-        poolStats: [],
-      } satisfies StateSnapshot),
+      body: JSON.stringify(
+        { seq: 1n, runs: [], jobs: [], poolStats: [] } satisfies StateSnapshot,
+        bigintReplacer,
+      ),
     })
     await expect(page.getByText('No workflows yet.')).toBeVisible()
 
@@ -71,31 +69,34 @@ test.describe('Kanban board', () => {
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({
-          seq: 1,
-          runs: [
-            {
-              id: 1002,
-              org: 'test-org',
-              repo: 'test-repo',
-              workflowName: 'CI',
-              workflowPath: '.github/workflows/ci.yml',
-              branch: 'main',
-              headSha: 'def456',
-              commitMessage: 'another commit',
-              event: 'push',
-              displayTitle: 'CI — main',
-              status: 'Queued',
-              conclusion: null,
-              htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1002',
-              createdAt: '2026-04-16T11:00:00Z',
-              runStartedAt: null,
-              updatedAt: '2026-04-16T11:00:00Z',
-            },
-          ],
-          jobs: [],
-          poolStats: [],
-        } satisfies StateSnapshot),
+        body: JSON.stringify(
+          {
+            seq: 1n,
+            runs: [
+              {
+                id: 1002n,
+                org: 'test-org',
+                repo: 'test-repo',
+                workflowName: 'CI',
+                workflowPath: '.github/workflows/ci.yml',
+                branch: 'main',
+                headSha: 'def456',
+                commitMessage: 'another commit',
+                event: 'push',
+                displayTitle: 'CI — main',
+                status: 'Queued',
+                conclusion: null,
+                htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1002',
+                createdAt: '2026-04-16T11:00:00Z',
+                runStartedAt: null,
+                updatedAt: '2026-04-16T11:00:00Z',
+              },
+            ],
+            jobs: [],
+            poolStats: [],
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
       })
     })
 
@@ -168,31 +169,34 @@ test.describe('Kanban board', () => {
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({
-          seq: 1,
-          runs: [
-            {
-              id: 1003,
-              org: 'test-org',
-              repo: 'test-repo',
-              workflowName: 'Build',
-              workflowPath: '.github/workflows/build.yml',
-              branch: 'main',
-              headSha: 'ghi789',
-              commitMessage: 'reduced motion test',
-              event: 'push',
-              displayTitle: 'Build — main',
-              status: 'Queued',
-              conclusion: null,
-              htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1003',
-              createdAt: '2026-04-16T12:00:00Z',
-              runStartedAt: null,
-              updatedAt: '2026-04-16T12:00:00Z',
-            },
-          ],
-          jobs: [],
-          poolStats: [],
-        } satisfies StateSnapshot),
+        body: JSON.stringify(
+          {
+            seq: 1n,
+            runs: [
+              {
+                id: 1003n,
+                org: 'test-org',
+                repo: 'test-repo',
+                workflowName: 'Build',
+                workflowPath: '.github/workflows/build.yml',
+                branch: 'main',
+                headSha: 'ghi789',
+                commitMessage: 'reduced motion test',
+                event: 'push',
+                displayTitle: 'Build — main',
+                status: 'Queued',
+                conclusion: null,
+                htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1003',
+                createdAt: '2026-04-16T12:00:00Z',
+                runStartedAt: null,
+                updatedAt: '2026-04-16T12:00:00Z',
+              },
+            ],
+            jobs: [],
+            poolStats: [],
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
       })
     })
 

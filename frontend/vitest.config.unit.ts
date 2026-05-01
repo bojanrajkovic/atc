@@ -17,10 +17,8 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.unit.ts'],
     include: ['src/**/*.test.ts'],
     exclude: ['src/**/*.browser.test.ts', 'e2e/**'],
-    coverage: {
-      provider: 'v8',
-      include: ['src/lib/**/*.svelte.ts', 'src/lib/**/*.ts'],
-      exclude: ['src/lib/types/**'],
-    },
+    // Coverage config lives in vitest.config.ts at the workspace level.
+    // Per-project coverage blocks are ignored when running via the
+    // workspace's `projects:` array.
   },
 })

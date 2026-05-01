@@ -12,6 +12,9 @@ catalogs:
     '@internationalized/date':
       specifier: ^3.12.1
       version: 3.12.1
+    '@lucide/svelte':
+      specifier: ^1.11.0
+      version: 1.11.0
     '@sveltejs/vite-plugin-svelte':
       specifier: ^7.0.0
       version: 7.0.0
@@ -36,6 +39,9 @@ catalogs:
     clsx:
       specifier: ^2.1.1
       version: 2.1.1
+    command-score:
+      specifier: ^0.1.2
+      version: 0.1.2
     eslint:
       specifier: ^10.1.0
       version: 10.1.0
@@ -83,6 +89,9 @@ importers:
       clsx:
         specifier: 'catalog:'
         version: 2.1.1
+      command-score:
+        specifier: 'catalog:'
+        version: 0.1.2
       shadcn-svelte:
         specifier: 'catalog:'
         version: 1.2.7(svelte@5.55.0)
@@ -99,6 +108,9 @@ importers:
       '@internationalized/date':
         specifier: 'catalog:'
         version: 3.12.1
+      '@lucide/svelte':
+        specifier: 'catalog:'
+        version: 1.11.0(svelte@5.55.0)
       '@playwright/test':
         specifier: ^1.59.1
         version: 1.59.1
@@ -437,6 +449,11 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
+
+  '@lucide/svelte@1.11.0':
+    resolution: {integrity: sha512-4I9b+RuxIf8OkGG883bIYDIXjqVOH0ClgrB0j+jI6CrzEziroEwxiubQwW2xKT3esdJcRVTtW9RtCQM9D+r+ew==}
+    peerDependencies:
+      svelte: ^5
 
   '@mswjs/interceptors@0.41.3':
     resolution: {integrity: sha512-cXu86tF4VQVfwz8W1SPbhoRyHJkti6mjH/XJIxp40jhO4j2k1m4KYrEykxqWPkFF3vrK4rgQppBh//AwyGSXPA==}
@@ -901,6 +918,9 @@ packages:
 
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
+
+  command-score@0.1.2:
+    resolution: {integrity: sha512-VtDvQpIJBvBatnONUsPzXYFVKQQAhuf3XTNOAsdBxCNO/QCtUUd8LSgjn0GVarBkCad6aJCZfXgrjYbl/KRr7w==}
 
   commander@14.0.3:
     resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
@@ -2117,6 +2137,10 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@lucide/svelte@1.11.0(svelte@5.55.0)':
+    dependencies:
+      svelte: 5.55.0
+
   '@mswjs/interceptors@0.41.3':
     dependencies:
       '@open-draft/deferred-promise': 2.2.0
@@ -2559,6 +2583,8 @@ snapshots:
       color-name: 1.1.4
 
   color-name@1.1.4: {}
+
+  command-score@0.1.2: {}
 
   commander@14.0.3: {}
 

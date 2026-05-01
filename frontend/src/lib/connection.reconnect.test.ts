@@ -206,4 +206,126 @@ describe('ConnectionManager', () => {
       vi.useRealTimers()
     })
   })
+
+  describe('manager.reconnect() — manual trigger from command palette', () => {
+    it('cancels pending reconnect timer and resets backoff counter', async () => {
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+      const timeoutSpy = vi.spyOn(global, 'clearTimeout')
+
+      // Initial connect
+      manager.connect()
+      await vi.runAllTimersAsync()
+
+      // Trigger a disconnect
+      const ws = MockWebSocket.getLastInstance()
+      if (ws) {
+        ws.close(1000)
+      }
+
+      await Promise.resolve()
+
+      // Verify reconnecting state and attempt counter advanced
+      expect(connectionStore.status).toBe('reconnecting')
+
+      // Call the public reconnect() method
+      manager.reconnect()
+
+      // Verify attempt counter was reset
+      expect(connectionStore.reconnectAttempt).toBe(0)
+
+      manager.destroy()
+      timeoutSpy.mockRestore()
+      vi.useRealTimers()
+    })
+
+    it('closes existing WebSocket before re-connecting', async () => {
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+
+      manager.connect()
+      await vi.runAllTimersAsync()
+
+      // Verify connected state
+      expect(connectionStore.status).toBe('connected')
+
+      // Get current WS
+      const previousWs = MockWebSocket.getLastInstance()
+
+      // Call reconnect()
+      manager.reconnect()
+      await vi.runAllTimersAsync()
+
+      // After reconnect, should have created a new WebSocket instance
+      const newWs = MockWebSocket.getLastInstance()
+
+      // They should be different instances (old one closed, new one created)
+      expect(newWs).not.toBe(previousWs)
+
+      manager.destroy()
+      vi.useRealTimers()
+    })
+
+    it('aborts in-flight connect handshake when reconnect is called pre-open', async () => {
+      // Regression: reconnect() previously nulled this.ws.onclose then close()d
+      // the WebSocket. If a prior connect() was still awaiting open, that wait
+      // depended on the temporary onclose rejector — with onclose nulled and
+      // (in real browsers) onopen never firing on a closed socket, the original
+      // connect() Promise stranded forever, leaking the async frame and
+      // accumulating with each manual reconnect during a slow handshake.
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+
+      // Start connect() but do NOT drain microtasks — the WebSocket is in
+      // CONNECTING state, the open-wait Promise is pending.
+      const connectPromise = manager.connect()
+      let connectError: unknown = null
+      connectPromise.catch((err) => {
+        connectError = err
+      })
+
+      // Synchronously force a reconnect. The original handshake's open-wait
+      // must reject (rather than strand) so the orphan async frame settles.
+      manager.reconnect()
+
+      await vi.runAllTimersAsync()
+
+      expect(connectError).not.toBeNull()
+      const err = connectError as Error & { name?: string }
+      expect(err.name === 'AbortError' || /abort/i.test(err.message)).toBe(true)
+
+      manager.destroy()
+      vi.useRealTimers()
+    })
+
+    it('transitions to connecting state immediately', async () => {
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+
+      manager.connect()
+      await vi.runAllTimersAsync()
+
+      // Close to trigger reconnecting
+      const ws = MockWebSocket.getLastInstance()
+      if (ws) {
+        ws.close(1000)
+      }
+
+      await Promise.resolve()
+      expect(connectionStore.status).toBe('reconnecting')
+
+      // Call reconnect()
+      manager.reconnect()
+
+      // Should transition to connecting
+      expect(connectionStore.status).toBe('connecting')
+
+      manager.destroy()
+      vi.useRealTimers()
+    })
+  })
 })

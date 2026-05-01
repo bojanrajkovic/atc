@@ -85,8 +85,8 @@ describe('TopBar (browser mode)', () => {
   it('renders RunnerBar with empty pools by default', () => {
     render(TopBar)
 
-    // Default runnerStore.pools is empty, so "No pools" text appears
-    const noPools = screen.getByText('No pools')
+    // Default runnerStore.pools is empty, so the empty-state copy appears.
+    const noPools = screen.getByText('No active runners')
     expect(noPools).toBeTruthy()
   })
 

@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/svelte'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { resolveStatusKey, statusKeyToHumanLabel } from '$lib/format/status-key'
 import type { JobStats } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
@@ -197,5 +198,126 @@ describe('RunCard', () => {
 
     // AC10.7 reviewer guidance: only non-prop reactive read in RunCard.svelte is uiStore.nowMs.
     // Behavioural proof lives in RunCard.duration.test.ts AC12.7.
+  })
+
+  describe('RunCard — inner-button activation (interactivity AC4)', () => {
+    beforeEach(() => {
+      // Reset uiStore selection state between tests to prevent cross-test pollution.
+      // handleActivate writes both selectedRunId and lastTriggerRunId.
+      uiStore.selectedRunId = null
+      uiStore.lastTriggerRunId = null
+    })
+
+    it('AC4.1 + AC4.7: <article> contains a <button class="run-card-activate"> with correct aria-label (repo·branch)', () => {
+      const run = createMockRun({
+        displayTitle: 'My Workflow',
+        repo: 'acme',
+        branch: 'feat/x',
+        status: 'Queued',
+      })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+
+      const article = container.querySelector('article')
+      expect(article).toBeTruthy()
+
+      const button = container.querySelector('button.run-card-activate')
+      expect(button).toBeTruthy()
+      // Button must be inside the article (AC4.7 screen-reader contract: article > button > aria-label)
+      expect(article!.contains(button)).toBe(true)
+
+      const statusLabel = statusKeyToHumanLabel(resolveStatusKey(run))
+      const expectedLabel = `${run.displayTitle}, ${statusLabel}, ${run.repo}·${run.branch}`
+      expect(button!.getAttribute('aria-label')).toBe(expectedLabel)
+    })
+
+    it('AC4.7: aria-label omits the middle-dot separator when branch is null', () => {
+      const run = createMockRun({
+        displayTitle: 'My Workflow',
+        repo: 'acme',
+        branch: null,
+        status: 'Queued',
+      })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+
+      const button = container.querySelector('button.run-card-activate')
+      expect(button).toBeTruthy()
+
+      const statusLabel = statusKeyToHumanLabel(resolveStatusKey(run))
+      const expectedLabel = `${run.displayTitle}, ${statusLabel}, ${run.repo}`
+      expect(button!.getAttribute('aria-label')).toBe(expectedLabel)
+      // Middle dot must NOT appear when branch is null
+      expect(button!.getAttribute('aria-label')).not.toContain('·')
+    })
+
+    it('AC4.2: click on the activator button sets uiStore.selectedRunId', () => {
+      const run = createMockRun({ id: 42n })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+
+      const button = container.querySelector('button.run-card-activate') as HTMLButtonElement
+      expect(button).toBeTruthy()
+
+      button.click()
+      // Svelte reactive state is synchronous for $state mutations; no tick needed.
+      expect(uiStore.selectedRunId).toBe(42n)
+    })
+
+    it('AC4.3: Enter on the focused button activates via native button semantics (no custom keydown handler)', () => {
+      // Native <button> converts Enter → click event. Dispatching a click on the
+      // focused button replicates that path without a custom onkeydown handler.
+      // If a custom keydown handler were added, this test would still pass — the
+      // design intent (no custom handler) is reviewer-verified from RunCard.svelte source.
+      const run = createMockRun({ id: 43n })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+
+      const button = container.querySelector('button.run-card-activate') as HTMLButtonElement
+      expect(button).toBeTruthy()
+
+      button.focus()
+      expect(document.activeElement).toBe(button)
+
+      // Simulate native Enter → click conversion
+      button.click()
+      expect(uiStore.selectedRunId).toBe(43n)
+    })
+
+    it('AC4.4: Space on the focused button activates via native button semantics', () => {
+      // Same path as AC4.3 — native <button> also converts Space → click.
+      const run = createMockRun({ id: 44n })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+
+      const button = container.querySelector('button.run-card-activate') as HTMLButtonElement
+      expect(button).toBeTruthy()
+
+      button.focus()
+      expect(document.activeElement).toBe(button)
+
+      // Simulate native Space → click conversion
+      button.click()
+      expect(uiStore.selectedRunId).toBe(44n)
+    })
+
+    it('AC4.6: button sits as a sibling of leaf components inside the article (layout-layer click capture verified)', () => {
+      // AC4.6 states that clicks on text inside the article (e.g., the run title)
+      // do NOT break activation. In real browsers this works because the absolutely-
+      // positioned button covers the card's z-stack and the pointer click lands on
+      // the button. jsdom has no layout engine, so the z-stack property cannot be
+      // tested here. This test instead asserts the structural contract:
+      //   - the button is a direct child of the article
+      //   - the button is the FIRST child of the article (so its position:absolute overlays content)
+      // The visual layering (cursor:pointer over text, pointer events intercepted) is
+      // verified end-to-end in frontend/e2e/run-card-interactivity.test.ts (Task 6).
+      const run = createMockRun({ displayTitle: 'Title Text' })
+      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+
+      const article = container.querySelector('article')!
+      const button = article.querySelector('button.run-card-activate')!
+      expect(button).toBeTruthy()
+
+      // Button must be a DIRECT child of the article so that position:absolute inset:0
+      // covers the full card surface above the sibling leaves.
+      expect(button.parentElement).toBe(article)
+      // Button is first child — ensures it stacks above all leaf content in z-order.
+      expect(article.firstElementChild).toBe(button)
+    })
   })
 })

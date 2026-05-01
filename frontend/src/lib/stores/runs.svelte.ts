@@ -83,6 +83,25 @@ class RunStore {
     return result
   })
 
+  /**
+   * Per-run jobs view. Snapshot rebuilt on every job mutation, mirroring
+   * jobStatsByRun's loop pattern. Consumers (e.g., pool filter in
+   * KanbanColumn) get the raw Job[] arrays without needing to dip into the
+   * internal SvelteMap directly.
+   *
+   * Iterates this.jobsByRun.entries() — the resulting Map preserves bigint
+   * key identity (no string coercion). The total-map invariant of
+   * jobStatsByRun does NOT apply here: only runs with at least one job
+   * appear as keys.
+   */
+  jobsByRunId = $derived.by<ReadonlyMap<bigint, Job[]>>(() => {
+    const result = new Map<bigint, Job[]>()
+    for (const [runId, jobs] of this.jobsByRun) {
+      result.set(runId, jobs)
+    }
+    return result
+  })
+
   applyRunEvent(envelope: RunEventEnvelope): void {
     const runId = envelope.runId
 

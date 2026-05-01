@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-import { resolveStatusKey, STATUS_KEYS } from './status-key'
+import {
+  resolveJobStatusKey,
+  resolveStatusKey,
+  STATUS_KEYS,
+  statusKeyToHumanLabel,
+  statusKeyToVar,
+} from './status-key'
 
 describe('format/status-key', () => {
   describe('run-cards.AC6A.1: Queued status returns Queued key', () => {
@@ -161,6 +168,113 @@ describe('format/status-key', () => {
       expect(resultSet.size).toBe(STATUS_KEYS.length)
       for (const key of STATUS_KEYS) {
         expect(resultSet.has(key)).toBe(true)
+      }
+    })
+  })
+
+  describe('resolveJobStatusKey', () => {
+    it('returns Queued when status is Queued', () => {
+      expect(resolveJobStatusKey({ status: 'Queued', conclusion: null })).toBe('Queued')
+    })
+
+    it('returns InProgress when status is Waiting', () => {
+      expect(resolveJobStatusKey({ status: 'Waiting', conclusion: null })).toBe('InProgress')
+    })
+
+    it('returns InProgress when status is InProgress', () => {
+      expect(resolveJobStatusKey({ status: 'InProgress', conclusion: null })).toBe('InProgress')
+    })
+
+    it('returns Cancelled when Completed with null conclusion (bare-Completed fallback)', () => {
+      expect(resolveJobStatusKey({ status: 'Completed', conclusion: null })).toBe('Cancelled')
+    })
+
+    it.each([
+      ['Success', 'Success'],
+      ['Failure', 'Failure'],
+      ['Cancelled', 'Cancelled'],
+      ['TimedOut', 'TimedOut'],
+      ['ActionRequired', 'ActionRequired'],
+      ['Stale', 'Stale'],
+      ['Neutral', 'Neutral'],
+      ['Skipped', 'Skipped'],
+    ] as const)('Completed + %s conclusion → %s key', (conclusion, expected) => {
+      expect(resolveJobStatusKey({ status: 'Completed', conclusion })).toBe(expected)
+    })
+  })
+
+  describe('exhaustiveness defense at runtime', () => {
+    // These tests guard against off-shape input slipping past the TypeScript
+    // boundary (test fixtures with loose types, JSON over the wire). Without a
+    // runtime default branch, the switch silently returns undefined and the
+    // failure cascades into broken renders that don't surface a useful error.
+    // See feedback_exhaustive_switches_at_boundaries.md.
+
+    it('throws when conclusionToKey receives an unknown RunConclusion value', () => {
+      expect(() =>
+        resolveStatusKey({
+          status: 'Completed',
+          conclusion: 'success' as RunConclusion, // wrong casing — what the e2e fixtures used to send
+        }),
+      ).toThrow(/unhandled run conclusion/i)
+    })
+
+    it('throws when jobConclusionToKey receives an unknown JobConclusion value', () => {
+      expect(() =>
+        resolveJobStatusKey({
+          status: 'Completed',
+          conclusion: 'failure' as JobConclusion, // wrong casing
+        }),
+      ).toThrow(/unhandled job conclusion/i)
+    })
+  })
+
+  describe('statusKeyToHumanLabel', () => {
+    it.each([
+      ['Queued', 'Queued'],
+      ['InProgress', 'In progress'],
+      ['Success', 'Success'],
+      ['Failure', 'Failure'],
+      ['Cancelled', 'Cancelled'],
+      ['TimedOut', 'Timed out'],
+      ['ActionRequired', 'Action required'],
+      ['StartupFailure', 'Startup failure'],
+      ['Stale', 'Stale'],
+      ['Neutral', 'Neutral'],
+      ['Skipped', 'Skipped'],
+    ] as const)('returns "%s" for %s', (key, expected) => {
+      expect(statusKeyToHumanLabel(key)).toBe(expected)
+    })
+
+    it('covers all STATUS_KEYS', () => {
+      for (const key of STATUS_KEYS) {
+        expect(() => statusKeyToHumanLabel(key)).not.toThrow()
+        expect(typeof statusKeyToHumanLabel(key)).toBe('string')
+      }
+    })
+  })
+
+  describe('statusKeyToVar', () => {
+    it.each([
+      ['Queued', 'queued'],
+      ['InProgress', 'running'],
+      ['Success', 'success'],
+      ['Failure', 'failed'],
+      ['Cancelled', 'cancelled'],
+      ['TimedOut', 'timed-out'],
+      ['ActionRequired', 'action-required'],
+      ['StartupFailure', 'failed'],
+      ['Stale', 'neutral'],
+      ['Neutral', 'neutral'],
+      ['Skipped', 'neutral'],
+    ] as const)('returns CSS token name "%s" for %s', (key, expected) => {
+      expect(statusKeyToVar(key)).toBe(expected)
+    })
+
+    it('covers all STATUS_KEYS', () => {
+      for (const key of STATUS_KEYS) {
+        expect(() => statusKeyToVar(key)).not.toThrow()
+        expect(typeof statusKeyToVar(key)).toBe('string')
       }
     })
   })

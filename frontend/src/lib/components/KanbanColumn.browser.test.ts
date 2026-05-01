@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it, vi } from 'vitest'
 import type { JobStats } from '$lib/stores/runs.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
+import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
 const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
@@ -25,6 +26,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-queued',
           runs,
           jobStatsByRun: statsMapFor(runs),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -41,6 +44,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-queued',
         runs,
         jobStatsByRun: statsMapFor(runs),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       // Wait for animation/reactivity
@@ -77,6 +82,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-queued',
           runs: runs1,
           jobStatsByRun: statsMapFor(runs1),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -88,6 +95,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-in-progress',
           runs: runs2,
           jobStatsByRun: statsMapFor(runs2),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -104,6 +113,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-queued',
         runs: runs1,
         jobStatsByRun: statsMapFor(runs1),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       await rerender2({
@@ -111,6 +122,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-in-progress',
         runs: runs2,
         jobStatsByRun: statsMapFor(runs2),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       // Wait for crossfade animation to settle
@@ -139,6 +152,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-queued',
           runs,
           jobStatsByRun: statsMapFor(runs),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -153,6 +168,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-queued',
         runs,
         jobStatsByRun: statsMapFor(runs),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       await new Promise((r) => setTimeout(r, 50))
@@ -183,6 +200,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-queued',
           runs: runsA,
           jobStatsByRun: statsMapFor(runsA),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -194,6 +213,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-in-progress',
           runs: runsB,
           jobStatsByRun: statsMapFor(runsB),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -212,6 +233,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-queued',
         runs: runsA,
         jobStatsByRun: statsMapFor(runsA),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       await rerenderB({
@@ -219,6 +242,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-in-progress',
         runs: runsB,
         jobStatsByRun: statsMapFor(runsB),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       // Wait for crossfade animations to settle
@@ -268,6 +293,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-queued',
           runs: runsA,
           jobStatsByRun: statsMapFor(runsA),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -279,6 +306,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-in-progress',
           runs: runsB,
           jobStatsByRun: statsMapFor(runsB),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -295,6 +324,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-queued',
         runs: runsA,
         jobStatsByRun: statsMapFor(runsA),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       await rerenderB({
@@ -302,6 +333,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-in-progress',
         runs: runsB,
         jobStatsByRun: statsMapFor(runsB),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       // Wait for the transition to complete
@@ -345,6 +378,8 @@ describe('KanbanColumn (browser mode)', () => {
           headingId: 'kanban-col-queued',
           runs,
           jobStatsByRun: statsMapFor(runs),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
         },
       })
 
@@ -360,6 +395,8 @@ describe('KanbanColumn (browser mode)', () => {
         headingId: 'kanban-col-queued',
         runs,
         jobStatsByRun: statsMapFor(runs),
+        activePoolFilter: null,
+        jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
       // Wait for the reorder to complete

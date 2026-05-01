@@ -13,8 +13,12 @@ export class MockWebSocket {
   constructor(url: string) {
     this.url = url
     MockWebSocket.instances.push(this)
-    // Simulate connection delay using Promise microtask (more reliable than setTimeout(0))
+    // Simulate connection delay using Promise microtask (more reliable than setTimeout(0)).
+    // Match real-browser semantics: if close() landed before the open microtask
+    // drained (readyState already CLOSED), do NOT fire onopen — real WebSockets
+    // skip straight to onclose in this case.
     Promise.resolve().then(() => {
+      if (this.readyState === 3) return
       this.readyState = 1 // OPEN
       this.onopen?.(new Event('open'))
     })
