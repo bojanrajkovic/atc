@@ -933,28 +933,29 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
     await page.locator('article.run-card[data-run-id="1"]').locator('.run-card-activate').click()
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
 
-    // With the panel open, evict queued-1 (the trigger card).
-    // This simulates TTL eviction while the panel is open — the card disappears
-    // from the DOM and the store.
+    // Evict queued-1 (the trigger card) by deleting its run from the store.
+    // The AC2.9 $effect fires: selectedRunId (1n) references a missing run
+    // → sets selectedRunId = null. Path A: because lastTriggerRunId === evictedId,
+    // the $effect also calls ctx.restoreFocusToInitial() directly — bypassing the
+    // Bits UI onCloseAutoFocus path (which would not fire because {#if run}
+    // collapses the dialog content, removing the close button from the DOM before
+    // FocusScope can see focus inside the scope at close time).
     await page.evaluate(() => {
       window.__stores!.runStore!.runs.delete(1n)
     })
 
-    // Close the panel via Escape.
-    await page.keyboard.press('Escape')
-
-    // Wait for selectedRunId to clear (panel fully closed).
+    // Wait for selectedRunId to clear (panel fully closed by AC2.9 $effect).
     await page.waitForFunction(() => window.__stores!.uiStore!.selectedRunId === null, {
       timeout: 3_000,
     })
 
-    // Wait ~350ms for the Bits UI Sheet exit animation + onCloseAutoFocus to complete.
-    // onCloseAutoFocus should route through ctx.restoreFocusToInitial() since the
-    // trigger card (id=1) was evicted — querySelector returns null, so the bug-fix
-    // path fires and lands focus on queued-2 (the new first card).
+    // Wait for focus to land on a run-card-activate (restored via Path A in the
+    // AC2.9 $effect). Use a generous timeout because restoreFocusToInitial() calls
+    // tick() before querying the DOM, and the Sheet exit animation may still be
+    // running.
     await page.waitForFunction(
       () => document.activeElement?.classList.contains('run-card-activate'),
-      { timeout: 3_500 },
+      { timeout: 5_000 },
     )
 
     // The original bug: focus was left on <body> because event.preventDefault() ran
@@ -1019,7 +1020,7 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
-        // @ts-ignore wire shape for test
+        // @ts-expect-error wire shape for test
         action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
       })
       // job 2n for run 2n → labels ['pool-b']
@@ -1032,7 +1033,7 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
-        // @ts-ignore wire shape for test
+        // @ts-expect-error wire shape for test
         action: { type: 'Queued', data: { labels: ['pool-b'], steps: [] } },
       })
       // job 3n for run 3n → labels ['pool-a']
@@ -1045,7 +1046,7 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
-        // @ts-ignore wire shape for test
+        // @ts-expect-error wire shape for test
         action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
       })
     })

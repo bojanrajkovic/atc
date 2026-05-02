@@ -25,9 +25,23 @@
 
   // AC2.9 missing-run fallback effect — clears selectedRunId when the id
   // references a run not present in runStore.runs (stale id, evicted run, etc.)
+  // Path A (AC7.2 fix): when the evicted run is also the panel's trigger source,
+  // call ctx.restoreFocusToInitial() directly here, bypassing Bits UI's
+  // onCloseAutoFocus path. That path requires focus to be inside the Sheet's
+  // FocusScope at close time, but {#if run} collapses the dialog content (removing
+  // the close button from the DOM) before the FocusScope can see focus inside —
+  // so onCloseAutoFocus never fires in this scenario and we must restore focus
+  // ourselves. We also null lastTriggerRunId so the onCloseAutoFocus handler (if
+  // it does fire) treats this as a no-trigger close and falls through to Bits UI
+  // default, rather than re-running restoreFocusToInitial a second time.
   $effect(() => {
     if (uiStore.selectedRunId !== null && runStore.runs.get(uiStore.selectedRunId) === undefined) {
+      const evictedId = uiStore.selectedRunId
       uiStore.selectedRunId = null
+      if (uiStore.lastTriggerRunId === evictedId) {
+        uiStore.lastTriggerRunId = null
+        void ctx.restoreFocusToInitial()
+      }
     }
   })
 
@@ -55,14 +69,20 @@
       // Guard: only fire when truly closing (selectedRunId has been cleared by handleOpenChange).
       if (uiStore.selectedRunId !== null) return
 
+      // Prevent Bits UI's built-in focus restoration unconditionally. The default
+      // restoration tries to focus the original opener element, but in the evicted-
+      // trigger case (AC7.2 / Path A) that element is gone, which would land focus
+      // on <body>. We always supply our own restoration path below (or return with
+      // focus already placed by the AC2.9 $effect's restoreFocusToInitial call).
+      event.preventDefault()
+
       // Read and consume the trigger.
       const triggerId = uiStore.lastTriggerRunId
       uiStore.lastTriggerRunId = null
 
-      // No trigger recorded → defer to Bits UI's default focus restoration. AC7.5.
+      // No trigger recorded (AC7.5) or already consumed by the AC2.9 $effect's
+      // Path A restoration — nothing to do, focus is already correctly placed.
       if (triggerId === null) return
-
-      event.preventDefault()
       const trigger = document.querySelector<HTMLElement>(
         `.run-card[data-run-id="${triggerId}"] .run-card-activate`
       )
