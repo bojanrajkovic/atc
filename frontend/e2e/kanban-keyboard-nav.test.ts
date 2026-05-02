@@ -614,7 +614,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC4.4b Cmd+ArrowUp returns early — kanban does not move focus', async ({
+  test('kanban-keyboard-nav.AC4.4 (Cmd+ArrowUp variant) returns early — kanban does not move focus', async ({
     page,
   }) => {
     await seedQueued(page, 3)
