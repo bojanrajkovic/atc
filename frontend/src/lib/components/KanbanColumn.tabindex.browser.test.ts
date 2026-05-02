@@ -10,10 +10,11 @@ import { render } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RovingFocusContext } from '$lib/components/roving/context'
+import { poolKey } from '$lib/filters/pool'
 import type { JobStats } from '$lib/stores/runs.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
-import { createMockRunEvent } from '$lib/test-utils/factories'
+import { createMockJob, createMockRunEvent } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import KanbanBoardInvariantHarness from './KanbanBoardInvariant.test-harness.svelte'
@@ -87,11 +88,13 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
   beforeEach(() => {
     runStore.clear()
     uiStore.lastTriggerRunId = null
+    uiStore.activePoolFilter = null
     capturedCtx = undefined
   })
 
   afterEach(() => {
     runStore.clear()
+    uiStore.activePoolFilter = null
   })
 
   it('AC1.1: initial render with all three columns populated — exactly one tabindex=0 on first queued card', async () => {
@@ -252,5 +255,78 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     // Verify existing list/listitem structure is preserved
     expect(container.querySelectorAll('[role="list"]').length).toBeGreaterThan(0)
     expect(container.querySelectorAll('[role="listitem"]').length).toBeGreaterThan(0)
+  })
+
+  it('AC1.1 with pool filter: tabindex=0 lands on the first VISIBLE card, not the filter-hidden first card', async () => {
+    // Seed two queued runs: run 1n has pool-A jobs, run 2n has pool-B jobs.
+    // With activePoolFilter = poolKey(['B']), run 1n is hidden and run 2n is visible.
+    // The bug: provider derives initialFocusRunId from raw runStore.queuedRuns[0] = run 1n,
+    // so RunCard for run 1n gets tabindex=0 even though it's filtered out of the DOM.
+    // Expected: exactly one .run-card-activate has tabindex=0, and it belongs to run 2n.
+
+    const queued = addQueuedRuns([1n, 2n])
+
+    // Populate runStore.jobsByRun so the provider's visibleColumns derivation
+    // (which reads runStore.jobsByRunId) can filter by pool label.
+    // run 1n → job with label 'A'; run 2n → job with label 'B'
+    runStore.applyJobEvent({
+      runId: 1n,
+      jobId: 10n,
+      org: 'o',
+      repo: 'r',
+      name: 'j1',
+      createdAt: '2026-05-01T10:00:01Z',
+      startedAt: null,
+      completedAt: null,
+      action: { type: 'Queued', data: { labels: ['A'], steps: [] } },
+    })
+    runStore.applyJobEvent({
+      runId: 2n,
+      jobId: 20n,
+      org: 'o',
+      repo: 'r',
+      name: 'j2',
+      createdAt: '2026-05-01T10:00:02Z',
+      startedAt: null,
+      completedAt: null,
+      action: { type: 'Queued', data: { labels: ['B'], steps: [] } },
+    })
+    await tick()
+
+    // Also build a local jobsMap for the harness prop (KanbanColumn uses this for its DOM filter).
+    const jobsMap = new Map<bigint, readonly Job[]>([
+      [1n, [createMockJob({ id: 10n, runId: 1n, labels: ['A'] })]],
+      [2n, [createMockJob({ id: 20n, runId: 2n, labels: ['B'] })]],
+    ])
+
+    const filterB = poolKey(['B'])
+    // Set uiStore so the provider's $derived visibleColumns also filters by pool B.
+    // The KanbanColumn receives activePoolFilter as a prop (for DOM rendering),
+    // and the provider reads uiStore.activePoolFilter for geometry — both must agree.
+    uiStore.activePoolFilter = filterB
+
+    const { container } = render(KanbanBoardInvariantHarness, {
+      props: {
+        queuedRuns: queued,
+        inProgressRuns: [],
+        completedRuns: [],
+        jobStatsByRun: statsMapFor(queued),
+        jobsByRunId: jobsMap,
+        activePoolFilter: filterB,
+      },
+    })
+
+    await tick()
+
+    // Under the filter, run 1n's card must NOT be in the DOM (filtered out).
+    expect(container.querySelector('[data-run-id="1"]')).toBeNull()
+    // Run 2n's card IS in the DOM.
+    expect(container.querySelector('[data-run-id="2"]')).not.toBeNull()
+
+    // Exactly one card should have tabindex=0 — and it must be the VISIBLE card (run 2n).
+    const focused = container.querySelectorAll('button.run-card-activate[tabindex="0"]')
+    expect(focused).toHaveLength(1)
+    const focusedCard = focused[0]?.closest('.run-card')
+    expect(focusedCard?.getAttribute('data-run-id')).toBe('2')
   })
 })

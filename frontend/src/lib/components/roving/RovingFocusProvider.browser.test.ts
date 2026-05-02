@@ -1,7 +1,10 @@
 import { render } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { poolKey } from '$lib/filters/pool'
+import type { JobStats } from '$lib/stores/runs.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
+import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun, createMockRunEvent } from '$lib/test-utils/factories'
 import type { RovingFocusContext } from './context'
 
@@ -176,13 +179,22 @@ describe('RovingFocusProvider.browser.test', () => {
     const { container, ctx } = await mountHarness(runs)
     await tick()
 
-    // Focus on the second run (id 200n)
-    ctx.setFocus(200n)
+    // Focus on the second run's button to set kanbanHasFocus=true via the
+    // roving action's focusin listener. Without kanbanHasFocus=true, the
+    // eviction $effect correctly resets state without touching DOM focus
+    // (Task 2 fix: background eviction must not steal focus from palette/panel).
+    const btn200 = container.querySelector<HTMLButtonElement>(
+      '.run-card[data-run-id="200"] .run-card-activate',
+    )
+    expect(btn200).toBeTruthy()
+    btn200!.focus()
     await tick()
+    expect(ctx.kanbanHasFocus).toBe(true)
     expect(ctx.focusedRunId).toBe(200n)
     expect(ctx.currentFocusRunId).toBe(200n)
 
     // Evict run 200n from the store — should trigger restoreFocusToInitial
+    // because kanbanHasFocus is true.
     runStore.runs.delete(200n)
 
     // Plan adaptation: the implementation plan calls for `expect(focusedRunId).toBe(null)`,
@@ -257,5 +269,256 @@ describe('RovingFocusProvider.browser.test', () => {
     const grid = container.querySelector('[data-testid="grid"]')
     expect(grid).toBeTruthy()
     expect(grid?.querySelector('.run-card')).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Pool-filter arrow nav (Task 3b RED gate)
+// ---------------------------------------------------------------------------
+
+describe('RovingFocusProvider.browser.test — pool-filter arrow nav', () => {
+  const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
+
+  function statsMapFor(ids: bigint[]): Map<bigint, JobStats> {
+    const m = new Map<bigint, JobStats>()
+    for (const id of ids) m.set(id, emptyStats)
+    return m
+  }
+
+  afterEach(() => {
+    runStore.clear()
+    uiStore.activePoolFilter = null
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  })
+
+  it('arrow nav respects activePoolFilter — ArrowDown skips filter-hidden cards', async () => {
+    // Seed three queued runs: run 1n (pool A), run 2n (pool B), run 3n (pool A).
+    // With filter = poolKey(['A']), only runs 1n and 3n are visible in the DOM.
+    // The bug: action.ts reads raw runStore.queuedRuns → [1n, 2n, 3n], so ArrowDown
+    // from run 1n resolves to run 2n (hidden). After the fix, geometry uses
+    // visibleColumns → [1n, 3n], so ArrowDown from run 1n correctly lands on run 3n.
+
+    for (const [id, ts] of [
+      [1n, '2026-01-01T00:00:01Z'],
+      [2n, '2026-01-01T00:00:02Z'],
+      [3n, '2026-01-01T00:00:03Z'],
+    ] as [bigint, string][]) {
+      runStore.applyRunEvent(
+        createMockRunEvent({ runId: id, action: { type: 'Requested' }, createdAt: ts }),
+      )
+    }
+    // Assign jobs with labels so filterRunsByPool works
+    runStore.applyJobEvent({
+      runId: 1n,
+      jobId: 10n,
+      org: 'o',
+      repo: 'r',
+      name: 'j1',
+      createdAt: '2026-01-01T00:00:01Z',
+      startedAt: null,
+      completedAt: null,
+      action: { type: 'Queued', data: { labels: ['A'], steps: [] } },
+    })
+    runStore.applyJobEvent({
+      runId: 2n,
+      jobId: 20n,
+      org: 'o',
+      repo: 'r',
+      name: 'j2',
+      createdAt: '2026-01-01T00:00:02Z',
+      startedAt: null,
+      completedAt: null,
+      action: { type: 'Queued', data: { labels: ['B'], steps: [] } },
+    })
+    runStore.applyJobEvent({
+      runId: 3n,
+      jobId: 30n,
+      org: 'o',
+      repo: 'r',
+      name: 'j3',
+      createdAt: '2026-01-01T00:00:03Z',
+      startedAt: null,
+      completedAt: null,
+      action: { type: 'Queued', data: { labels: ['A'], steps: [] } },
+    })
+    await tick()
+
+    // Set the pool filter to 'A' — only runs 1n and 3n are visible
+    uiStore.activePoolFilter = poolKey(['A'])
+    await tick()
+
+    // Dynamic import to avoid ordering issues
+    const { default: Harness } = await import('../KanbanBoardInvariant.test-harness.svelte')
+
+    let capturedCtx: RovingFocusContext | undefined
+    const { container } = render(Harness, {
+      props: {
+        queuedRuns: runStore.queuedRuns,
+        inProgressRuns: [],
+        completedRuns: [],
+        jobStatsByRun: statsMapFor([1n, 2n, 3n]),
+        jobsByRunId: runStore.jobsByRunId,
+        activePoolFilter: uiStore.activePoolFilter,
+        onCtxReady: (ctx: RovingFocusContext) => {
+          capturedCtx = ctx
+        },
+      },
+    })
+    await tick()
+
+    // Verify the DOM has only runs 1n and 3n (run 2n is filter-hidden)
+    expect(container.querySelector('[data-run-id="2"]')).toBeNull()
+    expect(container.querySelector('[data-run-id="1"]')).not.toBeNull()
+    expect(container.querySelector('[data-run-id="3"]')).not.toBeNull()
+
+    // Programmatically focus run 1n's button to start navigation
+    const card1Button = container.querySelector<HTMLElement>(
+      '.run-card[data-run-id="1"] .run-card-activate',
+    )
+    expect(card1Button).toBeTruthy()
+    card1Button!.focus()
+    await tick()
+
+    // capturedCtx should now see run 1n focused
+    expect(capturedCtx?.kanbanHasFocus).toBe(true)
+
+    // Dispatch ArrowDown on the kanban grid — roving action handles it.
+    // With the bug: geometry uses raw [1n, 2n, 3n] → resolves to run 2n (hidden).
+    // After fix: geometry uses visible [1n, 3n] → resolves to run 3n (correct).
+    const grid = container.querySelector<HTMLElement>('[data-testid="kanban-grid"]')
+    expect(grid).toBeTruthy()
+    grid!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await tick()
+
+    // Wait for RunCard's $effect to call .focus() on the resolved card
+    const card3Button = container.querySelector<HTMLElement>(
+      '.run-card[data-run-id="3"] .run-card-activate',
+    )
+    expect(card3Button).toBeTruthy()
+
+    await vi.waitFor(
+      () => {
+        expect(document.activeElement).toBe(card3Button)
+      },
+      { timeout: 2000 },
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC7.4: panel-close-evicted and keyboard-nav-eviction paths land on same node
+// ---------------------------------------------------------------------------
+
+describe('RovingFocusProvider.browser.test — AC7.4 dual-path restoration', () => {
+  afterEach(() => {
+    runStore.clear()
+    uiStore.activePoolFilter = null
+    uiStore.lastTriggerRunId = null
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  })
+
+  it('AC7.4: panel-close-evicted path and keyboard-nav-eviction path land on the same DOM node', async () => {
+    // Seed runs 1n, 2n, 3n as Queued (ascending createdAt so 1n = initialFocusRunId).
+    // Run 2n will be evicted in both paths; the restoration target is run 1n.
+    for (const [id, ts] of [
+      [1n, '2026-01-01T00:00:01Z'],
+      [2n, '2026-01-01T00:00:02Z'],
+      [3n, '2026-01-01T00:00:03Z'],
+    ] as [bigint, string][]) {
+      runStore.applyRunEvent(
+        createMockRunEvent({ runId: id, action: { type: 'Requested' }, createdAt: ts }),
+      )
+    }
+    await tick()
+
+    // -------------------------------------------------------------------------
+    // Path A: keyboard-nav eviction
+    // Focus run 2n explicitly, then delete run 2n from store.
+    // The eviction $effect should restore focus to initialFocusRunId = run 1n.
+    // -------------------------------------------------------------------------
+    const { default: Harness } = await import('./RovingFocusProvider.test-harness.svelte')
+
+    let capturedCtx: RovingFocusContext | undefined
+    const { container } = render(Harness, {
+      props: {
+        runs: [runStore.runs.get(1n)!, runStore.runs.get(2n)!, runStore.runs.get(3n)!],
+        onCtxReady: (ctx: RovingFocusContext) => {
+          capturedCtx = ctx
+        },
+      },
+    })
+    await tick()
+
+    if (capturedCtx === undefined) throw new Error('ctx not captured')
+
+    // Focus run 2n — sets focusedRunId
+    capturedCtx.setFocus(2n)
+    // Also set kanbanHasFocus so the eviction $effect calls restoreFocusToInitial()
+    capturedCtx.setKanbanHasFocus(true)
+    await tick()
+    expect(capturedCtx.focusedRunId).toBe(2n)
+
+    // Evict run 2n
+    runStore.runs.delete(2n)
+
+    const card1Button = container.querySelector<HTMLElement>(
+      '.run-card[data-run-id="1"] .run-card-activate',
+    )
+    expect(card1Button).toBeTruthy()
+
+    await vi.waitFor(
+      () => {
+        expect(document.activeElement).toBe(card1Button)
+      },
+      { timeout: 2000 },
+    )
+
+    const pathANodeId = (document.activeElement as HTMLElement | null)
+      ?.closest('.run-card')
+      ?.getAttribute('data-run-id')
+
+    // -------------------------------------------------------------------------
+    // Path B: panel-close-evicted path via ctx.restoreFocusToInitial()
+    // Simulate panel-close where trigger card is evicted: run 2n was the trigger,
+    // but it's already evicted. restoreFocusToInitial() resolves to run 1n.
+    // -------------------------------------------------------------------------
+    // Restore run 2n so we can evict it cleanly again (re-seed)
+    runStore.applyRunEvent(
+      createMockRunEvent({
+        runId: 2n,
+        action: { type: 'Requested' },
+        createdAt: '2026-01-01T00:00:02Z',
+      }),
+    )
+    await tick()
+
+    // Reset focus state
+    capturedCtx.setFocus(null)
+    capturedCtx.setKanbanHasFocus(false)
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    await tick()
+
+    // Evict run 2n again
+    runStore.runs.delete(2n)
+    await tick()
+
+    // Simulate panel-close restoration: set lastTriggerRunId to evicted run 2n,
+    // then call restoreFocusToInitial() directly (as RunDetailPanel.onCloseAutoFocus does)
+    uiStore.lastTriggerRunId = 2n
+    await capturedCtx.restoreFocusToInitial()
+    await tick()
+
+    const pathBNodeId = (document.activeElement as HTMLElement | null)
+      ?.closest('.run-card')
+      ?.getAttribute('data-run-id')
+
+    // Both paths must land on the same node — run 1n (the new initialFocusRunId)
+    expect(pathANodeId).toBe('1')
+    expect(pathBNodeId).toBe('1')
+    expect(pathANodeId).toBe(pathBNodeId)
   })
 })
