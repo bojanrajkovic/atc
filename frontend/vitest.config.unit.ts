@@ -15,14 +15,14 @@ export default defineConfig({
     name: 'unit',
     environment: 'jsdom',
     pool: 'threads',
-    // Pin worker count: Vitest defaults to `os.availableParallelism() - 1`,
-    // which on the ubuntu-24.04 GitHub runner appears to resolve to 1
-    // (cgroup-limited or similar) — the CI run was 91s wall ≈ aggregate, ie
-    // essentially serial. Force 2 threads so CI actually parallelises; local
-    // runs at 14 cores are throttled but the suite is already <6s so the
-    // local hit is invisible.
-    minWorkers: 2,
-    maxWorkers: 2,
+    // Pin worker count under CI only. Vitest defaults to
+    // `os.availableParallelism() - 1`, which on the ubuntu-24.04 GitHub
+    // runner appears to resolve to 1 (cgroup-limited or similar) — the
+    // CI run was 91s wall ≈ aggregate, ie essentially serial. Force 2
+    // threads in CI; locally keep Vitest's default so 14-core machines
+    // run at full tilt.
+    minWorkers: process.env.CI ? 2 : undefined,
+    maxWorkers: process.env.CI ? 2 : undefined,
     setupFiles: ['./vitest.setup.unit.ts'],
     include: ['src/**/*.test.ts'],
     exclude: ['src/**/*.browser.test.ts', 'e2e/**'],

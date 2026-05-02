@@ -17,12 +17,12 @@ export default defineConfig({
     name: 'browser',
     include: ['src/**/*.browser.test.ts'],
     exclude: ['e2e/**'],
-    // Mirror the unit project's explicit worker pin — same root cause:
-    // ubuntu-24.04 reports a low availableParallelism, browser tests run
-    // serially through one Chromium instance, and the suite spends ~30s
-    // on browser files alone.
-    minWorkers: 2,
-    maxWorkers: 2,
+    // Mirror the unit project's explicit worker pin under CI only — same
+    // root cause: ubuntu-24.04 reports a low availableParallelism, browser
+    // tests run serially through one Chromium instance, and the suite spends
+    // ~30s on browser files alone. Locally, Vitest's default is fine.
+    minWorkers: process.env.CI ? 2 : undefined,
+    maxWorkers: process.env.CI ? 2 : undefined,
     browser: {
       enabled: true,
       headless: true,
