@@ -48,8 +48,10 @@
     aria-hidden="true"
   ></span>
 
-  <!-- Pool label -->
-  <span class="truncate max-w-24" style="color: var(--text-dim);">{pool.label}</span>
+  <!-- Pool label: truncates to 12ch at <md, unconstrained at md+ -->
+  <span class="truncate max-w-[12ch] md:max-w-none" style="color: var(--text-dim);"
+    >{pool.label}</span
+  >
 
   <!-- Capacity bar (known-capacity pools only) -->
   {#if pool.total !== null}
