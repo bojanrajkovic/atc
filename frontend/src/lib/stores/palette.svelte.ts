@@ -21,6 +21,8 @@ export class PaletteStore {
   recentRunIds = $state<bigint[]>([])
   subMenu = $state<'theme' | null>(null)
 
+  private effectCleanup: (() => void) | null = null
+
   constructor() {
     // Restore persisted recentRunIds from sessionStorage. Storage access can
     // throw `SecurityError` (Safari private mode, sandboxed iframe, cookies
@@ -39,8 +41,12 @@ export class PaletteStore {
       }
     }
 
-    // Persist recentRunIds to sessionStorage whenever it changes (best-effort)
-    $effect.root(() => {
+    // Persist recentRunIds to sessionStorage whenever it changes (best-effort).
+    // Capture the root cleanup so destroy() can stop the effect — without this,
+    // tests running with `isolate: false` see leftover effects from earlier
+    // PaletteStore instances writing to sessionStorage after a later test's
+    // clear().
+    this.effectCleanup = $effect.root(() => {
       $effect(() => {
         if (typeof window === 'undefined') return
         try {
@@ -51,6 +57,13 @@ export class PaletteStore {
         }
       })
     })
+  }
+
+  destroy(): void {
+    if (this.effectCleanup !== null) {
+      this.effectCleanup()
+      this.effectCleanup = null
+    }
   }
 
   open(): void {

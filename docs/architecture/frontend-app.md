@@ -197,7 +197,7 @@ Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the o
 **`uiStore.nowMs` — shared wall-clock signal** (`frontend/src/lib/stores/ui.svelte.ts`)
 - `$state(Date.now())` initialised at module load; refreshed every 1000ms by a constructor-owned `setInterval`.
 - Single timer feeds every live-duration derivation across the board. Every card reads the same signal instead of each spawning its own timer.
-- `uiStore.destroy()` clears the interval. Used by fake-timer tests to prevent leaks; production never calls it.
+- `uiStore.destroy()` clears the interval **and** runs the captured `$effect.root()` cleanup so the DOM-sync effects stop firing. Used by fake-timer tests to prevent leaks; production never calls it. `paletteStore.destroy()` mirrors this for the sessionStorage persistence effect — both stores capture the cleanup returned by `$effect.root()` rather than discarding it, otherwise prior store instances keep ticking under `vitest --isolate=false` and clobber later tests' storage state.
 
 **`uiStore.lastTriggerRunId` — activation ref for focus restoration** (`frontend/src/lib/stores/ui.svelte.ts`)
 - Set by RunCard's `handleActivate` to the clicked run's id at click time.
@@ -442,6 +442,8 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - Verify HTML attributes (`data-theme`, `data-mode`) and CSS custom properties (`--hue`)
 - Run in headless Chromium with dev server auto-start
 - Playwright starts `pnpm dev` automatically, reuses existing server in local mode
+- `fullyParallel: true` so tests inside a single file are spread across workers, not just files
+- `workers: process.env.CI ? '75%' : undefined` — Playwright's CI default is `workers: 1`, which would silently neutralise `fullyParallel`; setting an explicit fraction in CI restores parallelism while leaving headroom for the shared Vite dev server
 - Location: `e2e/*.test.ts`
 - Run with: `pnpm test:e2e` or `playwright test`
 

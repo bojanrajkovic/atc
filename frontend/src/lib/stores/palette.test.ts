@@ -1,14 +1,25 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PaletteStore } from './palette.svelte'
 
 describe('PaletteStore', () => {
   let store: PaletteStore
+  const extraStores: PaletteStore[] = []
 
   beforeEach(() => {
-    // Only clear for tests that don't rely on persistence
-    // Persistence tests handle their own setup
     sessionStorage.clear()
     store = new PaletteStore()
+  })
+
+  afterEach(() => {
+    // Tear down the persistence $effect so it doesn't keep ticking and writing
+    // to sessionStorage between tests under `isolate: false`. Tests that create
+    // additional PaletteStore instances push them onto extraStores so they get
+    // cleaned up symmetrically.
+    store.destroy()
+    while (extraStores.length > 0) {
+      const s = extraStores.pop()
+      s?.destroy()
+    }
   })
 
   // Test 1: Defaults
@@ -83,13 +94,20 @@ describe('PaletteStore', () => {
     // Manually set up sessionStorage with test data
     sessionStorage.clear()
     const testStore = new PaletteStore()
+    extraStores.push(testStore)
     testStore.recordRunVisit(100n)
     testStore.recordRunVisit(200n)
     // Wait for effect to fire
     await new Promise((r) => setTimeout(r, 0))
 
+    // Tear the writer down before constructing the reader so its effect can't
+    // race the reader's initial sessionStorage read under `isolate: false`.
+    testStore.destroy()
+    extraStores.pop()
+
     // Create new instance reading from the persisted data
     const store2 = new PaletteStore()
+    extraStores.push(store2)
     expect(store2.recentRunIds).toEqual([200n, 100n])
   })
 
@@ -98,12 +116,17 @@ describe('PaletteStore', () => {
     // Manually set up sessionStorage
     sessionStorage.clear()
     const testStore = new PaletteStore()
+    extraStores.push(testStore)
     const largeId = 9007199254740993n // > Number.MAX_SAFE_INTEGER
     testStore.recordRunVisit(largeId)
     // Wait for effect
     await new Promise((r) => setTimeout(r, 0))
 
+    testStore.destroy()
+    extraStores.pop()
+
     const store2 = new PaletteStore()
+    extraStores.push(store2)
     expect(store2.recentRunIds[0]).toBe(largeId)
     expect(store2.recentRunIds[0] === largeId).toBe(true)
   })
@@ -131,6 +154,7 @@ describe('PaletteStore', () => {
     }
     try {
       const testStore = new PaletteStore()
+      extraStores.push(testStore)
       expect(testStore.recentRunIds).toEqual([])
     } finally {
       Storage.prototype.getItem = original
@@ -145,6 +169,7 @@ describe('PaletteStore', () => {
     }
     try {
       const testStore = new PaletteStore()
+      extraStores.push(testStore)
       // Should not throw — the effect catches the storage error silently
       expect(() => testStore.recordRunVisit(1n)).not.toThrow()
       await new Promise((r) => setTimeout(r, 0))

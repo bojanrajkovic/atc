@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-04-14 (updated 2026-04-14 for upload-artifact SHA update)
+Last verified: 2026-05-02 (updated 2026-05-02 for setup-node version-comment correction — pinned SHA was already v6.3.0, comment said v6)
 
 ## Purpose
 
