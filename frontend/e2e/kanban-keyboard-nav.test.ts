@@ -1020,8 +1020,8 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
-        // @ts-expect-error wire shape for test
-        action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
+        // biome-ignore lint/suspicious/noExplicitAny: wire shape for test
+        action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } } as any,
       })
       // job 2n for run 2n → labels ['pool-b']
       stores.runStore!.applyJobEvent({
@@ -1033,8 +1033,8 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
-        // @ts-expect-error wire shape for test
-        action: { type: 'Queued', data: { labels: ['pool-b'], steps: [] } },
+        // biome-ignore lint/suspicious/noExplicitAny: wire shape for test
+        action: { type: 'Queued', data: { labels: ['pool-b'], steps: [] } } as any,
       })
       // job 3n for run 3n → labels ['pool-a']
       stores.runStore!.applyJobEvent({
@@ -1046,8 +1046,8 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
-        // @ts-expect-error wire shape for test
-        action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
+        // biome-ignore lint/suspicious/noExplicitAny: wire shape for test
+        action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } } as any,
       })
     })
   }
