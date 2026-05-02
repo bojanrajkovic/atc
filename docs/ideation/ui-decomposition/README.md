@@ -350,7 +350,7 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 
 ### Sub-Phase 6a: Kanban Keyboard Navigation ✅ COMPLETE
 
-**Implemented in:** PR #<NN> (`feat/kanban-keyboard-nav` branch), per design plan [`docs/design-plans/2026-05-01-kanban-keyboard-nav.md`](../../design-plans/2026-05-01-kanban-keyboard-nav.md).
+**Implemented in:** PR #43 (`feat/kanban-keyboard-nav` branch), per design plan [`docs/design-plans/2026-05-01-kanban-keyboard-nav.md`](../../design-plans/2026-05-01-kanban-keyboard-nav.md).
 
 **What was built:**
 
