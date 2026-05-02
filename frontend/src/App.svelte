@@ -5,6 +5,7 @@
   import KanbanBoard from '$lib/components/KanbanBoard.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
   import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
+  import RovingFocusProvider from '$lib/components/roving/RovingFocusProvider.svelte'
   import { paletteStore } from '$lib/stores/palette.svelte'
   import { uiStore } from '$lib/stores/ui.svelte'
 
@@ -54,8 +55,10 @@
 </script>
 
 <ConnectionManager />
-<AppShell>
-  <KanbanBoard />
-</AppShell>
-<CommandPalette />
-<RunDetailPanel />
+<RovingFocusProvider>
+  <AppShell>
+    <KanbanBoard />
+  </AppShell>
+  <CommandPalette />
+  <RunDetailPanel />
+</RovingFocusProvider>

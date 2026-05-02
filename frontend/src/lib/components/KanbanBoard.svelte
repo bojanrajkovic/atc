@@ -6,6 +6,10 @@
   import { uiStore } from '$lib/stores/ui.svelte'
   import KanbanColumn from './KanbanColumn.svelte'
   import PoolFilterPill from './PoolFilterPill.svelte'
+  import { getRovingContext } from '$lib/components/roving/context'
+  import { roving } from '$lib/components/roving/action'
+
+  const ctx = getRovingContext()
 
   const totalRuns = $derived(
     runStore.queuedRuns.length + runStore.inProgressRuns.length + runStore.completedRuns.length
@@ -49,7 +53,7 @@
     </header>
   {/if}
   <!-- Three-column kanban grid -->
-  <div class="grid grid-cols-3 gap-4 h-full p-4" style="min-height: 0;">
+  <div use:roving={ctx} class="grid grid-cols-3 gap-4 h-full p-4" style="min-height: 0;">
     <KanbanColumn
       label="QUEUED"
       runs={runStore.queuedRuns}
