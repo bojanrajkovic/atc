@@ -1,9 +1,9 @@
 import { render } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
 import type { RovingFocusContext } from './context'
-import ContextTestHarnessCombined from './context-test-harness-combined.svelte'
-import ContextTestHarnessGet from './context-test-harness-get.svelte'
-import ContextTestHarnessOtherSymbol from './context-test-harness-other-symbol.svelte'
+import ContextTestHarnessCombined from './test-utils/context-test-harness-combined.svelte'
+import ContextTestHarnessGet from './test-utils/context-test-harness-get.svelte'
+import ContextTestHarnessOtherSymbol from './test-utils/context-test-harness-other-symbol.svelte'
 
 type GetResult = { ok: true; value: RovingFocusContext } | { ok: false; error: Error }
 

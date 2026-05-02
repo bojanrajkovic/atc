@@ -6,7 +6,7 @@
   import type { JobStats } from '$lib/stores/runs.svelte'
   import type { Job } from '$lib/types/generated/Job'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-  import KanbanColumn from './KanbanColumn.svelte'
+  import KanbanColumn from '../KanbanColumn.svelte'
 
   interface Props {
     queuedRuns: readonly WorkflowRun[]

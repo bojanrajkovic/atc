@@ -23,7 +23,7 @@ import { runStore } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRunEvent } from '$lib/test-utils/factories'
 
-import RunDetailPanelHarness from './RunDetailPanel.test-harness.svelte'
+import RunDetailPanelHarness from './test-utils/RunDetailPanel.test-harness.svelte'
 
 // ---------------------------------------------------------------------------
 // Shared helpers

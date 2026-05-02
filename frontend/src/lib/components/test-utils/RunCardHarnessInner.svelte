@@ -3,7 +3,7 @@
   import type { JobStats } from '$lib/stores/runs.svelte'
   import type { RovingFocusContext } from '$lib/components/roving/context'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-  import RunCard from './RunCard.svelte'
+  import RunCard from '../RunCard.svelte'
 
   interface CardEntry {
     run: WorkflowRun

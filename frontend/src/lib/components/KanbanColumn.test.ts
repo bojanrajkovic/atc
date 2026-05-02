@@ -7,7 +7,7 @@ import { createMockJob, createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
-import KanbanColumnHarness from './KanbanColumn.test-harness.svelte'
+import KanbanColumnHarness from './test-utils/KanbanColumn.test-harness.svelte'
 
 const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
 

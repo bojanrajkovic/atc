@@ -7,7 +7,7 @@ import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRunEvent } from '$lib/test-utils/factories'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 
-import KanbanBoardHarness from './KanbanBoard.test-harness.svelte'
+import KanbanBoardHarness from './test-utils/KanbanBoard.test-harness.svelte'
 
 function queuedJob(jobId: bigint, runId: bigint, name: string): JobEventEnvelope {
   return {

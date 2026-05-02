@@ -8,7 +8,7 @@ import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun, createMockRunEvent } from '$lib/test-utils/factories'
 
 import type { RunCardProps } from './RunCard.svelte'
-import RunCardHarness from './RunCard.test-harness.svelte'
+import RunCardHarness from './test-utils/RunCard.test-harness.svelte'
 
 const emptyJobStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
 

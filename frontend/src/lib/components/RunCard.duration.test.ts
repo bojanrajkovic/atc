@@ -6,7 +6,7 @@ import type { JobStats } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 
-import RunCardHarness from './RunCard.test-harness.svelte'
+import RunCardHarness from './test-utils/RunCard.test-harness.svelte'
 
 /**
  * AC12.7 — the static-Completed branch of RunCard's durationText $derived

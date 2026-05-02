@@ -86,7 +86,7 @@
   },
   "overrides": [
     {
-      "includes": ["**/*.test.ts"],
+      "includes": ["**/*.test.ts", "**/test-utils/**/*.ts"],
       "linter": {
         "rules": {
           "style": {

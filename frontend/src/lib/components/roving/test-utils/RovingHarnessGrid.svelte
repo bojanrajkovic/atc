@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { roving } from './action'
-  import { getRovingContext } from './context'
+  import { roving } from '../action'
+  import { getRovingContext } from '../context'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-  import type { RovingFocusContext } from './context'
+  import type { RovingFocusContext } from '../context'
 
   interface Props {
     runs: readonly WorkflowRun[]

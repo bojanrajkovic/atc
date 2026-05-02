@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getRovingContext, type RovingFocusContext } from './context'
+  import { getRovingContext, type RovingFocusContext } from '../context'
 
   type GetResult = { ok: true; value: RovingFocusContext } | { ok: false; error: Error }
 

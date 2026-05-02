@@ -1,6 +1,6 @@
 <script lang="ts">
-  import RunDetailPanel from './RunDetailPanel.svelte'
-  import RovingFocusProvider from './roving/RovingFocusProvider.svelte'
+  import RunDetailPanel from '../RunDetailPanel.svelte'
+  import RovingFocusProvider from '../roving/RovingFocusProvider.svelte'
 
   /**
    * Synthetic card descriptor used to populate the fake kanban DOM inside the

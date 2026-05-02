@@ -17,7 +17,7 @@ import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockJob, createMockRunEvent } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-import KanbanBoardInvariantHarness from './KanbanBoardInvariant.test-harness.svelte'
+import KanbanBoardInvariantHarness from './test-utils/KanbanBoardInvariant.test-harness.svelte'
 
 const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
 

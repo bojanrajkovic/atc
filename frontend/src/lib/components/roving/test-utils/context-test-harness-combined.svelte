@@ -5,7 +5,7 @@
    * The onResult callback receives the result of calling getRovingContext()
    * inside the child's init scope.
    */
-  import { setRovingContext, type RovingFocusContext } from './context'
+  import { setRovingContext, type RovingFocusContext } from '../context'
   import ContextTestHarnessGet from './context-test-harness-get.svelte'
 
   type GetResult = { ok: true; value: RovingFocusContext } | { ok: false; error: Error }

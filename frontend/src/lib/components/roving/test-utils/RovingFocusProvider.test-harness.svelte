@@ -1,8 +1,8 @@
 <script lang="ts">
-  import RovingFocusProvider from './RovingFocusProvider.svelte'
+  import RovingFocusProvider from '../RovingFocusProvider.svelte'
   import RovingHarnessGrid from './RovingHarnessGrid.svelte'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
-  import type { RovingFocusContext } from './context'
+  import type { RovingFocusContext } from '../context'
 
   interface Props {
     runs: readonly WorkflowRun[]

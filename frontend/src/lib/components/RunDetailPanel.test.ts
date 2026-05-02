@@ -10,7 +10,7 @@ import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 // (added in kanban-keyboard-nav Phase 4) resolves correctly inside jsdom tests.
 // The harness wraps RunDetailPanel in a real RovingFocusProvider with an empty
 // synthetic-kanban div — all panel behavior under test is unchanged.
-import RunDetailPanel from './RunDetailPanel.test-harness.svelte'
+import RunDetailPanel from './test-utils/RunDetailPanel.test-harness.svelte'
 
 // Shared fixture run id used by most tests.
 const RUN_ID = 42n

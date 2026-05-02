@@ -6,7 +6,7 @@
    */
   import { setContext } from 'svelte'
   import ContextTestHarnessGet from './context-test-harness-get.svelte'
-  import type { RovingFocusContext } from './context'
+  import type { RovingFocusContext } from '../context'
 
   type GetResult = { ok: true; value: RovingFocusContext } | { ok: false; error: Error }
 

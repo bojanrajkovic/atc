@@ -26,7 +26,7 @@ afterEach(() => {
 
 async function mountHarness(runs: ReturnType<typeof createMockRun>[] = []) {
   // Dynamic import to avoid Svelte 5 module-init ordering issues in tests
-  const { default: Harness } = await import('./RovingFocusProvider.test-harness.svelte')
+  const { default: Harness } = await import('./test-utils/RovingFocusProvider.test-harness.svelte')
 
   let capturedCtx: RovingFocusContext | undefined
   const onCtxReady = vi.fn((ctx: RovingFocusContext) => {
@@ -350,7 +350,9 @@ describe('RovingFocusProvider.browser.test — pool-filter arrow nav', () => {
     await tick()
 
     // Dynamic import to avoid ordering issues
-    const { default: Harness } = await import('../KanbanBoardInvariant.test-harness.svelte')
+    const { default: Harness } = await import(
+      '../test-utils/KanbanBoardInvariant.test-harness.svelte'
+    )
 
     let capturedCtx: RovingFocusContext | undefined
     const { container } = render(Harness, {
@@ -440,7 +442,9 @@ describe('RovingFocusProvider.browser.test — AC7.4 dual-path restoration', () 
     // Focus run 2n explicitly, then delete run 2n from store.
     // The eviction $effect should restore focus to initialFocusRunId = run 1n.
     // -------------------------------------------------------------------------
-    const { default: Harness } = await import('./RovingFocusProvider.test-harness.svelte')
+    const { default: Harness } = await import(
+      './test-utils/RovingFocusProvider.test-harness.svelte'
+    )
 
     let capturedCtx: RovingFocusContext | undefined
     const { container } = render(Harness, {
