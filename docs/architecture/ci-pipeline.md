@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-04-15 (updated 2026-04-15 for Playwright install ordering — browser-mode Vitest needs Chromium before unit tests)
+Last verified: 2026-05-02 (updated 2026-05-02 for runner pinning to ubuntu-24.04)
 
 ## Purpose
 
@@ -36,6 +36,10 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 **Decision:** Zizmor findings are security advisories, not required status checks
 **Alternatives considered:** Required status check, blocking gate, optional warning
 **Rationale:** Zizmor findings are security improvement opportunities, not build blockers. Displaying them in the Security tab allows teams to triage and fix them as part of the security review process without blocking PRs on first occurrence.
+
+**Decision:** All workflow jobs run on a pinned `ubuntu-24.04` runner (no `ubuntu-latest`)
+**Alternatives considered:** Track `ubuntu-latest` so we get GitHub-managed image rolls automatically; pin to a SHA-tagged image
+**Rationale:** `ubuntu-latest` rolls over to whichever Ubuntu image GitHub currently considers current — historically that has produced same-day breakage when the alias flips (e.g. `actions/checkout` deprecation behaviour, glibc bumps that bust cached binaries, distro tool-version changes). Pinning to `ubuntu-24.04` gives reproducible CI: the runner OS only changes when this repo updates the pin in a commit reviewable on its own. The release pipeline already used `ubuntu-24.04`; this aligns the rest of the matrix.
 
 **Decision:** All cargo build/check/test invocations use `--locked`
 **Alternatives considered:** No lockfile enforcement; only enforce in release builds

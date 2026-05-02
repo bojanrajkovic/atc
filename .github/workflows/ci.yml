@@ -15,7 +15,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -53,7 +53,7 @@ jobs:
     name: Backend
     needs: changes
     if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ci
     permissions:
       contents: read
@@ -141,7 +141,7 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ci
     permissions:
       contents: read
@@ -276,7 +276,7 @@ jobs:
   pr-checks:
     name: PR Checks
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: write
@@ -301,7 +301,7 @@ jobs:
     name: Backend Result
     needs: [changes, backend]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check results
         env:
@@ -323,7 +323,7 @@ jobs:
     name: Frontend Result
     needs: [changes, frontend]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check results
         env:
@@ -345,7 +345,7 @@ jobs:
     name: Helm Result
     needs: [changes, helm-lint, helm]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check results
         env:
