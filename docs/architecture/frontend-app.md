@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-04-30
+Last verified: 2026-05-02
 
 ## Purpose
 
@@ -13,7 +13,7 @@ The frontend app is a standalone Svelte 5 single-page application built with Vit
 - Comprehensive test coverage with Vitest (unit tests) and Playwright (E2E tests)
 - A static build output (`frontend/dist/`) that the backend embeds into its release binary via rust-embed
 
-Complete through Sub-Phase 5: design system renders correctly, theme switching works, stores initialize with sorted derived arrays, WS client connects and buffers events, kanban board renders in app shell with three-column layout (queued/in-progress/completed), cards animate within and across columns with shared crossfade instance. Sub-Phase 5 adds: Cmd+K command palette (five sections — Recent/Runs/Jobs/Pools/Commands; theme submenu), slide-over detail panel (Sheet with header, action row, metadata grid, job blocks with step timeline), RunCard activation (inner button overlay + hover-peek popover gated by `(hover: hover) and (pointer: fine)`), pool filter integration (palette → `activePoolFilter` → kanban columns + RunnerPool accent + PoolFilterPill), nested-dialog stacking with global Cmd+K listener, and the first branded TypeScript type (`PoolKey`). Test coverage spans unit (jsdom), browser-mode (Playwright chromium), and E2E tiers.
+Complete through Sub-Phase 5 + Sub-Phase 6a (kanban keyboard navigation). Sub-Phase 5 adds: Cmd+K command palette (five sections — Recent/Runs/Jobs/Pools/Commands; theme submenu), slide-over detail panel (Sheet with header, action row, metadata grid, job blocks with step timeline), RunCard activation (inner button overlay + hover-peek popover gated by `(hover: hover) and (pointer: fine)`), pool filter integration (palette → `activePoolFilter` → kanban columns + RunnerPool accent + PoolFilterPill), nested-dialog stacking with global Cmd+K listener, and the first branded TypeScript type (`PoolKey`). Sub-Phase 6a (kanban keyboard navigation, see `docs/design-plans/2026-05-01-kanban-keyboard-nav.md`) adds the roving tabindex system: `RovingFocusProvider` context wrapper (wraps App subtree excluding ConnectionManager), `use:roving` action on KanbanBoard's grid `<div>`, per-card tabindex derivation in RunCard (tabindex=0 on the current-focus card, tabindex=-1 on all others), imperative `.focus()` via a `$effect` in RunCard (with `!popoverOpen` re-entrancy guard), 2D arrow + Home/End navigation with no-wrap and empty-column-skip, modifier-key delegation back to the App-level window handler, structural suspension via natural focus scoping when dialogs open, card-stable focus through FLIP/crossfade transitions, and lost-trigger restoration on panel close (existing `RunDetailPanel.onCloseAutoFocus` bug fixed). Initial focus falls back to the first card of the first non-empty column (Queued > InProgress > Completed priority). Test coverage spans unit (jsdom), browser-mode (Playwright chromium), and E2E tiers. 676 unit/browser tests + 119 E2E tests passing.
 
 ## Key Decisions
 
@@ -49,46 +49,47 @@ Complete through Sub-Phase 5: design system renders correctly, theme switching w
 
 ```
 App.svelte                          (global Cmd/Ctrl+K listener via onMount; toggles PaletteStore)
-  ConnectionManager.svelte          (service: onMount → connect, onDestroy → destroy)
-  AppShell.svelte                   (layout: 100dvh flex column)
-    TopBar.svelte                   (connected: reads ConnectionStore, RunnerStore, UIStore)
-      Logo.svelte                   (pure: "ATC" monospace text mark)
-      Separator                     (shadcn: vertical divider)
-      RunnerBar.svelte              (pure: receives pools[] as prop)
-        RunnerPool.svelte           (pure: single pool indicator; isActiveFilter prop adds accent border)
-          CapacityBar.svelte        (pure: horizontal fill bar with color thresholds)
-      PoolFilterPill.svelte         (pure: shown when activePoolFilter non-null; clear button)
-      Separator                     (shadcn: vertical divider)
-      ConnectionIndicator.svelte    (pure: colored dot + Tooltip)
-      SettingsPopover.svelte        (connected: reads/writes UIStore)
-    <slot />                        (content area: KanbanBoard mounted here)
-  CommandPalette.svelte             (connected: reads PaletteStore + stores; portals to body)
-    PaletteSection.svelte           (pure: group wrapper with heading)
-    PaletteRunItem.svelte           (pure: run row with status icon + highlight)
-    PaletteJobItem.svelte           (pure: job row with parent run label + highlight)
-    PalettePoolItem.svelte          (pure: pool row with label highlight)
-    PaletteCommandItem.svelte       (pure: command row with optional keyboard shortcut badge)
-  RunDetailPanel.svelte             (connected: reads UIStore + RunStore; Sheet portals to body)
-    PanelHeader.svelte              (pure: status icon + run title)
-    PanelActions.svelte             (pure: open-in-GitHub link + close button aria-label="Close detail panel")
-    MetaGrid.svelte                 (pure: two-column CSS grid wrapper)
-      MetaCell.svelte × N           (pure: label/value pair; null value → em-dash)
-    JobBlock.svelte × N             (connected: reads uiStore.selectedJobId; scrolls on $effect)
-      StepList.svelte               (pure: ordered list of steps)
-        StepItem.svelte × N         (pure: step row with status icon + name + duration)
+  ConnectionManager.svelte          (service: onMount → connect, onDestroy → destroy; outside provider)
+  RovingFocusProvider.svelte        (context-only wrapper: no DOM; owns focusedRunId + kanbanHasFocus state)
+    AppShell.svelte                   (layout: 100dvh flex column)
+      TopBar.svelte                   (connected: reads ConnectionStore, RunnerStore, UIStore)
+        Logo.svelte                   (pure: "ATC" monospace text mark)
+        Separator                     (shadcn: vertical divider)
+        RunnerBar.svelte              (pure: receives pools[] as prop)
+          RunnerPool.svelte           (pure: single pool indicator; isActiveFilter prop adds accent border)
+            CapacityBar.svelte        (pure: horizontal fill bar with color thresholds)
+        PoolFilterPill.svelte         (pure: shown when activePoolFilter non-null; clear button)
+        Separator                     (shadcn: vertical divider)
+        ConnectionIndicator.svelte    (pure: colored dot + Tooltip)
+        SettingsPopover.svelte        (connected: reads/writes UIStore)
+      <slot />                        (content area: KanbanBoard mounted here)
+    CommandPalette.svelte             (connected: reads PaletteStore + stores; portals to body)
+      PaletteSection.svelte           (pure: group wrapper with heading)
+      PaletteRunItem.svelte           (pure: run row with status icon + highlight)
+      PaletteJobItem.svelte           (pure: job row with parent run label + highlight)
+      PalettePoolItem.svelte          (pure: pool row with label highlight)
+      PaletteCommandItem.svelte       (pure: command row with optional keyboard shortcut badge)
+    RunDetailPanel.svelte             (connected: reads UIStore + RunStore; Sheet portals to body)
+      PanelHeader.svelte              (pure: status icon + run title)
+      PanelActions.svelte             (pure: open-in-GitHub link + close button aria-label="Close detail panel")
+      MetaGrid.svelte                 (pure: two-column CSS grid wrapper)
+        MetaCell.svelte × N           (pure: label/value pair; null value → em-dash)
+      JobBlock.svelte × N             (connected: reads uiStore.selectedJobId; scrolls on $effect)
+        StepList.svelte               (pure: ordered list of steps)
+          StepItem.svelte × N         (pure: step row with status icon + name + duration)
 ```
 
 **RunCard tree (within KanbanColumn):**
 
 ```
-RunCard.svelte                      (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId)
+RunCard.svelte                      (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId + RovingFocusContext)
   JobHeader.svelte                  (pure: StatusIcon + displayTitle + durationText row)
     StatusIcon.svelte               (pure: 11-StatusKey exhaustive glyph)
   JobMeta.svelte                    (pure: repo · branch secondary line)
   ProgressBar.svelte                (pure: role=progressbar with scaleX fill)
   RunnerLabel.svelte                (pure: ⊞ summary line)
   HoverPeekPopover.svelte           (pure: Popover with status/steps/runner summary; gated by (hover: hover) and (pointer: fine))
-  <button class="run-card-activate"> (inner overlay button: sets lastTriggerRunId + selectedRunId on click)
+  <button class="run-card-activate"> (inner overlay button; tabindex=0/−1 from roving context; imperative .focus() via $effect)
 ```
 
 ### Data Flow
@@ -126,10 +127,10 @@ RunCard.svelte                      (almost-pure: reads uiStore.nowMs + runStore
 ### Component Hierarchy
 
 ```
-KanbanBoard (connected: reads RunStore + ConnectionStore)
+KanbanBoard (connected: reads RunStore + ConnectionStore; use:roving={ctx} on grid div)
   KanbanColumn (pure: receives sorted array + column state)
     ColumnHeader (pure: label + badge count)
-    RunCard × N (pure: each card renders displayTitle + status)
+    RunCard × N (almost-pure: reads roving context; tabindex 0/−1 derived from currentFocusRunId)
 ```
 
 KanbanBoard has three-state rendering:
@@ -179,17 +180,17 @@ See `## App Shell` for the top-down tree from `App` down to `KanbanColumn` and `
 ### Component Tree (RunCard-scoped)
 
 ```
-RunCard (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId; owns popoverOpen + hover timer)
+RunCard (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId + RovingFocusContext)
   JobHeader (pure: StatusIcon + displayTitle + durationText row)
     StatusIcon (pure: 11-StatusKey exhaustive glyph)
   JobMeta (pure: repo · branch, null-branch elision)
   ProgressBar (pure: role=progressbar with scaleX fill)
   RunnerLabel (pure: ⊞ summary line, null-summary elision)
   HoverPeekPopover (pure: status + step progress + runner summary; anchored to article element)
-  <button class="run-card-activate"> (inner overlay button; sets lastTriggerRunId + selectedRunId)
+  <button class="run-card-activate"> (inner overlay button; tabindex=0/−1 from roving context; imperative .focus() via $effect)
 ```
 
-Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the orchestrator — its `$derived.by` for `durationText` reads `uiStore.nowMs` (but only in live branches; completed non-ActionRequired cards never subscribe to the tick), and it reads `runStore.jobsByRunId` for step aggregation. Sub-Phase 5 added the hover-peek popover (gated by `(hover: hover) and (pointer: fine)` media query) and the inner activation button (opens RunDetailPanel).
+Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the orchestrator — its `$derived.by` for `durationText` reads `uiStore.nowMs` (but only in live branches; completed non-ActionRequired cards never subscribe to the tick), and it reads `runStore.jobsByRunId` for step aggregation. Sub-Phase 5 added the hover-peek popover (gated by `(hover: hover) and (pointer: fine)` media query) and the inner activation button (opens RunDetailPanel). Kanban keyboard nav Phase 2 added `getRovingContext()` to RunCard for tabindex derivation (`isFocused = ctx.currentFocusRunId === run.id`) and an imperative focus `$effect` that calls `buttonEl.focus()` when `isFocused && ctx.kanbanHasFocus`.
 
 ### Store Additions
 
@@ -354,6 +355,28 @@ Focus restoration after each dialog closes uses an id-then-querySelector pattern
 
 See Phase 6 plan Note 4 (`docs/implementation-plans/2026-04-25-interactivity/phase_06.md`) for the rationale comparing alternative approaches (element-ref-on-store, default Bits UI focus-scope).
 
+### Roving Focus
+
+The kanban grid implements 2D arrow-key navigation via roving tabindex without adopting the WAI-ARIA `grid` or `listbox` widget contract. Focus management is layered on externally — the existing `<section>` / `<div role="list">` / `<div role="listitem">` structure is preserved.
+
+**Architecture:**
+
+- `<RovingFocusProvider>` is a context-only wrapper component (no DOM element) that wraps `<AppShell>`, `<CommandPalette>`, and `<RunDetailPanel>` in `App.svelte`. It owns two `$state` cells (`focusedRunId: bigint | null`, `kanbanHasFocus: boolean`), a `$derived<Columns> visibleColumns` that applies `filterRunsByPool(runs, runStore.jobsByRunId, uiStore.activePoolFilter)` to all three store arrays (this is the single source of truth for what the kanban DOM actually renders — geometry resolution, `initialFocusRunId`, and the eviction `$effect` all consume `visibleColumns` so the roving logic and the rendered DOM cannot diverge under a pool filter), three additional `$derived` values (`initialFocusRunId`, `currentFocusRunId`, an eviction-watcher `$effect`), and the `restoreFocusToInitial()` function. `visibleColumns` is exposed through `ctx.getVisibleColumns()` so the action and any other consumer can read filtered columns without re-computing the derivation. The provider renders `{@render children()}` with no surrounding DOM, so context propagates by component tree (which means Bits UI portals from `Command.Dialog` and `Sheet` do NOT break `getRovingContext()` access in their consumers).
+- `roving/context.ts` exposes `RovingFocusContext` interface, `ROVING_CONTEXT_KEY` symbol, and `setRovingContext` / `getRovingContext` accessors. The getter throws if the context is missing — fast failure rather than silent `undefined`. The interface includes `getVisibleColumns(): Columns` so callers don't need to thread the pool filter or re-compute the derivation.
+- `roving/geometry.ts` is pure functions over a `Columns = readonly [WorkflowRun[], WorkflowRun[], WorkflowRun[]]` tuple. The `Columns` tuple is fed from `visibleColumns` (see provider above) — never from raw `runStore.*Runs` directly. Resolves arrow-key + Home/End navigation with no-wrap at edges, empty-column-skipping, and asymmetric-column row-clamping. O(n) per keypress where n is total visible runs (~<100 at dashboard scale).
+- `roving/action.ts` is a Svelte 5 action `(node: HTMLElement, ctx: RovingFocusContext) => { destroy }` attached to `KanbanBoard.svelte`'s grid `<div>`. Three listeners: `focusin` (sets `kanbanHasFocus` + syncs `focusedRunId` from the event target's `[data-run-id]` ancestor), `focusout` (clears `kanbanHasFocus` if focus exits the grid), `keydown` (modifier-guard-first, then reads `ctx.getVisibleColumns()` for geometry resolution, calls `ctx.setFocus(targetId)` plus `event.preventDefault()`). Imperative `.focus()` is NOT called from the action — RunCard's `$effect` handles it.
+- `RunCard.svelte` derives `isFocused = ctx.currentFocusRunId === run.id`, applies `tabindex={isFocused ? 0 : -1}` on the inner `<button class="run-card-activate">`, and runs a `$effect` that calls `buttonEl.focus()` when `isFocused && ctx.kanbanHasFocus`. The `$effect` covers both user-initiated arrow nav AND cross-column re-focus across crossfade (a fresh DOM node remounts with `isFocused === true`, the effect runs, and `document.activeElement` lands on the new node).
+
+**Suspension is structural:** When `Command.Dialog` (palette) or `Sheet` (panel) opens, Bits UI moves focus into its portaled DOM (outside the kanban grid). The action's keydown listener is scoped via bubble-phase to the grid `<div>`, so it silences naturally — no explicit coordination flag with `paletteStore.paletteOpen` or `uiStore.selectedRunId`.
+
+**Lost-trigger restoration is centralized:** `ctx.restoreFocusToInitial()` is the single source of truth for "involuntary focus loss → first card in first non-empty column." Two callers:
+1. **Eviction during keyboard nav** — the provider's `$effect` watches `focusedRunId` against `locate()`; if `locate` returns null the focused run was evicted. The effect is gated on `kanbanHasFocus`: when the kanban owns focus, `restoreFocusToInitial()` fires; when the kanban does not own focus (user has Tab'd to TopBar, opened the palette, or opened the panel), the effect resets `focusedRunId = null` *without* calling `.focus()`, preventing a background TTL/store eviction from yanking focus away from the user's current target.
+2. **Panel close with evicted source** — `RunDetailPanel.onCloseAutoFocus` calls it when the trigger-card querySelector returns null. (This replaces the previous bug where the optional-chained `?.focus()` silently no-opped, leaving focus on `<body>`.)
+
+Both paths land focus on the same DOM node under identical preconditions (AC7.4).
+
+**Why context, not a sixth store:** Roving state is component-scoped (dies with the kanban) and doesn't need to survive any persistence boundary. Folding into UIStore would mix preference-state with transient-state; a sixth store would fight the README's "5 stores is the ceiling" principle without empirical justification. Svelte context is the textbook fit: component-tree-scoped state, propagates by composition, dies with the provider.
+
 ### Global keyboard chord listener
 
 A single `window.addEventListener('keydown', ...)` is mounted via `onMount` in App.svelte and removed on destroy. It dispatches three Cmd/Ctrl chords:
@@ -481,11 +504,17 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/components/PalettePoolItem.svelte` — Pure: Command.Item row for a runner pool with label highlight
 - `frontend/src/lib/components/PaletteCommandItem.svelte` — Pure: Command.Item row for a utility command with optional keyboard shortcut badge
 
+**Roving Focus Module (keyboard navigation)**
+- `frontend/src/lib/components/roving/context.ts` — `RovingFocusContext` interface (includes `getVisibleColumns(): Columns`), `ROVING_CONTEXT_KEY` symbol, `setRovingContext()` / `getRovingContext()` helpers; `getRovingContext` throws with a descriptive message if called outside a provider tree
+- `frontend/src/lib/components/roving/RovingFocusProvider.svelte` — Context-only wrapper (no DOM element); owns `focusedRunId: bigint | null` and `kanbanHasFocus: boolean` `$state` cells; derives `visibleColumns: Columns` (all three store arrays filtered through `filterRunsByPool` with `uiStore.activePoolFilter` — the single source of truth for what the kanban DOM renders); derives `initialFocusRunId` (first card of first non-empty visible column, Queued > InProgress > Completed), `currentFocusRunId` (focusedRunId ?? initialFocusRunId); exposes `setFocus`, `setKanbanHasFocus`, `restoreFocusToInitial`, `getVisibleColumns`; eviction `$effect` calls `restoreFocusToInitial` only when `kanbanHasFocus === true`; when kanban does not own focus, resets `focusedRunId = null` without touching the DOM
+- `frontend/src/lib/components/roving/action.ts` — `roving` Svelte action; attaches `focusin` / `focusout` / `keydown` listeners to the grid element; `focusin` calls `ctx.setFocus(runId)` from `data-run-id`; `focusout` calls `ctx.setKanbanHasFocus(false)` when focus leaves the grid; `keydown` reads `ctx.getVisibleColumns()` for geometry resolution (filtered columns, matching the DOM)
+- `frontend/src/lib/components/roving/geometry.ts` — `locate(runId, columns): Position | null` — pure function returning `{col, row}` for a given run id across the `visibleColumns` tuple; consumed by the action for arrow-key navigation and by the provider's eviction `$effect`
+
 **Kanban Board Components**
-- `frontend/src/lib/components/KanbanBoard.svelte` — Connected: tri-state (loading/empty/grid), reads RunStore + ConnectionStore + UIStore, applies `filterRunsByPool` when `activePoolFilter` set, threads `runStore.jobStatsByRun` to each KanbanColumn
+- `frontend/src/lib/components/KanbanBoard.svelte` — Connected: tri-state (loading/empty/grid), reads RunStore + ConnectionStore + UIStore, applies `filterRunsByPool` when `activePoolFilter` set, threads `runStore.jobStatsByRun` to each KanbanColumn; attaches `use:roving={ctx}` to the grid `<div>` for keyboard focus management
 - `frontend/src/lib/components/KanbanColumn.svelte` — Pure: receives sorted runs + `jobStatsByRun: ReadonlyMap<bigint, JobStats>`, renders ColumnHeader + `<div role="listitem">` wrappers around RunCards, enforces total-map invariant via throwing `requireJobStats` guard, applies crossfade/flip animations
 - `frontend/src/lib/components/ColumnHeader.svelte` — Pure: uppercase column label + count badge
-- `frontend/src/lib/components/RunCard.svelte` — Composition root: root `<article>` with `--status-color` inline, `data-status` and `data-run-id` attributes, state-aware `$derived.by` duration, inner activation button, hover-peek popover
+- `frontend/src/lib/components/RunCard.svelte` — Composition root: root `<article>` with `--status-color` inline, `data-status` and `data-run-id` attributes, state-aware `$derived.by` duration, inner activation button (tabindex=0/−1 from roving context), hover-peek popover
 
 **Run Card Leaves**
 - `frontend/src/lib/components/StatusIcon.svelte` — Pure: 11-StatusKey exhaustive glyph + sr-only label; color inherited from parent's `--status-color`
@@ -534,3 +563,9 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/e2e/palette.test.ts` — Playwright E2E tests: Cmd+K open/close, query filtering across sections, pool filter selection, theme submenu, command actions
 - `frontend/e2e/pool-filter.test.ts` — Playwright E2E tests: pool filter pill shows/clears, kanban filters by pool, RunnerPool accent border
 - `frontend/e2e/stacking.test.ts` — Playwright E2E tests: palette+panel Esc-unwind order, single backdrop with both open, click-outside-palette-inside-panel, Cmd+K toggle while palette open
+
+**Roving Focus Test Harnesses** (co-located with their respective test files)
+- `frontend/src/lib/components/roving/RovingFocusProvider.test-harness.svelte` / `RovingHarnessGrid.svelte` — Two-component harness for RovingFocusProvider browser tests: outer wraps provider, inner (RovingHarnessGrid) calls `getRovingContext()` + `use:roving` and renders stub run-card buttons
+- `frontend/src/lib/components/RunCard.test-harness.svelte` / `RunCardHarnessInner.svelte` — Two-component harness for RunCard unit tests: outer wraps RovingFocusProvider, inner calls `getRovingContext()` and renders N RunCards with `onCtxReady` context-capture callback
+- `frontend/src/lib/components/KanbanColumn.test-harness.svelte` — Single-column harness wrapping one KanbanColumn in a RovingFocusProvider; used by KanbanColumn.test.ts unit tests
+- `frontend/src/lib/components/KanbanBoardInvariant.test-harness.svelte` / `KanbanBoardInvariantHarnessInner.svelte` — Two-component harness for kanban-level tabindex invariant tests: renders all three KanbanColumns inside one RovingFocusProvider with `onCtxReady` callback; used by `KanbanColumn.tabindex.browser.test.ts`

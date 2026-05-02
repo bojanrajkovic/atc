@@ -348,9 +348,26 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - Roving-tabindex keyboard navigation across the kanban — deferred to Sub-Phase 6 (Tab cycles cards in DOM order via the inner activator buttons in this phase).
 - Log fetching for the detail panel — tracked as issue #36.
 
-### Sub-Phase 6: Polish + Responsive
+### Sub-Phase 6a: Kanban Keyboard Navigation ✅ COMPLETE
 
-**Goal:** Empty states, responsive breakpoints, reduced motion, roving-tabindex keyboard navigation, ARIA live regions for run state changes, final E2E coverage.
+**Implemented in:** PR #43 (`feat/kanban-keyboard-nav` branch), per design plan [`docs/design-plans/2026-05-01-kanban-keyboard-nav.md`](../../design-plans/2026-05-01-kanban-keyboard-nav.md).
+
+**What was built:**
+
+- 2D arrow-key navigation across the kanban grid: ArrowUp/ArrowDown within a column, ArrowLeft/ArrowRight between non-empty columns (skipping empties), Home/End to column ends, no-wrap at edges.
+- Tab leaves the kanban as a single group; initial focus on first card of first non-empty column.
+- Roving state via Svelte 5 context (`<RovingFocusProvider>` wrapping AppShell + CommandPalette + RunDetailPanel) — first production use of `setContext`/`getContext` in this codebase.
+- Modifier-key delegation: Cmd+K / Cmd+D / Cmd+\\ continue to fire window-level handlers; Cmd/Shift/Alt+Arrow delegate to browser default.
+- Suspension via natural focus scoping: when the palette or detail panel opens, focus moves into Bits UI's portaled DOM (outside the kanban grid), so the action's keydown listener silences without explicit coordination.
+- Card-stable focus through FLIP / crossfade animations: focus follows run identity (`data-run-id`), not column position.
+- `RunDetailPanel.onCloseAutoFocus` bug fix: when the trigger card has been TTL-evicted while the panel is open, focus now restores to the first card of the first non-empty column instead of stranding on `<body>`.
+- New module `lib/components/roving/`: `context.ts`, `geometry.ts`, `action.ts`, `RovingFocusProvider.svelte` plus sibling tests; first production use of a Svelte 5 action.
+- Playground at `docs/design-plans/playgrounds/2026-05-01-kanban-keyboard-nav-explorer.html`.
+- AC traceability matrix at `docs/test-plans/2026-05-01-kanban-keyboard-nav.md`.
+
+### Sub-Phase 6b: Polish + Responsive
+
+**Goal:** Empty states, responsive breakpoints, reduced motion, ARIA live regions for run state changes, final E2E coverage.
 
 - EmptyState component ("No workflows running" with calm illustration)
 - Responsive breakpoints: 3-column desktop (>1200px), condensed runner bar on tablet (768-1200px), tab-based single-column on mobile (<768px)
@@ -358,11 +375,7 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - Scrollbar styling (6px WebKit, theme-colored thumb)
 - Focus ring audit (2px solid accent, 2px offset on all interactive elements)
 - Performance: verify 60fps during burst WebSocket updates with 50+ cards
-- **Roving-tabindex keyboard navigation across the kanban grid** (deferred from Sub-Phase 5):
-  - 2D grid model — ArrowUp/Down within a column, ArrowLeft/Right between columns, Home/End to column ends, Tab leaves the group entirely.
-  - Suspend while the detail panel is open (focus-trapped inside the Sheet); on panel close restore focus to the triggering card and resume roving from that index.
-  - Implementation note (verified 2026-04): Bits UI does not provide a `RovingFocusGroup` primitive. Third-party survey — `svelte-roving-ux` is Svelte-4-era and not updated for runes; `jakelazaroff/roving-tabindex` is a framework-agnostic web component but adds Vite/Tailwind v4 integration risk. Default to a custom Svelte 5 context provider with explicit `tabindex` swap on a single index signal, plus one key handler attached at the kanban-board root. See `docs/design-plans/2026-04-25-interactivity.md` for the deferral context.
 - **ARIA live region for run state changes** (deferred from Sub-Phase 5):
   - Lean — announce **every** transition (Queued → InProgress → Completed, plus terminal Failed/TimedOut/Cancelled) via `aria-live="polite"`. The dashboard is intended for wall display, so frequency matters; re-evaluate during this phase whether terminal-only reads calmer in practice before settling.
   - Hook — a single live-region element near the kanban root receives short messages constructed from `Run` events as they flow through `EventDispatcher`. No new store; messages can derive from existing `RunStore` data.
-- **Tests:** EmptyState rendering. Responsive: Playwright viewport tests at each breakpoint. Reduced motion: verify no animations when media query active. Performance: Playwright trace for frame budget under load. Roving-tabindex: keyboard-driven E2E covering all 2D directions, Home/End, panel-open suspension, and focus restoration on panel close. Live region: assert the live element receives expected text on simulated state transitions and that messages do not pile up during bursts. Full E2E regression suite covering all prior phases.
+- **Tests:** EmptyState rendering. Responsive: Playwright viewport tests at each breakpoint. Reduced motion: verify no animations when media query active. Performance: Playwright trace for frame budget under load. Live region: assert the live element receives expected text on simulated state transitions and that messages do not pile up during bursts. Full E2E regression suite covering all prior phases.

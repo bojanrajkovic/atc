@@ -15,6 +15,7 @@
   import ProgressBar from './ProgressBar.svelte'
   import RunnerLabel from './RunnerLabel.svelte'
   import HoverPeekPopover from './HoverPeekPopover.svelte'
+  import { getRovingContext } from '$lib/components/roving/context'
 
   export interface RunCardProps {
     run: WorkflowRun
@@ -22,6 +23,24 @@
   }
 
   let { run, jobStats }: RunCardProps = $props()
+
+  const ctx = getRovingContext()
+
+  let buttonEl: HTMLButtonElement | undefined = $state()
+
+  const isFocused = $derived(ctx.currentFocusRunId === run.id)
+
+  $effect(() => {
+    if (
+      isFocused &&
+      ctx.kanbanHasFocus &&
+      buttonEl !== undefined &&
+      !popoverOpen &&
+      document.activeElement !== buttonEl
+    ) {
+      buttonEl.focus()
+    }
+  })
 
   const statusKey: StatusKey = $derived(resolveStatusKey(run))
 
@@ -178,7 +197,13 @@
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  <button class="run-card-activate" type="button" aria-label={ariaLabel} onclick={handleActivate}
+  <button
+    class="run-card-activate"
+    type="button"
+    bind:this={buttonEl}
+    tabindex={isFocused ? 0 : -1}
+    aria-label={ariaLabel}
+    onclick={handleActivate}
   ></button>
   <JobHeader displayTitle={run.displayTitle} statusValue={statusKey} {durationText} />
   <JobMeta repo={run.repo} branch={run.branch} />

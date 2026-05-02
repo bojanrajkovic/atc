@@ -11,6 +11,23 @@ import { createMockRun } from '$lib/test-utils/factories'
 // silently passes because the selectors never match anything.
 import '../../app.css'
 
+// These browser tests exercise CSS/animation/hover-peek behavior — they don't care about
+// roving tabindex focus management. Stub out getRovingContext with a static no-focus context
+// so RunCard mounts without requiring a provider in the test tree.
+vi.mock('$lib/components/roving/context', () => ({
+  getRovingContext: () => ({
+    focusedRunId: null,
+    initialFocusRunId: null,
+    currentFocusRunId: null,
+    kanbanHasFocus: false,
+    setFocus: () => {},
+    setKanbanHasFocus: () => {},
+    restoreFocusToInitial: () => {},
+  }),
+  setRovingContext: () => {},
+  ROVING_CONTEXT_KEY: Symbol('RovingFocusContext'),
+}))
+
 import RunCard from './RunCard.svelte'
 
 const mockLocalStorage = (() => {

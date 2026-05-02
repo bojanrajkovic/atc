@@ -11,6 +11,9 @@
   import { computeDurationText, computeJobDurationText } from '$lib/format/duration-text'
   import { formatTimestamp } from '$lib/format/timestamp'
   import { summarizeRunners } from '$lib/format/runners'
+  import { getRovingContext } from '$lib/components/roving/context'
+
+  const ctx = getRovingContext()
 
   // Read the run reactively
   const run = $derived(
@@ -22,9 +25,23 @@
 
   // AC2.9 missing-run fallback effect — clears selectedRunId when the id
   // references a run not present in runStore.runs (stale id, evicted run, etc.)
+  // Path A (AC7.2 fix): when the evicted run is also the panel's trigger source,
+  // call ctx.restoreFocusToInitial() directly here, bypassing Bits UI's
+  // onCloseAutoFocus path. That path requires focus to be inside the Sheet's
+  // FocusScope at close time, but {#if run} collapses the dialog content (removing
+  // the close button from the DOM) before the FocusScope can see focus inside —
+  // so onCloseAutoFocus never fires in this scenario and we must restore focus
+  // ourselves. We also null lastTriggerRunId so the onCloseAutoFocus handler (if
+  // it does fire) treats this as a no-trigger close and falls through to Bits UI
+  // default, rather than re-running restoreFocusToInitial a second time.
   $effect(() => {
     if (uiStore.selectedRunId !== null && runStore.runs.get(uiStore.selectedRunId) === undefined) {
+      const evictedId = uiStore.selectedRunId
       uiStore.selectedRunId = null
+      if (uiStore.lastTriggerRunId === evictedId) {
+        uiStore.lastTriggerRunId = null
+        void ctx.restoreFocusToInitial()
+      }
     }
   })
 
@@ -41,30 +58,44 @@
   }
 </script>
 
-{#if run}
-  <Sheet.Root open={true} onOpenChange={handleOpenChange}>
-    <Sheet.Content
-      side="right"
-      showCloseButton={false}
-      class="run-detail-panel data-[side=right]:sm:max-w-xl"
-      escapeKeydownBehavior="defer-otherwise-close"
-      interactOutsideBehavior="defer-otherwise-close"
-      onCloseAutoFocus={(event) => {
-        // Restore focus to the triggering RunCard's inner button after the panel closes.
-        // Guard: only fire when truly closing (selectedRunId has been cleared by handleOpenChange).
-        if (uiStore.selectedRunId === null) {
-          const lastTriggerRunId = uiStore.lastTriggerRunId
-          if (lastTriggerRunId !== null) {
-            event.preventDefault()
-            const trigger = document.querySelector<HTMLElement>(
-              `.run-card[data-run-id="${lastTriggerRunId}"] .run-card-activate`
-            )
-            trigger?.focus()
-            uiStore.lastTriggerRunId = null
-          }
-        }
-      }}
-    >
+<Sheet.Root open={run !== undefined} onOpenChange={handleOpenChange}>
+  <Sheet.Content
+    side="right"
+    showCloseButton={false}
+    class="run-detail-panel data-[side=right]:sm:max-w-xl"
+    escapeKeydownBehavior="defer-otherwise-close"
+    interactOutsideBehavior="defer-otherwise-close"
+    onCloseAutoFocus={(event) => {
+      // Guard: only fire when truly closing (selectedRunId has been cleared by handleOpenChange).
+      if (uiStore.selectedRunId !== null) return
+
+      // Prevent Bits UI's built-in focus restoration unconditionally. The default
+      // restoration tries to focus the original opener element, but in the evicted-
+      // trigger case (AC7.2 / Path A) that element is gone, which would land focus
+      // on <body>. We always supply our own restoration path below (or return with
+      // focus already placed by the AC2.9 $effect's restoreFocusToInitial call).
+      event.preventDefault()
+
+      // Read and consume the trigger.
+      const triggerId = uiStore.lastTriggerRunId
+      uiStore.lastTriggerRunId = null
+
+      // No trigger recorded (AC7.5) or already consumed by the AC2.9 $effect's
+      // Path A restoration — nothing to do, focus is already correctly placed.
+      if (triggerId === null) return
+      const trigger = document.querySelector<HTMLElement>(
+        `.run-card[data-run-id="${triggerId}"] .run-card-activate`
+      )
+      if (trigger !== null) {
+        // Happy path. AC7.1.
+        trigger.focus()
+      } else {
+        // Trigger was evicted while panel was open. AC7.2 / AC7.4.
+        ctx.restoreFocusToInitial()
+      }
+    }}
+  >
+    {#if run}
       {@const statusKey = resolveStatusKey(run)}
       <div class="panel-top">
         <PanelHeader
@@ -95,9 +126,9 @@
           />
         {/each}
       </div>
-    </Sheet.Content>
-  </Sheet.Root>
-{/if}
+    {/if}
+  </Sheet.Content>
+</Sheet.Root>
 
 <style>
   .panel-top {

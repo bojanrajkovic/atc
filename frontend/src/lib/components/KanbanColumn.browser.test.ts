@@ -5,6 +5,23 @@ import { createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
+// These browser tests exercise animation/FLIP/crossfade behavior — they don't care
+// about roving tabindex focus management. Stub getRovingContext with a static
+// no-focus context so RunCard mounts without requiring a provider in the test tree.
+vi.mock('$lib/components/roving/context', () => ({
+  getRovingContext: () => ({
+    focusedRunId: null,
+    initialFocusRunId: null,
+    currentFocusRunId: null,
+    kanbanHasFocus: false,
+    setFocus: () => {},
+    setKanbanHasFocus: () => {},
+    restoreFocusToInitial: () => {},
+  }),
+  setRovingContext: () => {},
+  ROVING_CONTEXT_KEY: Symbol('RovingFocusContext'),
+}))
+
 const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
 
 function statsMapFor(runs: readonly WorkflowRun[]): Map<bigint, JobStats> {

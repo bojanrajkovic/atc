@@ -63,7 +63,7 @@ describe('KanbanBoard (browser mode)', () => {
 
   // AC7.1: Hydration placeholder when not connected
   it('renders hydration placeholder when connection status is not connected', async () => {
-    const { default: KanbanBoard } = await import('./KanbanBoard.svelte')
+    const { default: KanbanBoard } = await import('./test-utils/KanbanBoard.test-harness.svelte')
     render(KanbanBoard)
 
     // Default connectionStore.status is 'disconnected'
@@ -76,7 +76,7 @@ describe('KanbanBoard (browser mode)', () => {
 
   // AC7.2: Empty state when connected with zero runs
   it('renders empty state when connected but no runs', async () => {
-    const { default: KanbanBoard } = await import('./KanbanBoard.svelte')
+    const { default: KanbanBoard } = await import('./test-utils/KanbanBoard.test-harness.svelte')
     render(KanbanBoard)
 
     // Set connection to connected
@@ -97,7 +97,7 @@ describe('KanbanBoard (browser mode)', () => {
 
   // AC7.3: Populated state with three column headings
   it('renders three-column kanban grid when connected with runs', async () => {
-    const KanbanBoard = (await import('./KanbanBoard.svelte')).default
+    const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
     // Set connection to connected BEFORE rendering
     connectionStore.status = 'connected'
@@ -204,7 +204,7 @@ describe('KanbanBoard (browser mode)', () => {
 
   // AC7.4: Card distribution across columns
   it('distributes cards to correct columns based on run status', async () => {
-    const KanbanBoard = (await import('./KanbanBoard.svelte')).default
+    const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
     connectionStore.status = 'connected'
 
@@ -313,7 +313,7 @@ describe('KanbanBoard (browser mode)', () => {
 
   // AC7.5: Column counts reflect run counts
   it('displays correct count badges for each column', async () => {
-    const KanbanBoard = (await import('./KanbanBoard.svelte')).default
+    const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
     connectionStore.status = 'connected'
 
@@ -421,7 +421,7 @@ describe('KanbanBoard (browser mode)', () => {
 
   // AC7.6: Snapshot reload stability
   it('preserves DOM identity and ordering across snapshot reload', async () => {
-    const KanbanBoard = (await import('./KanbanBoard.svelte')).default
+    const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
     connectionStore.status = 'connected'
 

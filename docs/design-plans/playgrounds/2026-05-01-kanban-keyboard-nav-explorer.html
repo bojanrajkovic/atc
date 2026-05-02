@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en" data-theme="radar" data-mode="dark" data-density="comfortable">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATC · Kanban Keyboard Navigation Explorer</title>
+    <style>
+      :root {
+        --hue: 155;
+        color-scheme: dark;
+
+        --bg: oklch(12% 0.063 var(--hue));
+        --surface: oklch(16% 0.063 var(--hue));
+        --surface-raised: oklch(20% 0.06 var(--hue));
+        --border: oklch(25% 0.055 var(--hue));
+
+        --text: oklch(85% 0.028 var(--hue));
+        --text-dim: oklch(72% 0.03 var(--hue));
+
+        --queued: oklch(72% 0.15 250);
+        --running: oklch(78% 0.16 80);
+        --success: oklch(72% 0.16 155);
+        --failed: oklch(72% 0.17 25);
+        --cancelled: var(--text-dim);
+        --timed-out: oklch(76% 0.18 40);
+        --neutral: oklch(60% 0.025 var(--hue));
+
+        --accent: oklch(45% 0.2 250);
+        --focus-ring: oklch(65% 0.2 250);
+        --halo-color: oklch(78% 0.16 80 / 0.25);
+
+        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+
+        --text-xs: 0.625rem;
+        --text-sm: 0.75rem;
+        --text-base: 0.9375rem;
+
+        --leading-tight: 1.2;
+        --leading-normal: 1.5;
+        --tracking-wide: 0.1em;
+
+        --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+        --duration-fast: 100ms;
+        --duration-normal: 200ms;
+        --duration-slow: 300ms;
+      }
+
+      [data-theme="warm"]   { --hue: 70; }
+      [data-theme="radar"]  { --hue: 155; }
+      [data-theme="violet"] { --hue: 280; }
+      [data-theme="pink"]   { --hue: 310; }
+
+      [data-mode="light"] {
+        color-scheme: light;
+        --bg: oklch(97% 0.022 var(--hue));
+        --surface: oklch(99% 0.013 var(--hue));
+        --surface-raised: oklch(92% 0.025 var(--hue));
+        --border: oklch(85% 0.028 var(--hue));
+        --text: oklch(16% 0.063 var(--hue));
+        --text-dim: oklch(40% 0.04 var(--hue));
+        --queued: oklch(45% 0.18 250);
+        --running: oklch(45% 0.15 80);
+        --success: oklch(42% 0.15 155);
+        --failed: oklch(48% 0.18 25);
+        --timed-out: oklch(49% 0.18 40);
+        --neutral: oklch(45% 0.025 var(--hue));
+        --focus-ring: oklch(40% 0.2 250);
+        --halo-color: oklch(50% 0.15 80 / 0.5);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        line-height: var(--leading-normal);
+        font-size: var(--text-sm);
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        transition:
+          background var(--duration-normal) var(--ease-out-expo),
+          color var(--duration-normal) var(--ease-out-expo);
+      }
+
+      /* ===== Controls ===== */
+      .controls {
+        display: grid;
+        gap: 14px 22px;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .control {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .control-label {
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: var(--tracking-wide);
+        text-transform: uppercase;
+        color: var(--text-dim);
+      }
+
+      .seg {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 4px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .seg button {
+        appearance: none;
+        background: transparent;
+        color: var(--text-dim);
+        font: inherit;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 6px 10px;
+        border: 0;
+        border-radius: 5px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all var(--duration-fast) var(--ease-out-expo);
+      }
+      .seg button:hover { color: var(--text); }
+      .seg button[aria-pressed="true"] {
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: 0 1px 0 0 var(--border);
+      }
+
+      .btn {
+        appearance: none;
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 14px;
+        font: inherit;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: all var(--duration-fast) var(--ease-out-expo);
+        white-space: nowrap;
+      }
+      .btn:hover {
+        border-color: oklch(35% 0.05 var(--hue));
+        color: var(--text);
+      }
+      .btn:active { transform: translateY(1px); }
+
+      .hints {
+        grid-column: 1 / -1;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px 22px;
+        align-items: center;
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        letter-spacing: 0.02em;
+      }
+      .hints kbd {
+        font-family: var(--mono);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-size: var(--text-xs);
+      }
+
+      .reduced-motion-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--text-dim);
+        padding: 7px 0;
+        user-select: none;
+      }
+      .reduced-motion-label input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+
+      /* ===== Canvas ===== */
+      .canvas {
+        overflow: auto;
+        padding: 20px 24px;
+      }
+
+      .kanban {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        min-height: 0;
+      }
+
+      /* ===== Column ===== */
+      .kanban-column {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: var(--bg);
+        border-radius: 10px;
+        padding: 14px;
+        border: 1px solid var(--border);
+      }
+
+      .column-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .column-title {
+        font-size: var(--text-xs);
+        font-weight: 700;
+        letter-spacing: var(--tracking-wide);
+        text-transform: uppercase;
+        color: var(--text-dim);
+      }
+      .column-count {
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .cards {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      /* ===== Run card ===== */
+      .run-card {
+        position: relative;
+        padding: 10px 12px 10px 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        font-size: var(--text-sm);
+        line-height: var(--leading-tight);
+        overflow: hidden;
+        transition:
+          transform var(--duration-fast) var(--ease-out-expo),
+          box-shadow var(--duration-fast) var(--ease-out-expo),
+          border-color var(--duration-fast) var(--ease-out-expo);
+      }
+      .run-card:hover {
+        border-color: oklch(35% 0.05 var(--hue));
+        transform: translateY(-1px);
+      }
+      .run-card[data-status="InProgress"] {
+        animation: pulse-border 2s ease-in-out infinite;
+      }
+      @keyframes pulse-border {
+        0%, 100% { box-shadow: 0 0 0 0 transparent; }
+        50%       { box-shadow: 0 0 8px 2px var(--halo-color); }
+      }
+      .run-card::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--status-color);
+      }
+
+      /* The keyboard-activatable inner button (mirrors .run-card-activate in the real app) */
+      .run-card-activate {
+        appearance: none;
+        background: transparent;
+        border: none;
+        padding: 0;
+        margin: 0;
+        text-align: left;
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+        display: block;
+        width: 100%;
+        outline: none;
+      }
+      /* Focus ring on the inner button — visible when navigating with keyboard */
+      .run-card-activate:focus-visible {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+
+      .run-card-name {
+        font-size: var(--text-base);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin: 0 0 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .run-card-status-icon {
+        flex: 0 0 auto;
+        font-family: var(--mono);
+        font-size: 14px;
+        color: var(--status-color);
+        line-height: 1;
+      }
+      .run-card-title {
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .run-card-duration {
+        flex: 0 0 auto;
+        font-family: var(--mono);
+        font-size: var(--text-sm);
+        font-variant-numeric: tabular-nums;
+        color: var(--text-dim);
+      }
+      .run-card-meta {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .run-card-progress {
+        margin-top: 8px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--surface-raised);
+        overflow: hidden;
+      }
+      .run-card-progress-fill {
+        height: 100%;
+        background: var(--status-color);
+        transform-origin: left;
+        transition: transform var(--duration-slow) var(--ease-out-expo);
+      }
+
+      /* Compact density */
+      [data-density="compact"] .run-card {
+        padding: 5px 10px 5px 14px;
+      }
+      [data-density="compact"] .run-card-meta,
+      [data-density="compact"] .run-card-progress {
+        display: none;
+      }
+      [data-density="compact"] .run-card-name {
+        font-size: var(--text-sm);
+        margin: 0;
+      }
+
+      /* Focused card highlight (roving tabindex — whichever card has tabindex=0) */
+      .run-card-activate:focus {
+        /* The outline on :focus-visible already handles visible keyboard focus.
+           We also add a subtle border lift so the focused state reads without
+           relying solely on the outline color. */
+      }
+      .run-card:has(.run-card-activate:focus-visible) {
+        border-color: var(--focus-ring);
+        box-shadow: 0 0 0 1px var(--focus-ring);
+      }
+
+      /* ===== Focus debug overlay ===== */
+      .focus-debug {
+        position: absolute;
+        top: 4px;
+        right: 6px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-dim);
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      /* ===== Status bar ===== */
+      .status-bar {
+        padding: 10px 24px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        font-family: var(--mono);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        flex-wrap: wrap;
+      }
+      .status-item strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .status-item.nav-event {
+        margin-left: auto;
+        color: var(--accent);
+        transition: opacity var(--duration-slow);
+      }
+      .status-item.nav-event[data-dim="true"] {
+        opacity: 0.3;
+      }
+
+      /* ===== Reduced-motion simulation ===== */
+      [data-reduced-motion="true"] *,
+      [data-reduced-motion="true"] *::before,
+      [data-reduced-motion="true"] *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+
+      /* Respect OS-level preference too */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      /* ===== View transitions for "Simulate reorder" ===== */
+      /* When view transitions are supported, cards animate smoothly on reorder */
+      .run-card {
+        view-transition-name: none; /* set dynamically per-card */
+      }
+      @keyframes vt-slide-in {
+        from { opacity: 0; transform: translateY(-6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      /* Fallback: simple fade for no-VT browsers */
+      .cards-reordering .run-card {
+        animation: vt-slide-in var(--duration-normal) var(--ease-out-expo);
+      }
+
+      /* ===== Scrollbars ===== */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--surface-raised); border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+    </style>
+  </head>
+  <body>
+    <header class="controls" aria-label="Playground controls">
+      <div class="control">
+        <span class="control-label">Theme</span>
+        <div class="seg" role="group" aria-label="Theme">
+          <button data-control="theme" data-value="warm">Warm</button>
+          <button data-control="theme" data-value="radar" aria-pressed="true">Radar</button>
+          <button data-control="theme" data-value="violet">Violet</button>
+          <button data-control="theme" data-value="pink">Pink</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Mode</span>
+        <div class="seg" role="group" aria-label="Mode">
+          <button data-control="mode" data-value="dark" aria-pressed="true">Dark</button>
+          <button data-control="mode" data-value="light">Light</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Density</span>
+        <div class="seg" role="group" aria-label="Density">
+          <button data-control="density" data-value="comfortable" aria-pressed="true">Comfortable</button>
+          <button data-control="density" data-value="compact">Compact</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Column distribution</span>
+        <div class="seg" role="group" aria-label="Column distribution">
+          <button data-control="layout" data-value="symmetric" aria-pressed="true">4 / 4 / 4</button>
+          <button data-control="layout" data-value="asymmetric">8 / 3 / 1</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Simulate reorder</span>
+        <button class="btn" id="reorder-btn" type="button">Shuffle queued column</button>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Reduced motion</span>
+        <label class="reduced-motion-label">
+          <input type="checkbox" id="reduced-motion-toggle" />
+          Simulate prefers-reduced-motion
+        </label>
+      </div>
+
+      <div class="hints">
+        <span>Tab into kanban → first card focused</span>
+        <span><kbd>↑</kbd><kbd>↓</kbd> within column</span>
+        <span><kbd>←</kbd><kbd>→</kbd> between columns</span>
+        <span><kbd>Home</kbd><kbd>End</kbd> first / last in column</span>
+        <span>Modifier keys (Cmd / Ctrl / Shift / Alt) pass through — no nav</span>
+        <span>Asymmetric: ArrowRight from row 5 of Queued clamps to last row of In Progress</span>
+      </div>
+    </header>
+
+    <main class="canvas" aria-label="Kanban grid">
+      <div class="kanban" id="kanban" role="group" aria-label="Workflow runs">
+        <section class="kanban-column" aria-label="Queued">
+          <div class="column-header">
+            <span class="column-title">Queued</span>
+            <span class="column-count" id="count-queued">0</span>
+          </div>
+          <div class="cards" id="col-queued" role="list" aria-label="Queued runs"></div>
+        </section>
+        <section class="kanban-column" aria-label="In Progress">
+          <div class="column-header">
+            <span class="column-title">In Progress</span>
+            <span class="column-count" id="count-inprogress">0</span>
+          </div>
+          <div class="cards" id="col-inprogress" role="list" aria-label="In Progress runs"></div>
+        </section>
+        <section class="kanban-column" aria-label="Completed">
+          <div class="column-header">
+            <span class="column-title">Completed</span>
+            <span class="column-count" id="count-completed">0</span>
+          </div>
+          <div class="cards" id="col-completed" role="list" aria-label="Completed runs"></div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="status-bar" aria-label="Focus state">
+      <span class="status-item">Focus: <strong id="status-focus">none</strong></span>
+      <span class="status-item">Column: <strong id="status-col">—</strong></span>
+      <span class="status-item">Row: <strong id="status-row">—</strong></span>
+      <span class="status-item">tabindex=0: <strong id="status-tabindex">—</strong></span>
+      <span class="status-item nav-event" id="nav-event" data-dim="true">—</span>
+    </footer>
+
+    <script>
+      // ===== Sample data =====
+      // 12 runs total: symmetric = 4/4/4, asymmetric = 8/3/1.
+      // Each run has an `id` (number — JS doesn't have BigInt literals in older
+      // environments, so we keep plain numbers and use string comparison for data
+      // attributes), `status`, `title`, `branch`, `duration`, `progress`.
+
+      const STATUS_META = {
+        Queued:     { symbol: "◐", color: "var(--queued)" },
+        InProgress: { symbol: "▶", color: "var(--running)" },
+        Completed:  { symbol: "✓", color: "var(--success)" },
+        Failed:     { symbol: "✗", color: "var(--failed)" },
+        Cancelled:  { symbol: "⊘", color: "var(--cancelled)" },
+        TimedOut:   { symbol: "⏱", color: "var(--timed-out)" },
+      };
+
+      // Master flat list of all 12 runs, in display order (queued first, then
+      // inprogress, then completed). The layout toggle slices these into columns.
+      const ALL_RUNS = [
+        // ---- Queued (8) ----
+        { id: 1,  status: "Queued",     title: "feat: add roving-tabindex navigation",    branch: "feat/keyboard-nav",      duration: null, progress: 0 },
+        { id: 2,  status: "Queued",     title: "fix: restore focus on panel close",        branch: "fix/panel-close-focus",  duration: null, progress: 0 },
+        { id: 3,  status: "Queued",     title: "test: verify cross-column re-focus",       branch: "test/cross-col-focus",   duration: null, progress: 0 },
+        { id: 4,  status: "Queued",     title: "docs: add roving focus architecture doc",  branch: "docs/roving-focus",      duration: null, progress: 0 },
+        { id: 5,  status: "Queued",     title: "chore: upgrade Svelte to 5.3.0",           branch: "chore/svelte-upgrade",   duration: null, progress: 0 },
+        { id: 6,  status: "Queued",     title: "feat: pool filter pill in TopBar",         branch: "feat/pool-filter",       duration: null, progress: 0 },
+        { id: 7,  status: "Queued",     title: "feat: Cmd+K command palette",              branch: "feat/cmd-k-palette",     duration: null, progress: 0 },
+        { id: 8,  status: "Queued",     title: "refactor: consolidate animation tokens",   branch: "refactor/anim-tokens",   duration: null, progress: 0 },
+        // ---- In Progress (3) ----
+        { id: 9,  status: "InProgress", title: "CI · full matrix on push to main",        branch: "main",                   duration: "2:14", progress: 0.55 },
+        { id: 10, status: "InProgress", title: "Release v1.0.0",                           branch: "release/1.0.0",          duration: "5:38", progress: 0.78 },
+        { id: 11, status: "InProgress", title: "feat: run detail panel slide-over",        branch: "feat/run-detail-panel",  duration: "1:02", progress: 0.30 },
+        // ---- Completed (1) ----
+        { id: 12, status: "Completed",  title: "docs: add kanban keyboard nav design plan", branch: "docs/kbd-nav-plan",    duration: "0:48", progress: 1.0 },
+      ];
+
+      // ===== State =====
+      const state = {
+        theme: "radar",
+        mode: "dark",
+        density: "comfortable",
+        layout: "symmetric",       // "symmetric" | "asymmetric"
+        currentFocusId: null,      // number | null
+        kanbanHasFocus: false,
+        reducedMotion: false,
+      };
+
+      // ===== Column slicing =====
+      // Returns [queuedRuns, inProgressRuns, completedRuns] based on layout.
+      function getColumns() {
+        const queued     = ALL_RUNS.filter((r) => r.status === "Queued");
+        const inprogress = ALL_RUNS.filter((r) => r.status === "InProgress");
+        const completed  = ALL_RUNS.filter((r) => r.status === "Completed");
+
+        if (state.layout === "asymmetric") {
+          // 8 / 3 / 1 — pad shorter columns by repeating runs cyclically if
+          // the master data has fewer, but here data matches exactly.
+          return [queued, inprogress, completed];
+        }
+        // Symmetric: each column gets 4.
+        // Queued has 8, so take first 4; completed has 1, pad with 3 more from
+        // finished builds.
+        const extra = [
+          { id: 13, status: "Completed", title: "chore: migrate CI to ubuntu-24.04", branch: "chore/ci-ubuntu", duration: "1:12", progress: 1.0 },
+          { id: 14, status: "Completed", title: "fix: WCAG contrast for timed-out token", branch: "fix/wcag-timed-out", duration: "0:32", progress: 1.0 },
+          { id: 15, status: "Completed", title: "test: geometry.ts unit suite", branch: "test/geometry", duration: "0:22", progress: 1.0 },
+        ];
+        return [
+          queued.slice(0, 4),
+          inprogress.slice(0, 4),   // inprogress only has 3; KanbanColumn is fine with 3
+          [completed[0], ...extra],
+        ];
+      }
+
+      // ===== Inline geometry (mirrors geometry.ts — plain JS over id numbers) =====
+
+      function locate(runId, columns) {
+        if (runId === null) return null;
+        for (let col = 0; col < 3; col++) {
+          const column = columns[col];
+          for (let row = 0; row < column.length; row++) {
+            if (column[row] && column[row].id === runId) {
+              return { col, row };
+            }
+          }
+        }
+        return null;
+      }
+
+      function nextNonEmptyColumn(from, dir, columns) {
+        let c = from + dir;
+        while (c >= 0 && c <= 2) {
+          if (columns[c].length > 0) return c;
+          c += dir;
+        }
+        return null;
+      }
+
+      function clampRow(targetCol, desiredRow, columns) {
+        const max = columns[targetCol].length - 1;
+        if (desiredRow < 0) return 0;
+        if (desiredRow > max) return max;
+        return desiredRow;
+      }
+
+      function runIdAt(pos, columns) {
+        return (columns[pos.col][pos.row] && columns[pos.col][pos.row].id) ?? null;
+      }
+
+      /**
+       * resolveTarget — equivalent to geometry.ts resolveTarget.
+       * Returns the target run id after applying the arrow key, or null.
+       * Returns the SAME id for no-op edges.
+       */
+      function resolveTarget(currentRunId, key, columns) {
+        // Null-current fallback: return the first card of the first non-empty column.
+        if (currentRunId === null) {
+          for (let col = 0; col < 3; col++) {
+            const first = columns[col][0];
+            if (first !== undefined) return first.id;
+          }
+          return null;
+        }
+
+        // Eviction: run not found in columns.
+        const pos = locate(currentRunId, columns);
+        if (pos === null) return null;
+
+        switch (key) {
+          case "ArrowDown": {
+            const newRow = pos.row + 1;
+            if (newRow >= columns[pos.col].length) return currentRunId; // no-op at last row
+            return runIdAt({ col: pos.col, row: newRow }, columns);
+          }
+          case "ArrowUp": {
+            if (pos.row === 0) return currentRunId; // no-op at first row
+            return runIdAt({ col: pos.col, row: pos.row - 1 }, columns);
+          }
+          case "ArrowRight": {
+            const targetCol = nextNonEmptyColumn(pos.col, 1, columns);
+            if (targetCol === null) return currentRunId; // no-op at rightmost
+            const row = clampRow(targetCol, pos.row, columns);
+            return runIdAt({ col: targetCol, row }, columns);
+          }
+          case "ArrowLeft": {
+            const targetCol = nextNonEmptyColumn(pos.col, -1, columns);
+            if (targetCol === null) return currentRunId; // no-op at leftmost
+            const row = clampRow(targetCol, pos.row, columns);
+            return runIdAt({ col: targetCol, row }, columns);
+          }
+          case "Home": {
+            if (pos.row === 0) return currentRunId;
+            return runIdAt({ col: pos.col, row: 0 }, columns);
+          }
+          case "End": {
+            const lastRow = columns[pos.col].length - 1;
+            if (pos.row === lastRow) return currentRunId;
+            return runIdAt({ col: pos.col, row: lastRow }, columns);
+          }
+        }
+        return currentRunId;
+      }
+
+      // ===== Render helpers =====
+      function escape(s) {
+        return String(s).replace(/[&<>"]/g, (c) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+        }[c]));
+      }
+
+      // ===== Card rendering =====
+      function renderCard(run, tabindex) {
+        const s = STATUS_META[run.status] || STATUS_META.Queued;
+        const showProgress =
+          run.status === "InProgress" || run.status === "Completed" || run.status === "Failed";
+        return `
+          <article
+            class="run-card"
+            data-run-id="${run.id}"
+            data-status="${escape(run.status)}"
+            role="listitem"
+            style="--status-color: ${s.color}; view-transition-name: run-card-${run.id}">
+            <button
+              class="run-card-activate"
+              tabindex="${tabindex}"
+              data-run-id="${run.id}"
+              aria-label="${escape(run.title)} · ${escape(run.status)}">
+              <h3 class="run-card-name">
+                <span class="run-card-status-icon" aria-hidden="true">${s.symbol}</span>
+                <span class="run-card-title">${escape(run.title)}</span>
+                ${run.duration ? `<span class="run-card-duration">${run.duration}</span>` : ""}
+              </h3>
+              <div class="run-card-meta">bojanrajkovic/atc · ${escape(run.branch)}</div>
+              ${showProgress ? `
+                <div class="run-card-progress" role="progressbar"
+                     aria-valuenow="${Math.round(run.progress * 100)}"
+                     aria-valuemax="100"
+                     aria-valuetext="${Math.round(run.progress * 100)}% complete">
+                  <div class="run-card-progress-fill" style="transform: scaleX(${run.progress})"></div>
+                </div>` : ""}
+            </button>
+          </article>
+        `;
+      }
+
+      // ===== Full render =====
+      function render() {
+        // Apply theme/mode/density to <html>
+        const html = document.documentElement;
+        html.setAttribute("data-theme", state.theme);
+        html.setAttribute("data-mode", state.mode);
+        html.setAttribute("data-density", state.density);
+        if (state.reducedMotion) {
+          html.setAttribute("data-reduced-motion", "true");
+        } else {
+          html.removeAttribute("data-reduced-motion");
+        }
+
+        // Update segmented button pressed states
+        document.querySelectorAll("[data-control]").forEach((btn) => {
+          const ctrl = btn.dataset.control;
+          const val = btn.dataset.value;
+          btn.setAttribute("aria-pressed", state[ctrl] === val ? "true" : "false");
+        });
+
+        // Slice columns
+        const columns = getColumns();
+
+        // Render each column
+        const colIds = ["col-queued", "col-inprogress", "col-completed"];
+        const countIds = ["count-queued", "count-inprogress", "count-completed"];
+        const colNames = ["queued", "inprogress", "completed"];
+
+        // Determine initial focus id if currentFocusId is not in columns
+        let focusId = state.currentFocusId;
+        if (focusId !== null && locate(focusId, columns) === null) {
+          // Evicted — fall back to first card
+          focusId = resolveTarget(null, "ArrowDown", columns);
+          state.currentFocusId = focusId;
+        }
+        if (focusId === null && state.kanbanHasFocus) {
+          focusId = resolveTarget(null, "ArrowDown", columns);
+          state.currentFocusId = focusId;
+        }
+
+        for (let c = 0; c < 3; c++) {
+          const col = columns[c];
+          document.getElementById(countIds[c]).textContent = String(col.length);
+          document.getElementById(colIds[c]).innerHTML = col
+            .map((run) => {
+              const tabindex = (run.id === focusId) ? 0 : -1;
+              return renderCard(run, tabindex);
+            })
+            .join("");
+        }
+
+        // Update status bar
+        updateStatus(columns);
+      }
+
+      // ===== Status bar =====
+      function updateStatus(columns) {
+        const focusId = state.currentFocusId;
+        const pos = locate(focusId, columns);
+
+        const colName = pos !== null
+          ? (["Queued", "In Progress", "Completed"][pos.col] || "—")
+          : "—";
+        const rowStr = pos !== null ? String(pos.row + 1) + " / " + String(columns[pos.col].length) : "—";
+
+        document.getElementById("status-focus").textContent =
+          focusId !== null ? "run #" + focusId : "none";
+        document.getElementById("status-col").textContent = colName;
+        document.getElementById("status-row").textContent = rowStr;
+        document.getElementById("status-tabindex").textContent =
+          focusId !== null ? "[data-run-id='" + focusId + "']" : "none";
+      }
+
+      // ===== Nav event flash =====
+      let navEventTimer = null;
+      function flashNavEvent(msg) {
+        const el = document.getElementById("nav-event");
+        el.textContent = msg;
+        el.setAttribute("data-dim", "false");
+        clearTimeout(navEventTimer);
+        navEventTimer = setTimeout(() => {
+          el.setAttribute("data-dim", "true");
+        }, 1200);
+      }
+
+      // ===== Focus a card by id (call .focus() on the button) =====
+      function focusCard(id) {
+        if (id === null) return;
+        const btn = document.querySelector(`.run-card-activate[data-run-id="${id}"]`);
+        if (btn) btn.focus();
+      }
+
+      // ===== Arrow key handler =====
+      const NAV_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]);
+
+      document.getElementById("kanban").addEventListener("keydown", (e) => {
+        if (!NAV_KEYS.has(e.key)) return;
+
+        // Modifier guard: Cmd / Ctrl / Shift / Alt pass through (AC4.1).
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+
+        // Claim the event — prevent scroll even on no-op edges (AC2.7).
+        e.preventDefault();
+
+        const columns = getColumns();
+        const targetId = resolveTarget(state.currentFocusId, e.key, columns);
+
+        if (targetId === null) return;
+
+        const moved = targetId !== state.currentFocusId;
+        state.currentFocusId = targetId;
+        state.kanbanHasFocus = true;
+
+        if (moved) {
+          const pos = locate(targetId, columns);
+          const colName = pos !== null ? ["Queued", "In Progress", "Completed"][pos.col] : "?";
+          const rowNum = pos !== null ? pos.row + 1 : "?";
+          flashNavEvent(`${e.key} → run #${targetId} · ${colName} row ${rowNum}`);
+        } else {
+          flashNavEvent(`${e.key} → no-op (edge)`);
+        }
+
+        // Re-render to update tabindex values, then focus the target button.
+        render();
+        // Focus must happen after render (tabindex="0" must be set first).
+        focusCard(targetId);
+      });
+
+      // ===== focusin / focusout on kanban grid =====
+      document.getElementById("kanban").addEventListener("focusin", (e) => {
+        const btn = e.target.closest(".run-card-activate");
+        if (!btn) return;
+        const id = Number(btn.dataset.runId);
+        state.currentFocusId = id;
+        state.kanbanHasFocus = true;
+        // Update tabindex on all siblings without a full re-render (avoids focus loss).
+        document.querySelectorAll(".run-card-activate").forEach((b) => {
+          b.setAttribute("tabindex", Number(b.dataset.runId) === id ? "0" : "-1");
+        });
+        updateStatus(getColumns());
+      });
+
+      document.getElementById("kanban").addEventListener("focusout", (e) => {
+        // If focus moves outside the kanban entirely, clear kanbanHasFocus.
+        const kanban = document.getElementById("kanban");
+        if (!kanban.contains(e.relatedTarget)) {
+          state.kanbanHasFocus = false;
+          updateStatus(getColumns());
+        }
+      });
+
+      // ===== Control picker clicks =====
+      document.addEventListener("click", (e) => {
+        const ctrl = e.target.closest("[data-control]");
+        if (!ctrl) return;
+        const key = ctrl.dataset.control;
+        const val = ctrl.dataset.value;
+        state[key] = val;
+        render();
+        // After layout toggle, re-focus the current card if kanban still had focus.
+        if (key === "layout" && state.kanbanHasFocus && state.currentFocusId !== null) {
+          focusCard(state.currentFocusId);
+        }
+      });
+
+      // ===== Simulate reorder button =====
+      // Shuffles the queued column using Fisher-Yates and re-renders.
+      // Uses View Transitions API when available for a smooth positional animation.
+      document.getElementById("reorder-btn").addEventListener("click", () => {
+        const queued = ALL_RUNS.filter((r) => r.status === "Queued");
+        // Fisher-Yates in-place shuffle of the queued slice inside ALL_RUNS.
+        const qStart = ALL_RUNS.findIndex((r) => r.status === "Queued");
+        const qEnd = qStart + queued.length;
+        for (let i = qEnd - 1; i > qStart; i--) {
+          const j = qStart + Math.floor(Math.random() * (i - qStart + 1));
+          [ALL_RUNS[i], ALL_RUNS[j]] = [ALL_RUNS[j], ALL_RUNS[i]];
+        }
+
+        if ("startViewTransition" in document && !state.reducedMotion) {
+          document.startViewTransition(() => render());
+        } else {
+          // Fallback: add a transient class that triggers the CSS fade-in keyframe.
+          const colEl = document.getElementById("col-queued");
+          colEl.classList.add("cards-reordering");
+          render();
+          setTimeout(() => colEl.classList.remove("cards-reordering"), 400);
+        }
+
+        // Keep focus on the current card after shuffle.
+        if (state.kanbanHasFocus && state.currentFocusId !== null) {
+          // focusCard in rAF to let View Transition settle first.
+          requestAnimationFrame(() => focusCard(state.currentFocusId));
+        }
+
+        flashNavEvent("Reordered queued column");
+      });
+
+      // ===== Reduced-motion toggle =====
+      document.getElementById("reduced-motion-toggle").addEventListener("change", (e) => {
+        state.reducedMotion = e.target.checked;
+        const html = document.documentElement;
+        if (state.reducedMotion) {
+          html.setAttribute("data-reduced-motion", "true");
+        } else {
+          html.removeAttribute("data-reduced-motion");
+        }
+      });
+
+      // ===== Initial render =====
+      // Set initial focusId to null — Tab will land on the first tabindex=0 card.
+      // The roving tabindex invariant: exactly one .run-card-activate has tabindex=0.
+      // On first render with currentFocusId=null we set the first card to tabindex=0.
+      (function init() {
+        const columns = getColumns();
+        const firstId = resolveTarget(null, "ArrowDown", columns);
+        state.currentFocusId = firstId;
+        render();
+      })();
+    </script>
+  </body>
+</html>

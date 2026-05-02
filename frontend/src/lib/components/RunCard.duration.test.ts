@@ -6,7 +6,7 @@ import type { JobStats } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 
-import RunCard from './RunCard.svelte'
+import RunCardHarness from './test-utils/RunCard.test-harness.svelte'
 
 /**
  * AC12.7 — the static-Completed branch of RunCard's durationText $derived
@@ -52,7 +52,9 @@ describe('RunCard — AC12.7 static-Completed derivation does not re-evaluate on
       updatedAt: '2026-04-17T09:02:14Z',
     })
 
-    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    const { container } = render(RunCardHarness, {
+      props: { cards: [{ run, jobStats: emptyJobStats }] },
+    })
     await tick()
 
     const durationEl = container.querySelector('.run-card-duration')
@@ -82,7 +84,9 @@ describe('RunCard — AC12.7 static-Completed derivation does not re-evaluate on
       runStartedAt: '2026-04-17T09:58:00Z',
     })
 
-    const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+    const { container } = render(RunCardHarness, {
+      props: { cards: [{ run, jobStats: emptyJobStats }] },
+    })
     await tick()
 
     const durationEl = container.querySelector('.run-card-duration')

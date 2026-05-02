@@ -7,7 +7,7 @@ import { uiStore } from '$lib/stores/ui.svelte'
 import { createMockRunEvent } from '$lib/test-utils/factories'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 
-import KanbanBoard from './KanbanBoard.svelte'
+import KanbanBoardHarness from './test-utils/KanbanBoard.test-harness.svelte'
 
 function queuedJob(jobId: bigint, runId: bigint, name: string): JobEventEnvelope {
   return {
@@ -82,7 +82,7 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     runStore.applyJobEvent(queuedJob(2n, 42n, 'test'))
     runStore.applyJobEvent(queuedJob(3n, 42n, 'deploy'))
 
-    render(KanbanBoard)
+    render(KanbanBoardHarness)
 
     expect(screen.getByText('Jobs 1 of 3')).toBeTruthy()
   })
@@ -99,7 +99,7 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     runStore.applyJobEvent(queuedJob(1n, 7n, 'build'))
     runStore.applyJobEvent(queuedJob(2n, 7n, 'test'))
 
-    render(KanbanBoard)
+    render(KanbanBoardHarness)
 
     // Initial state: 0 of 2 jobs complete.
     expect(screen.getByText('Jobs 0 of 2')).toBeTruthy()
@@ -116,7 +116,7 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
   })
 
   it('AC3.4: subscriber re-renders when applyRunEvent adds a new run mid-lifecycle', async () => {
-    render(KanbanBoard)
+    render(KanbanBoardHarness)
 
     // Connected + zero runs → empty state.
     expect(screen.getByText('No workflows yet.')).toBeTruthy()
