@@ -32,6 +32,10 @@ const ARROW_KEYS = new Set<string>([
   'End',
 ])
 
+function isArrowKey(k: string): k is ArrowKey {
+  return ARROW_KEYS.has(k)
+}
+
 // ---------------------------------------------------------------------------
 // roving() — Svelte 5 action
 // ---------------------------------------------------------------------------
@@ -111,15 +115,12 @@ export function roving(node: HTMLElement, ctx: RovingFocusContext): { destroy():
     const key = event.key
 
     // Non-arrow/home/end key — not our concern.
-    if (!ARROW_KEYS.has(key)) {
+    if (!isArrowKey(key)) {
       return
     }
 
-    // At this point key is narrowed to the claimed set.
-    const arrowKey = key as ArrowKey
-
     const columns = columnsSnapshot()
-    const resolved = resolveTarget(ctx.currentFocusRunId, arrowKey, columns)
+    const resolved = resolveTarget(ctx.currentFocusRunId, key, columns)
 
     // Always preventDefault for claimed keys — suppresses browser-default
     // scrolling even on no-op edges (AC2.7).

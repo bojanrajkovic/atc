@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createMockRun } from '$lib/test-utils/factories'
 import { roving } from './action'
-import type { RovingFocusContext } from './context'
 
 // ---------------------------------------------------------------------------
 // runStore mock — must come before any import that transitively loads the store
@@ -32,12 +31,7 @@ vi.mock('$lib/stores/runs.svelte', () => ({
 // Mock context factory
 // ---------------------------------------------------------------------------
 
-function makeMockContext(): RovingFocusContext & {
-  _setFocusCalls: (bigint | null)[]
-  _setKanbanHasFocusCalls: boolean[]
-} {
-  const _setFocusCalls: (bigint | null)[] = []
-  const _setKanbanHasFocusCalls: boolean[] = []
+function makeMockContext() {
   let focusedRunId: bigint | null = null
   let kanbanHasFocus = false
 
@@ -52,19 +46,15 @@ function makeMockContext(): RovingFocusContext & {
     get kanbanHasFocus() {
       return kanbanHasFocus
     },
-    setFocus(id) {
+    setFocus: vi.fn((id: bigint | null) => {
       focusedRunId = id
-      _setFocusCalls.push(id)
-    },
-    setKanbanHasFocus(v) {
+    }),
+    setKanbanHasFocus: vi.fn((v: boolean) => {
       kanbanHasFocus = v
-      _setKanbanHasFocusCalls.push(v)
-    },
+    }),
     restoreFocusToInitial() {
       /* no-op for this layer */
     },
-    _setFocusCalls,
-    _setKanbanHasFocusCalls,
   }
 }
 
@@ -164,8 +154,8 @@ describe('focusin', () => {
     const ev = new FocusEvent('focusin', { bubbles: true })
     btn1.dispatchEvent(ev)
 
-    expect(ctx._setKanbanHasFocusCalls).toEqual([true])
-    expect(ctx._setFocusCalls).toEqual([100n])
+    expect(ctx.setKanbanHasFocus).toHaveBeenCalledWith(true)
+    expect(ctx.setFocus).toHaveBeenCalledWith(100n)
   })
 
   it('sets kanbanHasFocus(true) but does NOT call setFocus when focusin hits a non-card-activate descendant', () => {
@@ -173,8 +163,8 @@ describe('focusin', () => {
     const ev = new FocusEvent('focusin', { bubbles: true })
     nonCard.dispatchEvent(ev)
 
-    expect(ctx._setKanbanHasFocusCalls).toEqual([true])
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setKanbanHasFocus).toHaveBeenCalledWith(true)
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('parses data-run-id from the closest [data-run-id] ancestor of the .run-card-activate element', () => {
@@ -182,7 +172,7 @@ describe('focusin', () => {
     const ev = new FocusEvent('focusin', { bubbles: true })
     btn2.dispatchEvent(ev)
 
-    expect(ctx._setFocusCalls).toEqual([200n])
+    expect(ctx.setFocus).toHaveBeenCalledWith(200n)
   })
 
   it('does not throw and does not call setFocus when data-run-id is malformed', () => {
@@ -200,9 +190,9 @@ describe('focusin', () => {
       badBtn.dispatchEvent(ev)
     }).not.toThrow()
 
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
     // kanbanHasFocus IS set even on malformed id (focusin always sets it)
-    expect(ctx._setKanbanHasFocusCalls).toEqual([true])
+    expect(ctx.setKanbanHasFocus).toHaveBeenCalledWith(true)
   })
 })
 
@@ -224,7 +214,7 @@ describe('focusout', () => {
     ctx = makeMockContext()
     // Seed kanbanHasFocus as true (as if a prior focusin happened)
     ctx.setKanbanHasFocus(true)
-    ctx._setKanbanHasFocusCalls.length = 0 // reset spy after seeding
+    ctx.setKanbanHasFocus.mockClear() // reset spy after seeding
   })
 
   afterEach(() => {
@@ -239,7 +229,7 @@ describe('focusout', () => {
     })
     kanban.dispatchEvent(ev)
 
-    expect(ctx._setKanbanHasFocusCalls).toEqual([false])
+    expect(ctx.setKanbanHasFocus).toHaveBeenCalledWith(false)
   })
 
   it('sets kanbanHasFocus(false) when relatedTarget is null', () => {
@@ -250,7 +240,7 @@ describe('focusout', () => {
     })
     kanban.dispatchEvent(ev)
 
-    expect(ctx._setKanbanHasFocusCalls).toEqual([false])
+    expect(ctx.setKanbanHasFocus).toHaveBeenCalledWith(false)
   })
 
   it('does NOT call setKanbanHasFocus when focus moves to another element inside the node', () => {
@@ -261,7 +251,7 @@ describe('focusout', () => {
     })
     kanban.dispatchEvent(ev)
 
-    expect(ctx._setKanbanHasFocusCalls).toEqual([])
+    expect(ctx.setKanbanHasFocus).not.toHaveBeenCalled()
   })
 })
 
@@ -305,7 +295,7 @@ describe('keydown', () => {
 
     // Set current focus to first queued card
     ctx.setFocus(100n)
-    ctx._setFocusCalls.length = 0
+    ctx.setFocus.mockClear()
 
     roving(kanban, ctx)
 
@@ -313,7 +303,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(true) // AC2.7
-    expect(ctx._setFocusCalls).toEqual([101n])
+    expect(ctx.setFocus).toHaveBeenCalledWith(101n)
   })
 
   it('calls preventDefault but NOT setFocus when ArrowDown is a no-op (last row of column) (AC2.7)', () => {
@@ -323,7 +313,7 @@ describe('keydown', () => {
     mockCompleted = []
 
     ctx.setFocus(100n)
-    ctx._setFocusCalls.length = 0
+    ctx.setFocus.mockClear()
 
     roving(kanban, ctx)
 
@@ -331,7 +321,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(true)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('returns immediately without preventDefault when metaKey is true (AC4.1)', () => {
@@ -346,7 +336,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(false)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('returns immediately without preventDefault when ctrlKey is true (AC4.1)', () => {
@@ -361,7 +351,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(false)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('returns immediately without preventDefault when altKey is true (AC4.1)', () => {
@@ -376,7 +366,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(false)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('returns immediately without preventDefault when shiftKey is true (AC4.1)', () => {
@@ -391,7 +381,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(false)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('returns immediately without preventDefault when key is not an arrow key', () => {
@@ -405,13 +395,13 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(false)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
   it('calls setFocus for ArrowRight when crossing to non-empty next column', () => {
     // queued[100n], inProgress[200n] — ArrowRight from queued goes to inProgress
     ctx.setFocus(100n)
-    ctx._setFocusCalls.length = 0
+    ctx.setFocus.mockClear()
 
     roving(kanban, ctx)
 
@@ -423,7 +413,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(true)
-    expect(ctx._setFocusCalls).toEqual([200n])
+    expect(ctx.setFocus).toHaveBeenCalledWith(200n)
   })
 
   it('calls preventDefault but NOT setFocus for ArrowRight when already in rightmost non-empty column', () => {
@@ -432,7 +422,7 @@ describe('keydown', () => {
     mockCompleted = [createMockRun({ id: 300n, status: 'Completed' })]
 
     ctx.setFocus(300n)
-    ctx._setFocusCalls.length = 0
+    ctx.setFocus.mockClear()
 
     roving(kanban, ctx)
 
@@ -444,7 +434,7 @@ describe('keydown', () => {
     kanban.dispatchEvent(ev)
 
     expect(ev.defaultPrevented).toBe(true)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 })
 
@@ -481,8 +471,8 @@ describe('destroy', () => {
     // focusin after destroy — no calls
     const focusinEv = new FocusEvent('focusin', { bubbles: true })
     btn1.dispatchEvent(focusinEv)
-    expect(ctx._setKanbanHasFocusCalls).toEqual([])
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setKanbanHasFocus).not.toHaveBeenCalled()
+    expect(ctx.setFocus).not.toHaveBeenCalled()
 
     // keydown after destroy — no calls
     const keydownEv = new KeyboardEvent('keydown', {
@@ -491,6 +481,6 @@ describe('destroy', () => {
       bubbles: true,
     })
     kanban.dispatchEvent(keydownEv)
-    expect(ctx._setFocusCalls).toEqual([])
+    expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 })

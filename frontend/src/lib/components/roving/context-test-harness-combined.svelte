@@ -12,6 +12,8 @@
 
   let { ctx, onResult }: { ctx: RovingFocusContext; onResult: (r: GetResult) => void } = $props()
 
+  // eslint-disable-next-line svelte/no-unused-svelte-ignore
+  // svelte-ignore state_referenced_locally -- init-time read is intentional in this test harness
   setRovingContext(ctx)
 </script>
 
