@@ -14,6 +14,7 @@ export default defineConfig({
   test: {
     name: 'unit',
     environment: 'jsdom',
+    pool: 'threads',
     setupFiles: ['./vitest.setup.unit.ts'],
     include: ['src/**/*.test.ts'],
     exclude: ['src/**/*.browser.test.ts', 'e2e/**'],
