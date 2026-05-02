@@ -1,3 +1,4 @@
+import { liveRegion } from '$lib/aria/live-region.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runnerStore } from '$lib/stores/runners.svelte'
@@ -108,6 +109,9 @@ export class ConnectionManager {
       this.snapshotSeq = snapshot.seq
 
       // Step 6: Flush buffered events, discarding stale ones
+      // Detach any prior setOnFlush callback so buffered-replay events do not
+      // produce announcements (AC6.7: reconnect silence during buffered drain).
+      eventDispatcher.setOnFlush(null)
       for (const buffered of this.preConnectBuffer) {
         if (buffered.seq >= this.snapshotSeq) {
           eventDispatcher.dispatch(buffered)
@@ -115,6 +119,9 @@ export class ConnectionManager {
       }
       this.preConnectBuffer = []
       eventDispatcher.flush()
+      // Step 6b: Wire the live-region callback AFTER the buffered drain so only
+      // subsequent live events produce announcements (AC6.7 deferred wiring).
+      eventDispatcher.setOnFlush((events) => liveRegion.observeFlush(events))
       this.connected = true
 
       // Step 7: Transition to connected
@@ -137,6 +144,9 @@ export class ConnectionManager {
   private handleDisconnect(): void {
     this.connected = false
     this.ws = null
+    // Detach the live-region callback on disconnect so the next reconnect cycle
+    // (snapshot + buffered-drain) runs silently until re-wired (AC6.7).
+    eventDispatcher.setOnFlush(null)
     connectionStore.status = 'reconnecting'
 
     // Exponential backoff: 1s, 2s, 4s, 8s, ..., capped at 30s
