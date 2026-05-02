@@ -31,9 +31,8 @@ PatternFly recommends a column-based grid that collapses progressively:
 - **Desktop (>1200px):** 3-column kanban with full runner bar
 - **Tablet (768-1200px):** 3-column kanban with condensed runner bar (icons + counts, no labels)
 - **Mobile (<768px):** Stacked single-column with tab navigation between Queued/Running/Completed
-- **Wall display:** Same as desktop but with larger type scale and compact card mode for density
 
-For ATC, the primary use case is desktop monitoring, with wall display as secondary. Mobile is deprioritized but should degrade gracefully.
+For ATC, the primary use case is desktop monitoring. Mobile is deprioritized but should degrade gracefully.
 
 ---
 
@@ -183,7 +182,7 @@ Smashing Magazine's recommendations for real-time dashboard animations:
 - Keep animations under 400ms for real-time updates
 - Use `cubic-bezier(0.16, 1, 0.3, 1)` (ease-out-expo) for natural motion — the ATC prototype already uses this
 - Respect `prefers-reduced-motion` — degrade to instant state changes
-- Running cards' pulsating halo is functional (visible across room on wall display), not decorative
+- Running cards' pulsating halo is functional (high-contrast motion signal for glance-readability), not decorative
 
 ### FLIP Animation for Column Transitions
 

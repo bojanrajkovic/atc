@@ -116,7 +116,7 @@ Resolved before implementation:
    Use something more meaningful or drop the icon entirely (the monospace runner
    name is already visually distinct).
 
-7. **Test `⊘` vs `◐` symbols at wall-display distance** — cancelled and queued
+7. **Test `⊘` vs `◐` symbols at small sizes** — cancelled and queued
    symbols may be confused at small sizes. Consider more distinct glyphs if
    testing confirms this.
 
@@ -131,7 +131,7 @@ Resolved before implementation:
 
 10. **Thicker left accent bar** — increase from 3px to 4–5px so it reads as a
     deliberate color indicator rather than a border artifact. Valuable for
-    at-a-glance state, especially on wall displays. Keep it.
+    at-a-glance state. Keep it.
 
 **Explicitly not goals for v1:**
 - System-wide "all green" vs "something red" color shift (Concourse-style).
