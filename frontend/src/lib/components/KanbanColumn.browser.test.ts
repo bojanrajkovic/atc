@@ -5,6 +5,16 @@ import { createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
+// Mock svelte/motion so prefersReducedMotion.current is true for all tests.
+// This must be at file scope so vi.mock() hoisting ensures kanban-transitions.ts
+// reads the mocked value when it is first imported. The animation tests below
+// remain valid because they check DOM structure (card identity, cross-column
+// movement), not timing — and all rely on a setTimeout(≥350ms) that is more
+// than enough with DURATION_MOVE=0.
+vi.mock('svelte/motion', () => ({
+  prefersReducedMotion: { current: true },
+}))
+
 // These browser tests exercise animation/FLIP/crossfade behavior — they don't care
 // about roving tabindex focus management. Stub getRovingContext with a static
 // no-focus context so RunCard mounts without requiring a provider in the test tree.
@@ -279,26 +289,25 @@ describe('KanbanColumn (browser mode)', () => {
   })
 
   describe('kanban-board.AC6.3 & AC6.4: Animations respect prefers-reduced-motion', () => {
+    // The vi.mock('svelte/motion', ...) at the top of this file ensures
+    // prefersReducedMotion.current === true when kanban-transitions.ts is
+    // first imported, so DURATION_MOVE/ARRIVE/REMOVE are all 0.
+
+    it('AC6.3: DURATION_MOVE is 0 under reduced motion (mock binds before module import)', async () => {
+      // Import after the file-scope mock has taken effect. kanban-transitions.ts
+      // reads prefersReducedMotion.current at module-top; the vi.mock hoist ensures
+      // the mocked value is visible at that import time.
+      const { DURATION_MOVE, DURATION_ARRIVE, DURATION_REMOVE } = await import(
+        '$lib/animations/kanban-transitions'
+      )
+
+      // All duration constants must be 0 under reduced motion
+      expect(DURATION_MOVE).toBe(0)
+      expect(DURATION_ARRIVE).toBe(0)
+      expect(DURATION_REMOVE).toBe(0)
+    })
+
     it('AC6.3: cross-column movement completes without animation delay under reduced motion', async () => {
-      // Clear module cache FIRST so KanbanColumn and kanban-transitions are imported fresh
-      vi.resetModules()
-
-      // Mock window.matchMedia BEFORE importing modules
-      // This allows kanban-transitions.ts to see reduced motion and set DURATION_MOVE = 0
-      // when the module is imported by KanbanColumn
-      window.matchMedia = ((query: string) => ({
-        matches: query === '(prefers-reduced-motion: reduce)',
-        media: query,
-        onchange: null,
-        addListener: () => undefined,
-        removeListener: () => undefined,
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-        dispatchEvent: () => true,
-      })) as unknown as typeof window.matchMedia
-
-      // Import KanbanColumn AFTER resetting modules and mocking matchMedia
-      // This ensures kanban-transitions reads the mocked reduced-motion state
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
       let runsA: readonly WorkflowRun[] = [createMockRun({ id: 100n })]
@@ -354,11 +363,9 @@ describe('KanbanColumn (browser mode)', () => {
         jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
-      // Wait for the transition to complete
-      // Note: In browser mode, vi.resetModules() doesn't properly clear module caches for ES6 modules,
-      // so the matchMedia mock may not affect the already-loaded kanban-transitions module.
-      // We still test the observable behavior: that animations work correctly and cards transition between columns.
-      await new Promise((r) => setTimeout(r, 500))
+      // With DURATION_MOVE=0, crossfade completes in a single frame. A short
+      // settle is still needed for the Svelte reconciler to process transitions.
+      await new Promise((r) => setTimeout(r, 50))
 
       // Verify cross-column transition completed: card removed from source, appears in destination
       expect(containerA.querySelector('[data-run-id="100"]')).toBeFalsy()
@@ -366,25 +373,6 @@ describe('KanbanColumn (browser mode)', () => {
     })
 
     it('AC6.4: within-column reorder completes instantly under reduced motion', async () => {
-      // Clear module cache FIRST so KanbanColumn and kanban-transitions are imported fresh
-      vi.resetModules()
-
-      // Mock window.matchMedia BEFORE importing modules
-      // This allows kanban-transitions.ts to see reduced motion and set DURATION_MOVE = 0
-      // when the module is imported by KanbanColumn
-      window.matchMedia = ((query: string) => ({
-        matches: query === '(prefers-reduced-motion: reduce)',
-        media: query,
-        onchange: null,
-        addListener: () => undefined,
-        removeListener: () => undefined,
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-        dispatchEvent: () => true,
-      })) as unknown as typeof window.matchMedia
-
-      // Import KanbanColumn AFTER resetting modules and mocking matchMedia
-      // This ensures kanban-transitions reads the mocked reduced-motion state
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
       let runs: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
@@ -416,13 +404,11 @@ describe('KanbanColumn (browser mode)', () => {
         jobsByRunId: new Map<bigint, readonly Job[]>(),
       })
 
-      // Wait for the reorder to complete
-      // Note: In browser mode, vi.resetModules() doesn't properly clear module caches for ES6 modules,
-      // so the matchMedia mock may not affect the already-loaded kanban-transitions module.
-      // We still test the observable behavior: that the reorder completes and cards are in final positions.
-      await new Promise((r) => setTimeout(r, 500))
+      // With DURATION_MOVE=0 the FLIP animation is instantaneous. A short settle
+      // allows the Svelte reconciler to finalize the DOM update.
+      await new Promise((r) => setTimeout(r, 50))
 
-      // Verify reorder completed - cards should be in final positions
+      // Verify reorder completed - both cards still present in final positions
       expect(container.querySelector('[data-run-id="100"]')).toBeTruthy()
       expect(container.querySelector('[data-run-id="200"]')).toBeTruthy()
     })
