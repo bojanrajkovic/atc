@@ -11,7 +11,7 @@ test.describe('App shell', () => {
     await expect(page.getByRole('button', { name: /settings/i })).toBeVisible()
 
     // Connection indicator visible
-    await expect(page.getByRole('status')).toBeVisible()
+    await expect(page.getByRole('status', { name: /connecting/i })).toBeVisible()
   })
 
   test('runner bar shows empty state without backend', async ({ page }) => {
@@ -69,7 +69,7 @@ test.describe('App shell', () => {
   test('connection indicator shows connecting without backend', async ({ page }) => {
     await page.goto('/')
 
-    const indicator = page.getByRole('status')
+    const indicator = page.getByRole('status', { name: /connecting|reconnecting/i })
     await expect(indicator).toBeVisible()
 
     // Without a backend, ConnectionManager cycles connecting/reconnecting — never disconnected
