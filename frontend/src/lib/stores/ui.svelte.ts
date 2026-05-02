@@ -21,6 +21,7 @@ class UIStore {
   nowMs = $state(Date.now())
 
   private nowMsInterval: ReturnType<typeof setInterval> | null = null
+  private effectCleanup: (() => void) | null = null
 
   constructor() {
     // Start the wall-clock timer for nowMs (bare constructor pattern, not in $effect.root)
@@ -38,9 +39,12 @@ class UIStore {
       if (savedDensity) this.density = savedDensity
     }
 
-    // Sync to DOM and localStorage via $effect
-    // Use $effect.root() because this is a module-level singleton outside component context
-    $effect.root(() => {
+    // Sync to DOM and localStorage via $effect.
+    // Use $effect.root() because this is a module-level singleton outside
+    // component context. Capture the cleanup so destroy() can stop the effects;
+    // without it, leftover effects from prior test instances continue writing
+    // DOM attributes and localStorage under `isolate: false`.
+    this.effectCleanup = $effect.root(() => {
       $effect(() => {
         document.documentElement.setAttribute('data-theme', this.theme)
         localStorage.setItem('atc-theme', this.theme)
@@ -70,6 +74,10 @@ class UIStore {
     if (this.nowMsInterval !== null) {
       clearInterval(this.nowMsInterval)
       this.nowMsInterval = null
+    }
+    if (this.effectCleanup !== null) {
+      this.effectCleanup()
+      this.effectCleanup = null
     }
   }
 }
