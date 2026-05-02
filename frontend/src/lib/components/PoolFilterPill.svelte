@@ -44,4 +44,8 @@
     color: var(--text);
     background: var(--border);
   }
+  .clear:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 </style>

@@ -6,6 +6,29 @@ import PanelActions from './PanelActions.svelte'
 describe('PanelActions', () => {
   const htmlUrl = 'https://github.com/owner/repo/actions/runs/12345'
 
+  // AC5.2: close button and go-to-run link have visible :focus-visible outline rules.
+  // jsdom does not compute :focus-visible styles (the heuristic is browser-level);
+  // computed-style verification lives in e2e/focus-rings.test.ts. Here we assert
+  // both interactive elements are standard HTML elements with no inline outline
+  // suppression, so the CSS rules can take effect in a real browser.
+  it('AC5.2: close button is a focusable button with no inline outline suppression', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    const button = screen.getByRole('button', { name: 'Close detail panel' })
+    expect(button.tagName).toBe('BUTTON')
+    expect(button.style.outline).not.toBe('none')
+    expect(button.style.outlineStyle).not.toBe('none')
+  })
+
+  it('AC5.2: go-to-run link is a focusable anchor with no inline outline suppression', () => {
+    render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
+
+    const link = screen.getByRole('link', { name: 'Go to run' })
+    expect(link.tagName).toBe('A')
+    expect(link.style.outline).not.toBe('none')
+    expect(link.style.outlineStyle).not.toBe('none')
+  })
+
   it('interactivity.AC2.2 renders the Go-to-run anchor with the correct href', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 

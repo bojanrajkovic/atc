@@ -39,6 +39,10 @@
   .go-to-run:hover {
     text-decoration: underline;
   }
+  .go-to-run:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .close-button {
     background: transparent;
     border: none;
@@ -51,5 +55,9 @@
   .close-button:hover {
     color: var(--text);
     background: var(--surface-raised);
+  }
+  .close-button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 </style>
