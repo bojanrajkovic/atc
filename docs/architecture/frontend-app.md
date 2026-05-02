@@ -157,6 +157,21 @@ All animations defined in `src/lib/animations/kanban-transitions.ts`:
 - **Reduced motion:** All durations zeroed when `prefers-reduced-motion` is active
 - **Shared instance:** One crossfade pair used across all KanbanColumn instances to ensure visual continuity
 
+### Animation Inventory (Reduced-Motion Audit)
+
+All animations in the codebase and their reduced-motion gate status (Sub-Phase 6b audit):
+
+| File:line | Type | Trigger | Gate status | Test coverage |
+|---|---|---|---|---|
+| `app.css:100-112` | CSS keyframes (`pulse-border`) | InProgress card halo | GATED (`animation: none !important` in `@media (prefers-reduced-motion: reduce)`) | `e2e/theme.test.ts` (AC1.6: computed `animation-duration: 0s` on InProgress card) |
+| `lib/animations/kanban-transitions.ts:14-31` | Crossfade send/receive | Cross-column card move | GATED (`prefersReducedMotion.current` zeroes all durations at module load) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_MOVE === 0`) |
+| `lib/animations/kanban-transitions.ts:20-23` | Fly fallback | New card arrival | GATED (same `prefersReducedMotion.current` check, `DURATION_ARRIVE`) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_ARRIVE === 0`) |
+| `lib/animations/kanban-transitions.ts:27-29` | Fade fallback | Card removal | GATED (same check, `DURATION_REMOVE`) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_REMOVE === 0`) |
+| `KanbanColumn.svelte:49` | `animate:flip` | Within-column reorder | GATED (uses `DURATION_MOVE` from kanban-transitions) | `KanbanColumn.browser.test.ts` (AC6.4: reorder completes instantly) |
+| `CommandPalette.svelte:218` | `transition:slide\|local` | Theme submenu open/close | GATED (`$derived(prefersReducedMotion.current ? 0 : 200)` as `submenuDuration`; reactive so OS change takes effect without reload) | `CommandPalette.reduced-motion.browser.test.ts` (AC3.1); `e2e/theme.test.ts` (submenu-without-delay assertion) |
+
+**Gate pattern for Svelte components:** Use `$derived(prefersReducedMotion.current ? 0 : duration)` (reactive) inside a component, not a module-top const (which captures once). `kanban-transitions.ts` uses module-top const because it is a module-level singleton that does not update reactively — this is intentional and tested via file-scope `vi.mock('svelte/motion', ...)` which binds before the module is first imported.
+
 ### Sort Strategies
 
 All sorting is direct lexical ISO-8601 string comparison (no Date parsing, no millisecond precision loss):
@@ -231,6 +246,16 @@ The duration formula is extracted to a pure `computeDurationText(run, nowMs): st
 **Accent bar.** `.run-card::before` in `RunCard`'s scoped `<style>` — 3px wide, `left: 0`, `top: 0`, `bottom: 0`, `background: var(--status-color)`. This is the first scoped style block in the kanban components; the halo and density rules stay in `app.css` because they need ancestor selectors (`html[data-density]`, `[data-mode="light"]`) that Svelte's scoped selectors can't cross.
 
 **Density attribute.** `UIStore`'s `$effect.root` block writes `data-density="compact"` (or removes it) on `<html>` when the setting changes. CSS selectors in `app.css` key off `[data-density="compact"]` to `display: none` the `.run-card-meta`, `.run-card-progress`, `.run-card-runner` children and shrink `.run-card` padding + `.run-card-name` font-size. Class names stay global (not Svelte-scoped) so the top-level selector still matches the compiled DOM.
+
+### Scrollbar Styling
+
+Sub-Phase 6b added a global `.atc-scrollbar` class in `app.css` for cross-browser thin scrollbar styling. Applied to `KanbanColumn`'s `role="list"` container and `RunDetailPanel`'s `job-blocks` container. `CommandPalette`'s list retains `no-scrollbar` (hides scrollbars by design).
+
+**Token flow:** thumb uses `color-mix(in oklch, var(--border) 80%, transparent)` — anchored to `--border` so it tracks theme hue and mode changes automatically without new tokens. Track is transparent.
+
+**Cross-browser implementation:**
+- **Firefox:** `scrollbar-width: thin; scrollbar-color: <thumb> transparent`
+- **Chromium/Safari:** `::-webkit-scrollbar { width: 6px }` + `::-webkit-scrollbar-thumb { background: <thumb>; border: 1px solid transparent; background-clip: padding-box }` (Rauno Freiberg pattern — the transparent border creates track spacing without a visible track background)
 
 ### Design Tokens
 
