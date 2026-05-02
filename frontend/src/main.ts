@@ -1,5 +1,6 @@
 import './app.css'
 import { mount } from 'svelte'
+import { eventDispatcher } from '$lib/dispatcher'
 import { poolKey } from '$lib/filters/pool'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { paletteStore } from '$lib/stores/palette.svelte'
@@ -8,7 +9,7 @@ import { runStore } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
 import App from './App.svelte'
 
-// Expose stores for E2E testing (harmless no-op in production)
+// Expose stores and eventDispatcher for E2E testing (harmless no-op in production)
 if (import.meta.env.DEV) {
   // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
   ;(window as any).__stores = {
@@ -19,6 +20,8 @@ if (import.meta.env.DEV) {
     paletteStore,
     poolKey,
   }
+  // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
+  ;(window as any).eventDispatcher = eventDispatcher
 }
 
 const appElement = document.getElementById('app')
