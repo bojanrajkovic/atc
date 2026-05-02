@@ -377,6 +377,80 @@ Both paths land focus on the same DOM node under identical preconditions (AC7.4)
 
 **Why context, not a sixth store:** Roving state is component-scoped (dies with the kanban) and doesn't need to survive any persistence boundary. Folding into UIStore would mix preference-state with transient-state; a sixth store would fight the README's "5 stores is the ceiling" principle without empirical justification. Svelte context is the textbook fit: component-tree-scoped state, propagates by composition, dies with the provider.
 
+## EmptyState Component
+
+`frontend/src/lib/components/EmptyState.svelte` is a pure component that renders when the connection is established but no workflow runs exist yet. It replaces the former inline `"No workflows yet."` string in `KanbanBoard.svelte`.
+
+### Props
+
+```typescript
+export interface EmptyStateProps {
+  message?: string  // Default: "Watching for runs."
+}
+```
+
+### Visual Treatment
+
+The schematic preview renders three faint dashed column groups (Queued / Running / Completed), each containing three rows of monospace placeholder dots (`· · · · · · · ·`), with a caption below the preview. The treatment is purely cosmetic: all rows carry `aria-hidden="true"` so screen readers only see the caption text.
+
+Selector surface: `[data-empty-col]` on each column group, `[data-empty-row]` on each placeholder row. These attributes are used by unit tests to assert structure without relying on CSS class names.
+
+### Tri-state integration
+
+`KanbanBoard.svelte` maintains three rendering branches:
+
+1. **Connecting** — `connectionStore.status !== 'connected' && totalRuns === 0`: inline "Connecting…" hydration placeholder.
+2. **Empty** — `connectionStore.status === 'connected' && totalRuns === 0`: `<EmptyState />` with default caption.
+3. **Populated** — all other states: the kanban grid with three columns.
+
+`EmptyState` is only rendered in branch 2. The tri-state shape is preserved by design — adding a variant for "filtered empty" (no runs match the current pool filter) is out of scope for 1.0 and deferred.
+
+## Responsive Breakpoint Contract
+
+The kanban grid and TopBar adapt to viewport width using Tailwind v4's mobile-first cascade. The detail panel (`RunDetailPanel`) uses Bits UI Sheet overlay-style positioning and does not shrink the kanban, so viewport breakpoints are sufficient — container queries would adapt to nothing the kanban cares about.
+
+### Kanban grid
+
+`KanbanBoard.svelte`'s grid `<div>` uses:
+
+```
+grid-cols-1 sm:grid-cols-2 xl:grid-cols-3
+```
+
+| Viewport | Breakpoint | Columns |
+|----------|-----------|---------|
+| `≥1280px` | `xl:` | 3 columns |
+| `640–1279px` | `sm:` | 2 columns (Completed wraps to row 2) |
+| `<640px` | (base) | 1 column stack |
+
+No horizontal page scroll at any viewport width ≥320px. The `min-w-0` class on the grid container prevents overflow from long run titles.
+
+### TopBar wrap
+
+`TopBar.svelte`'s header uses `flex flex-wrap gap-y-2`. Four direct children:
+
+1. **Logo** — natural flex order
+2. **RunnerBar wrapper** — `order-3 md:order-2 basis-full md:basis-0 md:flex-1 min-w-0`; the `basis-full` at `<md` forces the row wrap
+3. **ConnectionIndicator** — `order-2 md:order-4`; appears next to Logo on row 1 at `<md`
+4. **SettingsPopover** — `order-5`; follows RunnerBar on row 2 at `<md`
+
+Separators carry `hidden md:block` — hidden at `<md` to avoid floating dividers on the wrapped row.
+
+| Viewport | TopBar layout |
+|----------|--------------|
+| `≥768px` (md) | Single row: Logo → Separator → RunnerBar → Separator → ConnectionIndicator → SettingsPopover |
+| `<768px` | Row 1: Logo + ConnectionIndicator; Row 2: RunnerBar + SettingsPopover |
+
+The `md:` (768px) breakpoint was verified manually during Sub-Phase 6b implementation. Header height increases from 48px to ~94px when wrapping (two rows). The breakpoint feels appropriate for the amount of content.
+
+### Pool label truncation
+
+`RunnerPool.svelte`'s label `<span>` carries `truncate max-w-[12ch] md:max-w-none`. At `<md`, long pool labels are capped at 12 characters to preserve layout density in the narrower two-row header. At `md+`, the full label is shown.
+
+### Future extensibility
+
+Container queries (`@container`) are the natural upgrade path if a future sidebar or split-view feature affects the kanban's effective width independently of the viewport. The migration is mechanical: wrap the kanban in a `@container` and replace `sm:`/`xl:` with `@sm:`/`@xl:`.
+
 ### Global keyboard chord listener
 
 A single `window.addEventListener('keydown', ...)` is mounted via `onMount` in App.svelte and removed on destroy. It dispatches three Cmd/Ctrl chords:
