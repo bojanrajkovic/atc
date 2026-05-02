@@ -197,7 +197,7 @@ Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the o
 **`uiStore.nowMs` — shared wall-clock signal** (`frontend/src/lib/stores/ui.svelte.ts`)
 - `$state(Date.now())` initialised at module load; refreshed every 1000ms by a constructor-owned `setInterval`.
 - Single timer feeds every live-duration derivation across the board. Every card reads the same signal instead of each spawning its own timer.
-- `uiStore.destroy()` clears the interval. Used by fake-timer tests to prevent leaks; production never calls it.
+- `uiStore.destroy()` clears the interval **and** runs the captured `$effect.root()` cleanup so the DOM-sync effects stop firing. Used by fake-timer tests to prevent leaks; production never calls it. `paletteStore.destroy()` mirrors this for the sessionStorage persistence effect — both stores capture the cleanup returned by `$effect.root()` rather than discarding it, otherwise prior store instances keep ticking under `vitest --isolate=false` and clobber later tests' storage state.
 
 **`uiStore.lastTriggerRunId` — activation ref for focus restoration** (`frontend/src/lib/stores/ui.svelte.ts`)
 - Set by RunCard's `handleActivate` to the clicked run's id at click time.
