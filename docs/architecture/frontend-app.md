@@ -510,6 +510,55 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 - On reconnect, client re-fetches full state snapshot to ensure consistency
 - Event queue resumes from the new sequence number
 
+## ARIA Live Region
+
+The `AriaLiveRegion` module announces run-level state transitions to screen readers. It is composed of two pieces: the `LiveRegion` rune-class store (in `src/lib/aria/live-region.svelte.ts`) and the `AriaLiveRegion.svelte` component that mounts at the App root level as a sibling to `<AppShell>`.
+
+### AriaLiveRegion component
+
+The component renders a single `<div role="status" aria-live="polite" aria-atomic="true" aria-busy="false" aria-label="Workflow run updates" class="sr-only">` element. The `aria-atomic="true"` attribute instructs screen readers to announce the entire text content on each update, not just the diff. The `aria-busy` attribute switches to `"true"` during burst-mode accumulation, signaling screen readers to defer announcement until the summary is ready.
+
+The `textContent` is driven by `liveRegion.message` — a plain `$state` string in the `LiveRegion` store.
+
+### EventDispatcher setOnFlush callback contract
+
+`EventDispatcher.setOnFlush(cb)` registers a callback that is invoked **synchronously** within `processBuffer()` after all events in the current RAF batch have been applied to stores. The callback receives the flushed `ReadonlyArray<SeqEvent>`.
+
+Invariants:
+- The callback is only called when `events.length > 0` (empty drains never fire the callback).
+- `flush()` cancels any pending RAF before draining. Calling `dispatch(); flush()` produces exactly one callback invocation, not two (no phantom RAF callback).
+- `setOnFlush(null)` detaches the callback. Idempotent: calling `setOnFlush` twice replaces the prior callback.
+
+### Snapshot-bypass and reconnect-silence policy (AC6.7)
+
+Snapshots loaded by `ConnectionManager` go directly into stores via `runStore.loadSnapshot()` and entirely bypass the dispatcher. This never generates announcements.
+
+The post-snapshot buffered drain (`connection.ts` step 6) does flow through `eventDispatcher.dispatch + flush`, but `ConnectionManager` defers the `setOnFlush` wiring until **after** the buffered drain completes. Sequence:
+
+1. WS opens; events are buffered in `preConnectBuffer`
+2. Snapshot fetched; `eventDispatcher.clear()` drains stale dispatcher state
+3. `dispatcher.setOnFlush(null)` — explicitly silence the callback for the drain
+4. Snapshot loaded into stores (`runStore.loadSnapshot`)
+5. Buffered events with seq >= snapshot seq dispatched and flushed — stores updated silently
+6. **`dispatcher.setOnFlush((events) => liveRegion.observeFlush(events))`** — wired here, after the drain
+7. Subsequent live events announce normally
+
+On disconnect, `handleDisconnect()` calls `dispatcher.setOnFlush(null)` to detach the callback, so the next reconnect's snapshot+drain sequence also runs silently. The callback is re-wired after each new drain completes.
+
+Result: zero announcements during snapshot load or buffered-replay drain; only events arriving after the connection is fully established announce.
+
+### LiveRegion store: transition classification and burst accumulation
+
+`LiveRegion.observeFlush(events)` walks the flushed `SeqEvent[]` and extracts `RunEvent::Requested` (→ "queued") and `RunEvent::Completed` (→ conclusion-specific verb) transitions. `RunEvent::InProgress` events are silently skipped.
+
+Announcement routing:
+- **≤3 transitions in a flush:** per-run messages are emitted immediately, joined by `". "`. `aria-busy` stays `"false"`.
+- **>3 transitions in a flush:** the `BurstAccumulator` opens. `aria-busy` flips to `"true"`. A 200ms debounce timer starts. All transitions from the opening flush AND every subsequent flush that arrives within the debounce window accumulate into per-conclusion counts (regardless of per-flush count). On debounce close, a summary message of the form `"N runs queued, M completed (X succeeded, Y failed, ...)"` is emitted, absent-count entries elided; `aria-busy` returns to `"false"`.
+
+`classifyEvent` uses an exhaustive `switch` over `RunConclusion` guarded by `Record<RunConclusion, string>` (`VERB_BY_CONCLUSION`). Adding a new `RunConclusion` variant in `atc-core` and regenerating ts-rs types fails the frontend `tsc` step until `VERB_BY_CONCLUSION` adds the corresponding verb.
+
+Per-event error containment: `observeFlush` wraps each `classifyEvent` call in a try/catch. Invariant violations (e.g., `Completed` with `conclusion: null`) are logged via `console.error` with the offending `SeqEvent` payload; the bad event is skipped; remaining well-formed transitions in the flush still announce.
+
 ## Test Strategy
 
 Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Playwright), integration, and E2E (Playwright).
@@ -638,6 +687,12 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 **Animation Module**
 - `frontend/src/lib/animations/kanban-transitions.ts` — Shared crossfade instance, motion constants, reduced-motion support
 
+**ARIA Utilities**
+- `frontend/src/lib/aria/transition-kinds.ts` — `TransitionKind` discriminated union (`{kind:'queued'}` | `{kind:'completed';conclusion:RunConclusion}`); `VERB_BY_CONCLUSION: Record<RunConclusion, string>` exhaustive verb table; `classifyEvent(seqEvent): TransitionKind | null` — extracts the transition kind from a `SeqEvent` (returns null for InProgress / Job events; throws on invariant violation)
+- `frontend/src/lib/aria/format-run-transition.ts` — `formatRunTransition(run, kind): string` — pure message builder; elides "on {branch}" when `run.branch` is null
+- `frontend/src/lib/aria/live-region.svelte.ts` — `LiveRegion` rune-class store (`message: $state<string>`, `busy: $state<boolean>`, `observeFlush(events)`); `BurstAccumulator` internal state (threshold=3, debounce=200ms); module-level singleton `liveRegion`
+- `frontend/src/lib/components/AriaLiveRegion.svelte` — Connected component: renders `<div role="status" aria-live="polite" aria-atomic="true" aria-busy={liveRegion.busy?'true':'false'} aria-label="Workflow run updates" class="sr-only">{liveRegion.message}</div>` at App root level (sibling to AppShell)
+
 **Filter Utilities (pure functions)**
 - `frontend/src/lib/filters/pool.ts` — `PoolKey` branded type + `poolKey(labels)` constructor + `filterRunsByPool(runs, jobsByRunId, poolFilter)` filter; first branded TypeScript type in the codebase — see ADR `docs/architecture-decisions/0001-pool-key-branded-type.md` for rationale
 
@@ -656,7 +711,7 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/**/*.browser.test.ts` — Vitest browser-mode tests for animations, store reactivity, reduced-motion support
 - `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
 - `frontend/src/lib/components/BackdropSuppression.browser.test.ts` — Browser-mode test: verifies the `[data-dialog-overlay] ~ [data-dialog-overlay] { display: none }` CSS rule hides the second overlay when both Sheet and Command.Dialog are open
-- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobSeqEvent`, `sendWS` — intercepts `new WebSocket('/v1/ws')` and bridges store updates via `window.__stores`
+- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobSeqEvent`, `sendWS`, `sendWSBatch` — intercepts `new WebSocket('/v1/ws')` and routes events through `window.eventDispatcher.dispatch + flush` (Sub-Phase 6b onward) so E2E tests exercise real RAF batching and the `setOnFlush` callback path; `sendWSBatch` dispatches a batch without flushing between events and awaits a `bufferLength === 0` synchronization fence followed by one extra RAF tick
 - `frontend/e2e/theme.test.ts` — Playwright E2E tests: app rendering, theme switching, dark/light mode toggle
 - `frontend/e2e/app-shell.test.ts` — Playwright E2E tests: app shell rendering, runner bar pool indicators, connection indicator, settings popover
 - `frontend/e2e/kanban.test.ts` — Playwright E2E tests: kanban board lifecycle, card movement, WebSocket event handling
@@ -664,6 +719,7 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/e2e/palette.test.ts` — Playwright E2E tests: Cmd+K open/close, query filtering across sections, pool filter selection, theme submenu, command actions
 - `frontend/e2e/pool-filter.test.ts` — Playwright E2E tests: pool filter pill shows/clears, kanban filters by pool, RunnerPool accent border
 - `frontend/e2e/stacking.test.ts` — Playwright E2E tests: palette+panel Esc-unwind order, single backdrop with both open, click-outside-palette-inside-panel, Cmd+K toggle while palette open
+- `frontend/e2e/aria-live.test.ts` — Playwright E2E tests: ARIA live region attribute audit (role/aria-live/aria-atomic/aria-busy/aria-label), per-run messages below burst threshold, conclusion verbs, multi-transition join, null-branch elision, burst aria-busy flip, summary accumulation across flushes, absent-conclusion elision
 
 **Roving Focus Test Harnesses** (co-located with their respective test files)
 - `frontend/src/lib/components/roving/RovingFocusProvider.test-harness.svelte` / `RovingHarnessGrid.svelte` — Two-component harness for RovingFocusProvider browser tests: outer wraps provider, inner (RovingHarnessGrid) calls `getRovingContext()` + `use:roving` and renders stub run-card buttons
