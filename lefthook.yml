@@ -26,6 +26,9 @@ pre-commit:
       glob: "*.svelte"
       root: "frontend/"
       run: mise exec -- pnpm exec prettier --check '**/*.svelte'
+    no-explicit-any:
+      glob: "frontend/**/*.{ts,svelte}"
+      run: scripts/check-no-explicit-any.sh
 
 commit-msg:
   commands:
