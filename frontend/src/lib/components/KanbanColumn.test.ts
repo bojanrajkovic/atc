@@ -364,6 +364,26 @@ describe('KanbanColumn', () => {
     })
   })
 
+  describe('frontend-1-0-polish.AC4.1: scroll container has atc-scrollbar class', () => {
+    it('the role=list scroll container has class atc-scrollbar applied', () => {
+      const run = createMockRun({ id: 1n })
+      const { container } = render(KanbanColumnHarness, {
+        props: {
+          label: 'QUEUED',
+          headingId: 'kanban-col-queued',
+          runs: [run],
+          jobStatsByRun: statsMapFor([run]),
+          activePoolFilter: null,
+          jobsByRunId: new Map<bigint, readonly Job[]>(),
+        },
+      })
+
+      const scrollContainer = container.querySelector('[role="list"]')
+      expect(scrollContainer).toBeTruthy()
+      expect(scrollContainer?.classList.contains('atc-scrollbar')).toBe(true)
+    })
+  })
+
   describe('AC5.6: empty result when filter matches no jobs', () => {
     it('renders zero cards and does not crash when filter matches no jobs', () => {
       const runA = createMockRun({ id: 50n })

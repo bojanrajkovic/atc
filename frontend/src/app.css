@@ -256,3 +256,35 @@ body {
   font-family: var(--font);
   line-height: var(--leading-normal);
 }
+
+/*
+ * Cross-browser thin scrollbar using existing OKLCH tokens.
+ * Thumb: var(--border) at 80% opacity for visibility without
+ * competing with content. Track: transparent.
+ *
+ * Firefox: scrollbar-width + scrollbar-color (standard).
+ * Chromium/Safari: ::-webkit-scrollbar family with border +
+ * background-clip: padding-box (Rauno Freiberg pattern) so the
+ * border gap acts as the track spacing.
+ */
+.atc-scrollbar {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--border) 80%, transparent) transparent;
+}
+
+.atc-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.atc-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.atc-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--border) 80%, transparent);
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
