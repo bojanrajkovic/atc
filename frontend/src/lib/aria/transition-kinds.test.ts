@@ -12,11 +12,9 @@ type Expect<T extends true> = T
 type Equal<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false
 // If RunConclusion grows a new variant and VERB_BY_CONCLUSION doesn't cover it,
-// this line will cause a tsc error.
-type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, RunConclusion>>
-
-// Force use of type-level check to avoid TS "unused" warning
-const _assertExhaustive: _CheckExhaustive = true
+// this line will cause a tsc error. Exported so svelte-check's "declared but
+// never used" rule treats it as part of the module's public surface.
+export type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, RunConclusion>>
 
 // ---------------------------------------------------------------------------
 // Helpers
