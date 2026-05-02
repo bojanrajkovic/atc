@@ -125,34 +125,53 @@ test.describe('RunCard interactivity', () => {
   })
 
   // -----------------------------------------------------------------------
-  // AC4.5 — Tab order cycles cards in column-then-row DOM order
-  //   Column order: Queued → InProgress → Completed (left → right)
-  //   With one run per column and distinct displayTitles, the expected aria-labels are:
-  //     "CI — queued, Queued, test-repo·main"
-  //     "CI — running, In progress, test-repo·main"
-  //     "CI — done, Success, test-repo·main"
+  // AC4.5 — Roving tabindex: exactly one card has tabindex=0; Tab from
+  //   outside the kanban lands on that card; a second Tab exits the kanban.
+  //
+  // Updated for kanban-keyboard-nav.AC1.2 + AC1.6 — roving tabindex means
+  // exactly one card has tabindex=0; Tab moves OUT of the kanban after the
+  // focused card (single tab stop). The old assertion that Tab cycles through
+  // all three card buttons is superseded by the new roving-tabindex contract.
   // -----------------------------------------------------------------------
-  test('interactivity.AC4.5 Tab cycles activator buttons in column-then-row DOM order', async ({
+  test('interactivity.AC4.5 Tab from outside kanban lands on the single tabindex=0 card, second Tab exits', async ({
     page,
   }) => {
-    // Start from the first card's activator button so we don't have to skip
-    // through TopBar focusable elements.
-    await page.locator('.run-card-activate').first().focus()
+    // Start focus at the Settings button (TopBar, outside the kanban) so Tab
+    // travels through the document in natural DOM order into the kanban.
+    await page.getByRole('button', { name: 'Settings' }).focus()
 
-    const labels: string[] = []
-    for (let i = 0; i < 3; i++) {
-      const label = await page.evaluate(
-        () => document.activeElement?.getAttribute('aria-label') ?? '',
+    // Tab forward until we land on a .run-card-activate element.
+    // Cap at 20 presses to avoid hanging on a regression where no card is reachable.
+    let landedOnCard = false
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('Tab')
+      landedOnCard = await page.evaluate(
+        () => document.activeElement?.classList.contains('run-card-activate') ?? false,
       )
-      labels.push(label)
-      if (i < 2) await page.keyboard.press('Tab')
+      if (landedOnCard) break
     }
+    expect(landedOnCard, 'Tab from TopBar should reach a run-card-activate button').toBe(true)
 
-    expect(labels).toEqual([
-      'CI — queued, Queued, test-repo·main',
-      'CI — running, In progress, test-repo·main',
-      'CI — done, Success, test-repo·main',
-    ])
+    // AC1.1 priority: Queued > InProgress > Completed — the focused card is the
+    // first card of the Queued column.
+    const landedLabel = await page.evaluate(
+      () => document.activeElement?.getAttribute('aria-label') ?? '',
+    )
+    expect(landedLabel).toBe('CI — queued, Queued, test-repo·main')
+
+    // AC1.6: exactly one card has tabindex=0 at this point.
+    const tabzeroCount = await page.locator('.run-card-activate[tabindex="0"]').count()
+    expect(tabzeroCount).toBe(1)
+
+    // AC1.2: a second Tab moves focus OUT of the kanban (no second .run-card-activate).
+    await page.keyboard.press('Tab')
+    const stillOnCard = await page.evaluate(
+      () => document.activeElement?.classList.contains('run-card-activate') ?? false,
+    )
+    expect(
+      stillOnCard,
+      'Second Tab should exit the kanban (no longer on a run-card-activate)',
+    ).toBe(false)
   })
 
   // -----------------------------------------------------------------------
