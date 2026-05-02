@@ -7,7 +7,7 @@ import { createMockJob, createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
-import KanbanColumn from './KanbanColumn.svelte'
+import KanbanColumnHarness from './KanbanColumn.test-harness.svelte'
 
 const emptyStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
 
@@ -27,7 +27,7 @@ describe('KanbanColumn', () => {
   describe('kanban-board.AC1.2: ARIA structure', () => {
     it('renders section with aria-labelledby referencing heading id', () => {
       const run = createMockRun()
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -44,7 +44,7 @@ describe('KanbanColumn', () => {
 
     it('renders heading with correct id', () => {
       const run = createMockRun()
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -61,7 +61,7 @@ describe('KanbanColumn', () => {
 
     it('renders heading text in uppercase', () => {
       const run = createMockRun()
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'InProgress',
           headingId: 'kanban-col-in-progress',
@@ -78,7 +78,7 @@ describe('KanbanColumn', () => {
 
     it('renders role=list container', () => {
       const run = createMockRun()
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -95,7 +95,7 @@ describe('KanbanColumn', () => {
 
     it('renders cards as role=listitem', () => {
       const runs = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -114,7 +114,7 @@ describe('KanbanColumn', () => {
   describe('Card count and rendering', () => {
     it('renders 2 runs with 2 listitems', () => {
       const runs = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -135,7 +135,7 @@ describe('KanbanColumn', () => {
         createMockRun({ id: 200n }),
         createMockRun({ id: 300n }),
       ]
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -151,7 +151,7 @@ describe('KanbanColumn', () => {
     })
 
     it('renders 0 runs with empty role=list container', () => {
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -173,7 +173,7 @@ describe('KanbanColumn', () => {
   describe('Data attributes for test targeting', () => {
     it('sets data-run-id on each RunCard root article', () => {
       const runs = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]
-      const { container } = render(KanbanColumn, {
+      const { container } = render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -190,7 +190,7 @@ describe('KanbanColumn', () => {
 
     it('converts bigint run.id to string in data-run-id attribute', () => {
       const run = createMockRun({ id: 456n })
-      const { container } = render(KanbanColumn, {
+      const { container } = render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -211,7 +211,7 @@ describe('KanbanColumn', () => {
         createMockRun({ id: 222n }),
         createMockRun({ id: 333n }),
       ]
-      const { container } = render(KanbanColumn, {
+      const { container } = render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -231,7 +231,7 @@ describe('KanbanColumn', () => {
   describe('Column metadata', () => {
     it('displays correct count in column header', () => {
       const runs = [createMockRun({ id: 1n }), createMockRun({ id: 2n }), createMockRun({ id: 3n })]
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -247,7 +247,7 @@ describe('KanbanColumn', () => {
     })
 
     it('displays zero count when no runs', () => {
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -269,7 +269,7 @@ describe('KanbanColumn', () => {
       const jobStatsByRun = new Map<bigint, JobStats>([
         [7n, { completed: 2, total: 5, runnerSummary: 'runner-a' }],
       ])
-      render(KanbanColumn, {
+      render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           runs: [run],
@@ -291,7 +291,7 @@ describe('KanbanColumn', () => {
       // jobStatsByRun does NOT contain id 9n — invariant violation.
       const jobStatsByRun = new Map<bigint, JobStats>()
       expect(() =>
-        render(KanbanColumn, {
+        render(KanbanColumnHarness, {
           props: {
             label: 'QUEUED',
             runs: [run],
@@ -322,7 +322,7 @@ describe('KanbanColumn', () => {
 
       const filter = poolKey(['linux', 'x86'])
 
-      const { container } = render(KanbanColumn, {
+      const { container } = render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -347,7 +347,7 @@ describe('KanbanColumn', () => {
       const runB = createMockRun({ id: 40n })
       const runs = [runA, runB]
 
-      const { container } = render(KanbanColumn, {
+      const { container } = render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',
@@ -381,7 +381,7 @@ describe('KanbanColumn', () => {
       // Filter with labels that no job has
       const filter = poolKey(['nonexistent-label'])
 
-      const { container } = render(KanbanColumn, {
+      const { container } = render(KanbanColumnHarness, {
         props: {
           label: 'QUEUED',
           headingId: 'kanban-col-queued',

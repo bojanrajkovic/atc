@@ -1,14 +1,26 @@
 import { render, screen } from '@testing-library/svelte'
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { tick } from 'svelte'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resolveStatusKey, statusKeyToHumanLabel } from '$lib/format/status-key'
 import type { JobStats } from '$lib/stores/runs.svelte'
+import { runStore } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
-import { createMockRun } from '$lib/test-utils/factories'
+import { createMockRun, createMockRunEvent } from '$lib/test-utils/factories'
 
 import type { RunCardProps } from './RunCard.svelte'
-import RunCard from './RunCard.svelte'
+import RunCardHarness from './RunCard.test-harness.svelte'
 
 const emptyJobStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
+
+/**
+ * Helper: render a single RunCard inside the harness.
+ * Most existing tests only need one card; this keeps the call-site diff minimal.
+ */
+function renderOne(run: ReturnType<typeof createMockRun>, jobStats: JobStats = emptyJobStats) {
+  return render(RunCardHarness, {
+    props: { cards: [{ run, jobStats }] },
+  })
+}
 
 describe('RunCard', () => {
   // Static import of RunCard transitively imports uiStore, whose constructor
@@ -19,9 +31,7 @@ describe('RunCard', () => {
   })
   it('renders displayTitle as visible text (AC4.1)', () => {
     const run = createMockRun({ displayTitle: 'Test Workflow Run' })
-    render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    renderOne(run)
 
     const title = screen.getByText('Test Workflow Run')
     expect(title).toBeTruthy()
@@ -29,12 +39,10 @@ describe('RunCard', () => {
 
   it('renders status indicator with Queued status (AC4.2)', () => {
     const run = createMockRun({ status: 'Queued' })
-    render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    renderOne(run)
 
     // StatusIcon for Queued renders ◐ glyph
-    const glyph = screen.getByText('\u25D0')
+    const glyph = screen.getByText('◐')
     expect(glyph).toBeTruthy()
 
     const srOnly = screen.getByText('Queued')
@@ -44,12 +52,10 @@ describe('RunCard', () => {
 
   it('renders status indicator with InProgress status (AC4.2)', () => {
     const run = createMockRun({ status: 'InProgress' })
-    render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    renderOne(run)
 
     // StatusIcon for InProgress renders ▶ glyph
-    const glyph = screen.getByText('\u25B6')
+    const glyph = screen.getByText('▶')
     expect(glyph).toBeTruthy()
 
     const srOnly = screen.getByText('In Progress')
@@ -60,12 +66,10 @@ describe('RunCard', () => {
   it('renders status indicator with Completed status (AC4.2)', () => {
     // Completed with no conclusion → resolveStatusKey returns 'Cancelled'
     const run = createMockRun({ status: 'Completed' })
-    render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    renderOne(run)
 
     // StatusIcon for Cancelled renders ⊘ glyph
-    const glyph = screen.getByText('\u2298')
+    const glyph = screen.getByText('⊘')
     expect(glyph).toBeTruthy()
 
     // sr-only label is 'Cancelled'
@@ -76,9 +80,7 @@ describe('RunCard', () => {
 
   it('applies correct color variable for Queued status (AC4.2)', () => {
     const run = createMockRun({ status: 'Queued' })
-    const { container } = render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    const { container } = renderOne(run)
 
     const root = container.querySelector('.run-card')
     expect(root?.getAttribute('style')).toContain('--status-color: var(--queued)')
@@ -86,9 +88,7 @@ describe('RunCard', () => {
 
   it('applies correct color variable for InProgress status (AC4.2)', () => {
     const run = createMockRun({ status: 'InProgress' })
-    const { container } = render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    const { container } = renderOne(run)
 
     const root = container.querySelector('.run-card')
     expect(root?.getAttribute('style')).toContain('--status-color: var(--running)')
@@ -97,9 +97,7 @@ describe('RunCard', () => {
   it('applies correct color variable for Completed status (AC4.2)', () => {
     // Completed with no conclusion → Cancelled → var(--cancelled)
     const run = createMockRun({ status: 'Completed' })
-    const { container } = render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    const { container } = renderOne(run)
 
     const root = container.querySelector('.run-card')
     expect(root?.getAttribute('style')).toContain('--status-color: var(--cancelled)')
@@ -107,9 +105,7 @@ describe('RunCard', () => {
 
   it('has data-run-id attribute for test targeting', () => {
     const run = createMockRun({ id: 456n })
-    const { container } = render(RunCard, {
-      props: { run, jobStats: emptyJobStats },
-    })
+    const { container } = renderOne(run)
 
     const element = container.querySelector('[data-run-id]')
     expect(element).toBeTruthy()
@@ -140,9 +136,7 @@ describe('RunCard', () => {
       ]
 
       for (const [runOverride, expectedColor] of cases) {
-        const { container, unmount } = render(RunCard, {
-          props: { run: createMockRun(runOverride), jobStats: emptyJobStats },
-        })
+        const { container, unmount } = renderOne(createMockRun(runOverride))
         const root = container.querySelector('.run-card')
         expect(root?.getAttribute('style')).toContain(`--status-color: ${expectedColor}`)
         unmount()
@@ -157,9 +151,7 @@ describe('RunCard', () => {
       ]
 
       for (const override of cases) {
-        const { container, unmount } = render(RunCard, {
-          props: { run: createMockRun(override), jobStats: emptyJobStats },
-        })
+        const { container, unmount } = renderOne(createMockRun(override))
         const root = container.querySelector('.run-card')
         expect(root?.getAttribute('data-status')).toBe(override.status)
         unmount()
@@ -168,15 +160,14 @@ describe('RunCard', () => {
 
     it('AC10.5: composes all five leaf components', () => {
       const run = createMockRun({ status: 'Queued', repo: 'acme', branch: 'main' })
-      const { container } = render(RunCard, {
+      const { container } = render(RunCardHarness, {
         props: {
-          run,
-          jobStats: { completed: 1, total: 3, runnerSummary: 'ubuntu-latest' },
+          cards: [{ run, jobStats: { completed: 1, total: 3, runnerSummary: 'ubuntu-latest' } }],
         },
       })
 
       // StatusIcon glyph (◐ for Queued)
-      expect(screen.getByText('\u25D0')).toBeTruthy()
+      expect(screen.getByText('◐')).toBeTruthy()
       // JobHeader wrapper class
       expect(container.querySelector('.run-card-header')).toBeTruthy()
       // JobMeta wrapper class
@@ -184,7 +175,7 @@ describe('RunCard', () => {
       // ProgressBar via its label text
       expect(screen.getByText('Jobs 1 of 3')).toBeTruthy()
       // RunnerLabel ⊞ glyph (U+229E, present when summary is non-null)
-      expect(screen.getByText('\u229E', { exact: false })).toBeTruthy()
+      expect(screen.getByText('⊞', { exact: false })).toBeTruthy()
     })
 
     it('AC10.6: RunCardProps exported interface has correct shape', () => {
@@ -215,7 +206,7 @@ describe('RunCard', () => {
         branch: 'feat/x',
         status: 'Queued',
       })
-      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      const { container } = renderOne(run)
 
       const article = container.querySelector('article')
       expect(article).toBeTruthy()
@@ -237,7 +228,7 @@ describe('RunCard', () => {
         branch: null,
         status: 'Queued',
       })
-      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      const { container } = renderOne(run)
 
       const button = container.querySelector('button.run-card-activate')
       expect(button).toBeTruthy()
@@ -251,7 +242,7 @@ describe('RunCard', () => {
 
     it('AC4.2: click on the activator button sets uiStore.selectedRunId', () => {
       const run = createMockRun({ id: 42n })
-      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      const { container } = renderOne(run)
 
       const button = container.querySelector('button.run-card-activate') as HTMLButtonElement
       expect(button).toBeTruthy()
@@ -267,7 +258,7 @@ describe('RunCard', () => {
       // If a custom keydown handler were added, this test would still pass — the
       // design intent (no custom handler) is reviewer-verified from RunCard.svelte source.
       const run = createMockRun({ id: 43n })
-      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      const { container } = renderOne(run)
 
       const button = container.querySelector('button.run-card-activate') as HTMLButtonElement
       expect(button).toBeTruthy()
@@ -283,7 +274,7 @@ describe('RunCard', () => {
     it('AC4.4: Space on the focused button activates via native button semantics', () => {
       // Same path as AC4.3 — native <button> also converts Space → click.
       const run = createMockRun({ id: 44n })
-      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      const { container } = renderOne(run)
 
       const button = container.querySelector('button.run-card-activate') as HTMLButtonElement
       expect(button).toBeTruthy()
@@ -307,7 +298,7 @@ describe('RunCard', () => {
       // The visual layering (cursor:pointer over text, pointer events intercepted) is
       // verified end-to-end in frontend/e2e/run-card-interactivity.test.ts (Task 6).
       const run = createMockRun({ displayTitle: 'Title Text' })
-      const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
+      const { container } = renderOne(run)
 
       const article = container.querySelector('article')!
       const button = article.querySelector('button.run-card-activate')!
@@ -318,6 +309,159 @@ describe('RunCard', () => {
       expect(button.parentElement).toBe(article)
       // Button is first child — ensures it stacks above all leaf content in z-order.
       expect(article.firstElementChild).toBe(button)
+    })
+  })
+
+  describe('roving tabindex (AC1)', () => {
+    beforeEach(() => {
+      runStore.clear()
+      uiStore.selectedRunId = null
+      uiStore.lastTriggerRunId = null
+    })
+
+    afterEach(() => {
+      runStore.clear()
+    })
+
+    it('AC1.1 / AC1.3: focused card gets tabindex=0, other card gets tabindex=-1', async () => {
+      const run1 = createMockRun({ id: 1n, status: 'Queued', createdAt: '2026-04-16T10:00:00Z' })
+      const run2 = createMockRun({ id: 2n, status: 'Queued', createdAt: '2026-04-16T10:01:00Z' })
+
+      // Populate runStore so RovingFocusProvider's initialFocusRunId derives from run1
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: 1n,
+          action: { type: 'Requested' },
+          createdAt: '2026-04-16T10:00:00Z',
+        }),
+      )
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: 2n,
+          action: { type: 'Requested' },
+          createdAt: '2026-04-16T10:01:00Z',
+        }),
+      )
+
+      let capturedCtx: import('$lib/components/roving/context').RovingFocusContext | null = null
+      const { container } = render(RunCardHarness, {
+        props: {
+          cards: [
+            { run: run1, jobStats: emptyJobStats },
+            { run: run2, jobStats: emptyJobStats },
+          ],
+          onCtxReady: (ctx) => {
+            capturedCtx = ctx
+          },
+        },
+      })
+      await tick()
+
+      // Initially: run1 is initialFocusRunId (earliest createdAt in Queued column)
+      const btn1 = container.querySelector('.run-card[data-run-id="1"] button.run-card-activate')
+      const btn2 = container.querySelector('.run-card[data-run-id="2"] button.run-card-activate')
+      expect(btn1).toBeTruthy()
+      expect(btn2).toBeTruthy()
+      expect(btn1!.getAttribute('tabindex')).toBe('0')
+      expect(btn2!.getAttribute('tabindex')).toBe('-1')
+
+      // AC1.3: setFocus to run2 → run2 gets tabindex=0, run1 gets tabindex=-1
+      capturedCtx!.setFocus(2n)
+      await tick()
+
+      expect(btn1!.getAttribute('tabindex')).toBe('-1')
+      expect(btn2!.getAttribute('tabindex')).toBe('0')
+
+      // AC1.6 implicit: never both tabindex=0 simultaneously
+      const allZero = container.querySelectorAll('button.run-card-activate[tabindex="0"]')
+      expect(allZero.length).toBe(1)
+    })
+
+    it('AC1.5: zero-to-one transition — new first card receives tabindex=0 reactively', async () => {
+      // Start with empty store (beforeEach clears it)
+      const run = createMockRun({ id: 5n, status: 'Queued' })
+
+      let capturedCtx: import('$lib/components/roving/context').RovingFocusContext | null = null
+      const { container } = render(RunCardHarness, {
+        props: {
+          cards: [{ run, jobStats: emptyJobStats }],
+          onCtxReady: (ctx) => {
+            capturedCtx = ctx
+          },
+        },
+      })
+      await tick()
+
+      // With empty store: initialFocusRunId is null, currentFocusRunId is null
+      // The card renders but its tabindex should be -1 (not the focus candidate)
+      expect(capturedCtx!.currentFocusRunId).toBeNull()
+      const btn = container.querySelector('.run-card[data-run-id="5"] button.run-card-activate')
+      expect(btn).toBeTruthy()
+      expect(btn!.getAttribute('tabindex')).toBe('-1')
+
+      // Transition from zero to one: add run to store
+      runStore.applyRunEvent(createMockRunEvent({ runId: 5n, action: { type: 'Requested' } }))
+      await tick()
+
+      // Now initialFocusRunId = 5n, currentFocusRunId = 5n → tabindex=0
+      expect(capturedCtx!.currentFocusRunId).toBe(5n)
+      expect(btn!.getAttribute('tabindex')).toBe('0')
+    })
+
+    it('rapid setFocus toggle — tabindex follows each call', async () => {
+      const run1 = createMockRun({ id: 10n, status: 'Queued', createdAt: '2026-04-16T10:00:00Z' })
+      const run2 = createMockRun({ id: 11n, status: 'Queued', createdAt: '2026-04-16T10:01:00Z' })
+
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: 10n,
+          action: { type: 'Requested' },
+          createdAt: '2026-04-16T10:00:00Z',
+        }),
+      )
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: 11n,
+          action: { type: 'Requested' },
+          createdAt: '2026-04-16T10:01:00Z',
+        }),
+      )
+
+      let capturedCtx: import('$lib/components/roving/context').RovingFocusContext | null = null
+      const { container } = render(RunCardHarness, {
+        props: {
+          cards: [
+            { run: run1, jobStats: emptyJobStats },
+            { run: run2, jobStats: emptyJobStats },
+          ],
+          onCtxReady: (ctx) => {
+            capturedCtx = ctx
+          },
+        },
+      })
+      await tick()
+
+      const btn10 = container.querySelector('.run-card[data-run-id="10"] button.run-card-activate')
+      const btn11 = container.querySelector('.run-card[data-run-id="11"] button.run-card-activate')
+
+      // Toggle: run10 → run11 → run10
+      capturedCtx!.setFocus(11n)
+      await tick()
+      expect(btn11!.getAttribute('tabindex')).toBe('0')
+      expect(btn10!.getAttribute('tabindex')).toBe('-1')
+
+      capturedCtx!.setFocus(10n)
+      await tick()
+      expect(btn10!.getAttribute('tabindex')).toBe('0')
+      expect(btn11!.getAttribute('tabindex')).toBe('-1')
+    })
+
+    it('AC1.7: no role="grid" or role="gridcell" in rendered DOM', () => {
+      const run = createMockRun({ id: 20n, status: 'Queued' })
+      const { container } = renderOne(run)
+
+      expect(container.querySelector('[role="grid"]')).toBeNull()
+      expect(container.querySelector('[role="gridcell"]')).toBeNull()
     })
   })
 })
