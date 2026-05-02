@@ -17,7 +17,7 @@
 
 import { cleanup, render } from '@testing-library/svelte'
 import { tick } from 'svelte'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { runStore } from '$lib/stores/runs.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
@@ -271,13 +271,25 @@ describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', (
     closeBtn!.focus()
     await tick()
 
+    // Spy on HTMLElement.prototype.focus to catch any .focus() calls during close.
+    // This directly asserts the "return without preventDefault" branch: our
+    // onCloseAutoFocus returned early (lastTriggerRunId was null), so Bits UI's
+    // default restoration ran — and none of our explicit .focus() calls fired.
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus')
+
     // Close via Esc.
     await pressEscape()
     await tick()
     await waitForAnimation()
 
-    // AC7.5: No run-card-activate should have focus (Bits UI default handles it,
-    // which typically leaves focus on <body> or previously-focused element).
+    // AC7.5: No run-card-activate should have received .focus() during the close lifecycle.
+    const cardFocusCalls = focusSpy.mock.instances.filter(
+      (el) => el instanceof HTMLElement && el.classList.contains('run-card-activate'),
+    )
+    expect(cardFocusCalls).toHaveLength(0)
+    focusSpy.mockRestore()
+
+    // Double-check: no run-card-activate should be the current activeElement
     const anyActivateButton = document.querySelector('.run-card-activate')
     expect(document.activeElement).not.toBe(anyActivateButton)
     // Trigger id was already null and should remain null.

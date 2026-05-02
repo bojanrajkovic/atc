@@ -749,6 +749,28 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
       () => window.__stores!.uiStore!.selectedRunId !== null,
     )
     expect(panelStillOpen).toBe(true)
+
+    // Stronger assertions (Task 4a): verify focus is still inside the dialog and
+    // the kanban's roving tabindex state has not advanced.
+
+    // 1. document.activeElement is inside the dialog
+    const activeIsInsideDialog = await page.evaluate(() => {
+      return document.activeElement?.closest('[role="dialog"]') !== null
+    })
+    expect(activeIsInsideDialog).toBe(true)
+
+    // 2. document.activeElement is NOT a .run-card-activate
+    const activeIsRunCardActivate = await page.evaluate(() => {
+      return document.activeElement?.classList.contains('run-card-activate') ?? false
+    })
+    expect(activeIsRunCardActivate).toBe(false)
+
+    // 3. The kanban's tabindex=0 card is still run 1 — roving context did not advance
+    const tabindex0RunId = await page.evaluate(() => {
+      const el = document.querySelector<HTMLElement>('.run-card-activate[tabindex="0"]')
+      return el?.closest('[data-run-id]')?.getAttribute('data-run-id') ?? null
+    })
+    expect(tabindex0RunId).toBe('1')
   })
 
   test('kanban-keyboard-nav.AC5.3 both palette and panel stacked: ArrowDown affects neither', async ({
@@ -942,5 +964,125 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
 
     // Focus should be on the new initialFocusRunId = queued-2 (id=2, since id=1 was evicted).
     expect(await focusedRunId(page)).toBe('2')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AC2.x: Pool-filter arrow nav
+// ---------------------------------------------------------------------------
+
+test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupPage(page)
+  })
+
+  /**
+   * Seed three queued runs with different pool labels:
+   *   run 1 → pool-a (visible under pool-a filter)
+   *   run 2 → pool-b (hidden under pool-a filter)
+   *   run 3 → pool-a (visible under pool-a filter)
+   *
+   * Sends inline JSON because ws-mock's sendWS helper routes through
+   * window.__stores bridge's bigint reviver and job event path, just
+   * like the app's real WS dispatcher.
+   */
+  async function seedWithPools(page: import('@playwright/test').Page): Promise<void> {
+    // Seed three queued runs.
+    for (let i = 1; i <= 3; i++) {
+      await sendWS(
+        page,
+        makeRunEvent(i, {
+          runId: i,
+          displayTitle: `Queued #${i}`,
+          createdAt: new Date(2026, 0, 1, 12, 0, i).toISOString(),
+          runStartedAt: null,
+          updatedAt: new Date(2026, 0, 1, 12, 0, i).toISOString(),
+          action: { type: 'Requested' },
+        }),
+      )
+    }
+    await expect(page.locator('.run-card')).toHaveCount(3, { timeout: 5_000 })
+
+    // Attach pool labels via direct store mutation — keeps the test self-contained
+    // without having to construct valid JobEventEnvelope wire payloads.
+    // filterRunsByPool() reads jobsByRunId via runStore.applyJobEvent(); we inject
+    // minimal job records with the labels we need for the filter to match correctly.
+    await page.evaluate(() => {
+      const stores = window.__stores!
+      // job 1n for run 1n → labels ['pool-a']
+      stores.runStore!.applyJobEvent({
+        runId: 1n,
+        jobId: 10n,
+        org: 'o',
+        repo: 'r',
+        name: 'j1',
+        createdAt: '2026-01-01T12:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        // @ts-ignore wire shape for test
+        action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
+      })
+      // job 2n for run 2n → labels ['pool-b']
+      stores.runStore!.applyJobEvent({
+        runId: 2n,
+        jobId: 20n,
+        org: 'o',
+        repo: 'r',
+        name: 'j2',
+        createdAt: '2026-01-01T12:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        // @ts-ignore wire shape for test
+        action: { type: 'Queued', data: { labels: ['pool-b'], steps: [] } },
+      })
+      // job 3n for run 3n → labels ['pool-a']
+      stores.runStore!.applyJobEvent({
+        runId: 3n,
+        jobId: 30n,
+        org: 'o',
+        repo: 'r',
+        name: 'j3',
+        createdAt: '2026-01-01T12:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        // @ts-ignore wire shape for test
+        action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
+      })
+    })
+  }
+
+  test('kanban-keyboard-nav.AC2.x pool-filter: ArrowDown skips hidden cards, stays within visible set', async ({
+    page,
+  }) => {
+    await seedWithPools(page)
+
+    // Activate pool-a filter — run 2 (pool-b) becomes hidden.
+    await page.evaluate(() => {
+      // biome-ignore lint/suspicious/noExplicitAny: bypass PoolKey brand for test setter
+      window.__stores!.uiStore!.activePoolFilter = window.__stores!.poolKey!(['pool-a']) as any
+    })
+    await expect(page.locator('.run-card[data-run-id="2"]')).toBeHidden({ timeout: 3_000 })
+
+    // Focus the first visible card (run 1 — pool-a matches).
+    await focusFirstCard(page)
+    expect(await focusedRunId(page)).toBe('1')
+
+    // ArrowDown: should skip run 2 (filtered) and land on run 3 (pool-a, visible).
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedRunId(page)).toBe('3')
+
+    // ArrowDown again: run 3 is the last visible card — no-op (no wrap).
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedRunId(page)).toBe('3')
+
+    // Clear filter: all runs visible again, nav continues normally.
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.activePoolFilter = null
+    })
+    await expect(page.locator('.run-card[data-run-id="2"]')).toBeVisible({ timeout: 3_000 })
+
+    // ArrowDown from run 3 is still at bottom of queued column — no-op.
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedRunId(page)).toBe('3')
   })
 })
