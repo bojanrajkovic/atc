@@ -31,7 +31,13 @@
   const isFocused = $derived(ctx.currentFocusRunId === run.id)
 
   $effect(() => {
-    if (isFocused && ctx.kanbanHasFocus && buttonEl !== undefined) {
+    if (
+      isFocused &&
+      ctx.kanbanHasFocus &&
+      buttonEl !== undefined &&
+      !popoverOpen &&
+      document.activeElement !== buttonEl
+    ) {
       buttonEl.focus()
     }
   })
