@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-05-01
+Last verified: 2026-05-02
 
 ## Purpose
 
@@ -354,6 +354,28 @@ Focus restoration after each dialog closes uses an id-then-querySelector pattern
 - **Panel closes:** `onCloseAutoFocus` reads `uiStore.lastTriggerRunId`, queries `.run-card[data-run-id="${lastTriggerRunId}"] .run-card-activate` (set by RunCard as `data-run-id` on the `<article>`), focuses the inner button, and clears `lastTriggerRunId`. The `data-run-id` attribute survives remounts; the element ref would not.
 
 See Phase 6 plan Note 4 (`docs/implementation-plans/2026-04-25-interactivity/phase_06.md`) for the rationale comparing alternative approaches (element-ref-on-store, default Bits UI focus-scope).
+
+### Roving Focus
+
+The kanban grid implements 2D arrow-key navigation via roving tabindex without adopting the WAI-ARIA `grid` or `listbox` widget contract. Focus management is layered on externally — the existing `<section>` / `<div role="list">` / `<div role="listitem">` structure is preserved.
+
+**Architecture:**
+
+- `<RovingFocusProvider>` is a context-only wrapper component (no DOM element) that wraps `<AppShell>`, `<CommandPalette>`, and `<RunDetailPanel>` in `App.svelte`. It owns two `$state` cells (`focusedRunId: bigint | null`, `kanbanHasFocus: boolean`), three `$derived` values (`initialFocusRunId`, `currentFocusRunId`, an eviction-watcher `$effect`), and the `restoreFocusToInitial()` function. The provider renders `{@render children()}` with no surrounding DOM, so context propagates by component tree (which means Bits UI portals from `Command.Dialog` and `Sheet` do NOT break `getRovingContext()` access in their consumers).
+- `roving/context.ts` exposes `RovingFocusContext` interface, `ROVING_CONTEXT_KEY` symbol, and `setRovingContext` / `getRovingContext` accessors. The getter throws if the context is missing — fast failure rather than silent `undefined`.
+- `roving/geometry.ts` is pure functions over a `Columns = readonly [WorkflowRun[], WorkflowRun[], WorkflowRun[]]` tuple. Resolves arrow-key + Home/End navigation with no-wrap at edges, empty-column-skipping, and asymmetric-column row-clamping. O(n) per keypress where n is total visible runs (~<100 at dashboard scale).
+- `roving/action.ts` is a Svelte 5 action `(node: HTMLElement, ctx: RovingFocusContext) => { destroy }` attached to `KanbanBoard.svelte`'s grid `<div>`. Three listeners: `focusin` (sets `kanbanHasFocus` + syncs `focusedRunId` from the event target's `[data-run-id]` ancestor), `focusout` (clears `kanbanHasFocus` if focus exits the grid), `keydown` (modifier-guard-first, then geometry-resolves and calls `ctx.setFocus(targetId)` plus `event.preventDefault()`). Imperative `.focus()` is NOT called from the action — RunCard's `$effect` handles it.
+- `RunCard.svelte` derives `isFocused = ctx.currentFocusRunId === run.id`, applies `tabindex={isFocused ? 0 : -1}` on the inner `<button class="run-card-activate">`, and runs a `$effect` that calls `buttonEl.focus()` when `isFocused && ctx.kanbanHasFocus`. The `$effect` covers both user-initiated arrow nav AND cross-column re-focus across crossfade (a fresh DOM node remounts with `isFocused === true`, the effect runs, and `document.activeElement` lands on the new node).
+
+**Suspension is structural:** When `Command.Dialog` (palette) or `Sheet` (panel) opens, Bits UI moves focus into its portaled DOM (outside the kanban grid). The action's keydown listener is scoped via bubble-phase to the grid `<div>`, so it silences naturally — no explicit coordination flag with `paletteStore.paletteOpen` or `uiStore.selectedRunId`.
+
+**Lost-trigger restoration is centralized:** `ctx.restoreFocusToInitial()` is the single source of truth for "involuntary focus loss → first card in first non-empty column." Two callers:
+1. **Eviction during keyboard nav** — the provider's `$effect` watches `focusedRunId` against `locate()`; if `locate` returns null, the focused run was evicted and `restoreFocusToInitial()` fires.
+2. **Panel close with evicted source** — `RunDetailPanel.onCloseAutoFocus` calls it when the trigger-card querySelector returns null. (This replaces the previous bug where the optional-chained `?.focus()` silently no-opped, leaving focus on `<body>`.)
+
+Both paths land focus on the same DOM node under identical preconditions (AC7.4).
+
+**Why context, not a sixth store:** Roving state is component-scoped (dies with the kanban) and doesn't need to survive any persistence boundary. Folding into UIStore would mix preference-state with transient-state; a sixth store would fight the README's "5 stores is the ceiling" principle without empirical justification. Svelte context is the textbook fit: component-tree-scoped state, propagates by composition, dies with the provider.
 
 ### Global keyboard chord listener
 
