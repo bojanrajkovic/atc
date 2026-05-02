@@ -1,5 +1,6 @@
 import { getContext, setContext } from 'svelte'
 import type { RunId } from '$lib/types/generated/RunId'
+import type { Columns } from './geometry'
 
 /**
  * The full shape of the roving focus context shared between RovingFocusProvider
@@ -12,7 +13,7 @@ export interface RovingFocusContext {
   /** Explicit user-set focus target. Null means "fall back to initial". */
   readonly focusedRunId: bigint | null
 
-  /** First card in first non-empty column, derived from runStore in the provider. */
+  /** First card in first non-empty VISIBLE column, derived from visibleColumns in the provider. */
   readonly initialFocusRunId: bigint | null
 
   /** Effective target: focusedRunId ?? initialFocusRunId. */
@@ -21,6 +22,15 @@ export interface RovingFocusContext {
   /** Toggled by the action's focusin/focusout listeners. */
   readonly kanbanHasFocus: boolean
 
+  /**
+   * Snapshot of the visible columns the kanban DOM renders.
+   * Computed by the provider from runStore columns filtered by uiStore.activePoolFilter.
+   * Callers must not mutate the returned tuple — it is a live snapshot.
+   * Both action.ts (geometry resolution) and the eviction $effect consume this
+   * so the roving source of truth and the rendered DOM cannot diverge under a filter.
+   */
+  getVisibleColumns(): Columns
+
   /** Set the explicitly focused run id. */
   setFocus(id: RunId | null): void
 
@@ -28,7 +38,7 @@ export interface RovingFocusContext {
   setKanbanHasFocus(value: boolean): void
 
   /** Reset focusedRunId to null so currentFocusRunId falls back to initialFocusRunId. */
-  restoreFocusToInitial(): void
+  restoreFocusToInitial(): Promise<void>
 }
 
 /**

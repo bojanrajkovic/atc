@@ -8,7 +8,7 @@ import ContextTestHarnessOtherSymbol from './context-test-harness-other-symbol.s
 type GetResult = { ok: true; value: RovingFocusContext } | { ok: false; error: Error }
 
 /**
- * Build a fully-specified mock RovingFocusContext with all seven members.
+ * Build a fully-specified mock RovingFocusContext with all eight members.
  * The setters are stubs — this layer only tests the store/retrieve protocol,
  * not the behavior of the setters or restorers themselves.
  */
@@ -18,9 +18,10 @@ function makeMockContext(): RovingFocusContext {
     initialFocusRunId: null,
     currentFocusRunId: null,
     kanbanHasFocus: false,
+    getVisibleColumns: () => [[], [], []] as const,
     setFocus: () => {},
     setKanbanHasFocus: () => {},
-    restoreFocusToInitial: () => {},
+    restoreFocusToInitial: () => Promise.resolve(),
   }
 }
 
@@ -81,7 +82,7 @@ describe('roving context', () => {
     })
   })
 
-  describe('round-trip with all seven context members', () => {
+  describe('round-trip with all eight context members', () => {
     it('retrieves a fully-specified context object with all members intact', () => {
       let setFocusCallCount = 0
       let setKanbanHasFocusCallCount = 0
@@ -92,6 +93,7 @@ describe('roving context', () => {
         initialFocusRunId: 1n,
         currentFocusRunId: 42n,
         kanbanHasFocus: true,
+        getVisibleColumns: () => [[], [], []] as const,
         setFocus: (_id) => {
           setFocusCallCount++
         },
@@ -100,6 +102,7 @@ describe('roving context', () => {
         },
         restoreFocusToInitial: () => {
           restoreFocusCallCount++
+          return Promise.resolve()
         },
       }
 
@@ -122,11 +125,12 @@ describe('roving context', () => {
       // Identity: same object reference
       expect(retrieved).toBe(ctx)
 
-      // All seven members are accessible on the retrieved reference
+      // All eight members are accessible on the retrieved reference
       expect(retrieved.focusedRunId).toBe(42n)
       expect(retrieved.initialFocusRunId).toBe(1n)
       expect(retrieved.currentFocusRunId).toBe(42n)
       expect(retrieved.kanbanHasFocus).toBe(true)
+      expect(retrieved.getVisibleColumns()).toStrictEqual([[], [], []])
 
       // Methods are callable (not exercising setter behavior — just protocol)
       retrieved.setFocus(null)

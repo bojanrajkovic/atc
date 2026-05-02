@@ -1,23 +1,5 @@
-import { runStore } from '$lib/stores/runs.svelte'
 import type { RovingFocusContext } from './context'
-import { type ArrowKey, type Columns, resolveTarget } from './geometry'
-
-// ---------------------------------------------------------------------------
-// columnsSnapshot()
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the current kanban columns as a Columns tuple from the runStore.
- * Reads are not in a reactive context (inside an event handler) so they
- * snapshot the current values at the time of the keypress.
- */
-function columnsSnapshot(): Columns {
-  return [
-    runStore.queuedRuns,
-    runStore.inProgressRuns,
-    runStore.completedRuns,
-  ] as const satisfies Columns
-}
+import { type ArrowKey, resolveTarget } from './geometry'
 
 // ---------------------------------------------------------------------------
 // Arrow-key set — used for early-return guard
@@ -119,7 +101,7 @@ export function roving(node: HTMLElement, ctx: RovingFocusContext): { destroy():
       return
     }
 
-    const columns = columnsSnapshot()
+    const columns = ctx.getVisibleColumns()
     const resolved = resolveTarget(ctx.currentFocusRunId, key, columns)
 
     // Always preventDefault for claimed keys — suppresses browser-default

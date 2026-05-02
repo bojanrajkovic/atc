@@ -2,30 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createMockRun } from '$lib/test-utils/factories'
 import { roving } from './action'
+import type { Columns } from './geometry'
 
 // ---------------------------------------------------------------------------
-// runStore mock — must come before any import that transitively loads the store
+// Fixture columns — reassigned per-test to control what ctx.getVisibleColumns()
+// returns.  action.ts now calls ctx.getVisibleColumns() instead of reading
+// from runStore directly, so these live on the mock context rather than in a
+// module-level store mock.
 // ---------------------------------------------------------------------------
 
-// Fixture arrays for the mock store. These are reassigned per-test to control
-// what `columnsSnapshot()` returns.
 let mockQueued = [createMockRun({ id: 100n, status: 'Queued' })]
 let mockInProgress = [createMockRun({ id: 200n, status: 'InProgress' })]
 let mockCompleted = [createMockRun({ id: 300n, status: 'Completed' })]
-
-vi.mock('$lib/stores/runs.svelte', () => ({
-  runStore: {
-    get queuedRuns() {
-      return mockQueued
-    },
-    get inProgressRuns() {
-      return mockInProgress
-    },
-    get completedRuns() {
-      return mockCompleted
-    },
-  },
-}))
 
 // ---------------------------------------------------------------------------
 // Mock context factory
@@ -46,14 +34,20 @@ function makeMockContext() {
     get kanbanHasFocus() {
       return kanbanHasFocus
     },
+    getVisibleColumns(): Columns {
+      // Snapshot the current fixture arrays at call time, mirroring the
+      // provider's $derived snapshot semantics inside the event handler.
+      return [mockQueued, mockInProgress, mockCompleted] as const satisfies Columns
+    },
     setFocus: vi.fn((id: bigint | null) => {
       focusedRunId = id
     }),
     setKanbanHasFocus: vi.fn((v: boolean) => {
       kanbanHasFocus = v
     }),
-    restoreFocusToInitial() {
+    restoreFocusToInitial(): Promise<void> {
       /* no-op for this layer */
+      return Promise.resolve()
     },
   }
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import RovingFocusProvider from '$lib/components/roving/RovingFocusProvider.svelte'
   import type { RovingFocusContext } from '$lib/components/roving/context'
+  import type { PoolKey } from '$lib/filters/pool'
   import type { JobStats } from '$lib/stores/runs.svelte'
   import type { Job } from '$lib/types/generated/Job'
   import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
@@ -12,6 +13,7 @@
     completedRuns: readonly WorkflowRun[]
     jobStatsByRun: ReadonlyMap<bigint, JobStats>
     jobsByRunId: ReadonlyMap<bigint, readonly Job[]>
+    activePoolFilter?: PoolKey | null
     onCtxReady?: (ctx: RovingFocusContext) => void
   }
 
@@ -21,6 +23,7 @@
     completedRuns,
     jobStatsByRun,
     jobsByRunId,
+    activePoolFilter = null,
     onCtxReady = () => {},
   }: Props = $props()
 </script>
@@ -32,6 +35,7 @@
     {completedRuns}
     {jobStatsByRun}
     {jobsByRunId}
+    {activePoolFilter}
     {onCtxReady}
   />
 </RovingFocusProvider>
