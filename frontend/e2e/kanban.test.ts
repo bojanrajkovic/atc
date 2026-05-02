@@ -25,7 +25,7 @@ test.describe('Kanban board', () => {
     // Step 1: Hydration placeholder visible while connecting
     await expect(page.getByText(/Connecting/)).toBeVisible()
 
-    // Step 2: Fulfill empty snapshot → "No workflows yet."
+    // Step 2: Fulfill empty snapshot → EmptyState caption "Watching for runs."
     await stateRoute!.fulfill({
       contentType: 'application/json',
       body: JSON.stringify(
@@ -33,7 +33,7 @@ test.describe('Kanban board', () => {
         bigintReplacer,
       ),
     })
-    await expect(page.getByText('No workflows yet.')).toBeVisible()
+    await expect(page.getByText('Watching for runs.')).toBeVisible()
 
     // Step 3: Send WS event → board populates
     await sendWS(

@@ -6,6 +6,7 @@
   import { uiStore } from '$lib/stores/ui.svelte'
   import KanbanColumn from './KanbanColumn.svelte'
   import PoolFilterPill from './PoolFilterPill.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { getRovingContext } from '$lib/components/roving/context'
   import { roving } from '$lib/components/roving/action'
 
@@ -38,9 +39,7 @@
   </div>
 {:else if connectionStore.status === 'connected' && totalRuns === 0}
   <!-- Empty state: connected but no workflow runs -->
-  <div class="flex items-center justify-center h-full" style="color: var(--text-dim);">
-    <p class="text-sm">No workflows yet.</p>
-  </div>
+  <EmptyState />
 {:else}
   {#if uiStore.activePoolFilter !== null && activeFilterLabelText !== null}
     <header class="kanban-header">
@@ -52,8 +51,13 @@
       />
     </header>
   {/if}
-  <!-- Three-column kanban grid -->
-  <div use:roving={ctx} class="grid grid-cols-3 gap-4 h-full p-4" style="min-height: 0;">
+  <!-- Three-column kanban grid (responsive: 1 col <sm, 2 cols sm–xl, 3 cols ≥xl) -->
+  <div
+    use:roving={ctx}
+    data-kanban-grid
+    class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 h-full p-4 min-w-0"
+    style="min-height: 0;"
+  >
     <KanbanColumn
       label="QUEUED"
       runs={runStore.queuedRuns}

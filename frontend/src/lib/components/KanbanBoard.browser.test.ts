@@ -70,8 +70,8 @@ describe('KanbanBoard (browser mode)', () => {
     const connectingText = screen.getByText(/Connecting/i)
     expect(connectingText).toBeTruthy()
 
-    // Ensure "No workflows yet." is NOT visible
-    expect(() => screen.getByText(/No workflows yet/i)).toThrow()
+    // Ensure EmptyState caption "Watching for runs." is NOT visible
+    expect(() => screen.getByText(/Watching for runs/i)).toThrow()
   })
 
   // AC7.2: Empty state when connected with zero runs
@@ -85,14 +85,14 @@ describe('KanbanBoard (browser mode)', () => {
     // Wait for reactivity
     await new Promise((r) => setTimeout(r, 50))
 
-    // Should render "No workflows yet." text
-    const emptyText = screen.getByText(/No workflows yet/i)
+    // Should render EmptyState with default caption
+    const emptyText = screen.getByText(/Watching for runs/i)
     expect(emptyText).toBeTruthy()
 
-    // Should not render column headings
-    expect(() => screen.getByText(/QUEUED/i)).toThrow()
-    expect(() => screen.getByText(/IN PROGRESS/i)).toThrow()
-    expect(() => screen.getByText(/COMPLETED/i)).toThrow()
+    // Should not render kanban column headings (role=heading from ColumnHeader)
+    expect(() => screen.getByRole('heading', { name: /QUEUED/i })).toThrow()
+    expect(() => screen.getByRole('heading', { name: /IN PROGRESS/i })).toThrow()
+    expect(() => screen.getByRole('heading', { name: /COMPLETED/i })).toThrow()
   })
 
   // AC7.3: Populated state with three column headings
