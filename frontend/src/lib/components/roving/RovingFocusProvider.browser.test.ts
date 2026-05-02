@@ -185,6 +185,13 @@ describe('RovingFocusProvider.browser.test', () => {
     // Evict run 200n from the store — should trigger restoreFocusToInitial
     runStore.runs.delete(200n)
 
+    // Plan adaptation: the implementation plan calls for `expect(focusedRunId).toBe(null)`,
+    // but that state is unobservable — restoreFocusToInitial sets focusedRunId=null, awaits
+    // tick, then calls el.focus(); the action's focusin handler synchronously re-syncs
+    // focusedRunId back to the target id (100n) before any poll can observe null. We assert
+    // the user-observable end-state instead: focus landed on the right button, and
+    // currentFocusRunId reflects the effective focus.
+    //
     // Wait for the $derived arrays and the eviction $effect to propagate,
     // then for restoreFocusToInitial to call el.focus(). After focus lands on
     // the 100n button, the action's focusin handler fires and sets focusedRunId
