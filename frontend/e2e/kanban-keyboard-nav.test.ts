@@ -805,3 +805,142 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
     expect(await focusedRunId(page)).toBe('2')
   })
 })
+
+// ---------------------------------------------------------------------------
+// AC6 + AC7: Card-stable transitions, lost-trigger restoration
+// ---------------------------------------------------------------------------
+
+test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupPage(page)
+  })
+
+  test('kanban-keyboard-nav.AC6.5 burst events with held ArrowDown — card-stable across reorder', async ({
+    page,
+  }) => {
+    // Seed 5 queued runs with EXACT UTC timestamps per the deterministic plan scenario.
+    // Do NOT use seedQueued() here — that helper uses local-time new Date() constructors
+    // which produce different UTC strings on non-UTC runners, breaking the timestamp math.
+    // IDs 1-5 with displayTitles Q1-Q5, createdAt ascending: order is Q1,Q2,Q3,Q4,Q5.
+    for (let i = 1; i <= 5; i++) {
+      const padded = String(i).padStart(2, '0')
+      await sendWS(
+        page,
+        makeRunEvent(i, {
+          runId: i,
+          displayTitle: `Q${i}`,
+          createdAt: `2026-01-01T12:00:${padded}Z`,
+          runStartedAt: null,
+          updatedAt: `2026-01-01T12:00:${padded}Z`,
+          action: { type: 'Requested' },
+        }),
+      )
+    }
+    await expect(page.locator('.run-card')).toHaveCount(5, { timeout: 5_000 })
+
+    // Initial order: Q1(id=1), Q2(id=2), Q3(id=3), Q4(id=4), Q5(id=5)
+    await focusFirstCard(page)
+    expect(await focusedRunId(page)).toBe('1')
+
+    // ArrowDown → Q2 (id=2)
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedRunId(page)).toBe('2')
+
+    // Burst event: re-issue Q4 with an EARLIER createdAt (11:59:59Z) — moves Q4 to top.
+    // New sort order: Q4(id=4, 11:59:59), Q1(id=1, 12:00:01), Q2(id=2, 12:00:02),
+    //                 Q3(id=3, 12:00:03), Q5(id=5, 12:00:05)
+    await sendWS(
+      page,
+      makeRunEvent(10, {
+        runId: 4,
+        displayTitle: 'Q4',
+        createdAt: '2026-01-01T11:59:59Z',
+        runStartedAt: null,
+        updatedAt: '2026-01-01T11:59:59Z',
+        action: { type: 'Requested' },
+      }),
+    )
+
+    // Press ArrowDown again. Card-stable contract: focus is anchored to run-id 2 (Q2),
+    // which is now at row 2 of the new ordering. ArrowDown from row 2 → row 3 = run-id 3 (Q3).
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedRunId(page)).toBe('3')
+  })
+
+  test('kanban-keyboard-nav.AC7.3 eviction during keyboard nav restores focus to initial card', async ({
+    page,
+  }) => {
+    // Seed 3 queued runs. Navigate to queued-2.
+    await seedQueued(page, 3)
+    await focusFirstCard(page)
+    expect(await focusedRunId(page)).toBe('1')
+
+    await page.keyboard.press('ArrowDown')
+    expect(await focusedRunId(page)).toBe('2')
+
+    // Evict queued-2 via SvelteMap reactive delete. The eviction $effect in
+    // RovingFocusProvider detects locate(focusedRunId, columns) === null and
+    // calls restoreFocusToInitial() → focuses the first card of the first
+    // non-empty column (queued-1, id=1).
+    await page.evaluate((id: string) => {
+      window.__stores!.runStore!.runs.delete(BigInt(id))
+    }, '2')
+
+    // Wait for the eviction $effect + RunCard $effect + DOM update to settle.
+    // Use waitForFunction (retrying) rather than a snapshot read to avoid racing
+    // the Svelte tick that follows the SvelteMap reactive delete.
+    await page.waitForFunction(
+      () => document.activeElement?.classList.contains('run-card-activate'),
+      { timeout: 3_000 },
+    )
+
+    // Focus should have been restored to queued-1 (the new initialFocusRunId).
+    expect(await focusedRunId(page)).toBe('1')
+  })
+
+  test('kanban-keyboard-nav.AC7.2 panel close with evicted trigger card — focus lands on initial card, NOT body', async ({
+    page,
+  }) => {
+    // Seed 3 queued runs. Focus queued-1.
+    await seedQueued(page, 3)
+    await focusFirstCard(page)
+    expect(await focusedRunId(page)).toBe('1')
+
+    // Open panel by clicking queued-1's activator button.
+    // The click sets uiStore.lastTriggerRunId = 1n (canonical user path).
+    await page.locator('article.run-card[data-run-id="1"]').locator('.run-card-activate').click()
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
+
+    // With the panel open, evict queued-1 (the trigger card).
+    // This simulates TTL eviction while the panel is open — the card disappears
+    // from the DOM and the store.
+    await page.evaluate(() => {
+      window.__stores!.runStore!.runs.delete(1n)
+    })
+
+    // Close the panel via Escape.
+    await page.keyboard.press('Escape')
+
+    // Wait for selectedRunId to clear (panel fully closed).
+    await page.waitForFunction(() => window.__stores!.uiStore!.selectedRunId === null, {
+      timeout: 3_000,
+    })
+
+    // Wait ~350ms for the Bits UI Sheet exit animation + onCloseAutoFocus to complete.
+    // onCloseAutoFocus should route through ctx.restoreFocusToInitial() since the
+    // trigger card (id=1) was evicted — querySelector returns null, so the bug-fix
+    // path fires and lands focus on queued-2 (the new first card).
+    await page.waitForFunction(
+      () => document.activeElement?.classList.contains('run-card-activate'),
+      { timeout: 3_500 },
+    )
+
+    // The original bug: focus was left on <body> because event.preventDefault() ran
+    // but the optional-chain ?.focus() silently no-opped. Assert regression is fixed.
+    const activeTag = await page.evaluate(() => document.activeElement?.tagName)
+    expect(activeTag).not.toBe('BODY')
+
+    // Focus should be on the new initialFocusRunId = queued-2 (id=2, since id=1 was evicted).
+    expect(await focusedRunId(page)).toBe('2')
+  })
+})
