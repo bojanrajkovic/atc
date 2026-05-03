@@ -218,6 +218,7 @@ jobs:
           name: test-results-frontend
           path: |
             frontend/coverage/lcov.info
+            frontend/test-results/frame-budget-trace.json
           retention-days: 7
           if-no-files-found: ignore
 
