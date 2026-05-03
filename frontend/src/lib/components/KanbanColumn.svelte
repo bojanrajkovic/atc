@@ -42,7 +42,10 @@
 
 <section aria-labelledby={headingId} class="flex flex-col min-h-0">
   <ColumnHeader {label} count={visibleRuns.length} {headingId} />
-  <div role="list" class="flex flex-col gap-2 overflow-y-auto min-h-0 p-2 atc-scrollbar">
+  <div
+    role="list"
+    class="flex flex-col gap-2 p-2 sm:px-3 sm:overflow-y-auto sm:min-h-0 atc-scrollbar"
+  >
     {#each visibleRuns as run (run.id)}
       <div
         role="listitem"

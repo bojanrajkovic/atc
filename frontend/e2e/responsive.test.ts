@@ -188,4 +188,41 @@ test.describe('Responsive layout', () => {
       expect(hasHScroll).toBe(false)
     })
   }
+
+  /**
+   * AC2.6: At <sm, the kanban scroll is unified across stacked columns —
+   * column bodies do not scroll independently. The unified scroll lives on
+   * <main>, and column headers are `position: sticky` so each pins to the
+   * top of <main>'s viewport while its column section is in view.
+   *
+   * At sm+, columns regain independent vertical scroll (overflow-y: auto on
+   * the column body), and `sticky` on the header is functionally a no-op
+   * because <main> no longer scrolls.
+   */
+  test('AC2.6 — 480px width: column bodies do not scroll independently', async ({ page }) => {
+    await page.setViewportSize({ width: 480, height: 800 })
+    await setupWithRuns(page)
+
+    const queuedList = page.locator('[data-kanban-grid] [role="list"]').first()
+    const overflowY = await queuedList.evaluate((el) => getComputedStyle(el).overflowY)
+    expect(overflowY).toBe('visible')
+  })
+
+  test('AC2.6 — 480px width: column headers are sticky', async ({ page }) => {
+    await page.setViewportSize({ width: 480, height: 800 })
+    await setupWithRuns(page)
+
+    const header = page.locator('[data-column-header]').first()
+    const position = await header.evaluate((el) => getComputedStyle(el).position)
+    expect(position).toBe('sticky')
+  })
+
+  test('AC2.6 — 1280px width: column bodies scroll independently', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await setupWithRuns(page)
+
+    const queuedList = page.locator('[data-kanban-grid] [role="list"]').first()
+    const overflowY = await queuedList.evaluate((el) => getComputedStyle(el).overflowY)
+    expect(overflowY).toBe('auto')
+  })
 })

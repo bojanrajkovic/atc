@@ -51,11 +51,14 @@
       />
     </header>
   {/if}
-  <!-- Three-column kanban grid (responsive: 1 col <sm, 2 cols sm–xl, 3 cols ≥xl) -->
+  <!-- Three-column kanban grid (responsive: 1 col <sm, 2 cols sm–xl, 3 cols ≥xl).
+       At <sm, drop `h-full` so the grid flows to natural content height and
+       <main> scrolls all stacked columns as one unified scroll (paired with
+       removing per-column overflow in KanbanColumn and sticky headers). -->
   <div
     use:roving={ctx}
     data-kanban-grid
-    class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 h-full p-4 min-w-0"
+    class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:h-full p-4 min-w-0"
     style="min-height: 0;"
   >
     <KanbanColumn

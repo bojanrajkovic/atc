@@ -450,6 +450,23 @@ grid-cols-1 sm:grid-cols-2 xl:grid-cols-3
 
 No horizontal page scroll at any viewport width ≥320px. The `min-w-0` class on the grid container prevents overflow from long run titles.
 
+### Kanban scroll
+
+The kanban inverts its scroll model at the `sm:` (640px) breakpoint:
+
+| Viewport | Scroll owner | Column body | Column header |
+|----------|--------------|-------------|---------------|
+| `≥640px` | per-column (`[role="list"]`) | `overflow-y: auto`, `min-height: 0` | static (no-op `sticky` is harmless) |
+| `<640px` | unified on `<main>` (AppShell) | `overflow: visible` (flows to natural height) | `position: sticky; top: 0` (pins per column section) |
+
+The mechanism:
+
+- `KanbanBoard.svelte`'s grid carries `grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:h-full p-4`. Dropping `h-full` at `<sm` lets the grid flow to natural content height so `<main>` (which already has `flex-1 overflow-auto` from `AppShell.svelte`) becomes the document scroll container for all stacked columns at once.
+- `KanbanColumn.svelte`'s `<div role="list">` carries `flex flex-col gap-2 p-2 sm:px-3 sm:overflow-y-auto sm:min-h-0 atc-scrollbar`. At `sm+`, the body owns its own vertical scroll; the `sm:px-3` bumps horizontal padding from 8px → 12px so the per-column scrollbar (right edge) has visible breathing room from the cards. At `<sm`, `overflow: visible` lets the cards flow into the unified scroll on `<main>` (and `sm:px-3` is inert).
+- `ColumnHeader.svelte`'s root carries `sticky top-0 z-10 ... px-2 py-2 sm:px-0 sm:py-0` with `background-color: var(--bg)`. The sticky positioning attaches to `<main>` (the nearest scrolling ancestor at `<sm`) and pins the header to the top of the viewport while its column section is in view; the next section's header takes over on scroll. At `sm+` the header is functionally identical to a `static` element because `<main>` no longer scrolls (the grid fills it via `h-full`); the small `<sm`-only padding is reset with `sm:px-0 sm:py-0`. The opaque `var(--bg)` background prevents cards bleeding through the header during sticky pin.
+
+The two-mode design preserves the clean per-column scroll at desktop widths (where multiple columns are visible side-by-side and independent scroll is the natural mental model) while giving narrow viewports a single document-style scroll with section markers — avoiding the "trapped inside a tiny scroll viewport" feel of stacked independently-scrollable rectangles.
+
 ### TopBar wrap
 
 `TopBar.svelte`'s header uses `flex flex-wrap gap-y-2`. Three direct flex children, plus a row-2 container:
