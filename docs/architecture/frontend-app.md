@@ -726,3 +726,40 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/components/RunCard.test-harness.svelte` / `RunCardHarnessInner.svelte` — Two-component harness for RunCard unit tests: outer wraps RovingFocusProvider, inner calls `getRovingContext()` and renders N RunCards with `onCtxReady` context-capture callback
 - `frontend/src/lib/components/KanbanColumn.test-harness.svelte` — Single-column harness wrapping one KanbanColumn in a RovingFocusProvider; used by KanbanColumn.test.ts unit tests
 - `frontend/src/lib/components/KanbanBoardInvariant.test-harness.svelte` / `KanbanBoardInvariantHarnessInner.svelte` — Two-component harness for kanban-level tabindex invariant tests: renders all three KanbanColumns inside one RovingFocusProvider with `onCtxReady` callback; used by `KanbanColumn.tabindex.browser.test.ts`
+
+## Performance Verification
+
+### Methodology
+
+Performance verification for the EventDispatcher's RAF-coalescing behavior is split into two tiers:
+
+**Tier 1 — Deterministic CI gate** (`frontend/src/lib/dispatcher.perf.browser.test.ts`)
+
+A Vitest browser-mode test that verifies RAF batching is working correctly under a 1000-event burst. The key design choice is eliminating wall-clock variance entirely:
+
+- `requestAnimationFrame` is replaced with a manually-driven queue via `vi.stubGlobal` before the module singleton is imported (fresh import via `vi.resetModules()`).
+- Events are dispatched in N=10 controlled batches of 100; the RAF queue is ticked once after each batch.
+- Because the first `dispatch()` in each batch schedules one RAF (and subsequent dispatches in the same batch skip scheduling since `rafId !== null`), each `tickRAF()` drains exactly one batch of 100 events.
+
+Assertions (all equality, not bounded):
+- `flushCount === 10` — exactly N flush callbacks fired.
+- `runStore.runs.size === 1000` — every event landed in store state.
+- `totalEventsReceived === 1000` — no events dropped across all flushes (verified via the public `setOnFlush` hook, which receives the flushed array after stores have been mutated).
+
+This test is a CI hard fail. Wall-clock flake is eliminated by construction: no `setTimeout`, no `vi.useFakeTimers()` involvement, no real RAF scheduling.
+
+**Tier 2 — Informational frame-budget trace** (`frontend/e2e/frame-budget.test.ts`)
+
+A Playwright test that fires 1000 events through the live `EventDispatcher` (via `sendWSBatch`) while a Chrome DevTools Protocol trace is running. Trace data is collected via a CDP session (`context.newCDPSession(page)`) with the `devtools.timeline,rendering` categories. After the burst, the test parses `BeginFrame` delta timestamps, computes a frame-budget summary (`p50_ms`, `p95_ms`, `p99_ms`, `dropped_frames`), and saves the result to `frontend/test-results/frame-budget-trace.json`.
+
+This test always passes — there are no timing assertions. In headless Chromium, `BeginFrame` events are not generated (no physical display), so the summary will show zeros; the trace still captures other timeline events (2000+ events in a typical run). The artifact is uploaded to CI under the `test-results-frontend` artifact name (`if-no-files-found: ignore` handles the case where E2E tests were skipped).
+
+Future tightening is mechanical: once a baseline p95 is established from headed or non-headless runs, add `expect(summary.p95_ms).toBeLessThan(N)` to gate regressions.
+
+### Artifact Location
+
+`frontend/test-results/frame-budget-trace.json` — produced by the Tier 2 Playwright test and uploaded as a CI artifact alongside `coverage/lcov.info`.
+
+### Rationale for browser-mode Tier 1
+
+Vitest's jsdom environment does not provide a reliable `requestAnimationFrame` implementation for stub-and-replay purposes: calling `vi.useFakeTimers()` after `vi.stubGlobal('requestAnimationFrame', ...)` overrides the stub. Chromium browser mode ensures the stub is installed once and respected throughout the test. The dispatcher's `dispatch()` method calls `requestAnimationFrame(...)` at call time (not at module load time), so a fresh `vi.resetModules()` import with the stub already in place is sufficient for reliable interception.
