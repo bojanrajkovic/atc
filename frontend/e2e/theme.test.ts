@@ -343,11 +343,23 @@ test.describe('fe-foundation.AC1.6: prefers-reduced-motion disables animations',
     // Navigate to the theme command to open the submenu
     await page.getByRole('option', { name: /switch theme/i }).click()
 
-    // The theme submenu should appear immediately (no slide delay)
-    // Assert it is visible right away — if there were a delay, this would
-    // time out waiting for the section to appear.
-    const themeSection = await page.waitForSelector('text=Switch theme', { timeout: 500 })
-    expect(themeSection).toBeTruthy()
+    // Wait for the submenu element to be present in the DOM.
+    await page.waitForSelector('[data-slot="command-list"] > div', { timeout: 3_000 })
+
+    // Assert that the slide element has NO active Web Animations.
+    // Svelte's transition:slide calls element.animate() only when duration > 0.
+    // With reduced motion ON, submenuDuration = 0 so element.animate() is never
+    // called and getAnimations() returns []. If the gate were removed (duration
+    // always 200), element.animate() would be called and this would fail because
+    // getAnimations() would return a non-empty array immediately after the trigger.
+    const animationCount = await page.evaluate(() => {
+      const slideEl = document.querySelector('[data-slot="command-list"] > div')
+      if (!slideEl) return -1
+      return slideEl.getAnimations().length
+    })
+
+    expect(animationCount).not.toBe(-1) // slide element must exist
+    expect(animationCount).toBe(0) // no active animations under reduced motion
   })
 })
 

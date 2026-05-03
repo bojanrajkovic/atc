@@ -4,17 +4,17 @@
  * Verifies that the CommandPalette's theme submenu slide respects
  * prefers-reduced-motion. Uses vitest browser-mode (real DOM, Chromium).
  *
- * Strategy: vi.mock('svelte/motion', ...) at file scope ensures the mock is
- * hoisted before any module imports. When CommandPalette.svelte imports
- * prefersReducedMotion, it gets { current: true }. The $derived expression
- * `const submenuDuration = $derived(prefersReducedMotion.current ? 0 : 200)`
- * then evaluates to 0, meaning the slide transition is instantaneous.
+ * Strategy: vi.mock('svelte/motion', ...) at file scope with a flippable getter
+ * so individual tests can toggle reduced-motion on/off. When reduced-motion is ON,
+ * CommandPalette.svelte's `$derived(prefersReducedMotion.current ? 0 : 200)` yields
+ * 0 and Svelte skips the Web Animations API call entirely (duration=0 short-circuits
+ * the animate() path). When OFF, it yields 200 and element.animate() is called with
+ * duration=200.
  *
- * We verify this via two layers:
- *  1. Import-level: prefersReducedMotion.current === true (mock took effect).
- *  2. DOM-level: after paletteStore.subMenu is set to 'theme', the slide div
- *     gains an inline style with transition-duration: 0s (Svelte writes the
- *     duration as an inline style during the transition intro).
+ * We verify by checking `slideEl.getAnimations()`: with duration=0 Svelte bypasses
+ * the animation entirely so getAnimations() returns []; with duration=200 Svelte
+ * calls element.animate() and getAnimations() returns a non-empty array with a
+ * 200ms effect. This directly exercises the gate — removing it breaks the OFF test.
  *
  * AC covered: frontend-1-0-polish.AC3.1, AC3.2
  */
@@ -26,12 +26,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { paletteStore } from '$lib/stores/palette.svelte'
 import { uiStore } from '$lib/stores/ui.svelte'
 
-// Mock svelte/motion before any module that reads prefersReducedMotion.current
-// is imported. vi.mock() calls are hoisted to the top of the module by the
-// Vitest transform, so this binding takes effect before CommandPalette.svelte
-// (and kanban-transitions.ts, which also reads it) are resolved.
+// Flippable mock: each test sets mockReducedMotion before rendering so the
+// component sees the right value. vi.mock() is hoisted before any import that
+// reads prefersReducedMotion.current (including CommandPalette.svelte and
+// kanban-transitions.ts), so the getter is live from the first module resolution.
+let mockReducedMotion = true
 vi.mock('svelte/motion', () => ({
-  prefersReducedMotion: { current: true },
+  prefersReducedMotion: {
+    get current() {
+      return mockReducedMotion
+    },
+  },
 }))
 
 // Mock stores that CommandPalette needs to read (prevents "store not found"
@@ -63,10 +68,40 @@ vi.mock('$lib/stores/connection.svelte', () => ({
 // already in place when the module is first loaded.
 import CommandPalette from './CommandPalette.svelte'
 
+/**
+ * Opens the palette and navigates to the theme submenu, then returns the
+ * slide element. Throws if the slide element is not found — a missing element
+ * means the submenu didn't render and the whole test is invalid.
+ */
+async function openSubmenuAndGetSlideEl(): Promise<Element> {
+  render(CommandPalette)
+  await tick()
+
+  paletteStore.paletteOpen = true
+  await tick()
+
+  // Trigger the `transition:slide|local` by setting the theme submenu.
+  // The slide div is the direct child of [data-slot="command-list"].
+  paletteStore.subMenu = 'theme'
+  await tick()
+  // Allow the microtask queue to flush so Svelte applies the transition intro.
+  await new Promise((r) => setTimeout(r, 0))
+
+  const slideEl = document.querySelector('[data-slot="command-list"] > div')
+  if (!slideEl) {
+    throw new Error(
+      'Slide element not found — theme submenu did not render. ' +
+        'Check the [data-slot="command-list"] > div selector against the rendered DOM.',
+    )
+  }
+  return slideEl
+}
+
 describe('CommandPalette reduced-motion gate', () => {
   beforeEach(() => {
     cleanup()
-    // Reset palette state before each test
+    // Reset mock and palette state before each test.
+    mockReducedMotion = true
     paletteStore.paletteOpen = false
     paletteStore.subMenu = null
     paletteStore.setQuery('')
@@ -79,57 +114,52 @@ describe('CommandPalette reduced-motion gate', () => {
   })
 
   it('AC3.1: prefersReducedMotion.current is true (mock bound before import)', () => {
-    // This is the baseline assertion: if the mock didn't take effect, this
-    // would return false and every assertion below would be untestable.
+    // Baseline assertion: if the mock didn't take effect, this would return false
+    // and every DOM-level assertion below would be untestable.
     expect(prefersReducedMotion.current).toBe(true)
   })
 
-  it('AC3.1: submenuDuration evaluates to 0 when prefersReducedMotion.current is true', () => {
-    // Verify the gate expression used in CommandPalette:
-    //   const submenuDuration = $derived(prefersReducedMotion.current ? 0 : 200)
-    // With the mock in place, this must be 0.
-    const reduced = prefersReducedMotion.current
-    const submenuDuration = reduced ? 0 : 200
-    expect(submenuDuration).toBe(0)
-  })
-
   it('AC3.2: CommandPalette renders without errors under reduced-motion mock', async () => {
-    // Basic smoke test: CommandPalette should mount without throwing even with
-    // the mocked svelte/motion module. The palette dialog is hidden by default.
-    // CommandPalette has no exported props (zero-prop connected component).
+    // Smoke test: CommandPalette should mount without throwing even with the
+    // mocked svelte/motion module. The palette dialog is hidden by default.
     expect(() => render(CommandPalette)).not.toThrow()
     await tick()
   })
 
-  it('AC3.1: theme submenu slide div has no non-zero transition when opened under reduced motion', async () => {
-    // Open the palette and navigate to the theme submenu to trigger the slide.
-    render(CommandPalette)
-    await tick()
+  it('AC3.1 (reduced ON): theme submenu slide has no active Web Animation when duration is 0', async () => {
+    // With reduced motion ON, submenuDuration = 0. Svelte's transition runtime
+    // short-circuits when duration=0 and skips element.animate() entirely.
+    // getAnimations() must return [] — confirming the gate set the duration to 0.
+    mockReducedMotion = true
 
-    // Open the palette
-    paletteStore.paletteOpen = true
-    await tick()
+    const slideEl = await openSubmenuAndGetSlideEl()
 
-    // Set the theme submenu — this triggers the `transition:slide|local` which
-    // reads submenuDuration (= 0 under our mock). With duration=0, Svelte applies
-    // inline style `transition: all 0ms linear` (or omits it entirely).
-    paletteStore.subMenu = 'theme'
-    await tick()
-    // Allow one microtask for Svelte to apply the transition intro
-    await new Promise((r) => setTimeout(r, 0))
+    const animations = slideEl.getAnimations()
+    // With duration=0, Svelte bypasses the Web Animations API call.
+    // If the gate were removed (submenuDuration always 200), element.animate()
+    // would be called and getAnimations() would return a non-empty array.
+    expect(animations).toHaveLength(0)
+  })
 
-    // The slide element should exist since subMenu === 'theme'
-    // If it rendered, the transition duration must be 0ms (or no transition at all).
-    const slideEl = document.querySelector('[data-slot="command-list"] > div')
-    if (slideEl) {
-      const style = getComputedStyle(slideEl)
-      const duration = style.transitionDuration
-      // Duration is either '0s', '0ms', or empty — any of these means no delay.
-      // It must NOT be '0.2s' or '200ms' (the non-reduced value).
-      expect(duration).not.toBe('0.2s')
-      expect(duration).not.toBe('200ms')
+  it('AC3.1 (reduced OFF): theme submenu slide has an active 200ms Web Animation when duration is 200', async () => {
+    // With reduced motion OFF, submenuDuration = 200. Svelte calls
+    // element.animate(keyframes, { duration: 200 }) and the animation is
+    // active immediately after the intro starts.
+    mockReducedMotion = false
+
+    const slideEl = await openSubmenuAndGetSlideEl()
+
+    const animations = slideEl.getAnimations()
+    // With duration=200, element.animate() is called and at least one animation
+    // should be running. If the gate were removed (always 200), this would pass
+    // trivially — but the reduced-ON test above would have caught the regression.
+    expect(animations.length).toBeGreaterThan(0)
+
+    // Confirm the animation effect duration is ~200ms (the value from the gate).
+    const firstEffect = animations[0]?.effect
+    if (firstEffect && 'getTiming' in firstEffect) {
+      const timing = (firstEffect as AnimationEffect).getTiming()
+      expect(timing.duration).toBe(200)
     }
-    // If slideEl is null, the submenu may not have rendered (Bits UI portal timing)
-    // — that's acceptable; the duration-constant test above is the primary gate.
   })
 })
