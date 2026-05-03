@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import { classifyEvent, VERB_BY_CONCLUSION } from './transition-kinds'
@@ -198,6 +198,57 @@ describe('classifyEvent', () => {
       // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
       const event = makeRunSeqEvent({ type: 'Completed', data: {} as any })
       expect(() => classifyEvent(event)).toThrow()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // classifyEvent: off-shape string conclusions — warn once and return null
+  // ---------------------------------------------------------------------------
+
+  describe('off-shape string conclusions', () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      warnSpy.mockRestore()
+    })
+
+    it('returns null for lowercase "success" (canonical off-shape case)', () => {
+      // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
+      const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion: 'success' } as any })
+      const result = classifyEvent(event)
+      expect(result).toBeNull()
+    })
+
+    it('emits console.warn with the unknown value and does not warn again (dedupe)', () => {
+      // Use a unique value so module-scope dedup state from other tests doesn't interfere.
+      const event = makeRunSeqEvent({
+        type: 'Completed',
+        // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
+        data: { conclusion: 'off_shape_unique' } as any,
+      })
+      // First call: should warn
+      classifyEvent(event)
+      expect(warnSpy).toHaveBeenCalledOnce()
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"off_shape_unique"'))
+      // Second call with the same unknown value: dedupe must suppress the warning
+      warnSpy.mockClear()
+      classifyEvent(event)
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
+    it('valid PascalCase conclusions still classify correctly (no regression)', () => {
+      // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input — cast needed for the test fixture
+      const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion: 'Success' } as any })
+      const result = classifyEvent(event)
+      expect(result).not.toBeNull()
+      expect(result?.kind).toBe('completed')
+      if (result?.kind === 'completed') {
+        expect(result.conclusion).toBe('Success')
+      }
     })
   })
 })

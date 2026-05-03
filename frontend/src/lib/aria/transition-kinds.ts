@@ -41,7 +41,17 @@ export type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, Run
  * Throws on invariant violations (e.g., a Completed RunEvent with
  * conclusion === null or undefined). The caller (LiveRegion.observeFlush) is
  * expected to wrap each call in try/catch and log+skip on throw.
+ *
+ * For off-shape string conclusions (not null/undefined, but also not a key of
+ * VERB_BY_CONCLUSION — e.g. lowercase "success", typos, future backend
+ * variants), emits a deduplicated console.warn (once per unknown value per
+ * session) and returns null. The dispatcher keeps flowing; a single bad event
+ * does not abort other event processing.
  */
+
+/** Dedupe set for unknown conclusion warnings — prevents log spam per session. */
+const _warnedConclusions = new Set<string>()
+
 export function classifyEvent(seqEvent: SeqEvent): TransitionKind | null {
   const webhookEvent = seqEvent.event
 
@@ -69,6 +79,21 @@ export function classifyEvent(seqEvent: SeqEvent): TransitionKind | null {
         throw new Error(
           `classifyEvent: invariant violation — Completed RunEvent has null/undefined conclusion. Event seq: ${seqEvent.seq}`,
         )
+      }
+      // Runtime guard for off-shape string values: not null/undefined, but also
+      // not a recognized RunConclusion key (e.g. lowercase "success", typos,
+      // future backend variants not yet in VERB_BY_CONCLUSION). Warn once per
+      // unknown value per session (deduplicated) and skip the event.
+      if (!Object.hasOwn(VERB_BY_CONCLUSION, conclusion as string)) {
+        const key = String(conclusion)
+        if (!_warnedConclusions.has(key)) {
+          _warnedConclusions.add(key)
+          // biome-ignore lint/suspicious/noConsole: intentional one-per-session diagnostic for off-shape wire values
+          console.warn(
+            `classifyEvent: unrecognized RunConclusion "${key}" — skipping announcement. Event seq: ${seqEvent.seq}`,
+          )
+        }
+        return null
       }
       return { kind: 'completed', conclusion }
     }
