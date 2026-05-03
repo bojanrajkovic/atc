@@ -9,24 +9,27 @@
   const PLACEHOLDER_ROWS = [0, 1, 2] as const
 </script>
 
-<div class="flex flex-col items-center justify-center h-full gap-6" style="color: var(--text-dim);">
+<div class="flex flex-col items-center justify-center h-full gap-8" style="color: var(--text-dim);">
   <!-- Schematic preview: three faint dashed column groups -->
-  <div class="flex gap-4">
+  <div class="flex gap-5 sm:gap-6">
     {#each COLUMNS as col (col)}
       <div
         data-empty-col
-        class="flex flex-col gap-2 rounded border border-dashed px-3 py-2 w-28"
+        class="flex flex-col gap-2 rounded border border-dashed px-4 py-3 sm:gap-3 sm:px-5 sm:py-4"
         style="border-color: var(--border); opacity: 0.5;"
       >
         <!-- Column label -->
-        <span class="text-xs font-mono uppercase tracking-wider" style="color: var(--text-dim);">
+        <span
+          class="text-xs sm:text-sm font-mono uppercase tracking-wider"
+          style="color: var(--text-dim);"
+        >
           {col}
         </span>
         <!-- Placeholder dot rows -->
         {#each PLACEHOLDER_ROWS as row (row)}
           <div
             data-empty-row
-            class="font-mono text-xs"
+            class="font-mono text-sm sm:text-base whitespace-nowrap"
             style="color: var(--text-dim);"
             aria-hidden="true"
           >
@@ -37,5 +40,5 @@
     {/each}
   </div>
   <!-- Caption -->
-  <p class="text-sm">{message}</p>
+  <p class="text-base sm:text-lg">{message}</p>
 </div>
