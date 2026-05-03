@@ -2,6 +2,12 @@ import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 
+/**
+ * Tracks event types that have already triggered a console.warn so that a
+ * long stream of the same unknown type does not spam the console.
+ */
+const warnedUnknownTypes = new Set<string>()
+
 class EventDispatcher {
   private buffer: SeqEvent[] = []
   private rafId: number | null = null
@@ -77,8 +83,22 @@ class EventDispatcher {
         runStore.applyJobEvent(event.data)
         break
       default: {
-        const _: never = event
-        throw new Error(`EventDispatcher.routeEvent: unhandled event type: ${JSON.stringify(_)}`)
+        // At a JSON wire boundary, the event.type may not match any known
+        // variant (e.g. newer backend, rolling deploy, or malformed payload).
+        // Throwing aborts the entire RAF batch and leaves the dashboard stale,
+        // which is worse than skipping. Warn once per unknown type, then skip
+        // the entire seqEvent (including poolStatsAfter, which is suspect too).
+        const unknownType = (event as { type: string }).type
+        if (!warnedUnknownTypes.has(unknownType)) {
+          warnedUnknownTypes.add(unknownType)
+          // Intentional operator warning: unknown event type from a newer backend or malformed
+          // payload; deduped per type so it is not spam. biome-ignore on next line is intentional.
+          // biome-ignore lint/suspicious/noConsole: operator-visible warning, not debugging output
+          console.warn(
+            `EventDispatcher.routeEvent: unknown event type "${unknownType}" — skipping (future occurrences of this type will be silenced)`,
+          )
+        }
+        return
       }
     }
     if (seqEvent.poolStatsAfter != null) {

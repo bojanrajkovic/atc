@@ -554,4 +554,83 @@ describe('EventDispatcher', () => {
       expect(eventDispatcher.bufferLength).toBe(0)
     })
   })
+
+  describe('unknown event type tolerance (wire-skew resilience)', () => {
+    // Helper factories reused from the AC6 section pattern
+    const makeRunSeqEvent = (id: bigint): SeqEvent => ({
+      seq: id,
+      event: {
+        type: 'Run',
+        data: {
+          runId: id,
+          org: 'org',
+          repo: 'repo',
+          workflowName: 'test',
+          workflowPath: null,
+          branch: 'main',
+          headSha: 'abc',
+          commitMessage: null,
+          triggerEvent: 'push',
+          displayTitle: `Run ${id}`,
+          htmlUrl: 'https://example.com',
+          createdAt: new Date().toISOString(),
+          runStartedAt: null,
+          updatedAt: new Date().toISOString(),
+          action: { type: 'Requested' },
+        },
+      },
+      poolStatsAfter: null,
+    })
+
+    const makeUnknownSeqEvent = (seq: bigint, unknownType: string): SeqEvent =>
+      ({ seq, event: { type: unknownType }, poolStatsAfter: null }) as unknown as SeqEvent
+
+    beforeEach(() => {
+      eventDispatcher.setOnFlush(null)
+      runStore.clear()
+    })
+
+    it('skips unknown event types without aborting the batch, warns once per type, and deduplicates across batches', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        // --- Batch 1: [valid Run A, unknown "future_unknown_type", valid Run B] ---
+        const runA = makeRunSeqEvent(10n)
+        const unknown1 = makeUnknownSeqEvent(11n, 'future_unknown_type')
+        const runB = makeRunSeqEvent(12n)
+
+        eventDispatcher.dispatch(runA)
+        eventDispatcher.dispatch(unknown1)
+        eventDispatcher.dispatch(runB)
+        eventDispatcher.flush()
+
+        // Both valid events must have been applied
+        expect(runStore.runs.has(10n)).toBe(true)
+        expect(runStore.runs.has(12n)).toBe(true)
+
+        // console.warn called exactly once, mentioning the unknown type
+        expect(warnSpy).toHaveBeenCalledOnce()
+        expect(warnSpy.mock.calls[0]![0]).toContain('future_unknown_type')
+
+        warnSpy.mockClear()
+
+        // --- Batch 2: same unknown type again — warn must NOT fire again (dedupe) ---
+        const unknown2 = makeUnknownSeqEvent(20n, 'future_unknown_type')
+        eventDispatcher.dispatch(unknown2)
+        eventDispatcher.flush()
+
+        expect(warnSpy).not.toHaveBeenCalled()
+
+        // --- Batch 3: different unknown type — warn IS fired once for the new type ---
+        const unknown3 = makeUnknownSeqEvent(30n, 'another_future_type')
+        eventDispatcher.dispatch(unknown3)
+        eventDispatcher.flush()
+
+        expect(warnSpy).toHaveBeenCalledOnce()
+        expect(warnSpy.mock.calls[0]![0]).toContain('another_future_type')
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+  })
 })
