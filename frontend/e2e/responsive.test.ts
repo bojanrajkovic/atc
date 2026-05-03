@@ -106,26 +106,71 @@ test.describe('Responsive layout', () => {
   })
 
   /**
-   * AC2.4: At <768px, TopBar wraps to two rows (logo+connection on row 1,
-   * RunnerBar+settings on row 2). Verified by checking the offset top of the
-   * RunnerBar wrapper differs from the Logo offset top.
+   * AC2.4: At <768px, TopBar wraps to exactly two rows:
+   *   Row 1 — Logo + ConnectionIndicator (same vertical center)
+   *   Row 2 — RunnerBar + SettingsPopover (same vertical center, below row 1)
+   *
+   * Bounding-rect approach: elements sharing a flex line with items-center
+   * alignment have the same vertical midpoint. Elements on a lower line have
+   * a strictly greater midpoint.
    */
-  test('AC2.4 — 640px width: TopBar RunnerBar is on a different row than Logo', async ({
+  test('AC2.4 — 640px width: TopBar wraps to two rows (logo+connection / runnerbar+settings)', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 640, height: 800 })
     await setupWithRuns(page)
 
-    const logoTop = await page
-      .getByLabel(/ATC — Actions Traffic Control/i)
-      .evaluate((el: Element) => el.getBoundingClientRect().top)
+    // Helper: compute vertical midpoint from bounding rect
+    type Rect = { top: number; bottom: number; midY: number }
+    const getRect = async (locator: ReturnType<typeof page.locator>): Promise<Rect> =>
+      locator.evaluate((el: Element) => {
+        const r = el.getBoundingClientRect()
+        return { top: r.top, bottom: r.bottom, midY: (r.top + r.bottom) / 2 }
+      })
 
-    const runnerBarTop = await page
-      .locator('[data-runner-bar]')
-      .evaluate((el) => el.getBoundingClientRect().top)
+    const logo = await getRect(page.getByLabel(/ATC — Actions Traffic Control/i))
+    const connection = await getRect(page.locator('header [role="status"]').first())
+    const runnerBar = await getRect(page.locator('[data-runner-bar]'))
+    const settings = await getRect(page.getByRole('button', { name: /settings/i }))
 
-    // RunnerBar should be on a lower row than the logo
-    expect(runnerBarTop).toBeGreaterThan(logoTop)
+    const TOLERANCE = 4 // px — accounts for sub-pixel rounding
+
+    // Row 1: Logo and ConnectionIndicator share the same row (midpoints within tolerance)
+    expect(Math.abs(logo.midY - connection.midY)).toBeLessThanOrEqual(TOLERANCE)
+
+    // Row 2: RunnerBar and SettingsPopover share the same row (midpoints within tolerance)
+    expect(Math.abs(runnerBar.midY - settings.midY)).toBeLessThanOrEqual(TOLERANCE)
+
+    // Row 2 is below row 1
+    expect(runnerBar.top).toBeGreaterThan(logo.bottom - TOLERANCE)
+  })
+
+  /**
+   * AC2.4 (md+): At ≥768px, all TopBar elements collapse onto one row.
+   * Verified by checking logo, connection indicator, runner bar, and settings
+   * all share the same vertical midpoint.
+   */
+  test('AC2.4 — 1280px width: TopBar all elements on one row', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await setupWithRuns(page)
+
+    const getMidY = async (locator: ReturnType<typeof page.locator>): Promise<number> =>
+      locator.evaluate((el: Element) => {
+        const r = el.getBoundingClientRect()
+        return (r.top + r.bottom) / 2
+      })
+
+    const logoMidY = await getMidY(page.getByLabel(/ATC — Actions Traffic Control/i))
+    const connectionMidY = await getMidY(page.locator('header [role="status"]').first())
+    const runnerBarMidY = await getMidY(page.locator('[data-runner-bar]'))
+    const settingsMidY = await getMidY(page.getByRole('button', { name: /settings/i }))
+
+    const TOLERANCE = 4 // px
+
+    // At md+ all four elements should share the same row (midpoints within tolerance)
+    expect(Math.abs(logoMidY - connectionMidY)).toBeLessThanOrEqual(TOLERANCE)
+    expect(Math.abs(logoMidY - runnerBarMidY)).toBeLessThanOrEqual(TOLERANCE)
+    expect(Math.abs(logoMidY - settingsMidY)).toBeLessThanOrEqual(TOLERANCE)
   })
 
   /**

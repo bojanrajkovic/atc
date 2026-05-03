@@ -452,14 +452,16 @@ No horizontal page scroll at any viewport width ≥320px. The `min-w-0` class on
 
 ### TopBar wrap
 
-`TopBar.svelte`'s header uses `flex flex-wrap gap-y-2`. Four direct children:
+`TopBar.svelte`'s header uses `flex flex-wrap gap-y-2`. Three direct flex children, plus a row-2 container:
 
-1. **Logo** — natural flex order
-2. **RunnerBar wrapper** — `order-3 md:order-2 basis-full md:basis-0 md:flex-1 min-w-0`; the `basis-full` at `<md` forces the row wrap
-3. **ConnectionIndicator** — `order-2 md:order-4`; appears next to Logo on row 1 at `<md`
-4. **SettingsPopover** — `order-5`; follows RunnerBar on row 2 at `<md`
+1. **Logo** — natural flex order (first child)
+2. **ConnectionIndicator** — `order-2 md:order-4`; appears next to Logo on row 1 at `<md`
+3. **Row-2 container** (`order-3 basis-full flex items-center gap-x-3 md:contents`) — at `<md` this is a full-width flex row containing RunnerBar and SettingsPopover side-by-side; at `md+`, `display:contents` flattens the wrapper so its children become direct flex children of `<header>` and their `md:order-*` classes take effect:
+   - **RunnerBar wrapper** — `min-w-0 flex-1 md:order-2 md:flex-1`
+   - **Inner Separator** — `hidden md:block md:order-3`
+   - **SettingsPopover** — `shrink-0 md:order-5`
 
-Separators carry `hidden md:block` — hidden at `<md` to avoid floating dividers on the wrapped row.
+Separators carry `hidden md:block` — hidden at `<md` to avoid floating dividers on the wrapped row. The `md:contents` technique ensures the `<md` two-row grouping and the `md+` single-row ordering are both driven by a single DOM structure.
 
 | Viewport | TopBar layout |
 |----------|--------------|
