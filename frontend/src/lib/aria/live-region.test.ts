@@ -442,4 +442,80 @@ describe('LiveRegion', () => {
       expect(liveRegion.busy).toBe(false)
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // cancelBurst — disconnect/reconnect cleanup hook (Codex P2)
+  // ---------------------------------------------------------------------------
+
+  describe('cancelBurst', () => {
+    it('cancels pending debounce timer so closeBurst does not fire', () => {
+      setupRun(1n)
+      setupRun(2n)
+      setupRun(3n)
+      setupRun(4n)
+
+      liveRegion.observeFlush([
+        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+      ])
+      // Burst is open; debounce has not fired yet (timers are faked)
+      expect(liveRegion.busy).toBe(true)
+      const messageBeforeCancel = liveRegion.message
+
+      liveRegion.cancelBurst()
+
+      // busy was dropped immediately; message untouched
+      expect(liveRegion.busy).toBe(false)
+      expect(liveRegion.message).toBe(messageBeforeCancel)
+
+      // Advance past the debounce window — the canceled timer must not fire
+      vi.advanceTimersByTime(500)
+      expect(liveRegion.message).toBe(messageBeforeCancel)
+      expect(liveRegion.message).not.toMatch(/\d+ runs queued/)
+    })
+
+    it('after cancelBurst, a fresh burst can open normally (state fully reset)', () => {
+      setupRun(1n)
+      setupRun(2n)
+      setupRun(3n)
+      setupRun(4n)
+
+      // Open burst, cancel it
+      liveRegion.observeFlush([
+        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+      ])
+      liveRegion.cancelBurst()
+
+      // Open a fresh burst — accumulator must be empty so summary reflects only new events
+      setupRun(5n)
+      setupRun(6n)
+      setupRun(7n)
+      setupRun(8n)
+      liveRegion.observeFlush([
+        makeRunSeqEvent({ runId: 5n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 6n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 7n, action: 'Requested' }),
+        makeRunSeqEvent({ runId: 8n, action: 'Requested' }),
+      ])
+      vi.advanceTimersByTime(200)
+
+      // Summary reflects only the second burst (4 runs), not the canceled first
+      expect(liveRegion.message).toMatch(/^4 runs queued\.$/)
+    })
+
+    it('is a no-op when no burst is active', () => {
+      expect(liveRegion.busy).toBe(false)
+      const messageBefore = liveRegion.message
+
+      liveRegion.cancelBurst()
+
+      expect(liveRegion.busy).toBe(false)
+      expect(liveRegion.message).toBe(messageBefore)
+    })
+  })
 })

@@ -562,7 +562,7 @@ The post-snapshot buffered drain (`connection.ts` step 6) does flow through `eve
 6. **`dispatcher.setOnFlush((events) => liveRegion.observeFlush(events))`** — wired here, after the drain
 7. Subsequent live events announce normally
 
-On disconnect, `handleDisconnect()` calls `dispatcher.setOnFlush(null)` to detach the callback, so the next reconnect's snapshot+drain sequence also runs silently. The callback is re-wired after each new drain completes.
+On disconnect, `handleDisconnect()` calls `dispatcher.setOnFlush(null)` to detach the callback AND `liveRegion.cancelBurst()` to drop any in-flight 200ms debounce timer (a burst opened just before the WS dropped would otherwise fire `closeBurst` during the reconnect window and announce a stale summary). `reconnect()` performs the same two-step cleanup at its top — it nulls `ws.onclose` to skip `handleDisconnect` (because `reconnect()` is a different path that resets the backoff counter), so without explicit cleanup the prior connection's onFlush callback could still fire on an orphan RAF batch during the new connect's snapshot-fetch window. The callback is re-wired after each new drain completes.
 
 Result: zero announcements during snapshot load or buffered-replay drain; only events arriving after the connection is fully established announce.
 

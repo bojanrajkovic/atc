@@ -224,4 +224,94 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
 
     manager.destroy()
   })
+
+  // -------------------------------------------------------------------------
+  // AC6.7+ — Codex P2: cancel pending live-region burst on disconnect/reconnect.
+  //
+  // Without this, a 200ms burst-debounce timer scheduled by observeFlush right
+  // before the WS dropped (or right before reconnect() nulled ws.onclose) would
+  // still fire closeBurst() during the new connect cycle and announce a stale
+  // summary while the app is reconnecting. AND in the reconnect() path,
+  // ws.onclose=null skips handleDisconnect, so any orphan RAF batch queued by
+  // the prior connection could still flush through the still-attached onFlush
+  // callback during the snapshot-fetch window.
+  // -------------------------------------------------------------------------
+
+  it('handleDisconnect detaches onFlush AND cancels pending live-region burst', async () => {
+    const cancelBurstSpy = vi.spyOn(liveRegion, 'cancelBurst')
+    const setOnFlushSpy = vi.spyOn(eventDispatcher, 'setOnFlush')
+
+    server.use(
+      http.get('http://localhost:*/v1/state', () =>
+        HttpResponse.json(snapshotToJSON({ seq: 5n, runs: [], jobs: [], poolStats: [] })),
+      ),
+    )
+
+    const manager = new ConnectionManager(baseUrl)
+    await manager.connect()
+    cancelBurstSpy.mockClear()
+    setOnFlushSpy.mockClear()
+
+    // Trigger the natural-disconnect path: simulate the WS dropping by calling
+    // close() on the live socket. handleDisconnect runs synchronously inside
+    // ws.onclose, so we don't need to await anything async here.
+    const ws = MockWebSocket.getLastInstance()!
+    ws.close()
+    await flushMicrotasks()
+
+    expect(setOnFlushSpy).toHaveBeenCalledWith(null)
+    expect(cancelBurstSpy).toHaveBeenCalledTimes(1)
+
+    manager.destroy()
+  })
+
+  it('reconnect() detaches onFlush AND cancels pending burst BEFORE closing the WS', async () => {
+    const cancelBurstSpy = vi.spyOn(liveRegion, 'cancelBurst')
+    const setOnFlushSpy = vi.spyOn(eventDispatcher, 'setOnFlush')
+
+    server.use(
+      http.get('http://localhost:*/v1/state', () =>
+        HttpResponse.json(snapshotToJSON({ seq: 5n, runs: [], jobs: [], poolStats: [] })),
+      ),
+    )
+
+    const manager = new ConnectionManager(baseUrl)
+    await manager.connect()
+
+    // Capture the live WS so we can verify our cleanup ran BEFORE it was closed.
+    const wsBeforeReconnect = MockWebSocket.getLastInstance()!
+    cancelBurstSpy.mockClear()
+    setOnFlushSpy.mockClear()
+
+    // Stub close() to capture relative invocation order vs cancelBurst/setOnFlush.
+    const callLog: string[] = []
+    cancelBurstSpy.mockImplementation(() => {
+      callLog.push('cancelBurst')
+    })
+    setOnFlushSpy.mockImplementation((cb) => {
+      callLog.push(`setOnFlush(${cb === null ? 'null' : 'callback'})`)
+    })
+    const realClose = wsBeforeReconnect.close.bind(wsBeforeReconnect)
+    vi.spyOn(wsBeforeReconnect, 'close').mockImplementation(() => {
+      callLog.push('ws.close')
+      realClose()
+    })
+
+    manager.reconnect()
+    await flushMicrotasks()
+
+    // Both cleanup hooks ran AT reconnect()-start (positions 0 and 1), BEFORE
+    // ws.close (position 2). Subsequent setOnFlush calls inside the new
+    // connect() cycle are fine — what matters is the prior connection's
+    // callback is detached BEFORE its events can flush.
+    const cancelIdx = callLog.indexOf('cancelBurst')
+    const detachIdx = callLog.indexOf('setOnFlush(null)')
+    const closeIdx = callLog.indexOf('ws.close')
+    expect(cancelIdx).toBeGreaterThanOrEqual(0)
+    expect(detachIdx).toBeGreaterThanOrEqual(0)
+    expect(closeIdx).toBeGreaterThan(cancelIdx)
+    expect(closeIdx).toBeGreaterThan(detachIdx)
+
+    manager.destroy()
+  })
 })

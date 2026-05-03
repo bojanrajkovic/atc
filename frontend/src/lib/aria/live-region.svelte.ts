@@ -126,6 +126,25 @@ export class LiveRegion {
     }, BURST_DEBOUNCE_MS)
   }
 
+  /**
+   * Cancel an in-flight burst without announcing. Called by ConnectionManager
+   * on disconnect/reconnect: if observeFlush had opened a burst whose 200ms
+   * debounce had not yet fired, the queued closeBurst() would otherwise
+   * announce a stale summary while the app is already reconnecting. Resets
+   * the accumulator, clears the timer, and drops aria-busy without touching
+   * `message` (any prior announcement stays in the DOM as last-known state).
+   */
+  cancelBurst(): void {
+    if (this.burst.timerId !== null) {
+      clearTimeout(this.burst.timerId)
+      this.burst.timerId = null
+    }
+    this.burst.active = false
+    this.burst.queued = 0
+    this.burst.completed = new Map()
+    this.busy = false
+  }
+
   private closeBurst(): void {
     const queued = this.burst.queued
     const completedMap = this.burst.completed
