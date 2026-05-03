@@ -186,8 +186,7 @@ test.describe('AC7.2: frame-budget tracing (informational)', () => {
       dropped_frames: droppedFrames,
     }
 
-    // biome-ignore lint/suspicious/noConsole: intentional CI diagnostic — frame-budget summary is
-    // the primary output of this informational test and must be visible in CI logs.
+    // biome-ignore lint/suspicious/noConsole: intentional CI diagnostic — frame-budget summary is the primary output of this informational test and must be visible in CI logs.
     console.log('[frame-budget]', JSON.stringify(summary))
 
     // --- Save trace artifact ---
@@ -215,8 +214,7 @@ test.describe('AC7.2: frame-budget tracing (informational)', () => {
     // The artifact exists on disk.
     expect(fs.existsSync(artifactPath)).toBe(true)
 
-    // biome-ignore lint/suspicious/noConsole: intentional CI diagnostic — frame-budget detail
-    // lines are informational output for debugging and baseline tracking across CI runs.
+    // biome-ignore lint/suspicious/noConsole: intentional CI diagnostic — frame-budget detail lines are informational output for debugging and baseline tracking across CI runs.
     console.log(`[frame-budget] Artifact saved to: ${artifactPath}`)
     // biome-ignore lint/suspicious/noConsole: intentional CI diagnostic (see above)
     console.log(`[frame-budget] AnimationFrame events: ${animationFrames.length}`)
