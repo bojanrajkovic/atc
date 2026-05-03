@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { slide } from 'svelte/transition'
+  import { prefersReducedMotion } from 'svelte/motion'
   import * as Command from '$lib/components/ui/command'
   import PaletteSection from './PaletteSection.svelte'
   import PaletteRunItem from './PaletteRunItem.svelte'
@@ -16,6 +17,11 @@
   import commandScore from 'command-score'
 
   let inputEl: HTMLInputElement | null = $state(null)
+
+  // Gate the theme submenu slide on prefers-reduced-motion.
+  // Uses $derived so OS preference changes mid-session take effect reactively
+  // without a page reload (per the design system's reduced-motion contract).
+  const submenuDuration = $derived(prefersReducedMotion.current ? 0 : 200)
 
   // Re-focus the input on open — Bits UI Dialog auto-focuses the first focusable element
   // (usually the close button); suppress with onOpenAutoFocus, then manually focus the input.
@@ -215,7 +221,7 @@
     {/if}
 
     {#if paletteStore.subMenu === 'theme'}
-      <div transition:slide|local={{ duration: 200 }}>
+      <div transition:slide|local={{ duration: submenuDuration }}>
         <PaletteSection heading="Switch theme">
           <PaletteCommandItem label="Warm" onSelect={() => selectTheme('warm')} />
           <PaletteCommandItem label="Radar" onSelect={() => selectTheme('radar')} />

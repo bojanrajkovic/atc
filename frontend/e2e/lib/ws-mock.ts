@@ -151,15 +151,15 @@ export function makeJobSeqEvent(
 export const bigintReplacer = (_key: string, value: unknown): unknown =>
   typeof value === 'bigint' ? value.toString() : value
 
-/** Inject a websocket event into the app's stores via the dev-mode global bridge.
- *  Tests the JSON parsing (bigint reviver) → store mutation → Svelte reactivity → DOM pipeline.
+/** Inject a websocket event into the app via the EventDispatcher global bridge.
+ *  Tests the JSON parsing (bigint reviver) → EventDispatcher → store mutation → Svelte reactivity → DOM pipeline.
  *  Note: Playwright's routeWebSocket.send() has a known delivery issue in this
- *  Vite dev-server environment, so we access the stores directly via window.__stores. */
+ *  Vite dev-server environment, so we route through window.eventDispatcher instead. */
 export async function sendWS(page: Page, msg: string): Promise<void> {
   const result = await page.evaluate((data) => {
     // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
-    const stores = (window as any).__stores
-    if (!stores?.runStore) return 'no store bridge'
+    const dispatcher = (window as any).eventDispatcher
+    if (!dispatcher) return 'no dispatcher bridge'
 
     // Parse with the same bigint reviver as ConnectionManager
     const reviver = (key: string, value: unknown) => {
@@ -177,29 +177,58 @@ export async function sendWS(page: Page, msg: string): Promise<void> {
     }
     const seqEvent = JSON.parse(data, reviver)
 
-    if (seqEvent.event.type === 'Run') {
-      stores.runStore.applyRunEvent(seqEvent.event.data)
-      return JSON.stringify({
-        result: 'dispatched',
-        queued: stores.runStore.queuedRuns.length,
-        inProgress: stores.runStore.inProgressRuns.length,
-        completed: stores.runStore.completedRuns.length,
-      })
-    }
+    dispatcher.dispatch(seqEvent)
+    dispatcher.flush()
 
-    if (seqEvent.event.type === 'Job') {
-      stores.runStore.applyJobEvent(seqEvent.event.data)
-      if (seqEvent.poolStatsAfter != null) {
-        stores.runnerStore.loadPools(seqEvent.poolStatsAfter)
-      }
-      return JSON.stringify({
-        result: 'dispatched',
-        pools: stores.runnerStore?.pools?.length ?? 0,
-      })
-    }
-
-    return 'unknown event type'
+    return JSON.stringify({ result: 'dispatched' })
   }, msg)
   const parsed = JSON.parse(result)
   if (parsed.result !== 'dispatched') throw new Error(`WS send failed: ${result}`)
+}
+
+/**
+ * Inject multiple websocket events as a batch via the EventDispatcher global bridge.
+ * Dispatches all events without flushing between them, then waits for the RAF drain
+ * to complete. Used by burst-testing scenarios (aria-live, frame-budget).
+ *
+ * Synchronization fence:
+ *   1. `bufferLength === 0` — the RAF fired and the buffer was drained
+ *   2. One extra RAF tick — ensures the post-flush callback has had at least one
+ *      tick to run (relevant for aria-busy flipping and debounce timers)
+ */
+export async function sendWSBatch(page: Page, msgs: string[]): Promise<void> {
+  await page.evaluate((dataList) => {
+    // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
+    const dispatcher = (window as any).eventDispatcher
+    if (!dispatcher) throw new Error('no dispatcher bridge')
+
+    const reviver = (key: string, value: unknown) => {
+      if (
+        ['seq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
+        (typeof value === 'number' || typeof value === 'string')
+      ) {
+        try {
+          return BigInt(value)
+        } catch {
+          return value
+        }
+      }
+      return value
+    }
+
+    for (const data of dataList) {
+      const seqEvent = JSON.parse(data, reviver)
+      dispatcher.dispatch(seqEvent)
+    }
+    // Do NOT flush here — let RAF batch naturally
+  }, msgs)
+
+  // Wait for the RAF to drain the buffer
+  await page.waitForFunction(() => {
+    // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
+    return (window as any).eventDispatcher?.bufferLength === 0
+  })
+
+  // One extra RAF tick to allow the post-flush callback to complete
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
 }

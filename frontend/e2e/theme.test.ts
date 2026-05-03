@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 test.describe('App rendering', () => {
   test('renders at / without console errors', async ({ page }) => {
@@ -265,29 +266,100 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
 // when components are integrated into real views.
 
 test.describe('fe-foundation.AC1.6: prefers-reduced-motion disables animations', () => {
-  test('animations are disabled when prefers-reduced-motion is set', async ({ page }) => {
-    // Configure the browser to emulate reduced motion preference
+  test('animation-duration is 0s on InProgress card halo under reduced motion', async ({
+    page,
+  }) => {
+    // Emulate reduced motion BEFORE navigating so the page sees it from the start.
     await page.emulateMedia({ reducedMotion: 'reduce' })
 
+    await page.addInitScript(WS_MOCK_INIT_SCRIPT)
+    await page.route('**/v1/state', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ seq: 1, runs: [], jobs: [], poolStats: [] }),
+      }),
+    )
     await page.goto('/')
-
-    // Check transition-duration on body (should be ~0.01ms per the CSS)
-    const transitionDuration = await page.evaluate(() => {
-      const duration = getComputedStyle(document.body).transitionDuration
-      // Handle both formats: "0.01ms" and "1e-05s"
-      // 0.01ms = 1e-05s (scientific notation in some browsers)
-      return duration
+    await page.waitForFunction(() => typeof window.__stores?.runStore !== 'undefined', {
+      timeout: 10_000,
     })
 
-    // The prefers-reduced-motion media query sets transition-duration: 0.01ms !important
-    // Browsers may return this in different formats, so check for very small duration
-    // Convert to ms for comparison (1e-05s = 0.01ms)
-    const durationMs = transitionDuration.includes('s')
-      ? Number.parseFloat(transitionDuration) * 1000
-      : Number.parseFloat(transitionDuration)
+    // Inject an InProgress run so the halo card exists in the DOM.
+    await sendWS(
+      page,
+      makeRunEvent(1, {
+        runId: 1,
+        displayTitle: 'Halo Test Run',
+        createdAt: new Date().toISOString(),
+        runStartedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        action: { type: 'InProgress' },
+      }),
+    )
 
-    // Duration should be very close to 0.01ms (allow for floating point variation)
-    expect(durationMs).toBeLessThan(0.1)
+    // Wait for the card to appear
+    await page.waitForSelector('.run-card[data-status="InProgress"]', { timeout: 5_000 })
+
+    // Assert computed animation-duration is 0s.
+    // The global prefers-reduced-motion CSS in app.css sets:
+    //   animation-duration: 0.01ms !important
+    // Chromium serializes this as "0s" (rounds sub-ms to 0).
+    const animDuration = await page.evaluate(() => {
+      const card = document.querySelector('.run-card[data-status="InProgress"]')
+      if (!card) return null
+      return getComputedStyle(card).animationDuration
+    })
+
+    expect(animDuration).not.toBeNull()
+    // Under reduced motion, animation-duration must be effectively 0.
+    // Chromium returns "0s" for durations < 1ms when emulateMedia is active.
+    const durationMs = animDuration!.endsWith('ms')
+      ? Number.parseFloat(animDuration!)
+      : Number.parseFloat(animDuration!) * 1000
+    expect(durationMs).toBeLessThan(1)
+  })
+
+  test('CommandPalette theme submenu opens without animation delay under reduced motion', async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+
+    await page.addInitScript(WS_MOCK_INIT_SCRIPT)
+    await page.route('**/v1/state', (route) =>
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ seq: 1, runs: [], jobs: [], poolStats: [] }),
+      }),
+    )
+    await page.goto('/')
+    await page.waitForFunction(() => typeof window.__stores?.paletteStore !== 'undefined', {
+      timeout: 10_000,
+    })
+
+    // Open the command palette
+    await page.keyboard.press('Meta+k')
+    await page.waitForSelector('[data-slot="command-input"]', { timeout: 3_000 })
+
+    // Navigate to the theme command to open the submenu
+    await page.getByRole('option', { name: /switch theme/i }).click()
+
+    // Wait for the submenu element to be present in the DOM.
+    await page.waitForSelector('[data-slot="command-list"] > div', { timeout: 3_000 })
+
+    // Assert that the slide element has NO active Web Animations.
+    // Svelte's transition:slide calls element.animate() only when duration > 0.
+    // With reduced motion ON, submenuDuration = 0 so element.animate() is never
+    // called and getAnimations() returns []. If the gate were removed (duration
+    // always 200), element.animate() would be called and this would fail because
+    // getAnimations() would return a non-empty array immediately after the trigger.
+    const animationCount = await page.evaluate(() => {
+      const slideEl = document.querySelector('[data-slot="command-list"] > div')
+      if (!slideEl) return -1
+      return slideEl.getAnimations().length
+    })
+
+    expect(animationCount).not.toBe(-1) // slide element must exist
+    expect(animationCount).toBe(0) // no active animations under reduced motion
   })
 })
 

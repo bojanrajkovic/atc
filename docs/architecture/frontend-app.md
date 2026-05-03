@@ -157,6 +157,21 @@ All animations defined in `src/lib/animations/kanban-transitions.ts`:
 - **Reduced motion:** All durations zeroed when `prefers-reduced-motion` is active
 - **Shared instance:** One crossfade pair used across all KanbanColumn instances to ensure visual continuity
 
+### Animation Inventory (Reduced-Motion Audit)
+
+All animations in the codebase and their reduced-motion gate status (Sub-Phase 6b audit):
+
+| File:line | Type | Trigger | Gate status | Test coverage |
+|---|---|---|---|---|
+| `app.css:100-112` | CSS keyframes (`pulse-border`) | InProgress card halo | GATED (`animation: none !important` in `@media (prefers-reduced-motion: reduce)`) | `e2e/theme.test.ts` (AC1.6: computed `animation-duration: 0s` on InProgress card) |
+| `lib/animations/kanban-transitions.ts:14-31` | Crossfade send/receive | Cross-column card move | GATED (`prefersReducedMotion.current` zeroes all durations at module load) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_MOVE === 0`) |
+| `lib/animations/kanban-transitions.ts:20-23` | Fly fallback | New card arrival | GATED (same `prefersReducedMotion.current` check, `DURATION_ARRIVE`) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_ARRIVE === 0`) |
+| `lib/animations/kanban-transitions.ts:27-29` | Fade fallback | Card removal | GATED (same check, `DURATION_REMOVE`) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_REMOVE === 0`) |
+| `KanbanColumn.svelte:49` | `animate:flip` | Within-column reorder | GATED (uses `DURATION_MOVE` from kanban-transitions) | `KanbanColumn.browser.test.ts` (AC6.4: reorder completes instantly) |
+| `CommandPalette.svelte:218` | `transition:slide\|local` | Theme submenu open/close | GATED (`$derived(prefersReducedMotion.current ? 0 : 200)` as `submenuDuration`; reactive so OS change takes effect without reload) | `CommandPalette.reduced-motion.browser.test.ts` (AC3.1); `e2e/theme.test.ts` (submenu-without-delay assertion) |
+
+**Gate pattern for Svelte components:** Use `$derived(prefersReducedMotion.current ? 0 : duration)` (reactive) inside a component, not a module-top const (which captures once). `kanban-transitions.ts` uses module-top const because it is a module-level singleton that does not update reactively — this is intentional and tested via file-scope `vi.mock('svelte/motion', ...)` which binds before the module is first imported.
+
 ### Sort Strategies
 
 All sorting is direct lexical ISO-8601 string comparison (no Date parsing, no millisecond precision loss):
@@ -231,6 +246,16 @@ The duration formula is extracted to a pure `computeDurationText(run, nowMs): st
 **Accent bar.** `.run-card::before` in `RunCard`'s scoped `<style>` — 3px wide, `left: 0`, `top: 0`, `bottom: 0`, `background: var(--status-color)`. This is the first scoped style block in the kanban components; the halo and density rules stay in `app.css` because they need ancestor selectors (`html[data-density]`, `[data-mode="light"]`) that Svelte's scoped selectors can't cross.
 
 **Density attribute.** `UIStore`'s `$effect.root` block writes `data-density="compact"` (or removes it) on `<html>` when the setting changes. CSS selectors in `app.css` key off `[data-density="compact"]` to `display: none` the `.run-card-meta`, `.run-card-progress`, `.run-card-runner` children and shrink `.run-card` padding + `.run-card-name` font-size. Class names stay global (not Svelte-scoped) so the top-level selector still matches the compiled DOM.
+
+### Scrollbar Styling
+
+Sub-Phase 6b added a global `.atc-scrollbar` class in `app.css` for cross-browser thin scrollbar styling. Applied to `KanbanColumn`'s `role="list"` container and `RunDetailPanel`'s `job-blocks` container. `CommandPalette`'s list retains `no-scrollbar` (hides scrollbars by design).
+
+**Token flow:** thumb uses `color-mix(in oklch, var(--border) 80%, transparent)` — anchored to `--border` so it tracks theme hue and mode changes automatically without new tokens. Track is transparent.
+
+**Cross-browser implementation:**
+- **Firefox:** `scrollbar-width: thin; scrollbar-color: <thumb> transparent`
+- **Chromium/Safari:** `::-webkit-scrollbar { width: 6px }` + `::-webkit-scrollbar-thumb { background: <thumb>; border: 1px solid transparent; background-clip: padding-box }` (Rauno Freiberg pattern — the transparent border creates track spacing without a visible track background)
 
 ### Design Tokens
 
@@ -377,6 +402,99 @@ Both paths land focus on the same DOM node under identical preconditions (AC7.4)
 
 **Why context, not a sixth store:** Roving state is component-scoped (dies with the kanban) and doesn't need to survive any persistence boundary. Folding into UIStore would mix preference-state with transient-state; a sixth store would fight the README's "5 stores is the ceiling" principle without empirical justification. Svelte context is the textbook fit: component-tree-scoped state, propagates by composition, dies with the provider.
 
+## EmptyState Component
+
+`frontend/src/lib/components/EmptyState.svelte` is a pure component that renders when the connection is established but no workflow runs exist yet. It replaces the former inline `"No workflows yet."` string in `KanbanBoard.svelte`.
+
+### Props
+
+```typescript
+export interface EmptyStateProps {
+  message?: string  // Default: "Watching for runs."
+}
+```
+
+### Visual Treatment
+
+The schematic preview renders three faint dashed column groups (Queued / Running / Completed), each containing three rows of monospace placeholder dots (`· · · · · · · ·`), with a caption below the preview. The treatment is purely cosmetic: all rows carry `aria-hidden="true"` so screen readers only see the caption text.
+
+Selector surface: `[data-empty-col]` on each column group, `[data-empty-row]` on each placeholder row. These attributes are used by unit tests to assert structure without relying on CSS class names.
+
+### Tri-state integration
+
+`KanbanBoard.svelte` maintains three rendering branches:
+
+1. **Connecting** — `connectionStore.status !== 'connected' && totalRuns === 0`: inline "Connecting…" hydration placeholder.
+2. **Empty** — `connectionStore.status === 'connected' && totalRuns === 0`: `<EmptyState />` with default caption.
+3. **Populated** — all other states: the kanban grid with three columns.
+
+`EmptyState` is only rendered in branch 2. The tri-state shape is preserved by design — adding a variant for "filtered empty" (no runs match the current pool filter) is out of scope for 1.0 and deferred.
+
+## Responsive Breakpoint Contract
+
+The kanban grid and TopBar adapt to viewport width using Tailwind v4's mobile-first cascade. The detail panel (`RunDetailPanel`) uses Bits UI Sheet overlay-style positioning and does not shrink the kanban, so viewport breakpoints are sufficient — container queries would adapt to nothing the kanban cares about.
+
+### Kanban grid
+
+`KanbanBoard.svelte`'s grid `<div>` uses:
+
+```
+grid-cols-1 sm:grid-cols-2 xl:grid-cols-3
+```
+
+| Viewport | Breakpoint | Columns |
+|----------|-----------|---------|
+| `≥1280px` | `xl:` | 3 columns |
+| `640–1279px` | `sm:` | 2 columns (Completed wraps to row 2) |
+| `<640px` | (base) | 1 column stack |
+
+No horizontal page scroll at any viewport width ≥320px. The `min-w-0` class on the grid container prevents overflow from long run titles.
+
+### Kanban scroll
+
+The kanban inverts its scroll model at the `sm:` (640px) breakpoint:
+
+| Viewport | Scroll owner | Column body | Column header |
+|----------|--------------|-------------|---------------|
+| `≥640px` | per-column (`[role="list"]`) | `overflow-y: auto`, `min-height: 0` | static (no-op `sticky` is harmless) |
+| `<640px` | unified on `<main>` (AppShell) | `overflow: visible` (flows to natural height) | `position: sticky; top: 0` (pins per column section) |
+
+The mechanism:
+
+- `KanbanBoard.svelte`'s grid carries `grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:h-full p-4`. Dropping `h-full` at `<sm` lets the grid flow to natural content height so `<main>` (which already has `flex-1 overflow-auto` from `AppShell.svelte`) becomes the document scroll container for all stacked columns at once.
+- `KanbanColumn.svelte`'s `<div role="list">` carries `flex flex-col gap-2 p-2 sm:px-3 sm:overflow-y-auto sm:min-h-0 atc-scrollbar`. At `sm+`, the body owns its own vertical scroll; the `sm:px-3` bumps horizontal padding from 8px → 12px so the per-column scrollbar (right edge) has visible breathing room from the cards. At `<sm`, `overflow: visible` lets the cards flow into the unified scroll on `<main>` (and `sm:px-3` is inert).
+- `ColumnHeader.svelte`'s root carries `sticky top-0 z-10 ... px-2 py-2 sm:px-0 sm:py-0` with `background-color: var(--bg)`. The sticky positioning attaches to `<main>` (the nearest scrolling ancestor at `<sm`) and pins the header to the top of the viewport while its column section is in view; the next section's header takes over on scroll. At `sm+` the header is functionally identical to a `static` element because `<main>` no longer scrolls (the grid fills it via `h-full`); the small `<sm`-only padding is reset with `sm:px-0 sm:py-0`. The opaque `var(--bg)` background prevents cards bleeding through the header during sticky pin.
+
+The two-mode design preserves the clean per-column scroll at desktop widths (where multiple columns are visible side-by-side and independent scroll is the natural mental model) while giving narrow viewports a single document-style scroll with section markers — avoiding the "trapped inside a tiny scroll viewport" feel of stacked independently-scrollable rectangles.
+
+### TopBar wrap
+
+`TopBar.svelte`'s header uses `flex flex-wrap gap-y-2`. Three direct flex children, plus a row-2 container:
+
+1. **Logo** — natural flex order (first child)
+2. **ConnectionIndicator** — `order-2 md:order-4`; appears next to Logo on row 1 at `<md`
+3. **Row-2 container** (`order-3 basis-full flex items-center gap-x-3 md:contents`) — at `<md` this is a full-width flex row containing RunnerBar and SettingsPopover side-by-side; at `md+`, `display:contents` flattens the wrapper so its children become direct flex children of `<header>` and their `md:order-*` classes take effect:
+   - **RunnerBar wrapper** — `min-w-0 flex-1 md:order-2 md:flex-1`
+   - **Inner Separator** — `hidden md:block md:order-3`
+   - **SettingsPopover** — `shrink-0 md:order-5`
+
+Separators carry `hidden md:block` — hidden at `<md` to avoid floating dividers on the wrapped row. The `md:contents` technique ensures the `<md` two-row grouping and the `md+` single-row ordering are both driven by a single DOM structure.
+
+| Viewport | TopBar layout |
+|----------|--------------|
+| `≥768px` (md) | Single row: Logo → Separator → RunnerBar → Separator → ConnectionIndicator → SettingsPopover |
+| `<768px` | Row 1: Logo + ConnectionIndicator; Row 2: RunnerBar + SettingsPopover |
+
+The `md:` (768px) breakpoint was verified manually during Sub-Phase 6b implementation. Header height increases from 48px to ~94px when wrapping (two rows). The breakpoint feels appropriate for the amount of content.
+
+### Pool label truncation
+
+`RunnerPool.svelte`'s label `<span>` carries `truncate max-w-[12ch] md:max-w-none`. At `<md`, long pool labels are capped at 12 characters to preserve layout density in the narrower two-row header. At `md+`, the full label is shown.
+
+### Future extensibility
+
+Container queries (`@container`) are the natural upgrade path if a future sidebar or split-view feature affects the kanban's effective width independently of the viewport. The migration is mechanical: wrap the kanban in a `@container` and replace `sm:`/`xl:` with `@sm:`/`@xl:`.
+
 ### Global keyboard chord listener
 
 A single `window.addEventListener('keydown', ...)` is mounted via `onMount` in App.svelte and removed on destroy. It dispatches three Cmd/Ctrl chords:
@@ -410,6 +528,55 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 - Connection loss triggers exponential backoff (1s, 2s, 4s, ..., max 30s)
 - On reconnect, client re-fetches full state snapshot to ensure consistency
 - Event queue resumes from the new sequence number
+
+## ARIA Live Region
+
+The `AriaLiveRegion` module announces run-level state transitions to screen readers. It is composed of two pieces: the `LiveRegion` rune-class store (in `src/lib/aria/live-region.svelte.ts`) and the `AriaLiveRegion.svelte` component that mounts at the App root level as a sibling to `<AppShell>`.
+
+### AriaLiveRegion component
+
+The component renders a single `<div role="status" aria-live="polite" aria-atomic="true" aria-busy="false" aria-label="Workflow run updates" class="sr-only">` element. The `aria-atomic="true"` attribute instructs screen readers to announce the entire text content on each update, not just the diff. The `aria-busy` attribute switches to `"true"` during burst-mode accumulation, signaling screen readers to defer announcement until the summary is ready.
+
+The `textContent` is driven by `liveRegion.message` — a plain `$state` string in the `LiveRegion` store.
+
+### EventDispatcher setOnFlush callback contract
+
+`EventDispatcher.setOnFlush(cb)` registers a callback that is invoked **synchronously** within `processBuffer()` after all events in the current RAF batch have been applied to stores. The callback receives the flushed `ReadonlyArray<SeqEvent>`.
+
+Invariants:
+- The callback is only called when `events.length > 0` (empty drains never fire the callback).
+- `flush()` cancels any pending RAF before draining. Calling `dispatch(); flush()` produces exactly one callback invocation, not two (no phantom RAF callback).
+- `setOnFlush(null)` detaches the callback. Idempotent: calling `setOnFlush` twice replaces the prior callback.
+
+### Snapshot-bypass and reconnect-silence policy (AC6.7)
+
+Snapshots loaded by `ConnectionManager` go directly into stores via `runStore.loadSnapshot()` and entirely bypass the dispatcher. This never generates announcements.
+
+The post-snapshot buffered drain (`connection.ts` step 6) does flow through `eventDispatcher.dispatch + flush`, but `ConnectionManager` defers the `setOnFlush` wiring until **after** the buffered drain completes. Sequence:
+
+1. WS opens; events are buffered in `preConnectBuffer`
+2. Snapshot fetched; `eventDispatcher.clear()` drains stale dispatcher state
+3. `dispatcher.setOnFlush(null)` — explicitly silence the callback for the drain
+4. Snapshot loaded into stores (`runStore.loadSnapshot`)
+5. Buffered events with seq >= snapshot seq dispatched and flushed — stores updated silently
+6. **`dispatcher.setOnFlush((events) => liveRegion.observeFlush(events))`** — wired here, after the drain
+7. Subsequent live events announce normally
+
+On disconnect, `handleDisconnect()` calls `dispatcher.setOnFlush(null)` to detach the callback AND `liveRegion.cancelBurst()` to drop any in-flight 200ms debounce timer (a burst opened just before the WS dropped would otherwise fire `closeBurst` during the reconnect window and announce a stale summary). `reconnect()` and `destroy()` perform the same two-step cleanup at their top — both null `ws.onclose` to skip `handleDisconnect` (`reconnect()` resets the backoff counter; `destroy()` is end-of-life teardown), so without explicit cleanup the prior connection's onFlush callback could still fire on an orphan RAF batch during the new connect's snapshot-fetch window (`reconnect`) or after the manager is gone (`destroy` — HMR, app teardown, test cleanup). The callback is re-wired after each new drain completes. **Cleanup contract:** every code path that nulls `ws.onclose` MUST call both `dispatcher.setOnFlush(null)` and `liveRegion.cancelBurst()` before closing the socket.
+
+Result: zero announcements during snapshot load or buffered-replay drain; only events arriving after the connection is fully established announce.
+
+### LiveRegion store: transition classification and burst accumulation
+
+`LiveRegion.observeFlush(events)` walks the flushed `SeqEvent[]` and extracts `RunEvent::Requested` (→ "queued") and `RunEvent::Completed` (→ conclusion-specific verb) transitions. `RunEvent::InProgress` events are silently skipped.
+
+Announcement routing:
+- **≤3 transitions in a flush:** per-run messages are emitted immediately, joined by `". "`. `aria-busy` stays `"false"`.
+- **>3 transitions in a flush:** the `BurstAccumulator` opens. `aria-busy` flips to `"true"`. A 200ms debounce timer starts. All transitions from the opening flush AND every subsequent flush that arrives within the debounce window accumulate into per-conclusion counts (regardless of per-flush count). On debounce close, a summary message of the form `"N runs queued, M completed (X succeeded, Y failed, ...)"` is emitted, absent-count entries elided; `aria-busy` returns to `"false"`.
+
+`classifyEvent` uses an exhaustive `switch` over `RunConclusion` guarded by `Record<RunConclusion, string>` (`VERB_BY_CONCLUSION`). Adding a new `RunConclusion` variant in `atc-core` and regenerating ts-rs types fails the frontend `tsc` step until `VERB_BY_CONCLUSION` adds the corresponding verb.
+
+Per-event error containment: `observeFlush` wraps each `classifyEvent` call in a try/catch. Invariant violations (e.g., `Completed` with `conclusion: null`) are logged via `console.error` with the offending `SeqEvent` payload; the bad event is skipped; remaining well-formed transitions in the flush still announce.
 
 ## Test Strategy
 
@@ -539,6 +706,12 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 **Animation Module**
 - `frontend/src/lib/animations/kanban-transitions.ts` — Shared crossfade instance, motion constants, reduced-motion support
 
+**ARIA Utilities**
+- `frontend/src/lib/aria/transition-kinds.ts` — `TransitionKind` discriminated union (`{kind:'queued'}` | `{kind:'completed';conclusion:RunConclusion}`); `VERB_BY_CONCLUSION: Record<RunConclusion, string>` exhaustive verb table; `classifyEvent(seqEvent): TransitionKind | null` — extracts the transition kind from a `SeqEvent` (returns null for InProgress / Job events; throws on invariant violation)
+- `frontend/src/lib/aria/format-run-transition.ts` — `formatRunTransition(run, kind): string` — pure message builder; elides "on {branch}" when `run.branch` is null
+- `frontend/src/lib/aria/live-region.svelte.ts` — `LiveRegion` rune-class store (`message: $state<string>`, `busy: $state<boolean>`, `observeFlush(events)`); `BurstAccumulator` internal state (threshold=3, debounce=200ms); module-level singleton `liveRegion`
+- `frontend/src/lib/components/AriaLiveRegion.svelte` — Connected component: renders `<div role="status" aria-live="polite" aria-atomic="true" aria-busy={liveRegion.busy?'true':'false'} aria-label="Workflow run updates" class="sr-only">{liveRegion.message}</div>` at App root level (sibling to AppShell)
+
 **Filter Utilities (pure functions)**
 - `frontend/src/lib/filters/pool.ts` — `PoolKey` branded type + `poolKey(labels)` constructor + `filterRunsByPool(runs, jobsByRunId, poolFilter)` filter; first branded TypeScript type in the codebase — see ADR `docs/architecture-decisions/0001-pool-key-branded-type.md` for rationale
 
@@ -557,7 +730,7 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/**/*.browser.test.ts` — Vitest browser-mode tests for animations, store reactivity, reduced-motion support
 - `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
 - `frontend/src/lib/components/BackdropSuppression.browser.test.ts` — Browser-mode test: verifies the `[data-dialog-overlay] ~ [data-dialog-overlay] { display: none }` CSS rule hides the second overlay when both Sheet and Command.Dialog are open
-- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobSeqEvent`, `sendWS` — intercepts `new WebSocket('/v1/ws')` and bridges store updates via `window.__stores`
+- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobSeqEvent`, `sendWS`, `sendWSBatch` — intercepts `new WebSocket('/v1/ws')` and routes events through `window.eventDispatcher`. The harness exposes two send paths: `sendWS()` calls `dispatch` then `flush` synchronously (deterministic, used when a test needs exactly one event delivered before asserting); `sendWSBatch()` calls `dispatch` for each event without flushing between them and lets natural RAF coalesce the batch, then awaits a `bufferLength === 0` synchronization fence followed by one extra RAF tick (used by burst-testing scenarios such as aria-live and frame-budget to exercise real RAF batching and the `setOnFlush` callback path)
 - `frontend/e2e/theme.test.ts` — Playwright E2E tests: app rendering, theme switching, dark/light mode toggle
 - `frontend/e2e/app-shell.test.ts` — Playwright E2E tests: app shell rendering, runner bar pool indicators, connection indicator, settings popover
 - `frontend/e2e/kanban.test.ts` — Playwright E2E tests: kanban board lifecycle, card movement, WebSocket event handling
@@ -565,9 +738,49 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/e2e/palette.test.ts` — Playwright E2E tests: Cmd+K open/close, query filtering across sections, pool filter selection, theme submenu, command actions
 - `frontend/e2e/pool-filter.test.ts` — Playwright E2E tests: pool filter pill shows/clears, kanban filters by pool, RunnerPool accent border
 - `frontend/e2e/stacking.test.ts` — Playwright E2E tests: palette+panel Esc-unwind order, single backdrop with both open, click-outside-palette-inside-panel, Cmd+K toggle while palette open
+- `frontend/e2e/aria-live.test.ts` — Playwright E2E tests: ARIA live region attribute audit (role/aria-live/aria-atomic/aria-busy/aria-label), per-run messages below burst threshold, conclusion verbs, multi-transition join, null-branch elision, burst aria-busy flip, summary accumulation across flushes, absent-conclusion elision
 
 **Roving Focus Test Harnesses** (co-located with their respective test files)
 - `frontend/src/lib/components/roving/RovingFocusProvider.test-harness.svelte` / `RovingHarnessGrid.svelte` — Two-component harness for RovingFocusProvider browser tests: outer wraps provider, inner (RovingHarnessGrid) calls `getRovingContext()` + `use:roving` and renders stub run-card buttons
 - `frontend/src/lib/components/RunCard.test-harness.svelte` / `RunCardHarnessInner.svelte` — Two-component harness for RunCard unit tests: outer wraps RovingFocusProvider, inner calls `getRovingContext()` and renders N RunCards with `onCtxReady` context-capture callback
 - `frontend/src/lib/components/KanbanColumn.test-harness.svelte` — Single-column harness wrapping one KanbanColumn in a RovingFocusProvider; used by KanbanColumn.test.ts unit tests
 - `frontend/src/lib/components/KanbanBoardInvariant.test-harness.svelte` / `KanbanBoardInvariantHarnessInner.svelte` — Two-component harness for kanban-level tabindex invariant tests: renders all three KanbanColumns inside one RovingFocusProvider with `onCtxReady` callback; used by `KanbanColumn.tabindex.browser.test.ts`
+
+## Performance Verification
+
+### Methodology
+
+Performance verification for the EventDispatcher's RAF-coalescing behavior is split into two tiers:
+
+**Tier 1 — Deterministic CI gate** (`frontend/src/lib/dispatcher.perf.browser.test.ts`)
+
+A Vitest browser-mode test that verifies RAF batching is working correctly under a 1000-event burst. The key design choice is eliminating wall-clock variance entirely:
+
+- `requestAnimationFrame` is replaced with a manually-driven queue via `vi.stubGlobal` before the module singleton is imported (fresh import via `vi.resetModules()`).
+- Events are dispatched in N=10 controlled batches of 100; the RAF queue is ticked once after each batch.
+- Because the first `dispatch()` in each batch schedules one RAF (and subsequent dispatches in the same batch skip scheduling since `rafId !== null`), each `tickRAF()` drains exactly one batch of 100 events.
+
+Assertions (all equality, not bounded):
+- `flushCount === 10` — exactly N flush callbacks fired.
+- `runStore.runs.size === 1000` — every event landed in store state.
+- `totalEventsReceived === 1000` — no events dropped across all flushes (verified via the public `setOnFlush` hook, which receives the flushed array after stores have been mutated).
+
+This test is a CI hard fail. Wall-clock flake is eliminated by construction: no `setTimeout`, no `vi.useFakeTimers()` involvement, no real RAF scheduling.
+
+**Tier 2 — Informational end-to-end injection trace** (`frontend/e2e/frame-budget.test.ts`)
+
+A Playwright test that fires 1000 events through the live `EventDispatcher` (via `sendWSBatch`) while a Chrome DevTools Protocol trace is running. Trace data is collected via a CDP session (`context.newCDPSession(page)`) with the `devtools.timeline,rendering` categories. After the burst, the test parses `AnimationFrame` event timestamps, computes a summary (`p50_ms`, `p95_ms`, `p99_ms`, `dropped_frames`), and saves the result to `frontend/test-results/frame-budget-trace.json`.
+
+**What this measures (and what it does not).** The deltas span end-to-end injection-loop + first-flush + post-flush rAF tail. Under the current `sendWSBatch` shape — one `page.evaluate` block running 1000 iterations of `JSON.parse(reviver) + dispatcher.dispatch()` synchronously — the dominant cost is the injection loop blocking the main thread for ~200ms (no rAF can fire during that window, so the leading delta is large). This makes Tier 2 a useful regression canary on full-pipeline cost (e.g., `dispatcher.dispatch()` getting 5× slower would surface here) but **not** a measurement of dispatcher rAF coalescing in isolation. Tier 1 (`dispatcher.perf.browser.test.ts`) owns that gate deterministically (`flushSpy.mock.calls.length === 10` for 1000 events in 10 batches via a manually-driven RAF queue). A future PR may rewrite `sendWSBatch` to inject events across rAF boundaries (simulating real WS arrival pacing) so Tier 2 measures something orthogonal to Tier 1 — tracked in GitHub issue #46.
+
+**Event-name choice.** Modern Chromium emits a single `AnimationFrame` event per rAF tick. The legacy `BeginFrame` / `FireAnimationFrame` names are not present in `devtools.timeline,rendering` traces from this Chromium build — empirically verified via the `top_event_names` histogram saved into the artifact. The artifact carries the top-50 event-name histogram permanently so future Chromium event-name renames are diagnosable from the artifact alone, without re-running.
+
+This test always passes — there are no timing assertions. The artifact is uploaded to CI under the `test-results-frontend` artifact name (`if-no-files-found: ignore` handles the case where E2E tests were skipped).
+
+### Artifact Location
+
+`frontend/test-results/frame-budget-trace.json` — produced by the Tier 2 Playwright test and uploaded as a CI artifact alongside `coverage/lcov.info`.
+
+### Rationale for browser-mode Tier 1
+
+Vitest's jsdom environment does not provide a reliable `requestAnimationFrame` implementation for stub-and-replay purposes: calling `vi.useFakeTimers()` after `vi.stubGlobal('requestAnimationFrame', ...)` overrides the stub. Chromium browser mode ensures the stub is installed once and respected throughout the test. The dispatcher's `dispatch()` method calls `requestAnimationFrame(...)` at call time (not at module load time), so a fresh `vi.resetModules()` import with the stub already in place is sufficient for reliable interception.

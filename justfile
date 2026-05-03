@@ -118,6 +118,21 @@ test:
 test-e2e:
 	cd frontend && pnpm exec playwright test
 
+# Run performance verification: Tier 1 (vitest deterministic coalescing gate) +
+# Tier 2 (Playwright frame-budget trace artifact). The Tier 1 test is also included
+# in `just test`; this recipe runs both tiers together for local perf work.
+test-perf:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	(cd frontend && pnpm exec vitest run src/lib/dispatcher.perf.browser.test.ts) &
+	pid1=$!
+	(cd frontend && pnpm exec playwright test e2e/frame-budget.test.ts) &
+	pid2=$!
+	fail=0
+	wait $pid1 || fail=1
+	wait $pid2 || fail=1
+	exit $fail
+
 # Generate TypeScript types from Rust structs via ts-rs
 types:
 	#!/usr/bin/env bash

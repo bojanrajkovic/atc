@@ -214,7 +214,7 @@ This is NOT a drag-and-drop kanban. Cards move between columns via server-pushed
 | Card removal | <200ms | ease-out-expo | `transition:fade` |
 | Running card halo | 2s infinite | ease-in-out | CSS `@keyframes` box-shadow |
 
-All animations respect `prefers-reduced-motion`. The halo is functional (visible across room on wall display), not decorative.
+All animations respect `prefers-reduced-motion`. The halo is functional (high-contrast motion signal for glance-readability at the operator's workstation), not decorative.
 
 ### 8. OKLCH token remapping first
 
@@ -365,17 +365,41 @@ Phase 10 decomposes into 6 sub-phases. Each is independently shippable and testa
 - Playground at `docs/design-plans/playgrounds/2026-05-01-kanban-keyboard-nav-explorer.html`.
 - AC traceability matrix at `docs/test-plans/2026-05-01-kanban-keyboard-nav.md`.
 
-### Sub-Phase 6b: Polish + Responsive
+### Sub-Phase 6b: Polish + Responsive ✅ COMPLETE
+
+**Design plan:** [`docs/design-plans/2026-05-02-frontend-1-0-polish.md`](../../design-plans/2026-05-02-frontend-1-0-polish.md)
 
 **Goal:** Empty states, responsive breakpoints, reduced motion, ARIA live regions for run state changes, final E2E coverage.
 
-- EmptyState component ("No workflows running" with calm illustration)
-- Responsive breakpoints: 3-column desktop (>1200px), condensed runner bar on tablet (768-1200px), tab-based single-column on mobile (<768px)
-- `prefers-reduced-motion` audit: verify all animations degrade
-- Scrollbar styling (6px WebKit, theme-colored thumb)
-- Focus ring audit (2px solid accent, 2px offset on all interactive elements)
-- Performance: verify 60fps during burst WebSocket updates with 50+ cards
-- **ARIA live region for run state changes** (deferred from Sub-Phase 5):
-  - Lean — announce **every** transition (Queued → InProgress → Completed, plus terminal Failed/TimedOut/Cancelled) via `aria-live="polite"`. The dashboard is intended for wall display, so frequency matters; re-evaluate during this phase whether terminal-only reads calmer in practice before settling.
-  - Hook — a single live-region element near the kanban root receives short messages constructed from `Run` events as they flow through `EventDispatcher`. No new store; messages can derive from existing `RunStore` data.
-- **Tests:** EmptyState rendering. Responsive: Playwright viewport tests at each breakpoint. Reduced motion: verify no animations when media query active. Performance: Playwright trace for frame budget under load. Live region: assert the live element receives expected text on simulated state transitions and that messages do not pile up during bursts. Full E2E regression suite covering all prior phases.
+**Responsive contract (locked):**
+
+| Viewport | Kanban | TopBar |
+|---|---|---|
+| `≥1280px` (xl) | 3 columns | Single row |
+| `768–1279px` | 2 columns | Single row |
+| `640–767px` | 2 columns | Wrapped (2 rows) |
+| `<640px` | 1 column stack | Wrapped |
+
+Breakpoints: Tailwind v4 `sm:` (≥640px) and `xl:` (≥1280px). No container queries (deferred). No horizontal scroll at any viewport width ≥320px. Mobile-targeted tab navigation between Queued/Running/Completed is **not** part of the 1.0 contract.
+
+**Deliverables:**
+
+- EmptyState component (`EmptyState.svelte`) — pure, schematic-preview treatment (three faint dashed column groups + "Watching for runs." caption); replaces inline "No workflows yet." string in `KanbanBoard.svelte`
+- Responsive kanban grid: `grid-cols-1 sm:grid-cols-2 xl:grid-cols-3` on `KanbanBoard.svelte`; TopBar markup rewrite for `<md` wrap + separator hide + `order-*` reflow; RunnerPool label truncation at `<md`
+- `prefers-reduced-motion` audit: gate the one remaining ungated animation (`CommandPalette.svelte` theme submenu slide); strengthen existing reduced-motion tests
+- Scrollbar styling: global `.atc-scrollbar` class in `app.css` using `var(--border)` thumb; applied to `KanbanColumn` and `RunDetailPanel` body
+- Focus ring audit: four custom interactive elements (`command-item`, `PoolFilterPill` clear, `PanelActions` close, `PanelActions` Go-to-run) gain explicit `:focus-visible` rules
+- **ARIA live region for run state changes** (deferred from Sub-Phase 5): `LiveRegion` rune-class store in `lib/aria/live-region.svelte.ts`; announces `RunEvent::Requested` (queued) and `RunEvent::Completed` events per-run below the burst threshold (≤3 per flush) and in summary form above it; single `role="status" aria-live="polite" aria-atomic="true"` element at `App.svelte` level; `EventDispatcher` gains a `setOnFlush(cb)` post-flush callback hook; `ConnectionManager` defers wiring until after snapshot+buffered-drain completes so reconnect sequences are silent
+- **Performance verification:** Tier 1 — vitest browser-mode deterministic RAF-coalescing test (1000 events, N controlled ticks, hard CI gate); Tier 2 — Playwright frame-budget trace artifact (informational)
+- **Tests:** EmptyState rendering. Responsive: Playwright viewport tests at 1280/900/480px. Reduced motion: all animations in inventory matrix have at least one asserting test. Performance: Tier 1 hard gate + Tier 2 artifact. Live region: per-run and summary announcement forms, burst threshold, debounce, error containment. Full E2E regression suite covering all prior phases.
+
+**Implemented in:** PR on `feat/frontend-1-0-polish` branch, per design plan [`docs/design-plans/2026-05-02-frontend-1-0-polish.md`](../../design-plans/2026-05-02-frontend-1-0-polish.md).
+
+**What was built:**
+
+- **Documentation cleanup (Phase 1):** "Wall display" framing removed from 7 structural occurrences across `.impeccable.md`, `docs/ideation/ui-decomposition/component-patterns.md`, `docs/ideation/ui-decomposition/README.md`, `docs/design-plans/2026-04-25-interactivity.md`, and `docs/ideation/design-research.md` (Concourse competitive-research mentions preserved). SP6b responsive contract locked: Tailwind v4 `sm:` (≥640px) and `xl:` (≥1280px) cascade, no mobile tab navigation, no container queries (deferred).
+- **EmptyState component (Phase 2):** `EmptyState.svelte` — pure, schematic-preview treatment with three faint dashed column groups (Queued/Running/Completed) and a configurable caption defaulting to "Watching for runs.". `KanbanBoard.svelte` inline placeholder string replaced. Tri-state predicate (connecting / connected-empty / populated) preserved. Responsive kanban grid (`grid-cols-1 sm:grid-cols-2 xl:grid-cols-3` on `KanbanBoard.svelte`); TopBar markup rewritten for `<md` wrap + separator hide + `order-*` reflow; RunnerPool label truncation at `<md`.
+- **Polish audits (Phase 3):** `CommandPalette.svelte` theme submenu slide gated on `prefersReducedMotion`; animation inventory matrix completed (all entries in `docs/architecture/frontend-app.md` have ≥1 reduced-motion test). Global `.atc-scrollbar` CSS class in `app.css` applied to `KanbanColumn` and `RunDetailPanel` body. `:focus-visible` outline rules added to `command-item`, `PoolFilterPill` clear button, `PanelActions` close button, and the Go-to-run link.
+- **ARIA live region (Phase 4):** New `lib/aria/` module: `transition-kinds.ts` (`TransitionKind` union, `classifyEvent`, `VERB_BY_CONCLUSION` compile-time exhaustiveness dictionary), `format-run-transition.ts` (pure `formatRunTransition` message builder), `live-region.svelte.ts` (`LiveRegion` rune-class store with `BurstAccumulator` 200 ms debounce, per-run announcements below threshold, summary form above). `AriaLiveRegion.svelte` mounts a single `role="status" aria-live="polite" aria-atomic="true" aria-busy` element at `App.svelte` level. `EventDispatcher` gains `setOnFlush(cb)` post-flush callback hook (Phase 4) and `bufferLength` getter; `ConnectionManager` defers wiring until after snapshot+buffered-replay drain. E2E tests cover: ARIA attribute audit, per-run messages, conclusion verbs, multi-transition join, null-branch elision, burst `aria-busy` flip, summary accumulation across flushes.
+- **Performance verification (Phase 5):** `dispatcher.perf.browser.test.ts` — Tier 1 deterministic CI gate: 1000 events dispatched in 10 batches of 100 each via manually-driven RAF queue (no wall-clock dependency); asserts `flushCount === 10`, `runStore.runs.size === 1000`, `totalEventsReceived === 1000`. `frame-budget.test.ts` — Tier 2 informational Playwright test measuring end-to-end injection-loop + first-flush + post-flush rAF tail latency under real-browser conditions (composite regression canary, not a dispatcher-pacing measurement; Tier 1 owns that gate). CDP trace with `devtools.timeline,rendering` categories, `AnimationFrame` delta parsing (legacy `BeginFrame` event name is not present in this Chromium build), p50/p95/p99 summary logged to stdout, trace plus top-50 event-name histogram saved as `test-results/frame-budget-trace.json` CI artifact; test always passes. `justfile` gains `test-perf` recipe running both tiers in parallel.
+- **Completed E2E regression:** All 147 Playwright E2E tests passing (146 prior + 1 new frame-budget test). All 756 vitest unit/browser tests passing (755 prior + 1 new perf test). Architecture docs (`docs/architecture/frontend-app.md`) updated with EmptyState, responsive breakpoint contract, animation inventory matrix, AriaLiveRegion module + `setOnFlush` contract, and performance verification methodology. `frontend/CLAUDE.md` and root `CLAUDE.md` updated to reflect 1.0-ready status.

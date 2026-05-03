@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import ConnectionManager from '$lib/components/ConnectionManager.svelte'
+  import AriaLiveRegion from '$lib/components/AriaLiveRegion.svelte'
   import AppShell from '$lib/components/AppShell.svelte'
-  import KanbanBoard from '$lib/components/KanbanBoard.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
+  import ConnectionManager from '$lib/components/ConnectionManager.svelte'
+  import KanbanBoard from '$lib/components/KanbanBoard.svelte'
   import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
   import RovingFocusProvider from '$lib/components/roving/RovingFocusProvider.svelte'
   import { paletteStore } from '$lib/stores/palette.svelte'
@@ -55,6 +56,7 @@
 </script>
 
 <ConnectionManager />
+<AriaLiveRegion />
 <RovingFocusProvider>
   <AppShell>
     <KanbanBoard />

@@ -118,8 +118,8 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
   it('AC3.4: subscriber re-renders when applyRunEvent adds a new run mid-lifecycle', async () => {
     render(KanbanBoardHarness)
 
-    // Connected + zero runs → empty state.
-    expect(screen.getByText('No workflows yet.')).toBeTruthy()
+    // Connected + zero runs → EmptyState component with default caption.
+    expect(screen.getByText('Watching for runs.')).toBeTruthy()
 
     runStore.applyRunEvent(
       createMockRunEvent({

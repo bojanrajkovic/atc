@@ -1,3 +1,4 @@
+import { liveRegion } from '$lib/aria/live-region.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runnerStore } from '$lib/stores/runners.svelte'
@@ -108,6 +109,9 @@ export class ConnectionManager {
       this.snapshotSeq = snapshot.seq
 
       // Step 6: Flush buffered events, discarding stale ones
+      // Detach any prior setOnFlush callback so buffered-replay events do not
+      // produce announcements (AC6.7: reconnect silence during buffered drain).
+      eventDispatcher.setOnFlush(null)
       for (const buffered of this.preConnectBuffer) {
         if (buffered.seq >= this.snapshotSeq) {
           eventDispatcher.dispatch(buffered)
@@ -115,6 +119,9 @@ export class ConnectionManager {
       }
       this.preConnectBuffer = []
       eventDispatcher.flush()
+      // Step 6b: Wire the live-region callback AFTER the buffered drain so only
+      // subsequent live events produce announcements (AC6.7 deferred wiring).
+      eventDispatcher.setOnFlush((events) => liveRegion.observeFlush(events))
       this.connected = true
 
       // Step 7: Transition to connected
@@ -137,6 +144,13 @@ export class ConnectionManager {
   private handleDisconnect(): void {
     this.connected = false
     this.ws = null
+    // Detach the live-region callback on disconnect so the next reconnect cycle
+    // (snapshot + buffered-drain) runs silently until re-wired (AC6.7).
+    eventDispatcher.setOnFlush(null)
+    // Also cancel any in-flight burst — observeFlush may have opened a burst
+    // whose 200ms debounce timer has not yet fired; without this, closeBurst()
+    // would announce a stale summary while the app is reconnecting.
+    liveRegion.cancelBurst()
     connectionStore.status = 'reconnecting'
 
     // Exponential backoff: 1s, 2s, 4s, 8s, ..., capped at 30s
@@ -160,6 +174,13 @@ export class ConnectionManager {
       this.reconnectTimer = null
     }
     connectionStore.reconnectAttempt = 0
+    // Detach onFlush + cancel any pending burst BEFORE closing the WS. We null
+    // ws.onclose to skip handleDisconnect (which is on a different path), so
+    // without this any RAF batch queued by the prior connection could still
+    // flush during the new connect cycle's snapshot-fetch window and announce
+    // stale updates through the still-attached onFlush callback.
+    eventDispatcher.setOnFlush(null)
+    liveRegion.cancelBurst()
     if (this.ws) {
       this.ws.onclose = null
       this.ws.close()
@@ -172,6 +193,13 @@ export class ConnectionManager {
     // Abort any in-flight connect (fetch, WS open wait)
     this.abortController?.abort()
     this.abortController = null
+
+    // Mirror the disconnect/reconnect cleanup: detach onFlush + cancel any
+    // pending burst. Without this, an app teardown / HMR / test cleanup that
+    // happens while a flush callback or 200ms burst timer is still pending
+    // could announce stale state after the manager is gone.
+    eventDispatcher.setOnFlush(null)
+    liveRegion.cancelBurst()
 
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)

@@ -103,24 +103,36 @@
 </script>
 
 <header
-  class="flex items-center gap-3 px-4 shrink-0"
-  style="height: 48px; background-color: var(--surface); border-bottom: 1px solid var(--border);"
+  class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 md:py-0 shrink-0"
+  style="min-height: 48px; background-color: var(--surface); border-bottom: 1px solid var(--border);"
 >
-  <!-- Left section: Logo -->
+  <!-- Logo: always on row 1 (order-1 at all widths) -->
   <Logo />
 
-  <Separator orientation="vertical" class="h-6" />
+  <Separator orientation="vertical" class="h-6 hidden md:block" />
 
-  <!-- Center section: Runner pools -->
-  <div class="flex-1 min-w-0">
-    <RunnerBar {pools} />
+  <!--
+    Row-2 container at <md: occupies the full second flex line, laying out
+    RunnerBar and SettingsPopover side-by-side.
+    At md+: display:contents flattens this wrapper so its children become
+    direct flex children of <header> and the md+ order-* classes take effect.
+  -->
+  <div class="order-3 basis-full flex items-center gap-x-3 md:contents">
+    <!-- Runner pools: flex-1 inside the row-2 container at <md; at md+ order-2 flex-1 -->
+    <div data-runner-bar class="min-w-0 flex-1 md:order-2 md:flex-1">
+      <RunnerBar {pools} />
+    </div>
+
+    <Separator orientation="vertical" class="h-6 hidden md:block md:order-3" />
+
+    <!-- Settings: pushed to end of row 2 at <md; at md+ order-5 (last) -->
+    <div class="shrink-0 md:order-5">
+      <SettingsPopover />
+    </div>
   </div>
 
-  <Separator orientation="vertical" class="h-6" />
-
-  <!-- Right section: Connection status + Settings -->
-  <div class="flex items-center gap-3">
+  <!-- Connection indicator: row 1 at <md (order-2 = next to Logo), row 1 at md+ (order-4) -->
+  <div class="order-2 md:order-4">
     <ConnectionIndicator state={indicatorState} detail={indicatorDetail} />
-    <SettingsPopover />
   </div>
 </header>

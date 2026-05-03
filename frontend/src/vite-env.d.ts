@@ -11,6 +11,8 @@ declare global {
       paletteStore?: typeof import('$lib/stores/palette.svelte')['paletteStore']
       poolKey?: typeof import('$lib/filters/pool')['poolKey']
     }
+    /** EventDispatcher singleton exposed for E2E harness (DEV only). */
+    eventDispatcher?: typeof import('$lib/dispatcher')['eventDispatcher']
     /** Spy accumulator: element IDs passed to scrollIntoView, populated by e2e test harness. */
     __scrolledIds?: string[]
   }

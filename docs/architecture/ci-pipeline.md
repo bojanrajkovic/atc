@@ -53,6 +53,6 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 
 ## Files
 
-- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building); includes `helm` job with 2×5 kubeconform matrix and `helm-result` gate
+- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building); includes `helm` job with 2×5 kubeconform matrix and `helm-result` gate. Frontend artifact upload includes `coverage/lcov.info` and `test-results/frame-budget-trace.json` (the Tier 2 informational frame-budget trace produced by `e2e/frame-budget.test.ts`).
 - `.github/workflows/zizmor.yml` — Workflow security linter
 - `scripts/doc-mapping.sh` — Maps workflow file changes to this architecture doc

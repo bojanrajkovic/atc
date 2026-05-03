@@ -29,6 +29,8 @@ Sub-Phase 5: Interactivity is complete when:
 6. **Per-component tests and Playwright E2E coverage ship in the same PR** as the implementation — no test debt deferred to a polish phase.
 7. **Sub-Phase 6 carries forward** roving-tabindex keyboard navigation across cards (arrow keys, Home/End, Tab-leaves-group) and an ARIA live region for run state changes. The leaning preference for the live region is to announce every transition politely; Sub-Phase 6 re-evaluates whether terminal-only reads calmer on a wall display before settling.
 
+> Revised by `docs/design-plans/2026-05-02-frontend-1-0-polish.md`.
+
 **Out of scope for Sub-Phase 5:**
 
 - Roving-tabindex keyboard navigation — deferred to Sub-Phase 6 (Polish + Responsive).
@@ -373,6 +375,8 @@ Per `.ed3d/design-plan-guidance.md` rule 6, every design plan must list the docu
 
 - **Roving-tabindex implementation strategy.** Bits UI provides no `RovingFocusGroup` primitive (verified 2026-04). Library survey: `svelte-roving-ux` is Svelte-4-era and unmaintained for runes; `jakelazaroff/roving-tabindex` is a framework-agnostic web component but adds Vite/Tailwind v4 integration risk. Default plan in Sub-Phase 6: a custom Svelte 5 context provider with explicit `tabindex` swap on a single index signal, plus one key handler attached at the kanban-board root. Suspend while detail panel is open; restore focus to triggering card on panel close.
 - **ARIA live region leaning preference.** Lean toward announcing every transition (Queued → InProgress → Completed, plus terminal Failed/TimedOut/Cancelled) via `aria-live="polite"`. The dashboard is intended for wall display, so frequency matters; re-evaluate during Sub-Phase 6 whether terminal-only reads calmer in practice before settling. A single live-region element near the kanban root receives short messages constructed from `Run` events as they flow through `EventDispatcher`.
+
+> Revised by `docs/design-plans/2026-05-02-frontend-1-0-polish.md`.
 
 These items are recorded in `docs/ideation/ui-decomposition/README.md` Sub-Phase 6 section so the implementation plan for that phase can pick them up directly.
 

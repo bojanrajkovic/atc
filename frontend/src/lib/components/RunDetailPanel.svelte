@@ -116,7 +116,7 @@
         <MetaCell label="Duration" value={computeDurationText(run, uiStore.nowMs)} />
         <MetaCell label="Runner" value={summarizeRunners(jobs)} />
       </MetaGrid>
-      <div class="job-blocks min-h-0 flex-1 overflow-y-auto">
+      <div class="job-blocks min-h-0 flex-1 overflow-y-auto atc-scrollbar">
         {#each jobs as job (job.id)}
           <JobBlock
             {job}
