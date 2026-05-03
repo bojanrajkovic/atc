@@ -265,6 +265,30 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
     manager.destroy()
   })
 
+  it('destroy() detaches onFlush AND cancels pending live-region burst', async () => {
+    const cancelBurstSpy = vi.spyOn(liveRegion, 'cancelBurst')
+    const setOnFlushSpy = vi.spyOn(eventDispatcher, 'setOnFlush')
+
+    server.use(
+      http.get('http://localhost:*/v1/state', () =>
+        HttpResponse.json(snapshotToJSON({ seq: 5n, runs: [], jobs: [], poolStats: [] })),
+      ),
+    )
+
+    const manager = new ConnectionManager(baseUrl)
+    await manager.connect()
+    cancelBurstSpy.mockClear()
+    setOnFlushSpy.mockClear()
+
+    // destroy() nulls ws.onclose (skipping handleDisconnect) so cleanup must
+    // be explicit, mirroring reconnect(). HMR / app teardown / test cleanup
+    // during in-flight events would otherwise leak stale announcements.
+    manager.destroy()
+
+    expect(setOnFlushSpy).toHaveBeenCalledWith(null)
+    expect(cancelBurstSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('reconnect() detaches onFlush AND cancels pending burst BEFORE closing the WS', async () => {
     const cancelBurstSpy = vi.spyOn(liveRegion, 'cancelBurst')
     const setOnFlushSpy = vi.spyOn(eventDispatcher, 'setOnFlush')

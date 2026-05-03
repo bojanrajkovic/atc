@@ -194,6 +194,13 @@ export class ConnectionManager {
     this.abortController?.abort()
     this.abortController = null
 
+    // Mirror the disconnect/reconnect cleanup: detach onFlush + cancel any
+    // pending burst. Without this, an app teardown / HMR / test cleanup that
+    // happens while a flush callback or 200ms burst timer is still pending
+    // could announce stale state after the manager is gone.
+    eventDispatcher.setOnFlush(null)
+    liveRegion.cancelBurst()
+
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
