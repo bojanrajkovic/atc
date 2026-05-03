@@ -15,7 +15,7 @@
     {#each COLUMNS as col (col)}
       <div
         data-empty-col
-        class="flex flex-col gap-2 rounded border px-3 py-2 w-28"
+        class="flex flex-col gap-2 rounded border border-dashed px-3 py-2 w-28"
         style="border-color: var(--border); opacity: 0.5;"
       >
         <!-- Column label -->
