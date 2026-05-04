@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-03 (updated 2026-05-03 for Phase 2a PostgreSQL integration: sqlx pool, schema migrations, /readyz probe semantics)
+Last verified: 2026-05-04 (updated 2026-05-04 for Phase 2b shadow writes: PgStore, dual-write, drift metrics)
 
 ## Purpose
 
@@ -221,6 +221,23 @@ same global recorder installed by axum-prometheus. Emitted families include
 `process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`,
 `process_start_time_seconds`, and `process_threads`.
 
+### Shadow PG write failure counters (Phase 2b)
+
+`atc_shadow_pg_write_failures_total` is a counter incremented when a shadow PG
+write fails after a successful in-memory apply. It carries a `kind` label:
+
+| Label | When | Severity |
+|-------|------|----------|
+| `kind="parity"` | PG UPSERT matches 0 rows (WHERE predicate rejected); in-memory and PG diverged | Page-worthy: indicates state machine drift |
+| `kind="transient"` | sqlx error (network, pool exhaustion, etc.); PG momentarily unavailable | Alert on sustained rate |
+
+Both increments are logged as warnings/errors (not returned as 5xx). The webhook
+handler returns 200 in shadow mode regardless of PG failure — the in-memory
+write is authoritative, and PG failures are observability concerns (via metrics
+and logs) rather than availability concerns. This counter is registered at
+startup via `register_shadow_pg_counters()` and appears in `/metrics` output
+only if PG writes have been attempted.
+
 ### Listener always binds
 
 The metrics listener binds unconditionally at startup regardless of the chart's
@@ -244,6 +261,7 @@ struct AppState {
     webhook_secret: Option<String>,
     seq: Mutex<u64>,
     pg_pool: Option<sqlx::PgPool>,
+    pg_store: Option<Arc<dyn PersistentStore + Send + Sync>>,
 }
 ```
 
@@ -251,7 +269,8 @@ struct AppState {
 - **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
 - **`seq`** — `tokio::sync::Mutex<u64>` counter incremented on each successfully ingested event. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across store mutation + seq assignment, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches commit order, and REST snapshots are consistent with their cursor. Resets on server restart (consistent with in-memory-only store).
-- **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Phase 2a only uses this for the `/readyz` probe; Phase 2b will use it for writes.
+- **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Used for the `/readyz` probe.
+- **`pg_store`** — `Option<Arc<dyn PersistentStore + Send + Sync>>`. `Some(Arc<PgStore>)` when `ATC_DATABASE_URL` is configured and the pool was created successfully. `None` in in-memory mode. Used by the webhook handler to shadow-write events to PostgreSQL (Phase 2b). `None` disables PG writes without affecting in-memory behavior.
 
 ### SeqEvent Sidecar Contract
 
@@ -286,10 +305,13 @@ The `pool_stats_after` field carries a snapshot of the runner pool state taken u
    - `ParseResult::Parsed(WebhookEvent)` — Continue to store ingestion
    - `ParseResult::Skipped { event_type }` — Return 200 with `{"status": "skipped"}`
    - `ParseResult::Err(ParseError)` — Return 422 with error details
-4. Acquire the `seq` mutex. Apply the parsed event to the store via `store.apply_event(domain_event)`. If the transition is invalid (e.g., backward transition from Completed to InProgress), log warning and continue (not a 500 error).
-5. Increment `seq` by 1 (under the same mutex guard), assigning the next sequence number to this event.
-6. Broadcast a `SeqEvent { seq, event }` to the webhook channel (still under the mutex). WebSocket subscribers receive it immediately.
-7. Release the mutex. Return 200 with `{"status": "processed"}`.
+4. Acquire the `seq` mutex. Apply the parsed event to the in-memory store via `store.apply_run_event()` or `store.apply_job_event()`. If the transition is invalid (e.g., backward transition from Completed to InProgress), log warning and skip broadcast (no SeqEvent emitted for rejected transitions, per AC1.5).
+5. On successful apply: capture the envelope in a `PgWrite` enum variant (for use in step 8), increment `seq` by 1, broadcast a `SeqEvent { seq, event, pool_stats_after }` to the webhook channel (still under the mutex).
+6. Release the `seq` mutex — **before** any PG I/O. This is the critical invariant: PG latency must not block concurrent webhooks or `GET /v1/state`.
+7. Return 200 with `{"status": "processed"}`.
+8. **Shadow PG write (outside mutex):** If `pg_store` is `Some` and the in-memory apply succeeded, call `pg_store.apply_run_event()` or `pg_store.apply_job_event()` on the captured envelope. On failure, increment a Prometheus counter:
+   - `kind="parity"` — `PersistError::InvalidTransition` (0 rows affected): the two stores have diverged.
+   - `kind="transient"` — `PersistError::Backend(e)`: sqlx network/pool error.
 
 **Error responses:**
 - **400** — Missing `X-GitHub-Event` header
@@ -347,12 +369,14 @@ Server wiring configuration extends the existing figment-based config:
 In `main.rs`:
 1. Load config via `Config::load()`
 2. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
-3. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
-4. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
-5. Create `AppState` with all components (including `pg_pool`) and pass to Axum via `.with_state()`
-6. Start background eviction task: `start_eviction_task(store.clone())`
-7. Bind the server to `http_addr`
-8. On graceful shutdown, abort the eviction task
+3. If pool was created, instantiate `pg_store: Some(Arc::new(PgStore::new(pool.clone())))`; otherwise `pg_store = None` (Phase 2b)
+4. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
+5. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
+6. Call `metrics::register_shadow_pg_counters()` after the recorder is installed (Phase 2b)
+7. Create `AppState` with all components (including `pg_pool` and `pg_store`) and pass to Axum via `.with_state()`
+8. Start background eviction task: `start_eviction_task(store.clone())`
+9. Bind the server to `http_addr`
+10. On graceful shutdown, abort the eviction task
 
 The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
 
@@ -364,8 +388,9 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 ### Modules
 
 - **`state.rs`** — `AppState` struct, `SeqEvent`, `StateSnapshot` types, and helper functions
-- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`
+- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`; webhook handler dual-write flow (Phase 2b)
 - **`ws.rs`** — WebSocket connection handling and message broadcast logic
+- **`persist.rs`** — `PgStore` implementing `PersistentStore` trait; predicated UPSERT for runs and jobs (Phase 2b)
 
 ## Files
 
@@ -376,8 +401,10 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `backend/crates/atc-server/src/state.rs` — AppState struct, SeqEvent, StateSnapshot types
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
-- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector
+- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, shadow PG counter registration (Phase 2b)
+- `backend/crates/atc-server/src/persist.rs` — `PgStore` struct implementing `PersistentStore`; predicated UPSERT SQL for runs and jobs with status WHERE predicates (Phase 2b)
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
+- `backend/.sqlx/` — Offline query cache (committed to repo). Generated by `cargo sqlx prepare --workspace -- --tests` during Phase 2b to enable `SQLX_OFFLINE=true` builds without a live DB at compile time. Updated whenever SQL queries change.
 - `backend/Cargo.toml` — Workspace definition with shared dependency versions
 - `backend/crates/atc-server/Cargo.toml` — Server crate dependencies

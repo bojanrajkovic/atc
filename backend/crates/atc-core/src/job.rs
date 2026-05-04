@@ -184,6 +184,43 @@ impl JobStatus {
             }),
         }
     }
+
+    /// Returns the set of statuses that can validly transition to `target`,
+    /// inclusive of `target` itself (so same-status replay is admitted).
+    /// Consistent with `transition_to` — verified by property test.
+    ///
+    /// Note: `Queued` -> `Completed` is invalid for jobs (asymmetry vs. runs).
+    #[must_use]
+    pub fn predecessors_of(target: Self) -> &'static [Self] {
+        match target {
+            Self::Queued => &[Self::Queued],
+            Self::Waiting => &[Self::Queued, Self::Waiting],
+            Self::InProgress => &[Self::Queued, Self::Waiting, Self::InProgress],
+            // NB: Queued → Completed is invalid for jobs (asymmetry vs. runs)
+            Self::Completed => &[Self::InProgress, Self::Completed],
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod arb {
+    use super::JobStatus;
+    use proptest::prelude::*;
+
+    impl Arbitrary for JobStatus {
+        type Parameters = ();
+        type Strategy = proptest::strategy::BoxedStrategy<Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            prop_oneof![
+                Just(JobStatus::Queued),
+                Just(JobStatus::Waiting),
+                Just(JobStatus::InProgress),
+                Just(JobStatus::Completed),
+            ]
+            .boxed()
+        }
+    }
 }
 
 #[cfg(test)]

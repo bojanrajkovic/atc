@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 atc-core = { path = "../atc-core" }
 atc-github = { path = "../atc-github" }
+async-trait = "0.1"
 axum = { version = "0.8.8", features = ["ws"] }
 axum-prometheus = "0.10.0"
 figment = { version = "0.10.19", features = ["env", "toml"] }
@@ -27,6 +28,7 @@ ts-rs = { workspace = true, features = ["serde-compat"] }
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }
+chrono = { version = "0.4", features = ["serde"] }
 const-hex = "1.18.1"
 futures-util = "0.3.32"
 hmac = "0.13.0"

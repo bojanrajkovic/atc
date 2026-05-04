@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT head_sha, workflow_name FROM runs LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "head_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "workflow_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "76af973aac604faf343b9e7daa12cec8aea51b721fd1b1ff2e50c6729fc254c1"
+}

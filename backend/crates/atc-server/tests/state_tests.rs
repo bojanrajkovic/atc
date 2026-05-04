@@ -18,6 +18,7 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        pg_store: None,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())

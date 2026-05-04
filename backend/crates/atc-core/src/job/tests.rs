@@ -1,4 +1,5 @@
 use super::*;
+use proptest::prelude::*;
 
 // core-domain.AC1.1 (job fields): Construct a `Job` with all fields populated
 // including `steps: vec![Step { ... }]` and `runner: Some(RunnerInfo { ... })`,
@@ -332,4 +333,56 @@ fn test_job_transition_in_progress_to_in_progress_idempotent() {
 fn test_job_transition_completed_to_completed_idempotent() {
     let result = JobStatus::Completed.transition_to(JobStatus::Completed);
     assert_eq!(result, Ok(JobStatus::Completed));
+}
+
+// predecessors_of: one assertion per (target, expected-slice) pair
+#[test]
+fn test_predecessors_of_queued() {
+    assert_eq!(
+        JobStatus::predecessors_of(JobStatus::Queued),
+        &[JobStatus::Queued]
+    );
+}
+
+#[test]
+fn test_predecessors_of_waiting() {
+    assert_eq!(
+        JobStatus::predecessors_of(JobStatus::Waiting),
+        &[JobStatus::Queued, JobStatus::Waiting]
+    );
+}
+
+#[test]
+fn test_predecessors_of_in_progress() {
+    assert_eq!(
+        JobStatus::predecessors_of(JobStatus::InProgress),
+        &[JobStatus::Queued, JobStatus::Waiting, JobStatus::InProgress]
+    );
+}
+
+#[test]
+fn test_predecessors_of_completed() {
+    // NB: Queued → Completed is invalid for jobs (asymmetry vs. runs)
+    assert_eq!(
+        JobStatus::predecessors_of(JobStatus::Completed),
+        &[JobStatus::InProgress, JobStatus::Completed]
+    );
+}
+
+// Proptest: from.transition_to(to).is_ok() ⟺ predecessors_of(to).contains(&from)
+proptest! {
+    #[test]
+    fn prop_predecessors_of_consistent_with_transition_to(
+        from: JobStatus,
+        to: JobStatus,
+    ) {
+        let transition_ok = from.transition_to(to).is_ok();
+        let in_predecessors = JobStatus::predecessors_of(to).contains(&from);
+        prop_assert_eq!(
+            transition_ok,
+            in_predecessors,
+            "from={:?} to={:?}: transition_to={} predecessors={}",
+            from, to, transition_ok, in_predecessors
+        );
+    }
 }

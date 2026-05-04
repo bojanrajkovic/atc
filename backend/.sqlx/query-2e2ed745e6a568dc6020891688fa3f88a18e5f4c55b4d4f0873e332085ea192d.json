@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status, workflow_name, run_started_at FROM runs WHERE id = 1002",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "workflow_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "run_started_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "2e2ed745e6a568dc6020891688fa3f88a18e5f4c55b4d4f0873e332085ea192d"
+}

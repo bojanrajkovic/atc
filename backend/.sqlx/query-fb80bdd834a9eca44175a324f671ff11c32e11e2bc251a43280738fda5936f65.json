@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE runs SET status = 'Completed' WHERE status = 'Queued'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "fb80bdd834a9eca44175a324f671ff11c32e11e2bc251a43280738fda5936f65"
+}

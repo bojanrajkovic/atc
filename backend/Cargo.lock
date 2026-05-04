@@ -106,6 +106,7 @@ dependencies = [
 name = "atc-core"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "proptest",
  "serde",
@@ -135,10 +136,12 @@ dependencies = [
 name = "atc-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "atc-core",
  "atc-github",
  "axum",
  "axum-prometheus",
+ "chrono",
  "const-hex",
  "figment",
  "futures-util",
