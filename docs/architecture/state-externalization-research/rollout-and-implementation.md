@@ -1,6 +1,6 @@
 # Rollout And Implementation
 
-Last verified: 2026-05-04 (Phase 2b shadow writes: complete)
+Last verified: 2026-05-04 (Phase 2c transactional outbox: complete)
 
 ## Status
 
@@ -75,17 +75,20 @@ ADR refs: [ADR 0002 Decision 2](../../architecture-decisions/0002-state-external
 
 #### Phase 2c: Outbox table + transactional writes
 
-Add the outbox and make the current-state write + outbox append atomic.
+**Status: complete.** Add the `outbox` table and make the current-state UPSERT + outbox INSERT atomic. Reverse the error policy so transient PG failures return 503 (not 200). Clean up shadow terminology.
 
 In scope:
-- Add `outbox` table with `BIGSERIAL seq` primary key, plus columns for the domain event payload (per [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md): domain event only, no derived sidecar)
-- Schema for the event payload: probably JSONB for the domain event body; minimal projected columns (`run_id`, `job_id`, event kind, `created_at`) for indexing/debugging
-- Webhook handler wraps current-state UPSERT + outbox INSERT in one transaction
-- Tests: writes succeed/fail together; outbox rows align with current-state rows
-- Tests: aborted transactions consume seq values without committing rows (validates monotonic-not-gapless behavior)
-- The outbox is written but not yet read by anyone
+- Add `outbox` table with `BIGSERIAL seq` primary key, `kind`, `run_id`, `job_id`, `payload JSONB`, and `inserted_at` — **DONE** (`migrations/0002_outbox.sql`)
+- 4 `pub(crate)` transaction helpers in `persist.rs`: `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` — **DONE**
+- Webhook handler holds seq mutex across `pool.begin()…tx.commit()` to preserve broadcast-order = durable-order invariant — **DONE**
+- Reversed error policy: transient PG failures → 503, parity rejections → 200 `{"status":"rejected"}`, success → 200 `{"status":"processed"}` — **DONE**
+- Drop `pg_store: Option<Arc<dyn PersistentStore>>` from `AppState`; handler drives transactions directly via `&PgPool` — **DONE** (14 `pg_store: None` literals + 1 `Some(...)` helper site swept)
+- Rename metric `atc_shadow_pg_write_failures_total` → `atc_pg_write_failures_total`; add `atc_pg_in_memory_drift_total` — **DONE**
+- Rename test file `shadow_writes_tests.rs` → `transactional_writes_tests.rs` with inverted transient-failure assertion (now 503) — **DONE** (8 tests pass)
+- New `outbox_tests.rs` covering AC1–AC6: atomicity success/rollback, BIGSERIAL gap, stub run, payload envelope, error policy — **DONE** (11 tests pass)
+- The outbox is written but not yet read by anyone — in-memory path still authoritative for reads
 
-Acceptance: a test that triggers a transaction abort (e.g., via constraint violation) and confirms the seq advances without producing a committed outbox row, and a separate test that confirms successful writes produce both a current-state row and a matching outbox row in a single transaction.
+Acceptance: a test that triggers a transaction abort and confirms no outbox row is committed, and tests that confirm successful writes produce both a current-state row and a matching outbox row in one transaction. **SATISFIED.** 11 `outbox_tests` + 8 `transactional_writes_tests` + 15 `persist_pg_tests` all pass. Full backend test suite passes. `.sqlx/` offline cache covers all new queries.
 
 ADR refs: [ADR 0002 Decision 2](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (atomicity), [ADR 0003 Decision 2](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) (monotonic-not-gapless ordering), [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md) (outbox stores domain events only).
 

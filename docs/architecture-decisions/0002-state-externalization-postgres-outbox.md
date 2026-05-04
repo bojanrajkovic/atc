@@ -217,6 +217,16 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
 - **Operator-surface decisions** (Helm gating, SQLite mode removal,
   retention) — see ADR 0003
 
+## Implementation Status
+
+- **Decision 1** (PostgreSQL as durable state backend, sqlx crate, `sqlx::migrate!` for migrations): implemented in Phase 2a (PR #48). Schema: `runs` and `jobs` tables in `0001_initial_runs_jobs.sql`.
+- **Decision 2** (atomic current-state UPSERT + outbox INSERT in one transaction): implemented in Phase 2c. `migrations/0002_outbox.sql` adds the outbox table; `upsert_*_in_txn` and `insert_outbox_*_in_txn` helpers in `persist.rs` drive the transaction. Webhook handler holds seq mutex across `pool.begin()…tx.commit()` to preserve broadcast order = durable order.
+- **Decision 3** (NOTIFY emission after commit; listener connection using session-compatible path): infrastructure groundwork (outbox table, BIGSERIAL seq) in place. NOTIFY emission and listener stub land in Phase 2d.
+- **Decision 4** (original pool-stats persistence — superseded by ADR 0004): outbox payload stores `RunEventEnvelope`/`JobEventEnvelope` only (no `pool_stats_after`). ADR 0004 governs pool stats from Phase 3b onward.
+- **Decision 5** (startup watermark and forwarder design): deferred to Phase 2d/3c when the forwarder is built.
+
+Phase 2c PR: `feat(server): add transactional outbox and reverse webhook error policy` (squash-merge commits `877b2c6`–`02ddd72`).
+
 ## Related
 
 - ADR 0003 — [`last_seq` cursor and multi-replica operator policy](./0003-state-cursor-contract-and-operator-policy.md)
