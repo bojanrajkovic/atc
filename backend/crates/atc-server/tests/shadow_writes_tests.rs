@@ -51,13 +51,13 @@ async fn render_metrics() -> String {
     String::from_utf8(bytes.to_vec()).unwrap()
 }
 
-/// Parse `atc_shadow_pg_write_failures_total{kind="<kind>"}` from the Prometheus
+/// Parse `atc_pg_write_failures_total{kind="<kind>"}` from the Prometheus
 /// text output. Returns the integer value, or 0 if the line is absent (counter
 /// has never been incremented for that label).
 fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
     let needle = format!("kind=\"{kind}\"");
     for line in metrics_body.lines() {
-        if line.starts_with("atc_shadow_pg_write_failures_total") && line.contains(&needle) {
+        if line.starts_with("atc_pg_write_failures_total") && line.contains(&needle) {
             // Line format: `metric_name{labels} value`
             if let Some(value_str) = line.split_whitespace().last() {
                 return value_str.parse::<u64>().unwrap_or(0);
@@ -558,7 +558,7 @@ async fn shadow_pg_write_failure_counters_are_registered() {
     // The counter must appear in /metrics now that it has been incremented.
     let metrics_body = render_metrics().await;
     assert!(
-        metrics_body.contains("atc_shadow_pg_write_failures_total"),
+        metrics_body.contains("atc_pg_write_failures_total"),
         "counter must appear in /metrics output after parity failure; got:\n{metrics_body}"
     );
 }
