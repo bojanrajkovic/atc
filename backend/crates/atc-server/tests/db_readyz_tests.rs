@@ -1,8 +1,8 @@
-//! Integration tests for the PostgreSQL-backed readyz probe.
+//! Integration tests for the PostgreSQL-backed readyz probe and pool initialization.
 //!
-//! Boots ephemeral PostgreSQL containers via testcontainers, runs migrations,
-//! and verifies GET /readyz behavior in healthy and unreachable DB states.
-//! Requires Docker (or OrbStack) to be running.
+//! Boots ephemeral PostgreSQL containers via testcontainers, runs migrations via
+//! `atc_server::db::init_pool`, and verifies GET /readyz behavior in healthy and
+//! unreachable DB states. Requires Docker (or OrbStack) to be running.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,13 +56,9 @@ async fn readyz_returns_ok_with_healthy_db() {
         .expect("failed to get port");
     let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    let pool = sqlx::PgPool::connect(&db_url)
+    let pool = atc_server::db::init_pool(&db_url)
         .await
-        .expect("failed to connect to PG");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations failed");
+        .expect("init_pool failed");
 
     let app = build_app_with_pool(pool).await;
     let response = app
@@ -94,13 +90,9 @@ async fn migrations_create_runs_and_jobs_tables() {
         .expect("failed to get port");
     let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    let pool = sqlx::PgPool::connect(&db_url)
+    let pool = atc_server::db::init_pool(&db_url)
         .await
-        .expect("failed to connect to PG");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("migrations failed");
+        .expect("init_pool failed");
 
     // Verify tables exist by querying them (empty result is fine; error = missing table)
     sqlx::query("SELECT 1 FROM runs LIMIT 0")

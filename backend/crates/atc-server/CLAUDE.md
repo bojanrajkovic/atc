@@ -14,6 +14,7 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 |--------|------|
 | `main` | Server entry point, config loading, AppState creation, router setup, eviction task lifecycle |
 | `config` | figment-based Config struct, GitHubConfig with webhook_secret, Config::load() |
+| `db` | `init_pool(url)` — connects sqlx PgPool and runs embedded migrations; extracted from main so it is testable as library code |
 | `routes` | HTTP route handlers: `POST /v1/webhooks/github`, `GET /v1/state`, `GET /v1/ws`, health/ready probes |
 | `state` | AppState struct, SeqEvent type (sidecar contract documented in `docs/architecture/backend-server.md` § SeqEvent Sidecar Contract) |
 | `ws` | WebSocket upgrade handler, broadcast subscription, SeqEvent serialization and push |

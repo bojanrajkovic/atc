@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::config;
+use atc_server::db;
 use atc_server::metrics;
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
@@ -64,17 +65,10 @@ async fn main() {
     }
 
     let pg_pool = if let Some(ref db_url) = cfg.database_url {
-        let pool = sqlx::PgPool::connect(db_url).await.unwrap_or_else(|e| {
-            tracing::error!(error = %e, "failed to connect to PostgreSQL");
+        let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "failed to connect or migrate database");
             process::exit(1);
         });
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "failed to run database migrations");
-                process::exit(1);
-            });
         tracing::info!("database connected and migrations applied");
         Some(pool)
     } else {

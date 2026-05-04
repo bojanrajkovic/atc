@@ -346,7 +346,7 @@ Server wiring configuration extends the existing figment-based config:
 
 In `main.rs`:
 1. Load config via `Config::load()`
-2. If `ATC_DATABASE_URL` is set: connect `sqlx::PgPool`, run embedded migrations; exit(1) on failure
+2. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
 3. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
 4. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
 5. Create `AppState` with all components (including `pg_pool`) and pass to Axum via `.with_state()`
@@ -371,6 +371,7 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 
 - `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition, eviction task lifecycle
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
+- `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
 - `backend/crates/atc-server/src/state.rs` — AppState struct, SeqEvent, StateSnapshot types
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
