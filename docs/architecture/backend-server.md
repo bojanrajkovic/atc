@@ -221,21 +221,25 @@ same global recorder installed by axum-prometheus. Emitted families include
 `process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`,
 `process_start_time_seconds`, and `process_threads`.
 
-### Shadow PG write failure counters (Phase 2b)
+### PG write counters (Phase 2b/2c)
 
-`atc_shadow_pg_write_failures_total` is a counter incremented when a shadow PG
-write fails after a successful in-memory apply. It carries a `kind` label:
+`atc_pg_write_failures_total` is a counter incremented when a PG write fails
+after a successful in-memory apply. It carries a `kind` label:
 
 | Label | When | Severity |
 |-------|------|----------|
 | `kind="parity"` | PG UPSERT matches 0 rows (WHERE predicate rejected); in-memory and PG diverged | Page-worthy: indicates state machine drift |
 | `kind="transient"` | sqlx error (network, pool exhaustion, etc.); PG momentarily unavailable | Alert on sustained rate |
 
+`atc_pg_in_memory_drift_total` counts events where PG committed successfully but
+the in-memory apply subsequently diverged — complementary observability to the
+failure counter.
+
 Both increments are logged as warnings/errors (not returned as 5xx). The webhook
 handler returns 200 in shadow mode regardless of PG failure — the in-memory
 write is authoritative, and PG failures are observability concerns (via metrics
-and logs) rather than availability concerns. This counter is registered at
-startup via `register_shadow_pg_counters()` and appears in `/metrics` output
+and logs) rather than availability concerns. These counters are registered at
+startup via `register_pg_write_counters()` and appear in `/metrics` output
 only if PG writes have been attempted.
 
 ### Listener always binds
@@ -372,7 +376,7 @@ In `main.rs`:
 3. If pool was created, instantiate `pg_store: Some(Arc::new(PgStore::new(pool.clone())))`; otherwise `pg_store = None` (Phase 2b)
 4. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
 5. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
-6. Call `metrics::register_shadow_pg_counters()` after the recorder is installed (Phase 2b)
+6. Call `metrics::register_pg_write_counters()` after the recorder is installed (Phase 2b)
 7. Create `AppState` with all components (including `pg_pool` and `pg_store`) and pass to Axum via `.with_state()`
 8. Start background eviction task: `start_eviction_task(store.clone())`
 9. Bind the server to `http_addr`

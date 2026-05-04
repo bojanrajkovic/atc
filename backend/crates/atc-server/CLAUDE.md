@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-04 (Phase 2b shadow writes: PgStore, dual-write, drift metrics)
+Last verified: 2026-05-04 (Phase 2c: outbox migration, txn helpers, pg metrics rename)
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -19,9 +19,9 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 | `state` | AppState struct (now includes `pg_store`), SeqEvent type (sidecar contract documented in `docs/architecture/backend-server.md` § SeqEvent Sidecar Contract) |
 | `ws` | WebSocket upgrade handler, broadcast subscription, SeqEvent serialization and push |
 | `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
-| `metrics` | Prometheus layer, build_info gauge, process collector, shadow PG counter registration (Phase 2b) |
-| `persist` | `PgStore` implementing `atc-core::PersistentStore` trait; predicated UPSERTs for runs and jobs using WHERE status IN (predecessors_of) (Phase 2b) |
-| `migrations/` | SQL migration files embedded at compile time via `sqlx::migrate!()`. `0001_initial_runs_jobs.sql` creates `runs` and `jobs` tables. Run automatically on startup when `ATC_DATABASE_URL` is set. |
+| `metrics` | Prometheus layer, build_info gauge, process collector, PG write counter registration (`register_pg_write_counters`) (Phase 2b/2c) |
+| `persist` | `PgStore` implementing `atc-core::PersistentStore` trait; predicated UPSERTs for runs and jobs; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` for atomic outbox writes (Phase 2c) |
+| `migrations/` | SQL migration files embedded at compile time via `sqlx::migrate!()`. `0001_initial_runs_jobs.sql` creates `runs` and `jobs` tables. `0002_outbox.sql` creates the `outbox` append-only event log table with BIGSERIAL primary key, `kind` discriminator, and JSONB payload. Run automatically on startup when `ATC_DATABASE_URL` is set. |
 
 ## TypeScript Generation
 
@@ -43,7 +43,7 @@ These rules are enforced by implementation and verified by tests:
 - **Broadcast semantics:** Bounded channel (capacity 256) means slow subscribers may miss events. LaggingError logs warning but does not disconnect. Broadcast happens under the seq mutex so state_handler never advertises a cursor for events that haven't been broadcast yet.
 - **State snapshot:** `Mutex<u64>` held across snapshot + seq read in the state handler, ensuring the cursor matches the snapshot content. StateSnapshot.seq is the next seq to assign; all events with seq < N are reflected in snapshot.
 - **Shadow PG writes (Phase 2b):** After releasing the seq mutex, the handler shadow-writes captured envelopes to PgStore outside the mutex (so PG latency doesn't block concurrent webhooks). Both in-memory and PG must apply the same state transition rule (predecessors_of), so divergence is observable (via parity counter) but not a logical error.
-- **PG write failures (Phase 2b):** Classified as parity (0 rows affected → WHERE predicate rejected) or transient (sqlx error). Increments `atc_shadow_pg_write_failures_total` counter with appropriate `kind` label. Failures do not fail the webhook (shadow mode).
+- **PG write failures (Phase 2b/2c):** Classified as parity (0 rows affected → WHERE predicate rejected) or transient (sqlx error). Increments `atc_pg_write_failures_total` counter with appropriate `kind` label. Failures do not fail the webhook (shadow mode).
 - **WebSocket:** Clients connect and receive SeqEvent stream in real time. Disconnection is clean (no crash, no effect on other clients)
 - **Config:** ATC_GITHUB__WEBHOOK_SECRET loads webhook_secret. If None, HMAC verification skipped
 

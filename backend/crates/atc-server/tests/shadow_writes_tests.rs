@@ -525,10 +525,10 @@ async fn transient_metric_increments_on_db_outage() {
 #[tokio::test]
 #[serial_test::serial]
 async fn shadow_pg_write_failure_counters_are_registered() {
-    // register_shadow_pg_counters() requires the recorder to be installed first.
+    // register_pg_write_counters() requires the recorder to be installed first.
     // The PROMETHEUS_INIT OnceLock ensures pair() is only called once per binary.
     // By the time this test runs, the recorder is already installed.
-    atc_server::metrics::register_shadow_pg_counters();
+    atc_server::metrics::register_pg_write_counters();
 
     let (pool, _c) = start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());

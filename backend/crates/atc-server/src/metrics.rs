@@ -60,7 +60,7 @@ pub fn register_build_info() {
     .set(1.0);
 }
 
-/// Register the shadow PG write failure counters.
+/// Register the PG write failure and drift counters.
 ///
 /// Two labels distinguish failure kinds:
 /// - `kind="parity"` — PG rejected a write that in-memory accepted (`0 rows affected`).
@@ -69,10 +69,14 @@ pub fn register_build_info() {
 ///   Alert on sustained rate.
 ///
 /// Must be called after `build()` (which installs the global recorder).
-pub fn register_shadow_pg_counters() {
+pub fn register_pg_write_counters() {
     metrics::describe_counter!(
-        "atc_shadow_pg_write_failures_total",
-        "Shadow PG write failures by kind (parity or transient)"
+        "atc_pg_write_failures_total",
+        "PG write failures by kind (parity or transient)"
+    );
+    metrics::describe_counter!(
+        "atc_pg_in_memory_drift_total",
+        "PG committed but in-memory apply diverged"
     );
 }
 

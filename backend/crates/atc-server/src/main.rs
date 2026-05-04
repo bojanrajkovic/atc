@@ -114,7 +114,7 @@ async fn main() {
     // installs the global metrics recorder.
     let (prometheus_layer, metrics_router) = metrics::build();
     metrics::register_build_info();
-    metrics::register_shadow_pg_counters();
+    metrics::register_pg_write_counters();
     metrics::spawn_process_collector();
 
     let app = routes::api_routes(prometheus_layer)

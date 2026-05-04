@@ -269,7 +269,7 @@ async fn webhook_handler(
                         // In-memory accepted but PG rejected: predecessor sets diverged.
                         // Page-worthy in production — the two stores disagree.
                         metrics::counter!(
-                            "atc_shadow_pg_write_failures_total",
+                            "atc_pg_write_failures_total",
                             "kind" => "parity"
                         )
                         .increment(1);
@@ -280,7 +280,7 @@ async fn webhook_handler(
                     Err(PersistError::Backend(e)) => {
                         // sqlx error: network, pool exhaustion, etc.
                         metrics::counter!(
-                            "atc_shadow_pg_write_failures_total",
+                            "atc_pg_write_failures_total",
                             "kind" => "transient"
                         )
                         .increment(1);
