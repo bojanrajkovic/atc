@@ -89,3 +89,8 @@ pub fn fixture_workflow_run_in_progress() -> Vec<u8> {
 pub fn fixture_workflow_job_in_progress() -> Vec<u8> {
     include_bytes!("../../../atc-github/tests/fixtures/workflow_job_in_progress.json").to_vec()
 }
+
+// Fixture: workflow_job_completed.json
+pub fn fixture_workflow_job_completed() -> Vec<u8> {
+    include_bytes!("../../../atc-github/tests/fixtures/workflow_job_completed.json").to_vec()
+}
