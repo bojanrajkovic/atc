@@ -63,6 +63,25 @@ async fn main() {
             .init();
     }
 
+    let pg_pool = if let Some(ref db_url) = cfg.database_url {
+        let pool = sqlx::PgPool::connect(db_url).await.unwrap_or_else(|e| {
+            tracing::error!(error = %e, "failed to connect to PostgreSQL");
+            process::exit(1);
+        });
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "failed to run database migrations");
+                process::exit(1);
+            });
+        tracing::info!("database connected and migrations applied");
+        Some(pool)
+    } else {
+        tracing::info!("no ATC_DATABASE_URL configured; running in in-memory mode");
+        None
+    };
+
     // Create the shared state store with system clock and 1-hour TTL for completed entries.
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
@@ -82,6 +101,7 @@ async fn main() {
         webhook_tx,
         webhook_secret: cfg.github.webhook_secret.clone(),
         seq: Mutex::new(0),
+        pg_pool,
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before

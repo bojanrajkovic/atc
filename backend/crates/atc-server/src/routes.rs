@@ -5,6 +5,7 @@ use axum::{
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
 };
 use axum_prometheus::PrometheusMetricLayer;
@@ -39,8 +40,24 @@ async fn healthz() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
 }
 
-async fn readyz() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if let Some(pool) = &state.pg_pool {
+        match sqlx::query("SELECT 1").execute(pool).await {
+            Ok(_) => (StatusCode::OK, Json(HealthResponse { status: "ok" })).into_response(),
+            Err(e) => {
+                tracing::warn!(error = %e, "readyz: db check failed");
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(HealthResponse {
+                        status: "db_unreachable",
+                    }),
+                )
+                    .into_response()
+            }
+        }
+    } else {
+        (StatusCode::OK, Json(HealthResponse { status: "ok" })).into_response()
+    }
 }
 
 /// Return current state snapshot with seq cursor.
