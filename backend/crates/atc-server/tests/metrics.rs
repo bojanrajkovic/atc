@@ -34,6 +34,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         webhook_tx,
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
+        pg_pool: None,
     });
 
     // Step 5: Build main router using the production api_routes function

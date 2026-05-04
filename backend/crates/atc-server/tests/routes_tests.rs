@@ -27,6 +27,7 @@ fn build_full_app() -> axum::Router {
         webhook_tx,
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
+        pg_pool: None,
     });
     atc_server::routes::api_routes(layer.clone())
         .with_state(app_state)

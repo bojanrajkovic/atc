@@ -33,6 +33,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         webhook_tx,
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
+        pg_pool: None,
     });
 
     let main_router = routes::api_routes(layer.clone())

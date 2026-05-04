@@ -22,6 +22,11 @@ pub struct AppState {
     /// - The state handler holds the lock across snapshot + seq read,
     ///   ensuring the cursor matches the snapshot content.
     pub seq: Mutex<u64>,
+    /// Optional PostgreSQL connection pool.
+    ///
+    /// `Some(pool)` when `ATC_DATABASE_URL` is configured; `None` runs in
+    /// in-memory-only mode. Used by readyz probe and future persistence writes.
+    pub pg_pool: Option<sqlx::PgPool>,
 }
 
 /// A domain event annotated with a monotonic sequence number.

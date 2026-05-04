@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-04-18 (updated 2026-04-18 for SeqEvent pool_stats_after sidecar, runner pool sort order, and runner_group_name normalization)
+Last verified: 2026-05-03 (updated 2026-05-03 for Phase 2a PostgreSQL integration: sqlx pool, schema migrations, /readyz probe semantics)
 
 ## Purpose
 
@@ -138,6 +138,39 @@ Config fields and their `ATC_*` env var overrides:
 **Alternatives considered:** Always JSON, always pretty, runtime-only env var
 **Rationale:** Developer builds benefit from ANSI-colored pretty output without any configuration. Production/container builds default to structured JSON for log aggregators. Both can be overridden via `ATC_LOG_FORMAT`, satisfying the override ACs without special-casing in code. The `cfg!(debug_assertions)` default mirrors the existing assets.rs pattern for compile-time branching.
 
+## PostgreSQL Integration (Phase 2a)
+
+ATC uses [sqlx](https://github.com/launchdarkis/sqlx) as its PostgreSQL client. The pool is created on startup when `ATC_DATABASE_URL` is set.
+
+### Startup behavior
+
+| Scenario | Behavior |
+|---|---|
+| `ATC_DATABASE_URL` unset | In-memory mode; `pg_pool = None`; no migration step |
+| `ATC_DATABASE_URL` set, connect fails | `tracing::error!` + `process::exit(1)` |
+| `ATC_DATABASE_URL` set, connect succeeds, migrations fail | `tracing::error!` + `process::exit(1)` |
+| `ATC_DATABASE_URL` set, everything succeeds, DB lost at runtime | Process stays up; `/readyz` returns 503 |
+
+### Schema migrations
+
+Migrations live in `backend/crates/atc-server/migrations/`. They are embedded in the binary at compile time via `sqlx::migrate!("./migrations")` and run automatically on startup. Re-running is idempotent (tracked by `_sqlx_migrations` table).
+
+Current schema (Phase 2a):
+- `0001_initial_runs_jobs.sql` — Creates `runs` and `jobs` tables with columns, FK, CHECK constraints, and indexes to support Phase 3c read patterns and TTL eviction.
+
+### sqlx feature flags
+
+`sqlx` is configured with: `postgres, runtime-tokio, tls-rustls-aws-lc-rs, chrono, migrate, macros, json`
+
+- `macros` — Enables `query!`/`query_as!` for compile-time SQL checking (used from Phase 2b). Requires either a live DB or the `.sqlx/` offline cache at compile time.
+- `migrate` — Enables `sqlx::migrate!()` for binary-embedded migrations (does NOT require a live DB at compile time).
+
+### Testing
+
+Backend tests that require PostgreSQL use [testcontainers](https://testcontainers.com) to boot ephemeral containers. **`just test` requires Docker or OrbStack to be running.**
+
+macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` before running `just test`.
+
 ## Boundaries
 
 **Owns:** HTTP routing, request handling, frontend asset serving, dev proxy, server lifecycle (bind, serve, shutdown)
@@ -210,6 +243,7 @@ struct AppState {
     webhook_tx: broadcast::Sender<SeqEvent>,
     webhook_secret: Option<String>,
     seq: Mutex<u64>,
+    pg_pool: Option<sqlx::PgPool>,
 }
 ```
 
@@ -217,6 +251,7 @@ struct AppState {
 - **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
 - **`seq`** — `tokio::sync::Mutex<u64>` counter incremented on each successfully ingested event. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across store mutation + seq assignment, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches commit order, and REST snapshots are consistent with their cursor. Resets on server restart (consistent with in-memory-only store).
+- **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Phase 2a only uses this for the `/readyz` probe; Phase 2b will use it for writes.
 
 ### SeqEvent Sidecar Contract
 
@@ -311,14 +346,20 @@ Server wiring configuration extends the existing figment-based config:
 
 In `main.rs`:
 1. Load config via `Config::load()`
-2. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
-3. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
-4. Create `AppState` with all components and pass to Axum via `.with_state()`
-5. Start background eviction task: `start_eviction_task(store.clone())`
-6. Bind the server to `http_addr`
-7. On graceful shutdown, abort the eviction task
+2. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
+3. Create `StateStore` with `SystemClock` and TTL (default 1 hour)
+4. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
+5. Create `AppState` with all components (including `pg_pool`) and pass to Axum via `.with_state()`
+6. Start background eviction task: `start_eviction_task(store.clone())`
+7. Bind the server to `http_addr`
+8. On graceful shutdown, abort the eviction task
 
 The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
+
+### Health Probes
+
+- `/readyz` — Readiness probe. Returns 200 `{"status":"ok"}` in in-memory mode (no DB configured). When `ATC_DATABASE_URL` is configured, runs `SELECT 1` against the pool; returns 200 on success or 503 `{"status":"db_unreachable"}` if the DB is unreachable.
+- `/healthz` — Liveness probe. Unchanged — process up = healthy regardless of DB state.
 
 ### Modules
 
@@ -330,11 +371,13 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 
 - `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition, eviction task lifecycle
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
+- `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
 - `backend/crates/atc-server/src/state.rs` — AppState struct, SeqEvent, StateSnapshot types
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector
-- `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars
+- `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
+- `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/Cargo.toml` — Workspace definition with shared dependency versions
 - `backend/crates/atc-server/Cargo.toml` — Server crate dependencies

@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-04-18
+Last verified: 2026-05-03
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -14,11 +14,13 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 |--------|------|
 | `main` | Server entry point, config loading, AppState creation, router setup, eviction task lifecycle |
 | `config` | figment-based Config struct, GitHubConfig with webhook_secret, Config::load() |
+| `db` | `init_pool(url)` — connects sqlx PgPool and runs embedded migrations; extracted from main so it is testable as library code |
 | `routes` | HTTP route handlers: `POST /v1/webhooks/github`, `GET /v1/state`, `GET /v1/ws`, health/ready probes |
 | `state` | AppState struct, SeqEvent type (sidecar contract documented in `docs/architecture/backend-server.md` § SeqEvent Sidecar Contract) |
 | `ws` | WebSocket upgrade handler, broadcast subscription, SeqEvent serialization and push |
 | `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
 | `metrics` | Prometheus layer, build_info gauge, process collector |
+| `migrations/` | SQL migration files embedded at compile time via `sqlx::migrate!()`. `0001_initial_runs_jobs.sql` creates `runs` and `jobs` tables. Run automatically on startup when `ATC_DATABASE_URL` is set. |
 
 ## TypeScript Generation
 
@@ -45,10 +47,14 @@ These rules are enforced by implementation and verified by tests:
 ## Testing
 
 ```bash
-cargo test -p atc-server        # 38 tests across three tiers
+cargo test -p atc-server        # 38+ tests across three tiers (count has grown with db_readyz_tests)
 cargo clippy -p atc-server -- -D warnings
 cargo test -p atc-server --test e2e_tests  # 3 full-stack e2e tests
 ```
+
+**Docker required:** The full test suite includes `db_readyz_tests` which uses testcontainers to boot ephemeral PostgreSQL instances. `cargo test -p atc-server` (and `just test`) now require Docker or OrbStack to be running.
+
+macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` before running tests.
 
 Test organization by tier:
 

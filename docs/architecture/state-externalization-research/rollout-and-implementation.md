@@ -37,6 +37,8 @@ Add the durable backend structures without changing frontend-visible behavior. T
 
 #### Phase 2a: PG foundation
 
+**Status: complete (PR #48).**
+
 Bootstrap the database integration without touching any read paths or the webhook handler logic.
 
 In scope:
