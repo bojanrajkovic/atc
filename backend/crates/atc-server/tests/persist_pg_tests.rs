@@ -1,0 +1,617 @@
+//! Integration tests for PgStore persistence against a live PostgreSQL container.
+//!
+//! Covers AC2 (run-event durable write), AC3 (job-event durable write including
+//! job-before-run), and AC4 (field-merge parity with in-memory store).
+//!
+//! Requires Docker (or OrbStack) to be running.
+
+use std::time::Duration;
+
+use atc_core::{
+    JobStatus, PersistError, PersistentStore,
+    event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
+    types::{JobId, RunId},
+};
+use atc_server::persist::PgStore;
+use chrono::{DateTime, Utc};
+use testcontainers::ImageExt;
+use testcontainers::runners::AsyncRunner;
+use testcontainers_modules::postgres::Postgres;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Boot a fresh PG container and return a pool with migrations applied.
+async fn start_pg() -> (sqlx::PgPool, impl Drop) {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .start()
+        .await
+        .expect("failed to start postgres container");
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("failed to get port");
+    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let pool = atc_server::db::init_pool(&db_url)
+        .await
+        .expect("init_pool failed");
+    (pool, container)
+}
+
+fn ts() -> DateTime<Utc> {
+    Utc::now()
+}
+
+/// Minimal RunEventEnvelope for a Requested (Queued) event.
+fn run_requested(run_id: i64) -> RunEventEnvelope {
+    RunEventEnvelope {
+        run_id: RunId(run_id),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        workflow_name: Some("CI".to_string()),
+        workflow_path: Some(".github/workflows/ci.yml".to_string()),
+        branch: Some("main".to_string()),
+        head_sha: "abc123".to_string(),
+        commit_message: Some("Initial commit".to_string()),
+        trigger_event: "push".to_string(),
+        display_title: "Test run".to_string(),
+        html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
+        created_at: ts(),
+        run_started_at: None,
+        updated_at: ts(),
+        action: RunEvent::Requested,
+    }
+}
+
+/// InProgress run event.
+fn run_in_progress(run_id: i64) -> RunEventEnvelope {
+    RunEventEnvelope {
+        run_id: RunId(run_id),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        workflow_name: None, // deliberately omitted — should be preserved via COALESCE
+        workflow_path: None,
+        branch: Some("main".to_string()),
+        head_sha: "abc123".to_string(),
+        commit_message: Some("Initial commit".to_string()),
+        trigger_event: "push".to_string(),
+        display_title: "Test run".to_string(),
+        html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
+        created_at: ts(),
+        run_started_at: Some(ts()),
+        updated_at: ts(),
+        action: RunEvent::InProgress,
+    }
+}
+
+/// Completed run event.
+fn run_completed(run_id: i64) -> RunEventEnvelope {
+    RunEventEnvelope {
+        run_id: RunId(run_id),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        workflow_name: None,
+        workflow_path: None,
+        branch: Some("main".to_string()),
+        head_sha: "abc123".to_string(),
+        commit_message: Some("Initial commit".to_string()),
+        trigger_event: "push".to_string(),
+        display_title: "Test run".to_string(),
+        html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
+        created_at: ts(),
+        run_started_at: Some(ts()),
+        updated_at: ts(),
+        action: RunEvent::Completed {
+            conclusion: atc_core::RunConclusion::Success,
+        },
+    }
+}
+
+/// Minimal queued job envelope.
+fn job_queued(job_id: i64, run_id: i64) -> JobEventEnvelope {
+    JobEventEnvelope {
+        job_id: JobId(job_id),
+        run_id: RunId(run_id),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: ts(),
+        started_at: None,
+        completed_at: None,
+        action: JobEvent::Queued {
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    }
+}
+
+/// InProgress job envelope with runner info.
+fn job_in_progress(job_id: i64, run_id: i64) -> JobEventEnvelope {
+    JobEventEnvelope {
+        job_id: JobId(job_id),
+        run_id: RunId(run_id),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: ts(),
+        started_at: Some(ts()),
+        completed_at: None,
+        action: JobEvent::InProgress {
+            runner: Some(atc_core::job::RunnerInfo {
+                id: 42,
+                name: "runner-1".to_string(),
+                group_id: Some(1),
+                group_name: Some("default".to_string()),
+            }),
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    }
+}
+
+/// Completed job envelope.
+fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
+    JobEventEnvelope {
+        job_id: JobId(job_id),
+        run_id: RunId(run_id),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: ts(),
+        started_at: Some(ts()),
+        completed_at: Some(ts()),
+        action: JobEvent::Completed {
+            conclusion: atc_core::JobConclusion::Success,
+            runner: Some(atc_core::job::RunnerInfo {
+                id: 42,
+                name: "runner-1".to_string(),
+                group_id: Some(1),
+                group_name: Some("default".to_string()),
+            }),
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AC2 — Run-event durable writes
+// ---------------------------------------------------------------------------
+
+/// AC2: Unknown run_id, Requested event → 1 row in `runs` with Queued status.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_first_sight_creates_row() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    let env = run_requested(1001);
+    let result = store.apply_run_event(env).await;
+    assert!(result.is_ok(), "expected Ok but got: {result:?}");
+
+    let row = sqlx::query!("SELECT id, status, workflow_name FROM runs WHERE id = 1001")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+
+    assert_eq!(row.id, 1001i64);
+    assert_eq!(row.status, "Queued");
+    assert_eq!(row.workflow_name.as_deref(), Some("CI"));
+}
+
+/// AC2: Queued → InProgress is valid; status updates, sticky COALESCE preserved.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_valid_transition_updates_row() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(1002)).await.unwrap();
+
+    let result = store.apply_run_event(run_in_progress(1002)).await;
+    assert!(result.is_ok(), "expected Ok but got: {result:?}");
+
+    let row =
+        sqlx::query!("SELECT status, workflow_name, run_started_at FROM runs WHERE id = 1002")
+            .fetch_one(&pool)
+            .await
+            .expect("row not found");
+
+    assert_eq!(row.status, "InProgress");
+    // workflow_name was set on Requested, omitted on InProgress → COALESCE preserves it
+    assert_eq!(row.workflow_name.as_deref(), Some("CI"));
+    assert!(row.run_started_at.is_some(), "run_started_at should be set");
+}
+
+/// AC2: Completed → InProgress is invalid; PG returns Err(InvalidTransition) and row unchanged.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_invalid_transition_returns_err() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    // Bring run to Completed
+    store.apply_run_event(run_requested(1003)).await.unwrap();
+    store.apply_run_event(run_in_progress(1003)).await.unwrap();
+    store.apply_run_event(run_completed(1003)).await.unwrap();
+
+    // Now attempt Completed → InProgress (invalid)
+    let result = store.apply_run_event(run_in_progress(1003)).await;
+    assert!(
+        matches!(result, Err(PersistError::InvalidTransition)),
+        "expected InvalidTransition, got: {result:?}"
+    );
+
+    // PG row unchanged — still Completed
+    let row = sqlx::query!("SELECT status FROM runs WHERE id = 1003")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.status, "Completed");
+}
+
+/// AC2: Queued → Queued is idempotent (same-status replay → Ok).
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_idempotent_same_status_replay() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(1004)).await.unwrap();
+    let result = store.apply_run_event(run_requested(1004)).await;
+    assert!(
+        result.is_ok(),
+        "same-status replay should be Ok: {result:?}"
+    );
+
+    let row = sqlx::query!("SELECT status FROM runs WHERE id = 1004")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.status, "Queued");
+}
+
+// ---------------------------------------------------------------------------
+// AC3 — Job-event durable writes including job-before-run
+// ---------------------------------------------------------------------------
+
+/// AC3: Job arrives after run → creates job row, no spurious stub.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_first_sight_creates_row_with_existing_run() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    // Pre-insert real run
+    store.apply_run_event(run_requested(2001)).await.unwrap();
+
+    let result = store.apply_job_event(job_queued(3001, 2001)).await;
+    assert!(result.is_ok(), "expected Ok: {result:?}");
+
+    let row = sqlx::query!("SELECT id, run_id, status FROM jobs WHERE id = 3001")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+    assert_eq!(row.id, 3001i64);
+    assert_eq!(row.run_id, 2001i64);
+    assert_eq!(row.status, "Queued");
+
+    // Exactly one run row should exist (the real one)
+    let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE id = 2001")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(run_count, 1, "should be exactly one run row");
+}
+
+/// AC3: Valid job transition Queued → InProgress.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_valid_transition_updates_row() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(2002)).await.unwrap();
+    store.apply_job_event(job_queued(3002, 2002)).await.unwrap();
+
+    let result = store.apply_job_event(job_in_progress(3002, 2002)).await;
+    assert!(result.is_ok(), "expected Ok: {result:?}");
+
+    let row = sqlx::query!("SELECT status, runner_id, runner_name FROM jobs WHERE id = 3002")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+    assert_eq!(row.status, "InProgress");
+    assert_eq!(row.runner_id, Some(42i64));
+    assert_eq!(row.runner_name.as_deref(), Some("runner-1"));
+}
+
+/// AC3: Invalid transition Completed → InProgress → Err(InvalidTransition).
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_invalid_transition_returns_err() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(2003)).await.unwrap();
+    store.apply_job_event(job_queued(3003, 2003)).await.unwrap();
+    store
+        .apply_job_event(job_in_progress(3003, 2003))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(job_completed(3003, 2003))
+        .await
+        .unwrap();
+
+    // Completed → InProgress is invalid
+    let result = store.apply_job_event(job_in_progress(3003, 2003)).await;
+    assert!(
+        matches!(result, Err(PersistError::InvalidTransition)),
+        "expected InvalidTransition, got: {result:?}"
+    );
+
+    let row = sqlx::query!("SELECT status FROM jobs WHERE id = 3003")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+    assert_eq!(row.status, "Completed");
+}
+
+/// AC3: Same-status replay is idempotent.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_idempotent_same_status_replay() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(2004)).await.unwrap();
+    store.apply_job_event(job_queued(3004, 2004)).await.unwrap();
+
+    let result = store.apply_job_event(job_queued(3004, 2004)).await;
+    assert!(
+        result.is_ok(),
+        "same-status replay should be Ok: {result:?}"
+    );
+}
+
+/// AC3 asymmetry: Queued → Completed is invalid for jobs (unlike runs).
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_queued_to_completed_rejected() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(2005)).await.unwrap();
+    store.apply_job_event(job_queued(3005, 2005)).await.unwrap();
+
+    // Queued → Completed is NOT in predecessors_of(Completed) for jobs
+    let result = store.apply_job_event(job_completed(3005, 2005)).await;
+    assert!(
+        matches!(result, Err(PersistError::InvalidTransition)),
+        "Queued→Completed should be InvalidTransition for jobs, got: {result:?}"
+    );
+
+    let row = sqlx::query!("SELECT status FROM jobs WHERE id = 3005")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+    assert_eq!(row.status, "Queued", "row should still be Queued");
+
+    // Confirm predecessors_of explicitly excludes Queued
+    let preds = JobStatus::predecessors_of(JobStatus::Completed);
+    assert!(
+        !preds.contains(&JobStatus::Queued),
+        "Queued must not be a predecessor of Completed for jobs"
+    );
+}
+
+/// AC3: Job arrives before its run → stub run row created, job FK satisfied.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_before_run_creates_stub_run() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    // Fire job event for unknown run 9001
+    let result = store.apply_job_event(job_queued(8001, 9001)).await;
+    assert!(result.is_ok(), "job-before-run should succeed: {result:?}");
+
+    // Stub run row must exist with status Queued
+    let run_row = sqlx::query!("SELECT id, status, head_sha FROM runs WHERE id = 9001")
+        .fetch_one(&pool)
+        .await
+        .expect("stub run row not found");
+    assert_eq!(run_row.id, 9001i64);
+    assert_eq!(run_row.status, "Queued");
+    assert_eq!(run_row.head_sha, "", "stub head_sha is empty placeholder");
+
+    // Job row exists with correct FK
+    let job_row = sqlx::query!("SELECT id, run_id, status FROM jobs WHERE id = 8001")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+    assert_eq!(job_row.run_id, 9001i64);
+    assert_eq!(job_row.status, "Queued");
+}
+
+/// AC3: Real run event after job-before-run reconciles the stub.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_real_run_event_reconciles_stub() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    // Job-before-run
+    store.apply_job_event(job_queued(8002, 9002)).await.unwrap();
+
+    // Now send the real run event
+    let result = store.apply_run_event(run_requested(9002)).await;
+    assert!(result.is_ok(), "reconciliation should succeed: {result:?}");
+
+    // Stub fields should now be populated via COALESCE
+    let run_row = sqlx::query!("SELECT status, head_sha, workflow_name FROM runs WHERE id = 9002")
+        .fetch_one(&pool)
+        .await
+        .expect("run row not found");
+
+    // head_sha should now be the real value (not the stub '')
+    assert_eq!(run_row.head_sha, "abc123");
+    assert_eq!(run_row.status, "Queued");
+    assert_eq!(run_row.workflow_name.as_deref(), Some("CI"));
+
+    // Job still has the right FK
+    let job_row = sqlx::query!("SELECT run_id FROM jobs WHERE id = 8002")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+    assert_eq!(job_row.run_id, 9002i64);
+}
+
+/// AC3: Two job events for same unknown run → exactly one stub run row.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_two_jobs_same_unknown_run_share_stub() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_job_event(job_queued(8003, 9003)).await.unwrap();
+    store.apply_job_event(job_queued(8004, 9003)).await.unwrap();
+
+    let run_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE id = 9003")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(run_count, 1, "should be exactly one stub run row");
+}
+
+// ---------------------------------------------------------------------------
+// AC4 — Field-merge parity with in-memory store (sticky COALESCE)
+// ---------------------------------------------------------------------------
+
+/// AC4: workflow_name set on first event, omitted on second → preserved.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_coalesce_preserves_workflow_name() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    // First event: workflow_name = Some("CI")
+    store.apply_run_event(run_requested(4001)).await.unwrap();
+
+    // Second event: workflow_name = None (in_progress omits it)
+    store.apply_run_event(run_in_progress(4001)).await.unwrap();
+
+    let row = sqlx::query!("SELECT workflow_name FROM runs WHERE id = 4001")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+
+    assert_eq!(
+        row.workflow_name.as_deref(),
+        Some("CI"),
+        "workflow_name must be preserved by COALESCE"
+    );
+}
+
+/// AC4: runner_* fields set on InProgress, preserved through second InProgress with same runner.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_coalesce_preserves_runner() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(4002)).await.unwrap();
+    store.apply_job_event(job_queued(5002, 4002)).await.unwrap();
+    store
+        .apply_job_event(job_in_progress(5002, 4002))
+        .await
+        .unwrap();
+
+    // Second InProgress without runner (None) — should preserve from first
+    let env_no_runner = JobEventEnvelope {
+        job_id: JobId(5002),
+        run_id: RunId(4002),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: ts(),
+        started_at: Some(ts()),
+        completed_at: None,
+        action: JobEvent::InProgress {
+            runner: None, // omit runner — should be preserved
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    };
+    store.apply_job_event(env_no_runner).await.unwrap();
+
+    let row = sqlx::query!("SELECT runner_id, runner_name FROM jobs WHERE id = 5002")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+
+    assert_eq!(
+        row.runner_id,
+        Some(42i64),
+        "runner_id must be preserved by COALESCE"
+    );
+    assert_eq!(
+        row.runner_name.as_deref(),
+        Some("runner-1"),
+        "runner_name must be preserved by COALESCE"
+    );
+}
+
+/// AC4: name, run_id, created_at are identity fields — never overwritten by job updates.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_coalesce_preserves_name_run_id_created_at() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(4003)).await.unwrap();
+
+    let env_first = job_queued(5003, 4003);
+    let original_name = env_first.name.clone();
+    let original_created_at = env_first.created_at;
+    store.apply_job_event(env_first).await.unwrap();
+
+    // Update: attempt to clobber name (can't via the API since name is String, not Option, but
+    // the UPSERT's SET clause locks it to jobs.name regardless)
+    let env_update = JobEventEnvelope {
+        job_id: JobId(5003),
+        run_id: RunId(4003),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "DIFFERENT-NAME".to_string(), // Envelope has a different name
+        created_at: Utc::now() + Duration::from_secs(3600), // different created_at
+        started_at: None,
+        completed_at: None,
+        action: JobEvent::Queued {
+            labels: vec![],
+            steps: vec![],
+        },
+    };
+    store.apply_job_event(env_update).await.unwrap();
+
+    let row = sqlx::query!("SELECT name, run_id, created_at FROM jobs WHERE id = 5003")
+        .fetch_one(&pool)
+        .await
+        .expect("job row not found");
+
+    assert_eq!(
+        row.name, original_name,
+        "name must not be overwritten (identity field)"
+    );
+    assert_eq!(row.run_id, 4003i64, "run_id must not change");
+    // created_at is locked to jobs.created_at in the UPSERT
+    let stored_ts = row.created_at;
+    let diff = (stored_ts - original_created_at).num_seconds().abs();
+    assert!(
+        diff < 2,
+        "created_at must not be overwritten (diff={diff}s)"
+    );
+}
