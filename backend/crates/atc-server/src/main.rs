@@ -66,7 +66,11 @@ async fn main() {
 
     let pg_pool = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
-            tracing::error!(error = %e, "failed to connect or migrate database");
+            if matches!(e, sqlx::Error::Migrate(_)) {
+                tracing::error!(error = %e, "failed to run database migrations");
+            } else {
+                tracing::error!(error = %e, "failed to connect to PostgreSQL");
+            }
             process::exit(1);
         });
         tracing::info!("database connected and migrations applied");
