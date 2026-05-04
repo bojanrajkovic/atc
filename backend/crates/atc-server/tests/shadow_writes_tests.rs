@@ -25,12 +25,46 @@ use tower::ServiceExt;
 
 // Guard: PrometheusMetricLayer::pair() installed once per binary.
 // All tests in this file must be #[serial_test::serial].
-static PROMETHEUS_INIT: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
+// We store (layer, metrics_router) so AC7 tests can GET /metrics and assert counter values.
+static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, axum::Router)> = OnceLock::new();
+
+fn prometheus_init() -> &'static (PrometheusMetricLayer<'static>, axum::Router) {
+    PROMETHEUS_INIT.get_or_init(atc_server::metrics::build)
+}
 
 fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    PROMETHEUS_INIT
-        .get_or_init(|| PrometheusMetricLayer::pair().0)
-        .clone()
+    prometheus_init().0.clone()
+}
+
+/// GET /metrics from the side-port router and return the body as a String.
+async fn render_metrics() -> String {
+    let metrics_router = prometheus_init().1.clone();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/metrics")
+        .body(Body::empty())
+        .unwrap();
+    let resp = metrics_router.oneshot(req).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+/// Parse `atc_shadow_pg_write_failures_total{kind="<kind>"}` from the Prometheus
+/// text output. Returns the integer value, or 0 if the line is absent (counter
+/// has never been incremented for that label).
+fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
+    let needle = format!("kind=\"{kind}\"");
+    for line in metrics_body.lines() {
+        if line.starts_with("atc_shadow_pg_write_failures_total") && line.contains(&needle) {
+            // Line format: `metric_name{labels} value`
+            if let Some(value_str) = line.split_whitespace().last() {
+                return value_str.parse::<u64>().unwrap_or(0);
+            }
+        }
+    }
+    0
 }
 
 /// Boot a fresh PG container and return a pool with migrations applied.
@@ -380,6 +414,11 @@ async fn parity_metric_increments_when_pg_rejects() {
     let (pool, _c) = start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
+    // Read the baseline counter value before this test runs (other serial tests may
+    // have already incremented it).
+    let before = render_metrics().await;
+    let baseline_parity = parse_counter_value(&before, "parity");
+
     // 1. Insert run through normal flow (Queued)
     post_webhook(
         app.clone(),
@@ -397,32 +436,30 @@ async fn parity_metric_increments_when_pg_rejects() {
 
     // 3. Send InProgress (in-memory: Queued→InProgress valid; PG: Completed not in
     //    predecessors_of(InProgress) → 0 rows affected → InvalidTransition → parity metric)
-    post_webhook(
-        app.clone(),
-        "workflow_run",
-        &common::fixture_workflow_run_in_progress(),
-    )
-    .await;
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // The parity counter should have incremented.
-    // We can't directly inspect metrics counters in tests without exporting them,
-    // but we can verify the response was still 200 (shadow mode contract preserved).
-    // The metric increment is observable via /metrics endpoint if a metrics server
-    // is wired up. Here we assert the behavioral contract.
-    // (A full metrics assertion would require a separate metrics router + HTTP call;
-    //  that's covered by the metrics.rs integration test suite pattern.)
-    //
-    // What we CAN assert: PG row is still Completed (rejected), 200 returned.
     let status = post_webhook(
         app.clone(),
         "workflow_run",
         &common::fixture_workflow_run_in_progress(),
     )
     .await;
-    // Note: the above fires a second webhook; in-memory may reject it too if already InProgress
-    // from the previous call. Regardless, response is always 200 in shadow mode.
     assert_eq!(status, StatusCode::OK, "shadow mode always returns 200");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // PG row should still be Completed (rejected)
+    let pg_row = sqlx::query!("SELECT status FROM runs LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pg_row.status, "Completed", "PG should still be Completed");
+
+    // Parity counter must have incremented by exactly 1.
+    let after = render_metrics().await;
+    let after_parity = parse_counter_value(&after, "parity");
+    assert_eq!(
+        after_parity,
+        baseline_parity + 1,
+        "parity counter should increment by 1; metrics output:\n{after}"
+    );
 }
 
 /// AC7: DB outage → transient counter increments; in-memory write still succeeds.
@@ -431,6 +468,10 @@ async fn parity_metric_increments_when_pg_rejects() {
 async fn transient_metric_increments_on_db_outage() {
     let (pool, _c) = start_pg().await;
     let (app, state, _rx) = build_app_with_pg(pool.clone());
+
+    // Read the baseline counter value before this test runs.
+    let before = render_metrics().await;
+    let baseline_transient = parse_counter_value(&before, "transient");
 
     // Fire one successful webhook to establish state
     post_webhook(
@@ -459,7 +500,7 @@ async fn transient_metric_increments_on_db_outage() {
         StatusCode::OK,
         "DB outage should not cause 5xx in shadow mode"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // In-memory store should still reflect the InProgress state
     let snap = state.store.snapshot().await;
@@ -469,11 +510,19 @@ async fn transient_metric_increments_on_db_outage() {
         "InProgress",
         "in-memory should be InProgress despite PG outage"
     );
+
+    // Transient counter must have incremented by exactly 1.
+    let after = render_metrics().await;
+    let after_transient = parse_counter_value(&after, "transient");
+    assert_eq!(
+        after_transient,
+        baseline_transient + 1,
+        "transient counter should increment by 1; metrics output:\n{after}"
+    );
 }
 
-/// Verify that shadow PG write failure counters can be registered without panic.
-/// This is a smoke test — we call register_shadow_pg_counters() (describe_counter!)
-/// and fire a webhook to confirm the dual-write path doesn't panic on success.
+/// Verify that shadow PG write failure counters are visible in /metrics output.
+/// Triggers a parity failure (in-memory accepts, PG rejects) to confirm the counter appears.
 #[tokio::test]
 #[serial_test::serial]
 async fn shadow_pg_write_failure_counters_are_registered() {
@@ -485,16 +534,32 @@ async fn shadow_pg_write_failure_counters_are_registered() {
     let (pool, _c) = start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
-    // Fire a webhook to trigger the shadow write path (no panic = pass)
+    // Establish a Queued run in both stores.
     let body = common::fixture_workflow_run_requested();
-    let status = post_webhook(app, "workflow_run", &body).await;
+    let status = post_webhook(app.clone(), "workflow_run", &body).await;
     assert_eq!(status, StatusCode::OK, "shadow write should succeed");
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // Verify the row landed in PG
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs")
-        .fetch_one(&pool)
+    // Manually advance PG to Completed — simulates divergence from in-memory.
+    sqlx::query!("UPDATE runs SET status = 'Completed' WHERE status = 'Queued'")
+        .execute(&pool)
         .await
         .unwrap();
-    assert_eq!(count, 1, "exactly one run in PG after shadow write");
+
+    // Send InProgress: in-memory accepts (Queued→InProgress); PG rejects (Completed not a
+    // predecessor of InProgress) → parity counter increments → counter appears in /metrics.
+    post_webhook(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_in_progress(),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // The counter must appear in /metrics now that it has been incremented.
+    let metrics_body = render_metrics().await;
+    assert!(
+        metrics_body.contains("atc_shadow_pg_write_failures_total"),
+        "counter must appear in /metrics output after parity failure; got:\n{metrics_body}"
+    );
 }
