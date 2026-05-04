@@ -1,6 +1,6 @@
 # Rollout And Implementation
 
-Last verified: 2026-05-03
+Last verified: 2026-05-04 (Phase 2b shadow writes: complete)
 
 ## Status
 
@@ -56,18 +56,20 @@ ADR refs: [ADR 0002 Decision 1](../../architecture-decisions/0002-state-external
 
 #### Phase 2b: Shadow current-state writes
 
-Implement the atomic-update pattern for `runs` and `jobs` and start writing to PG alongside the in-memory store.
+**Status: complete.** Implement the atomic-update pattern for `runs` and `jobs` and start writing to PG alongside the in-memory store.
 
 In scope:
-- Implement atomic `UPDATE ... WHERE status IN (predecessors)` for runs and jobs; predecessor sets parameterized from the existing Rust state machine (e.g., `RunStatus::predecessors_of(target)` and equivalent for `JobStatus`)
-- Implement first-sight creation via `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE status IN (predecessors)`
-- Map `0 rows affected` to `StoreError::InvalidTransition` (the existing error type)
-- Webhook handler now writes to PG in addition to the in-memory store (shadow mode — both writes happen, in-memory still authoritative for reads)
-- Integration tests verifying PG state matches in-memory state after a sequence of webhook events
-- Tests for invalid transitions (rejected via `0 rows affected`)
-- Tests for idempotent same-status replay
+- Implement atomic `UPDATE ... WHERE status IN (predecessors)` for runs and jobs; predecessor sets parameterized from the existing Rust state machine (e.g., `RunStatus::predecessors_of(target)` and equivalent for `JobStatus`) — **DONE**
+- Implement first-sight creation via `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE status IN (predecessors)` — **DONE**
+- Map `0 rows affected` to `PersistError::InvalidTransition` (new error type in atc-core) — **DONE**
+- Webhook handler now writes to PG in addition to the in-memory store (shadow mode — both writes happen, in-memory still authoritative for reads) — **DONE**
+- Integration tests verifying PG state matches in-memory state after a sequence of webhook events — **DONE** (persist_pg_tests.rs: 15 tests)
+- Tests for invalid transitions (rejected via `0 rows affected`) — **DONE**
+- Tests for idempotent same-status replay — **DONE**
+- Dual-write tests with full router and drift metrics (shadow_writes_tests.rs: 9 tests) — **DONE**
+- AC7 metric counter assertions (parity and transient failures) — **DONE**
 
-Acceptance: a test that fires a sequence of run/job webhooks against a real Postgres and asserts PG row state matches the in-memory store at each step.
+Acceptance: a test that fires a sequence of run/job webhooks against a real Postgres and asserts PG row state matches the in-memory store at each step. **SATISFIED.** All 24 integration tests pass (15 persist_pg + 9 shadow_writes). All 255 backend tests pass. Metrics counters verified in AC7 tests.
 
 ADR refs: [ADR 0002 Decision 2](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (atomicity + concurrency control via UPDATE-WHERE-predicate).
 

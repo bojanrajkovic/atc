@@ -1,22 +1,23 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-04-18
+Last verified: 2026-05-04 (Phase 2b: PersistentStore trait, predecessors_of for predicates)
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
 ## Purpose
 
-Core domain types, state store, and business logic for ATC. Source-agnostic — no GitHub-specific dependencies. The `atc-github` crate maps webhook payloads into these domain types.
+Core domain types, state store, and business logic for ATC. Source-agnostic — no GitHub-specific dependencies. The `atc-github` crate maps webhook payloads into these domain types. **Phase 2b:** Adds `PersistentStore` trait and `predecessors_of()` methods to enable durable shadow writes via `atc-server::persist::PgStore`.
 
 ## Modules
 
 | Module | Role |
 |--------|------|
 | `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; structs: `RunnerPoolStats` with `is_elastic` and `total` fields |
-| `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`, state transitions |
-| `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`, state transitions |
+| `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`, state transitions; `RunStatus::predecessors_of(target)` for predicates (Phase 2b) |
+| `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`, state transitions; `JobStatus::predecessors_of(target)` for predicates (Phase 2b) |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |
-| `store` | `StateStore` — in-memory state with event ingestion, queries, `snapshot()` (atomic consistent read), pool stats, TTL eviction |
+| `store` | `StateStore` — in-memory state with event ingestion, queries, `snapshot()` (atomic consistent read), pool stats, TTL eviction; implements `PersistentStore` (Phase 2b) |
+| `persist` | `PersistentStore` trait with `apply_run_event()` and `apply_job_event()` methods; returns `PersistError` for invalid transitions (Phase 2b) |
 | `clock` | `Clock` trait, `SystemClock`, `TestClock` (behind `test-support` feature) |
 
 ## TypeScript Generation
@@ -41,7 +42,7 @@ Pool stats are computed on-demand by `StateStore` query methods and do not requi
 
 ## Contracts
 
-These rules are enforced by the state machine and verified by 105 tests including proptest:
+These rules are enforced by the state machine and verified by 137+ tests including proptest:
 
 - **Forward-only transitions:** `RunStatus` and `JobStatus` only progress forward. Backward transitions return `Err`.
 - **Idempotent same-status:** Re-applying the current status succeeds without error (handles duplicate webhooks).
@@ -50,6 +51,7 @@ These rules are enforced by the state machine and verified by 105 tests includin
 - **Index consistency:** Every job appears in exactly one `jobs_by_repo` set and one `jobs_by_run` set. `assert_invariants()` (test-only) verifies this.
 - **Eviction safety:** Only completed jobs past TTL are evicted. Active jobs are never removed regardless of age.
 - **Sort order:** Both `snapshot()` and `pool_stats()` return `Vec<RunnerPoolStats>` sorted by `labels` lexicographically — canonical wire order for broadcast sidecar and REST snapshot.
+- **PersistentStore predicates (Phase 2b):** `RunStatus::predecessors_of(target)` and `JobStatus::predecessors_of(target)` return `&'static [Self]` including the target itself. These are used by `PgStore` to parameterize SQL WHERE clauses for predicated UPSERTs. The predicate includes the target status to enable idempotent replay (same-status reapplication succeeds).
 
 ## Testing
 
