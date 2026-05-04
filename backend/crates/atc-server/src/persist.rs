@@ -158,10 +158,12 @@ impl PersistentStore for PgStore {
                 branch         = EXCLUDED.branch,
                 head_sha       = EXCLUDED.head_sha,
                 commit_message = EXCLUDED.commit_message,
+                event          = EXCLUDED.event,
                 display_title  = EXCLUDED.display_title,
                 status         = EXCLUDED.status,
                 conclusion     = COALESCE(EXCLUDED.conclusion, runs.conclusion),
                 html_url       = EXCLUDED.html_url,
+                created_at     = EXCLUDED.created_at,
                 run_started_at = COALESCE(EXCLUDED.run_started_at, runs.run_started_at),
                 updated_at     = EXCLUDED.updated_at
             WHERE runs.status = ANY($17::text[])
