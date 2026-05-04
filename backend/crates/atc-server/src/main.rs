@@ -9,10 +9,11 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{PersistentStore, StateStore, SystemClock};
 use atc_server::config;
 use atc_server::db;
 use atc_server::metrics;
+use atc_server::persist::PgStore;
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
@@ -42,6 +43,7 @@ async fn shutdown_signal(shutdown: CancellationToken) {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() {
     let cfg = config::Config::load().unwrap_or_else(|e| {
         eprintln!("configuration error: {e}");
@@ -64,7 +66,10 @@ async fn main() {
             .init();
     }
 
-    let pg_pool = if let Some(ref db_url) = cfg.database_url {
+    let (pg_pool, pg_store): (
+        Option<sqlx::PgPool>,
+        Option<Arc<dyn PersistentStore + Send + Sync>>,
+    ) = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
             if matches!(e, sqlx::Error::Migrate(_)) {
                 tracing::error!(error = %e, "failed to run database migrations");
@@ -74,10 +79,11 @@ async fn main() {
             process::exit(1);
         });
         tracing::info!("database connected and migrations applied");
-        Some(pool)
+        let pg_store: Arc<dyn PersistentStore + Send + Sync> = Arc::new(PgStore::new(pool.clone()));
+        (Some(pool), Some(pg_store))
     } else {
         tracing::info!("no ATC_DATABASE_URL configured; running in in-memory mode");
-        None
+        (None, None)
     };
 
     // Create the shared state store with system clock and 1-hour TTL for completed entries.
@@ -100,6 +106,7 @@ async fn main() {
         webhook_secret: cfg.github.webhook_secret.clone(),
         seq: Mutex::new(0),
         pg_pool,
+        pg_store,
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before
@@ -107,6 +114,7 @@ async fn main() {
     // installs the global metrics recorder.
     let (prometheus_layer, metrics_router) = metrics::build();
     metrics::register_build_info();
+    metrics::register_shadow_pg_counters();
     metrics::spawn_process_collector();
 
     let app = routes::api_routes(prometheus_layer)

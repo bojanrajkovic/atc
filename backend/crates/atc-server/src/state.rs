@@ -3,7 +3,7 @@ use std::sync::Arc;
 use atc_github::WebhookEvent;
 use tokio::sync::{Mutex, broadcast};
 
-use atc_core::StateStore;
+use atc_core::{PersistentStore, StateStore};
 
 /// Shared application state passed to all Axum handlers via `State<Arc<AppState>>`.
 pub struct AppState {
@@ -27,6 +27,12 @@ pub struct AppState {
     /// `Some(pool)` when `ATC_DATABASE_URL` is configured; `None` runs in
     /// in-memory-only mode. Used by readyz probe and future persistence writes.
     pub pg_pool: Option<sqlx::PgPool>,
+    /// Optional PostgreSQL-backed persistent store for shadow writes.
+    ///
+    /// `Some(store)` when `ATC_DATABASE_URL` is configured; `None` in
+    /// in-memory-only mode. Webhook handler calls this outside the seq mutex
+    /// after a successful in-memory write.
+    pub pg_store: Option<Arc<dyn PersistentStore + Send + Sync>>,
 }
 
 /// A domain event annotated with a monotonic sequence number.

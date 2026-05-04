@@ -60,6 +60,22 @@ pub fn register_build_info() {
     .set(1.0);
 }
 
+/// Register the shadow PG write failure counters.
+///
+/// Two labels distinguish failure kinds:
+/// - `kind="parity"` — PG rejected a write that in-memory accepted (`0 rows affected`).
+///   Page-worthy in production: the two stores have diverged.
+/// - `kind="transient"` — sqlx error (network, pool exhaustion, etc.).
+///   Alert on sustained rate.
+///
+/// Must be called after `build()` (which installs the global recorder).
+pub fn register_shadow_pg_counters() {
+    metrics::describe_counter!(
+        "atc_shadow_pg_write_failures_total",
+        "Shadow PG write failures by kind (parity or transient)"
+    );
+}
+
 /// Describe process metrics and spawn a background collector that ticks every
 /// 10 seconds.
 ///
