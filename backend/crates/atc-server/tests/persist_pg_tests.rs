@@ -451,16 +451,30 @@ async fn pg_real_run_event_reconciles_stub() {
     let result = store.apply_run_event(run_requested(9002)).await;
     assert!(result.is_ok(), "reconciliation should succeed: {result:?}");
 
-    // Stub fields should now be populated via COALESCE
-    let run_row = sqlx::query!("SELECT status, head_sha, workflow_name FROM runs WHERE id = 9002")
-        .fetch_one(&pool)
-        .await
-        .expect("run row not found");
+    // Stub fields should now be populated by the real run event
+    let run_row = sqlx::query!(
+        "SELECT status, head_sha, workflow_name, event, display_title, html_url FROM runs WHERE id = 9002"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("run row not found");
 
-    // head_sha should now be the real value (not the stub '')
+    // head_sha, event, display_title were '' in the stub; real run must overwrite them
     assert_eq!(run_row.head_sha, "abc123");
     assert_eq!(run_row.status, "Queued");
     assert_eq!(run_row.workflow_name.as_deref(), Some("CI"));
+    assert_eq!(
+        run_row.event, "push",
+        "event must be overwritten from stub ''"
+    );
+    assert_eq!(
+        run_row.display_title, "Test run",
+        "display_title must be overwritten from stub ''"
+    );
+    assert_ne!(
+        run_row.html_url, "",
+        "html_url must be overwritten from stub ''"
+    );
 
     // Job still has the right FK
     let job_row = sqlx::query!("SELECT run_id FROM jobs WHERE id = 8002")

@@ -217,26 +217,25 @@ async fn dual_write_job_lifecycle() {
     assert_eq!(status, StatusCode::OK);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // Check the queued job exists in PG (any job row, since run pre-exists)
-    let queued_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'Queued'")
+    // Assert the queued job row by its specific ID (from workflow_job_queued.json)
+    let queued_row = sqlx::query!("SELECT status FROM jobs WHERE id = 70928200168")
         .fetch_one(&pool)
         .await
-        .unwrap();
-    assert_eq!(queued_count, 1, "should have one Queued job in PG");
+        .expect("queued job row not found in PG");
+    assert_eq!(queued_row.status, "Queued");
 
-    // InProgress job (different job_id=70928200174 — new job event from fixture)
+    // InProgress job (different job_id=70928200174 — a distinct job in the same run)
     let job_body = common::fixture_workflow_job_in_progress();
     let status = post_webhook(app.clone(), "workflow_job", &job_body).await;
     assert_eq!(status, StatusCode::OK);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // The in_progress event creates a new job row (different job_id)
-    let in_progress_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'InProgress'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(in_progress_count, 1, "should have one InProgress job in PG");
+    // Assert the in-progress job row by its specific ID (from workflow_job_in_progress.json)
+    let in_progress_row = sqlx::query!("SELECT status FROM jobs WHERE id = 70928200174")
+        .fetch_one(&pool)
+        .await
+        .expect("in-progress job row not found in PG");
+    assert_eq!(in_progress_row.status, "InProgress");
 }
 
 /// AC5: Job-before-run — fire job first, then run; assert stub then reconciliation.
