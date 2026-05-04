@@ -11,6 +11,7 @@ use axum::{
 use axum_prometheus::PrometheusMetricLayer;
 use serde::{Deserialize, Serialize};
 
+use atc_core::PersistError;
 use atc_github::{ParseResult, parse_webhook, verify_signature};
 
 use crate::state::{AppState, SeqEvent};
@@ -168,78 +169,219 @@ async fn webhook_handler(
 
     // 4. Handle parse result
     match result {
-        ParseResult::Parsed(event) => {
-            // Hold the seq mutex across store mutation + seq assignment.
-            // This serializes the critical section so that:
-            // (a) WS event seq values match store commit order, and
+        ParseResult::Parsed(boxed_event) => {
+            // Unbox once so we can match by reference and move into SeqEvent at the end.
+            let event = *boxed_event;
+
+            // Acquire the seq mutex BEFORE any PG I/O. This serializes the
+            // critical section so that:
+            // (a) WS event seq values match durable commit order, and
             // (b) GET /v1/state cannot read between mutation and seq bump.
             //
-            // StoreError variants are currently all deterministic (invalid
-            // state transitions) — retrying would fail identically, so we
-            // return 200 to prevent GitHub retries.
-            //
-            // Only assign seq and broadcast on successful store mutation.
-            // Failed transitions should not produce SeqEvents — clients
-            // must never receive events that aren't reflected in the store.
-            //
-            // PG shadow write happens OUTSIDE the mutex (below) so PG I/O
-            // does not block concurrent webhooks or GET /v1/state.
+            // The mutex must be held across pool.begin() (not just commit) so
+            // that two concurrent webhooks cannot commit in one order and
+            // broadcast in the reverse order.
             let mut seq_guard = state.seq.lock().await;
 
-            // Outer Option: Some(...) = apply succeeded and we should broadcast;
-            //               None = apply failed, skip broadcast (AC1.5).
-            // Inner Option in Some(...): Some(vec) for Job events (AC1.1),
-            //                             None for Run events (AC1.3).
-            let pool_stats_after: Option<Option<Vec<atc_core::RunnerPoolStats>>> = match &*event {
-                atc_github::WebhookEvent::Run(envelope) => {
-                    match state.store.apply_run_event(envelope.clone()).await {
-                        Ok(_) => Some(None),
+            match &state.pg_pool {
+                Some(pool) => {
+                    // ── Transactional PG path ────────────────────────────
+                    // Begin transaction (seq mutex already held).
+                    let mut tx = match pool.begin().await {
+                        Ok(tx) => tx,
                         Err(e) => {
-                            tracing::warn!(error = %e, "store run transition warning");
-                            None
+                            metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
+                                .increment(1);
+                            tracing::error!(error = %e, "pg begin failed");
+                            drop(seq_guard);
+                            return (
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                Json(
+                                    serde_json::json!({"status": "error", "message": "database unavailable"}),
+                                ),
+                            );
+                        }
+                    };
+
+                    // UPSERT + outbox INSERT inside the transaction.
+                    let txn_result: Result<(), PersistError> = match &event {
+                        atc_github::WebhookEvent::Run(env) => {
+                            let r1 = crate::persist::upsert_run_in_txn(&mut tx, env).await;
+                            if r1.is_ok() {
+                                crate::persist::insert_outbox_run_in_txn(&mut tx, env)
+                                    .await
+                                    .map(|_| ())
+                            } else {
+                                r1
+                            }
+                        }
+                        atc_github::WebhookEvent::Job(env) => {
+                            let r1 = crate::persist::upsert_job_in_txn(&mut tx, env).await;
+                            if r1.is_ok() {
+                                crate::persist::insert_outbox_job_in_txn(&mut tx, env)
+                                    .await
+                                    .map(|_| ())
+                            } else {
+                                r1
+                            }
+                        }
+                    };
+
+                    match txn_result {
+                        Ok(()) => {
+                            // Commit the transaction.
+                            if let Err(e) = tx.commit().await {
+                                metrics::counter!(
+                                    "atc_pg_write_failures_total",
+                                    "kind" => "transient"
+                                )
+                                .increment(1);
+                                tracing::error!(error = %e, "pg commit failed");
+                                drop(seq_guard);
+                                return (
+                                    StatusCode::SERVICE_UNAVAILABLE,
+                                    Json(
+                                        serde_json::json!({"status": "error", "message": "database commit failed"}),
+                                    ),
+                                );
+                            }
+                            // PG committed — fall through to in-memory apply below.
+                        }
+                        Err(PersistError::InvalidTransition) => {
+                            // tx drops here → auto-rollback. No outbox row written.
+                            metrics::counter!(
+                                "atc_pg_write_failures_total",
+                                "kind" => "parity"
+                            )
+                            .increment(1);
+                            tracing::warn!(
+                                "pg parity rejection: transition invalid under predicate"
+                            );
+                            drop(seq_guard);
+                            return (
+                                StatusCode::OK,
+                                Json(serde_json::json!({"status": "rejected"})),
+                            );
+                        }
+                        Err(PersistError::Backend(e)) => {
+                            metrics::counter!(
+                                "atc_pg_write_failures_total",
+                                "kind" => "transient"
+                            )
+                            .increment(1);
+                            tracing::error!(error = %e, "pg backend failure mid-txn");
+                            drop(seq_guard);
+                            return (
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                Json(
+                                    serde_json::json!({"status": "error", "message": "database error"}),
+                                ),
+                            );
                         }
                     }
-                }
-                atc_github::WebhookEvent::Job(envelope) => {
-                    match state.store.apply_job_event(envelope.clone()).await {
-                        Ok(_) => Some(Some(state.store.pool_stats().await)),
-                        Err(e) => {
-                            tracing::warn!(error = %e, "store job transition warning");
-                            None
-                        }
+
+                    // ── Apply to in-memory store (still under mutex) ──────
+                    // PG committed. Apply to in-memory store and broadcast.
+                    let broadcast_event: Option<Option<Vec<atc_core::RunnerPoolStats>>> =
+                        match &event {
+                            atc_github::WebhookEvent::Run(env) => {
+                                match state.store.apply_run_event(env.clone()).await {
+                                    Ok(_) => Some(None),
+                                    Err(e) => {
+                                        metrics::counter!("atc_pg_in_memory_drift_total")
+                                            .increment(1);
+                                        tracing::warn!(error = %e, "post-commit in-memory drift (run)");
+                                        None
+                                    }
+                                }
+                            }
+                            atc_github::WebhookEvent::Job(env) => {
+                                match state.store.apply_job_event(env.clone()).await {
+                                    Ok(_) => Some(Some(state.store.pool_stats().await)),
+                                    Err(e) => {
+                                        metrics::counter!("atc_pg_in_memory_drift_total")
+                                            .increment(1);
+                                        tracing::warn!(error = %e, "post-commit in-memory drift (job)");
+                                        None
+                                    }
+                                }
+                            }
+                        };
+
+                    if let Some(pool_stats_after) = broadcast_event {
+                        let seq = *seq_guard;
+                        *seq_guard += 1;
+                        let seq_event = SeqEvent {
+                            seq,
+                            event,
+                            pool_stats_after,
+                        };
+                        let _ = state.webhook_tx.send(seq_event);
+                        tracing::info!(event_type, seq, "event processed (pg+mem)");
+                    } else {
+                        tracing::info!(
+                            event_type,
+                            "pg committed but in-memory drift (no broadcast)"
+                        );
                     }
+
+                    drop(seq_guard);
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({"status": "processed"})),
+                    )
                 }
-            };
+                None => {
+                    // ── In-memory-only path ───────────────────────────────
+                    // No PG pool configured. Apply directly to in-memory store.
+                    // Seq mutex is already held.
+                    //
+                    // Only assign seq and broadcast on successful store mutation.
+                    // Failed transitions should not produce SeqEvents — clients
+                    // must never receive events that aren't reflected in the store.
+                    let pool_stats_after: Option<Option<Vec<atc_core::RunnerPoolStats>>> =
+                        match &event {
+                            atc_github::WebhookEvent::Run(envelope) => {
+                                match state.store.apply_run_event(envelope.clone()).await {
+                                    Ok(_) => Some(None),
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "store run transition warning");
+                                        None
+                                    }
+                                }
+                            }
+                            atc_github::WebhookEvent::Job(envelope) => {
+                                match state.store.apply_job_event(envelope.clone()).await {
+                                    Ok(_) => Some(Some(state.store.pool_stats().await)),
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "store job transition warning");
+                                        None
+                                    }
+                                }
+                            }
+                        };
 
-            if let Some(pool_stats_after) = pool_stats_after {
-                let seq = *seq_guard;
-                *seq_guard += 1;
+                    if let Some(pool_stats_after) = pool_stats_after {
+                        let seq = *seq_guard;
+                        *seq_guard += 1;
+                        let seq_event = SeqEvent {
+                            seq,
+                            event,
+                            pool_stats_after,
+                        };
+                        let _ = state.webhook_tx.send(seq_event);
+                        tracing::info!(event_type, seq, "event processed");
+                    } else {
+                        tracing::info!(event_type, "event accepted (transition already applied)");
+                    }
 
-                // Broadcast while still holding the mutex. send() is
-                // synchronous (pushes into a bounded ring buffer) so
-                // this is cheap. Holding through broadcast ensures that
-                // when state_handler acquires the mutex, all events up
-                // to that seq have already been broadcast — no window
-                // where a snapshot cursor advertises an event that WS
-                // clients haven't received yet.
-                let seq_event = SeqEvent {
-                    seq,
-                    event: *event,
-                    pool_stats_after,
-                };
-                let _ = state.webhook_tx.send(seq_event);
-
-                tracing::info!(event_type, seq, "event processed");
-            } else {
-                tracing::info!(event_type, "event accepted (transition already applied)");
+                    drop(seq_guard);
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({"status": "processed"})),
+                    )
+                }
             }
-
-            drop(seq_guard);
-
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({"status": "processed"})),
-            )
         }
         ParseResult::Skipped { ref event_type } => {
             tracing::debug!(event_type, "event skipped");
