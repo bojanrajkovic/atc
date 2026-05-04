@@ -284,8 +284,8 @@ impl PersistentStore for PgStore {
                 steps             = EXCLUDED.steps,
                 runner_id         = COALESCE(EXCLUDED.runner_id,         jobs.runner_id),
                 runner_name       = COALESCE(EXCLUDED.runner_name,       jobs.runner_name),
-                runner_group_id   = COALESCE(EXCLUDED.runner_group_id,   jobs.runner_group_id),
-                runner_group_name = COALESCE(EXCLUDED.runner_group_name, jobs.runner_group_name),
+                runner_group_id   = CASE WHEN EXCLUDED.runner_id IS NOT NULL THEN EXCLUDED.runner_group_id   ELSE jobs.runner_group_id END,
+                runner_group_name = CASE WHEN EXCLUDED.runner_id IS NOT NULL THEN EXCLUDED.runner_group_name ELSE jobs.runner_group_name END,
                 started_at        = COALESCE(EXCLUDED.started_at,        jobs.started_at),
                 completed_at      = COALESCE(EXCLUDED.completed_at,      jobs.completed_at),
                 created_at        = jobs.created_at

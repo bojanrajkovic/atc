@@ -579,6 +579,72 @@ async fn pg_job_coalesce_preserves_runner() {
     );
 }
 
+/// AC4: When a new event carries a runner with null group fields, those fields are cleared —
+/// they are NOT preserved from the previous event (runner is replaced as a unit, not merged).
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_runner_group_cleared_when_runner_changes() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool.clone());
+
+    store.apply_run_event(run_requested(4010)).await.unwrap();
+    store.apply_job_event(job_queued(5010, 4010)).await.unwrap();
+    // First in_progress: runner with group_id=1, group_name="default"
+    store
+        .apply_job_event(job_in_progress(5010, 4010))
+        .await
+        .unwrap();
+
+    // Second in_progress: same job, different runner — no group fields
+    let env_new_runner = JobEventEnvelope {
+        job_id: JobId(5010),
+        run_id: RunId(4010),
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: ts(),
+        started_at: Some(ts()),
+        completed_at: None,
+        action: JobEvent::InProgress {
+            runner: Some(atc_core::job::RunnerInfo {
+                id: 99,
+                name: "runner-2".to_string(),
+                group_id: None,
+                group_name: None,
+            }),
+            labels: vec!["ubuntu-latest".to_string()],
+            steps: vec![],
+        },
+    };
+    store.apply_job_event(env_new_runner).await.unwrap();
+
+    let row = sqlx::query!(
+        "SELECT runner_id, runner_name, runner_group_id, runner_group_name FROM jobs WHERE id = 5010"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("job row not found");
+
+    assert_eq!(
+        row.runner_id,
+        Some(99i64),
+        "runner_id must reflect new runner"
+    );
+    assert_eq!(
+        row.runner_name.as_deref(),
+        Some("runner-2"),
+        "runner_name must reflect new runner"
+    );
+    assert!(
+        row.runner_group_id.is_none(),
+        "runner_group_id must be cleared (was Some(1), new runner has None)"
+    );
+    assert!(
+        row.runner_group_name.is_none(),
+        "runner_group_name must be cleared (was Some(\"default\"), new runner has None)"
+    );
+}
+
 /// AC4: name, run_id, created_at are identity fields — never overwritten by job updates.
 #[tokio::test]
 #[serial_test::serial]
