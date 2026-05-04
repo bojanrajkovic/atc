@@ -2,6 +2,16 @@
 
 Last verified: 2026-05-03
 
+## Status
+
+This document is pre-ADR research. The canonical decisions are in [ADR 0002](../../architecture-decisions/0002-state-externalization-postgres-outbox.md), [ADR 0003](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md), and [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md). The research below is preserved for analysis and rejected alternatives.
+
+Notable supersessions:
+
+- **`pool_stats_after` is not persisted in the outbox** (ADR 0004). Pool stats are derived frontend-side; the outbox stores domain events only. References below to "WS-ready payload," "derived sidecar," or "compute any derived sidecar needed for WS" should be read as historical recommendations that were not adopted.
+- **Concurrency control uses atomic `UPDATE ... WHERE status IN (predecessors)`** parameterized from the Rust state machine (ADR 0002 Decision 2). The recommendation below for "transition validation in SQL / stored procedure / transaction logic" was narrowed — Rust remains the single source of truth for transition rules; SQL just consumes them as parameters.
+- **Helm gating has no `unsafe` escape hatch.** ADR 0003 Decision 3 simply requires `postgres://` for `replicaCount > 1` and removes SQLite mode entirely; the "unsafe escape hatch" recommendation in the ADR Positions section below was not adopted.
+
 ## Non-Negotiable Invariants
 
 Any durable multi-replica design should preserve these properties from the current implementation and issue comments:

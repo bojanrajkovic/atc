@@ -2,6 +2,16 @@
 
 Last verified: 2026-05-03
 
+## Status
+
+This document is pre-ADR research. The canonical decisions are in [ADR 0002](../../architecture-decisions/0002-state-externalization-postgres-outbox.md), [ADR 0003](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md), and [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md). The forwarder analysis below was adopted; the analysis of failure modes and client-side dedupe was modified during the ADR process.
+
+Notable supersessions:
+
+- **The `poolStatsAfter` regression failure mode is no longer applicable** (ADR 0004). Pool stats are derived frontend-side; duplicate events produce idempotent recomputes that yield the same value. The "repeated older `poolStatsAfter` sidecars can temporarily regress the pool display" bullet under "Why Overlap Matters To This Frontend" no longer applies.
+- **Frontend `highestAppliedSeq` dedupe is not added** (ADR 0003 dropped its dedupe decision entirely). The recommendation at the end of this document — "optional frontend dedupe by `highestAppliedSeq`" — was superseded; the forwarder design described here prevents overlap by construction, so no client-side dedupe is needed at all.
+- **The forwarder loop design itself was adopted as-is.** The serialized per-replica loop, level-triggered wake-up coalescing, strict `seq > last_forwarded_seq ORDER BY seq`, and watermark-advances-after-acceptance pattern from this document became ADR 0002 Decision 5.
+
 ## Overlap Delivery In More Detail
 
 In an outbox-backed design, overlap delivery means one replica forwards the same committed outbox range more than once on a single WS connection, or forwards an older overlapping range after a newer one.

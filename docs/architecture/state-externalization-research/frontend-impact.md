@@ -2,6 +2,16 @@
 
 Last verified: 2026-05-03
 
+## Status
+
+This document is pre-ADR research. The canonical decisions are in [ADR 0002](../../architecture-decisions/0002-state-externalization-postgres-outbox.md), [ADR 0003](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md), and [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md). The research below is preserved for analysis and rejected alternatives.
+
+Notable supersessions:
+
+- **`SeqEvent.poolStatsAfter` and `StateSnapshot.poolStats` are removed from the wire contract** (ADR 0004). Pool stats are derived frontend-side from `runStore.jobs`. The "Outbox Semantics And Frontend Interaction" and "`poolStatsAfter` And The Outbox" sections below describe an approach that was not adopted; the cleaner outcome is that the outbox stores domain events only and the frontend derives pool stats locally.
+- **Frontend `highestAppliedSeq` dedupe is not added.** ADR 0003 explicitly decided against the dedupe guard the "Frontend Hardening Worth Considering" section below recommends; the forwarder design in ADR 0002 (serialized per-replica loop, level-triggered wake-up coalescing, strict `seq > watermark`, watermark advances only after acceptance) prevents overlap by construction.
+- **No backward-compatible cursor transition window.** Frontend and backend ship together in one binary via `rust-embed`, so the cursor rename happens in lockstep (ADR 0003 Context). The "files that would need to change" list below is still accurate as the set of frontend touch-points; the change just happens in one commit alongside the backend rename rather than across a transition.
+
 ## Frontend Contract Today
 
 The frontend uses `seq` in a much narrower way than the backend does.
