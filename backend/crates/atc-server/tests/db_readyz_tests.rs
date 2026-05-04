@@ -14,6 +14,7 @@ use axum::body::to_bytes;
 use axum::http::{Request, StatusCode};
 use axum_prometheus::PrometheusMetricLayer;
 use std::sync::OnceLock;
+use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
@@ -47,6 +48,7 @@ async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
 #[serial_test::serial]
 async fn readyz_returns_ok_with_healthy_db() {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("failed to start postgres container");
@@ -81,6 +83,7 @@ async fn readyz_returns_ok_with_healthy_db() {
 #[serial_test::serial]
 async fn migrations_create_runs_and_jobs_tables() {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("failed to start postgres container");
@@ -115,6 +118,7 @@ async fn migrations_create_runs_and_jobs_tables() {
 #[serial_test::serial]
 async fn readyz_returns_503_when_db_unreachable() {
     let container = Postgres::default()
+        .with_tag("17-alpine")
         .start()
         .await
         .expect("failed to start postgres container");
