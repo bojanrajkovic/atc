@@ -629,3 +629,15 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
         "created_at must not be overwritten (diff={diff}s)"
     );
 }
+
+/// PgStore::ping() succeeds against a healthy pool.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_store_ping_succeeds() {
+    let (pool, _c) = start_pg().await;
+    let store = PgStore::new(pool);
+    assert!(
+        store.ping().await.is_ok(),
+        "ping should succeed with a healthy pool"
+    );
+}

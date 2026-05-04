@@ -5,8 +5,10 @@
 //! `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE status = ANY($preds::text[])`.
 //! Zero rows affected ⇒ [`PersistError::InvalidTransition`].
 //!
-//! The module also contains string-mapping helpers for status and conclusion enums
-//! that match the SQL CHECK constraint values exactly, independent of serde repr.
+//! The module also contains a [`SqlRepr`] trait implemented for the status and
+//! conclusion enums. Implementations match the SQL CHECK constraint values exactly,
+//! independent of serde representation so a future `#[serde(rename)]` cannot
+//! silently break a SQL bind.
 
 use atc_core::{
     JobConclusion, JobStatus, PersistError, PersistentStore, RunConclusion, RunStatus,
@@ -15,58 +17,66 @@ use atc_core::{
 use sqlx::PgPool;
 
 // ---------------------------------------------------------------------------
-// Status/conclusion → SQL string helpers
+// SqlRepr: status/conclusion → SQL CHECK constraint string
 // ---------------------------------------------------------------------------
 
-/// Map [`RunStatus`] to the SQL CHECK constraint string value.
+/// Maps a value to its SQL CHECK constraint string representation.
 ///
-/// These must exactly match the `CHECK (status IN (...))` constraint in
-/// `0001_initial_runs_jobs.sql`. Independent of serde so a future
-/// `#[serde(rename)]` cannot silently break the SQL bind.
-pub(crate) fn run_status_str(s: RunStatus) -> &'static str {
-    match s {
-        RunStatus::Queued => "Queued",
-        RunStatus::InProgress => "InProgress",
-        RunStatus::Completed => "Completed",
+/// Must exactly match the `CHECK (... IN (...))` constraints in
+/// `0001_initial_runs_jobs.sql`.
+trait SqlRepr {
+    fn sql_repr(self) -> &'static str;
+}
+
+impl SqlRepr for RunStatus {
+    fn sql_repr(self) -> &'static str {
+        match self {
+            Self::Queued => "Queued",
+            Self::InProgress => "InProgress",
+            Self::Completed => "Completed",
+        }
     }
 }
 
-/// Map [`JobStatus`] to the SQL CHECK constraint string value.
-pub(crate) fn job_status_str(s: JobStatus) -> &'static str {
-    match s {
-        JobStatus::Queued => "Queued",
-        JobStatus::Waiting => "Waiting",
-        JobStatus::InProgress => "InProgress",
-        JobStatus::Completed => "Completed",
+impl SqlRepr for JobStatus {
+    fn sql_repr(self) -> &'static str {
+        match self {
+            Self::Queued => "Queued",
+            Self::Waiting => "Waiting",
+            Self::InProgress => "InProgress",
+            Self::Completed => "Completed",
+        }
     }
 }
 
-/// Map [`RunConclusion`] to the SQL CHECK constraint string value.
-fn run_conclusion_str(c: RunConclusion) -> &'static str {
-    match c {
-        RunConclusion::Success => "Success",
-        RunConclusion::Failure => "Failure",
-        RunConclusion::Cancelled => "Cancelled",
-        RunConclusion::TimedOut => "TimedOut",
-        RunConclusion::ActionRequired => "ActionRequired",
-        RunConclusion::Stale => "Stale",
-        RunConclusion::Neutral => "Neutral",
-        RunConclusion::Skipped => "Skipped",
-        RunConclusion::StartupFailure => "StartupFailure",
+impl SqlRepr for RunConclusion {
+    fn sql_repr(self) -> &'static str {
+        match self {
+            Self::Success => "Success",
+            Self::Failure => "Failure",
+            Self::Cancelled => "Cancelled",
+            Self::TimedOut => "TimedOut",
+            Self::ActionRequired => "ActionRequired",
+            Self::Stale => "Stale",
+            Self::Neutral => "Neutral",
+            Self::Skipped => "Skipped",
+            Self::StartupFailure => "StartupFailure",
+        }
     }
 }
 
-/// Map [`JobConclusion`] to the SQL CHECK constraint string value.
-fn job_conclusion_str(c: JobConclusion) -> &'static str {
-    match c {
-        JobConclusion::Success => "Success",
-        JobConclusion::Failure => "Failure",
-        JobConclusion::Cancelled => "Cancelled",
-        JobConclusion::TimedOut => "TimedOut",
-        JobConclusion::ActionRequired => "ActionRequired",
-        JobConclusion::Stale => "Stale",
-        JobConclusion::Neutral => "Neutral",
-        JobConclusion::Skipped => "Skipped",
+impl SqlRepr for JobConclusion {
+    fn sql_repr(self) -> &'static str {
+        match self {
+            Self::Success => "Success",
+            Self::Failure => "Failure",
+            Self::Cancelled => "Cancelled",
+            Self::TimedOut => "TimedOut",
+            Self::ActionRequired => "ActionRequired",
+            Self::Stale => "Stale",
+            Self::Neutral => "Neutral",
+            Self::Skipped => "Skipped",
+        }
     }
 }
 
@@ -129,13 +139,13 @@ impl PersistentStore for PgStore {
     async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<(), PersistError> {
         let target = derive_run_target(&env.action);
         let preds = RunStatus::predecessors_of(target);
-        let preds_strs: Vec<&'static str> = preds.iter().copied().map(run_status_str).collect();
-        let target_str = run_status_str(target);
+        let preds_strs: Vec<&'static str> = preds.iter().copied().map(SqlRepr::sql_repr).collect();
+        let target_str = target.sql_repr();
 
         // Conclusion is only set on RunEvent::Completed.
         let conclusion_str: Option<&'static str> =
             if let RunEvent::Completed { conclusion } = &env.action {
-                Some(run_conclusion_str(*conclusion))
+                Some(conclusion.sql_repr())
             } else {
                 None
             };
@@ -203,8 +213,8 @@ impl PersistentStore for PgStore {
     async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<(), PersistError> {
         let target = derive_job_target(&env.action);
         let preds = JobStatus::predecessors_of(target);
-        let preds_strs: Vec<&'static str> = preds.iter().copied().map(job_status_str).collect();
-        let target_str = job_status_str(target);
+        let preds_strs: Vec<&'static str> = preds.iter().copied().map(SqlRepr::sql_repr).collect();
+        let target_str = target.sql_repr();
 
         let (conclusion_str, labels, steps, runner) = match &env.action {
             JobEvent::Queued { labels, steps } => (None, labels, steps, None),
@@ -219,12 +229,7 @@ impl PersistentStore for PgStore {
                 runner,
                 labels,
                 steps,
-            } => (
-                Some(job_conclusion_str(*conclusion)),
-                labels,
-                steps,
-                runner.as_ref(),
-            ),
+            } => (Some(conclusion.sql_repr()), labels, steps, runner.as_ref()),
         };
 
         let steps_json =
@@ -314,16 +319,109 @@ impl PersistentStore for PgStore {
 }
 
 // ---------------------------------------------------------------------------
-// Compile-time trait impl proof
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
+    use atc_core::event::{JobEvent, RunEvent};
+    use atc_core::{JobConclusion, JobStatus, RunConclusion, RunStatus};
+
     use super::*;
 
     #[allow(dead_code, clippy::used_underscore_items)]
     fn _assert_pg_store_impls_trait() {
         fn _f<T: PersistentStore>() {}
         _f::<PgStore>();
+    }
+
+    #[test]
+    fn run_status_sql_repr() {
+        assert_eq!(RunStatus::Queued.sql_repr(), "Queued");
+        assert_eq!(RunStatus::InProgress.sql_repr(), "InProgress");
+        assert_eq!(RunStatus::Completed.sql_repr(), "Completed");
+    }
+
+    #[test]
+    fn job_status_sql_repr() {
+        assert_eq!(JobStatus::Queued.sql_repr(), "Queued");
+        assert_eq!(JobStatus::Waiting.sql_repr(), "Waiting");
+        assert_eq!(JobStatus::InProgress.sql_repr(), "InProgress");
+        assert_eq!(JobStatus::Completed.sql_repr(), "Completed");
+    }
+
+    #[test]
+    fn run_conclusion_sql_repr() {
+        assert_eq!(RunConclusion::Success.sql_repr(), "Success");
+        assert_eq!(RunConclusion::Failure.sql_repr(), "Failure");
+        assert_eq!(RunConclusion::Cancelled.sql_repr(), "Cancelled");
+        assert_eq!(RunConclusion::TimedOut.sql_repr(), "TimedOut");
+        assert_eq!(RunConclusion::ActionRequired.sql_repr(), "ActionRequired");
+        assert_eq!(RunConclusion::Stale.sql_repr(), "Stale");
+        assert_eq!(RunConclusion::Neutral.sql_repr(), "Neutral");
+        assert_eq!(RunConclusion::Skipped.sql_repr(), "Skipped");
+        assert_eq!(RunConclusion::StartupFailure.sql_repr(), "StartupFailure");
+    }
+
+    #[test]
+    fn job_conclusion_sql_repr() {
+        assert_eq!(JobConclusion::Success.sql_repr(), "Success");
+        assert_eq!(JobConclusion::Failure.sql_repr(), "Failure");
+        assert_eq!(JobConclusion::Cancelled.sql_repr(), "Cancelled");
+        assert_eq!(JobConclusion::TimedOut.sql_repr(), "TimedOut");
+        assert_eq!(JobConclusion::ActionRequired.sql_repr(), "ActionRequired");
+        assert_eq!(JobConclusion::Stale.sql_repr(), "Stale");
+        assert_eq!(JobConclusion::Neutral.sql_repr(), "Neutral");
+        assert_eq!(JobConclusion::Skipped.sql_repr(), "Skipped");
+    }
+
+    #[test]
+    fn derive_run_target_all_variants() {
+        assert_eq!(derive_run_target(&RunEvent::Requested), RunStatus::Queued);
+        assert_eq!(
+            derive_run_target(&RunEvent::InProgress),
+            RunStatus::InProgress
+        );
+        assert_eq!(
+            derive_run_target(&RunEvent::Completed {
+                conclusion: RunConclusion::Success
+            }),
+            RunStatus::Completed
+        );
+    }
+
+    #[test]
+    fn derive_job_target_all_variants() {
+        assert_eq!(
+            derive_job_target(&JobEvent::Queued {
+                labels: vec![],
+                steps: vec![]
+            }),
+            JobStatus::Queued
+        );
+        assert_eq!(
+            derive_job_target(&JobEvent::Waiting {
+                labels: vec![],
+                steps: vec![]
+            }),
+            JobStatus::Waiting
+        );
+        assert_eq!(
+            derive_job_target(&JobEvent::InProgress {
+                runner: None,
+                labels: vec![],
+                steps: vec![]
+            }),
+            JobStatus::InProgress
+        );
+        assert_eq!(
+            derive_job_target(&JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: None,
+                labels: vec![],
+                steps: vec![]
+            }),
+            JobStatus::Completed
+        );
     }
 }
