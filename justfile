@@ -101,7 +101,8 @@ check:
 	wait $pid5 || fail=1
 	exit $fail
 
-# Run all tests (parallel)
+# Run all tests (parallel). Requires Docker or OrbStack — backend uses testcontainers for ephemeral PostgreSQL.
+# macOS/OrbStack: export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
 test:
 	#!/usr/bin/env bash
 	set -euo pipefail

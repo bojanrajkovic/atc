@@ -3,8 +3,9 @@
 ## Prerequisites
 
 - **[mise](https://mise.jdx.dev)** — Polyglot version manager. Installs and manages all tool versions.
+- **[Docker](https://www.docker.com)** (or **[OrbStack](https://orbstack.dev)** on macOS) — Required to run `just test`. The backend test suite uses [testcontainers](https://testcontainers.com) to boot ephemeral PostgreSQL instances. If Docker is unavailable, testcontainers tests fail loudly (they do not silently skip).
 
-All other tools (Rust, Node.js, pnpm, just, lefthook) are provisioned automatically by mise from `.mise.toml`.
+All other tools (Rust, Node.js, pnpm, just, lefthook, sqlx-cli) are provisioned automatically by mise from `.mise.toml`.
 
 ## Getting Started
 
@@ -33,6 +34,18 @@ All commands go through the `just` task runner:
 | `just test` | Run all tests |
 | `just dev` | Start development servers |
 | `just build` | Production build |
+
+## Running Tests
+
+```bash
+just test    # Runs all tests (requires Docker or OrbStack)
+```
+
+**macOS / OrbStack users:** testcontainers-rs needs `DOCKER_HOST` pointed at OrbStack's socket. Export this in any shell that runs `just test`:
+
+```bash
+export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
+```
 
 ## Commit Conventions
 
