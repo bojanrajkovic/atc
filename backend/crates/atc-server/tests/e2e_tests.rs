@@ -42,7 +42,6 @@ async fn start_test_server() -> SocketAddr {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
 
     let main_router = routes::api_routes(layer.clone())

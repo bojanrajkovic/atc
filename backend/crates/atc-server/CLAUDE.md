@@ -1,22 +1,22 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-04 (Phase 2c: outbox migration, txn helpers, pg metrics rename)
+Last verified: 2026-05-04 (Phase 2c: drop pg_store from AppState; webhook handler uses pg_pool directly)
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
 ## Purpose
 
-Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. **Phase 2b:** Adds PostgreSQL shadow writes via `PgStore` — events are written durably to PG in parallel with in-memory mutations, with drift observability via Prometheus counters.
+Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. **Phase 2c:** PostgreSQL writes are driven directly via `AppState.pg_pool` (`&PgPool`) in the webhook handler; the `PgStore` wrapper is retained in `persist.rs` for use by `tests/persist_pg_tests.rs` but is no longer mounted in `AppState`.
 
 ## Modules
 
 | Module | Role |
 |--------|------|
-| `main` | Server entry point, config loading, AppState creation, router setup, eviction task lifecycle; instantiates PgStore from pool (Phase 2b) |
+| `main` | Server entry point, config loading, AppState creation, router setup, eviction task lifecycle; connects pool and stores it in AppState.pg_pool |
 | `config` | figment-based Config struct, GitHubConfig with webhook_secret, Config::load() |
 | `db` | `init_pool(url)` — connects sqlx PgPool and runs embedded migrations; extracted from main so it is testable as library code |
-| `routes` | HTTP route handlers: `POST /v1/webhooks/github`, `GET /v1/state`, `GET /v1/ws`, health/ready probes; webhook handler dual-write flow outside seq mutex (Phase 2b) |
-| `state` | AppState struct (now includes `pg_store`), SeqEvent type (sidecar contract documented in `docs/architecture/backend-server.md` § SeqEvent Sidecar Contract) |
+| `routes` | HTTP route handlers: `POST /v1/webhooks/github`, `GET /v1/state`, `GET /v1/ws`, health/ready probes; webhook handler writes to in-memory store and broadcasts SeqEvent under seq mutex |
+| `state` | AppState struct (fields: `store`, `webhook_tx`, `webhook_secret`, `seq`, `pg_pool`), SeqEvent type (sidecar contract documented in `docs/architecture/backend-server.md` § SeqEvent Sidecar Contract) |
 | `ws` | WebSocket upgrade handler, broadcast subscription, SeqEvent serialization and push |
 | `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
 | `metrics` | Prometheus layer, build_info gauge, process collector, PG write counter registration (`register_pg_write_counters`) (Phase 2b/2c) |
@@ -38,12 +38,11 @@ Generated types are written to `frontend/src/lib/types/generated/` via `just typ
 
 These rules are enforced by implementation and verified by tests:
 
-- **Webhook ingestion:** HMAC-SHA256 verification (when secret configured), parse via atc-github, apply to in-memory store, broadcast SeqEvent, return 200 always in shadow mode (Phase 2b)
+- **Webhook ingestion:** HMAC-SHA256 verification (when secret configured), parse via atc-github, apply to in-memory store, broadcast SeqEvent, return 200 always.
 - **Seq ordering:** `Mutex<u64>` held across in-memory store mutation + seq assignment in the webhook handler, ensuring WS event seq order matches commit order. Strictly monotonic with no gaps. Resets on server restart.
 - **Broadcast semantics:** Bounded channel (capacity 256) means slow subscribers may miss events. LaggingError logs warning but does not disconnect. Broadcast happens under the seq mutex so state_handler never advertises a cursor for events that haven't been broadcast yet.
 - **State snapshot:** `Mutex<u64>` held across snapshot + seq read in the state handler, ensuring the cursor matches the snapshot content. StateSnapshot.seq is the next seq to assign; all events with seq < N are reflected in snapshot.
-- **Shadow PG writes (Phase 2b):** After releasing the seq mutex, the handler shadow-writes captured envelopes to PgStore outside the mutex (so PG latency doesn't block concurrent webhooks). Both in-memory and PG must apply the same state transition rule (predecessors_of), so divergence is observable (via parity counter) but not a logical error.
-- **PG write failures (Phase 2b/2c):** Classified as parity (0 rows affected → WHERE predicate rejected) or transient (sqlx error). Increments `atc_pg_write_failures_total` counter with appropriate `kind` label. Failures do not fail the webhook (shadow mode).
+- **PG access:** `AppState.pg_pool` is `Option<sqlx::PgPool>`. `Some(pool)` when `ATC_DATABASE_URL` is configured; `None` in in-memory-only mode. The webhook handler uses `&pool` directly for PG writes (Phase 2c); `PgStore` is no longer mounted in AppState.
 - **WebSocket:** Clients connect and receive SeqEvent stream in real time. Disconnection is clean (no crash, no effect on other clients)
 - **Config:** ATC_GITHUB__WEBHOOK_SECRET loads webhook_secret. If None, HMAC verification skipped
 

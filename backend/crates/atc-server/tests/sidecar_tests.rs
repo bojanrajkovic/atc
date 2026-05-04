@@ -152,7 +152,6 @@ async fn job_event_produces_populated_sidecar_equal_to_pool_stats_after_apply() 
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
@@ -245,7 +244,6 @@ async fn successive_job_events_evolve_sidecar_state() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
@@ -377,7 +375,6 @@ async fn run_event_produces_none_sidecar() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
@@ -436,7 +433,6 @@ async fn failed_job_transition_produces_no_broadcast() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())

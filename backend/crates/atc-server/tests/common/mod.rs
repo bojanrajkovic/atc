@@ -37,7 +37,6 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         webhook_secret: Some(secret.to_string()),
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -59,7 +58,6 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None,
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())

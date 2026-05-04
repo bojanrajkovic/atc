@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
-use atc_server::persist::PgStore;
 use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -99,15 +98,12 @@ fn build_app_with_pg(
         Duration::from_secs(3600),
     ));
     let (webhook_tx, rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    let pg_store: Arc<dyn atc_core::PersistentStore + Send + Sync> =
-        Arc::new(PgStore::new(pool.clone()));
     let app_state = Arc::new(AppState {
         store,
         webhook_tx,
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: Some(pool),
-        pg_store: Some(pg_store),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -375,7 +371,6 @@ async fn in_memory_mode_behavioral_invariance() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
-        pg_store: None, // No PG — type-level proof that no DB calls occur
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -395,10 +390,6 @@ async fn in_memory_mode_behavioral_invariance() {
     // In-memory snapshot should reflect the event
     let snap = app_state.store.snapshot().await;
     assert_eq!(snap.0.runs.len(), 1, "run should be in-memory");
-    assert!(
-        app_state.pg_store.is_none(),
-        "pg_store is None — no DB attempt"
-    );
 }
 
 // ---------------------------------------------------------------------------

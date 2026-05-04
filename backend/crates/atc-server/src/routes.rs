@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use atc_core::PersistError;
-use atc_core::event::{JobEventEnvelope, RunEventEnvelope};
 use axum::{
     Json, Router,
     body::Bytes,
@@ -17,13 +15,6 @@ use atc_github::{ParseResult, parse_webhook, verify_signature};
 
 use crate::state::{AppState, SeqEvent};
 use crate::ws;
-
-/// The pending PG write captured after a successful in-memory apply.
-/// Held outside the seq mutex so the envelope is available for PG I/O.
-enum PgWrite {
-    Run(RunEventEnvelope),
-    Job(JobEventEnvelope),
-}
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -195,10 +186,6 @@ async fn webhook_handler(
             // does not block concurrent webhooks or GET /v1/state.
             let mut seq_guard = state.seq.lock().await;
 
-            // Capture the envelope for PG write outside the mutex.
-            // None = in-memory apply failed; skip PG entirely.
-            let mut pg_write: Option<PgWrite> = None;
-
             // Outer Option: Some(...) = apply succeeded and we should broadcast;
             //               None = apply failed, skip broadcast (AC1.5).
             // Inner Option in Some(...): Some(vec) for Job events (AC1.1),
@@ -206,10 +193,7 @@ async fn webhook_handler(
             let pool_stats_after: Option<Option<Vec<atc_core::RunnerPoolStats>>> = match &*event {
                 atc_github::WebhookEvent::Run(envelope) => {
                     match state.store.apply_run_event(envelope.clone()).await {
-                        Ok(_) => {
-                            pg_write = Some(PgWrite::Run(envelope.clone()));
-                            Some(None)
-                        }
+                        Ok(_) => Some(None),
                         Err(e) => {
                             tracing::warn!(error = %e, "store run transition warning");
                             None
@@ -218,10 +202,7 @@ async fn webhook_handler(
                 }
                 atc_github::WebhookEvent::Job(envelope) => {
                     match state.store.apply_job_event(envelope.clone()).await {
-                        Ok(_) => {
-                            pg_write = Some(PgWrite::Job(envelope.clone()));
-                            Some(Some(state.store.pool_stats().await))
-                        }
+                        Ok(_) => Some(Some(state.store.pool_stats().await)),
                         Err(e) => {
                             tracing::warn!(error = %e, "store job transition warning");
                             None
@@ -253,41 +234,7 @@ async fn webhook_handler(
                 tracing::info!(event_type, "event accepted (transition already applied)");
             }
 
-            // Drop the seq mutex BEFORE PG I/O. This is the critical invariant:
-            // PG latency must not block concurrent webhooks or GET /v1/state.
             drop(seq_guard);
-
-            // Shadow PG write — outside the mutex. Only runs if in-memory succeeded.
-            if let (Some(pgw), Some(pg_store)) = (pg_write, &state.pg_store) {
-                let pg_result = match pgw {
-                    PgWrite::Run(env) => pg_store.apply_run_event(env).await,
-                    PgWrite::Job(env) => pg_store.apply_job_event(env).await,
-                };
-                match pg_result {
-                    Ok(()) => {}
-                    Err(PersistError::InvalidTransition) => {
-                        // In-memory accepted but PG rejected: predecessor sets diverged.
-                        // Page-worthy in production — the two stores disagree.
-                        metrics::counter!(
-                            "atc_pg_write_failures_total",
-                            "kind" => "parity"
-                        )
-                        .increment(1);
-                        tracing::warn!(
-                            "shadow PG write parity failure: PG rejected a transition in-memory accepted"
-                        );
-                    }
-                    Err(PersistError::Backend(e)) => {
-                        // sqlx error: network, pool exhaustion, etc.
-                        metrics::counter!(
-                            "atc_pg_write_failures_total",
-                            "kind" => "transient"
-                        )
-                        .increment(1);
-                        tracing::error!(error = %e, "shadow PG write transient failure");
-                    }
-                }
-            }
 
             (
                 StatusCode::OK,
