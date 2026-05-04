@@ -146,11 +146,44 @@ impl RunStatus {
             }),
         }
     }
+
+    /// Returns the set of statuses that can validly transition to `target`,
+    /// inclusive of `target` itself (so same-status replay is admitted).
+    /// Consistent with `transition_to` — verified by property test.
+    #[must_use]
+    pub fn predecessors_of(target: Self) -> &'static [Self] {
+        match target {
+            Self::Queued => &[Self::Queued],
+            Self::InProgress => &[Self::Queued, Self::InProgress],
+            Self::Completed => &[Self::Queued, Self::InProgress, Self::Completed],
+        }
+    }
+}
+
+#[cfg(test)]
+mod arb {
+    use super::RunStatus;
+    use proptest::prelude::*;
+
+    impl Arbitrary for RunStatus {
+        type Parameters = ();
+        type Strategy = proptest::strategy::BoxedStrategy<Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            prop_oneof![
+                Just(RunStatus::Queued),
+                Just(RunStatus::InProgress),
+                Just(RunStatus::Completed),
+            ]
+            .boxed()
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_workflow_run_fields() {
@@ -369,5 +402,52 @@ mod tests {
     fn test_run_transition_completed_to_completed_idempotent() {
         let result = RunStatus::Completed.transition_to(RunStatus::Completed);
         assert_eq!(result, Ok(RunStatus::Completed));
+    }
+
+    // predecessors_of: one assertion per (target, expected-slice) pair
+    #[test]
+    fn test_predecessors_of_queued() {
+        assert_eq!(
+            RunStatus::predecessors_of(RunStatus::Queued),
+            &[RunStatus::Queued]
+        );
+    }
+
+    #[test]
+    fn test_predecessors_of_in_progress() {
+        assert_eq!(
+            RunStatus::predecessors_of(RunStatus::InProgress),
+            &[RunStatus::Queued, RunStatus::InProgress]
+        );
+    }
+
+    #[test]
+    fn test_predecessors_of_completed() {
+        assert_eq!(
+            RunStatus::predecessors_of(RunStatus::Completed),
+            &[
+                RunStatus::Queued,
+                RunStatus::InProgress,
+                RunStatus::Completed
+            ]
+        );
+    }
+
+    // Proptest: from.transition_to(to).is_ok() ⟺ predecessors_of(to).contains(&from)
+    proptest! {
+        #[test]
+        fn prop_predecessors_of_consistent_with_transition_to(
+            from: RunStatus,
+            to: RunStatus,
+        ) {
+            let transition_ok = from.transition_to(to).is_ok();
+            let in_predecessors = RunStatus::predecessors_of(to).contains(&from);
+            prop_assert_eq!(
+                transition_ok,
+                in_predecessors,
+                "from={:?} to={:?}: transition_to={} predecessors={}",
+                from, to, transition_ok, in_predecessors
+            );
+        }
     }
 }
