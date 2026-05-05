@@ -46,3 +46,23 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: ATC_DATABASE_LISTENER_URL
+
+  - it: existingSecret path wins over config.databaseListenerUrl when both are set
+    set:
+      existingSecret.name: atc-db-secret
+      existingSecret.databaseListenerUrlKey: listener-db-url
+      config.databaseListenerUrl: "postgres://listener:pw@pg:5432/atc"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_LISTENER_URL
+            valueFrom:
+              secretKeyRef:
+                name: atc-db-secret
+                key: listener-db-url
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_LISTENER_URL
+            value: "postgres://listener:pw@pg:5432/atc"

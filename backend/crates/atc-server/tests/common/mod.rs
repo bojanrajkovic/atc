@@ -154,6 +154,30 @@ pub struct AppFixture {
 /// the first unconditional pass has run, so tests can capture a stable
 /// baseline.
 pub async fn build_app_with_pg_and_listener(pool: sqlx::PgPool, db_url: String) -> AppFixture {
+    build_app_inner(pool, db_url, None).await
+}
+
+/// Build a full fixture identical to [`build_app_with_pg_and_listener`] but
+/// with an artificial per-pass sleep injected into the drain task.
+///
+/// Passing a `drain_delay` makes each drain pass sleep for that duration before
+/// querying the outbox, ensuring that NOTIFYs fired during an in-flight pass
+/// arrive while the drain is still sleeping. This forces coalescing to be
+/// observable in AC7.
+pub async fn build_app_with_pg_and_slow_drain(
+    pool: sqlx::PgPool,
+    db_url: String,
+    drain_delay: Duration,
+) -> AppFixture {
+    build_app_inner(pool, db_url, Some(drain_delay)).await
+}
+
+/// Shared implementation for both fixture builders.
+async fn build_app_inner(
+    pool: sqlx::PgPool,
+    db_url: String,
+    drain_delay: Option<Duration>,
+) -> AppFixture {
     use std::sync::atomic::Ordering;
 
     let layer = PROMETHEUS_INIT
@@ -209,6 +233,7 @@ pub async fn build_app_with_pg_and_listener(pool: sqlx::PgPool, db_url: String) 
         shutdown.clone(),
         Some(observed_passes.clone()),
         Some(drain_started.clone()),
+        drain_delay,
     );
 
     // Wait for the first drain pass to complete so the fixture is stable.
