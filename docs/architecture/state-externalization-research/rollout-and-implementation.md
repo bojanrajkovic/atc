@@ -104,11 +104,12 @@ In scope:
 - Add `ATC_DATABASE_LISTENER_URL` config option that defaults to `ATC_DATABASE_URL` if unset — **DONE** (IMPLEMENTED in Phase 2d)
 - Listener task in `atc-server` runs the level-triggered drain loop (per `overlap-and-forwarding.md` pseudocode) — but instead of forwarding to WS clients, it just logs received notifications and the rows it would have fetched — **DONE**
 - Tests verify NOTIFY fires after commit and the listener task receives it — **DONE**
-- Tests verify wake-up coalescing (multiple notifications during a drain produce one extra pass, not concurrent fetches) — **DONE**
+- Tests verify drain task fetches outbox rows and advances watermark — **partially covered** (AC6: watermark-advancement assertion is weaker than spec; AC13: pre-seeded-row zero-fetch assertion is partially complete — follow-up tightening in progress on the same branch)
+- Tests verify wake-up coalescing (multiple notifications during a drain produce one extra pass, not concurrent fetches) — **partially covered** (AC7: bounds check is `<= 6` rather than the spec's `[2, 3]` — follow-up tightening in progress on the same branch)
 - Helm chart wired: `config.databaseListenerUrl` (plain value) and `existingSecret.databaseListenerUrlKey` (secret key ref); existingSecret path wins when both are set — **DONE**
 - Documentation updated: `docs/architecture/backend-server.md`, `docs/architecture/deployment.md`, `backend/crates/atc-server/CLAUDE.md`, this file, ADR 0002 — **DONE**
 
-Acceptance: an integration test that fires N webhooks and confirms the listener observes N notifications and would have fetched all N outbox rows in seq order. **SATISFIED.**
+Acceptance: an integration test that fires N webhooks and confirms the listener observes N notifications and would have fetched all N outbox rows in seq order. **PARTIALLY SATISFIED** — AC1, AC2, AC4, AC5, AC8, AC12 are fully covered; AC6, AC7, and AC13 have weaker-than-spec assertions with follow-up tightening in progress on the same branch.
 
 ADR refs: [ADR 0002 Decision 3](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (NOTIFY + connection-pool compatibility), [ADR 0002 Decision 5](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (forwarder design including startup watermark).
 

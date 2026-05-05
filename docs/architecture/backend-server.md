@@ -250,7 +250,7 @@ Five counters added in Phase 2d for the listener/drain pipeline:
 
 | Counter | Description |
 |---------|-------------|
-| `atc_pg_notify_emitted_total{kind}` | Incremented each time `pg_notify('atc_outbox', seq::text)` is called inside a webhook transaction. `kind` matches the event discriminator (`run` or `job`). |
+| `atc_pg_notify_emitted_total{kind}` | Incremented in the webhook route handler after `tx.commit()` succeeds (the `pg_notify` call is emitted inside the transaction before commit, but the metric increment happens post-commit in the handler). `kind` matches the event discriminator (`run` or `job`). |
 | `atc_pg_notify_received_total` | Incremented each time the listener task receives a NOTIFY from PG. |
 | `atc_pg_listener_recv_errors_total` | Incremented each time the listener task encounters a receive error (e.g., connection drop during reconnect window). |
 | `atc_pg_drain_passes_total` | Incremented each time the drain task wakes up and executes a fetch pass (whether or not any rows are returned). |
@@ -329,8 +329,8 @@ The `pool_stats_after` field carries a snapshot of the runner pool state taken u
      - Call `pool.begin()` to open a transaction. On failure → 503, drop mutex.
      - Call `persist::upsert_run_in_txn` or `persist::upsert_job_in_txn` inside the transaction. On `PersistError::InvalidTransition` → 200 `{"status":"rejected"}` (auto-rollback, increment `atc_pg_write_failures_total{kind="parity"}`). On `PersistError::Backend` → 503 (increment `kind="transient"`).
      - Call `persist::insert_outbox_run_in_txn` or `persist::insert_outbox_job_in_txn` in the same transaction. On failure, same error path as above.
-     - Emit `SELECT pg_notify('atc_outbox', seq::text)` inside the same transaction before commit. PG queues the NOTIFY and delivers it to all listeners on COMMIT; an aborted transaction silently drops the notification. Metric: `atc_pg_notify_emitted_total{kind}`.
-     - `tx.commit()`. On failure → 503 `{"status":"database commit failed"}`, increment `kind="transient"`.
+     - Emit `SELECT pg_notify('atc_outbox', seq::text)` inside the same transaction before commit. PG queues the NOTIFY and delivers it to all listeners on COMMIT; an aborted transaction silently drops the notification.
+     - `tx.commit()`. On failure → 503 `{"status":"database commit failed"}`, increment `kind="transient"`. On success, increment `atc_pg_notify_emitted_total{kind}` (the metric reflects a durable committed notification, not just the in-transaction call site).
      - **After commit:** apply to in-memory store under the same mutex. If in-memory apply fails after PG committed, increment `atc_pg_in_memory_drift_total`, log warning, skip broadcast. Return 200.
    - **`None` — In-memory-only path:** Apply the parsed event directly to the in-memory store via `store.apply_run_event()` or `store.apply_job_event()`. If the transition is invalid, log warning and skip broadcast (no SeqEvent emitted for rejected transitions).
 6. On successful apply (either path): increment `seq` by 1, broadcast a `SeqEvent { seq, event, pool_stats_after }` to the webhook channel (still under the mutex).
@@ -446,7 +446,7 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`) (Phase 2b/2c)
 - `backend/crates/atc-server/src/persist.rs` — `PgStore` struct implementing `PersistentStore` (used in `tests/persist_pg_tests.rs`); `pub(crate)` transaction helpers for UPSERT+outbox pattern used by webhook handler (Phase 2c)
-- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `start_listener_task` (receives notifications, fires `Arc<Notify>`) and `start_drain_task` (wakes on notify, fetches outbox rows by `seq > watermark ORDER BY seq`, logs, advances watermark). Spawned only when `pg_pool` is `Some`. (Phase 2d)
+- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify, fetches outbox rows by `seq > watermark ORDER BY seq`, logs, advances watermark). Spawned only when `pg_pool` is `Some`. (Phase 2d)
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/crates/atc-server/migrations/0002_outbox.sql` — Outbox table: `BIGSERIAL seq` PK, `kind` discriminator, `run_id`/`job_id`, `payload JSONB` (domain event envelope), `inserted_at TIMESTAMPTZ`; `outbox_run_idx` on `run_id`

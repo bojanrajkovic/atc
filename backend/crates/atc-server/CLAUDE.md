@@ -57,7 +57,7 @@ cargo clippy -p atc-server -- -D warnings
 cargo test -p atc-server --test e2e_tests  # 3 full-stack e2e tests
 ```
 
-**Docker required:** The PG-backed tier (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`) uses testcontainers to boot ephemeral PostgreSQL instances. `cargo test -p atc-server` (and `just test`) require Docker or OrbStack to be running.
+**Docker required:** The PG-backed tier (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`, `notify_listener_tests`) uses testcontainers to boot ephemeral PostgreSQL instances. `cargo test -p atc-server` (and `just test`) require Docker or OrbStack to be running.
 
 macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` before running tests.
 
@@ -65,7 +65,7 @@ Test organization by tier:
 
 - **Route-level oneshot tests** (`config_tests`, `routes_tests`, `webhook_hmac_tests`, `webhook_ingestion_tests`, `metrics`, `metrics_router_isolation`, `sidecar_tests`, `state_tests`) — Use tower's `oneshot()` to send requests directly through the router without binding a network port. Isolate endpoint behavior.
 - **Full-stack ephemeral tests** (`e2e_tests`, `ws_tests`) — Start an ephemeral TcpListener on 127.0.0.1:0, spawn a real server, send HTTP/WebSocket clients through real network I/O. Verify end-to-end flows.
-- **PG-backed integration tests** (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`) — Boot ephemeral Postgres via testcontainers, mount the router with a real `pg_pool: Some(pool)`, and exercise the transactional outbox path end-to-end (Phase 2b/2c). `outbox_tests.rs` covers the 11 Phase 2c outbox ACs; `transactional_writes_tests.rs` covers the inverted-from-shadow behavioral contract (PG-failure → 503, transactional atomicity, no drift tolerated).
+- **PG-backed integration tests** (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`, `notify_listener_tests`) — Boot ephemeral Postgres via testcontainers, mount the router with a real `pg_pool: Some(pool)`, and exercise the transactional outbox path end-to-end (Phase 2b/2c/2d). `outbox_tests.rs` covers the 11 Phase 2c outbox ACs; `transactional_writes_tests.rs` covers the inverted-from-shadow behavioral contract (PG-failure → 503, transactional atomicity, no drift tolerated); `notify_listener_tests.rs` covers Phase 2d LISTEN/NOTIFY AC1–AC13 and follows the same testcontainers + `#[serial]` pattern.
 
 **Concurrency requirement:** Tests using `PrometheusMetricLayer::pair()` must be marked with `#[serial_test::serial]` because the PrometheusBuilder global recorder can only be installed once per binary. The `PROMETHEUS_INIT` OnceLock in `tests/common/mod.rs` ensures this is called exactly once and reused across tests.
 
