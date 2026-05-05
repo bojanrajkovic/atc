@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
+use atc_github::ParseResult;
 use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -23,6 +24,7 @@ use std::sync::OnceLock;
 use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
+use tokio::sync::broadcast::error::TryRecvError;
 use tower::ServiceExt;
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,23 @@ fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
     for line in metrics_body.lines() {
         if line.starts_with("atc_pg_write_failures_total")
             && line.contains(&needle)
+            && let Some(value_str) = line.split_whitespace().last()
+        {
+            return value_str.parse::<u64>().unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// Parse an unlabeled counter (no `{...}` label set) from Prometheus text output.
+/// Matches lines where the metric name is followed immediately by whitespace.
+fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
+    for line in metrics_body.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with(name)
+            && line[name.len()..].starts_with(char::is_whitespace)
             && let Some(value_str) = line.split_whitespace().last()
         {
             return value_str.parse::<u64>().unwrap_or(0);
@@ -443,6 +462,8 @@ async fn phase_2c_outbox_ac2_2_bigserial_gap_property() {
 /// predecessors_of(Completed) for jobs = [InProgress, Completed].
 /// Queued → Completed is therefore invalid (Queued is not a predecessor of Completed for jobs).
 /// The transaction rolls back; no new outbox row is written.
+///
+/// Also satisfies AC5.2
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
@@ -787,4 +808,302 @@ async fn phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event() {
             other => panic!("unexpected outbox kind: {other}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// AC3.3 — Post-commit in-memory drift returns 200, increments drift counter
+// ---------------------------------------------------------------------------
+
+/// AC3.3: PG commits but in-memory apply rejects the same transition (drift).
+///
+/// The handler returns 200/processed for the first (seeding) webhook. Then we
+/// directly advance the in-memory store past the state PG still holds, so the
+/// next webhook succeeds in PG but finds in-memory already at a terminal state.
+/// The drift counter must increment; no SeqEvent is broadcast for the drifting
+/// webhook; the write-failure counters are unchanged.
+///
+/// Drift scenario in detail:
+///   1. Fire workflow_run.requested → both PG and in-memory: Queued.
+///   2. Directly apply workflow_run.in_progress to in-memory only (bypass handler).
+///   3. Directly apply workflow_run.completed to in-memory only (bypass handler).
+///      Now: in-memory = Completed, PG = Queued.
+///   4. Fire workflow_run.in_progress → PG: Queued→InProgress (valid, commits).
+///      In-memory: Completed→InProgress invalid (Completed not in
+///      predecessors_of(InProgress)) → drift counter increments, no broadcast.
+///   5. Assert: HTTP 200, no SeqEvent on rx, drift counter +1, no write-failure bump.
+#[tokio::test]
+#[serial_test::serial]
+async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_counter() {
+    // Ensure counters are registered before baseline snapshot.
+    atc_server::metrics::register_pg_write_counters();
+
+    let (pool, _c) = start_pg().await;
+    let (app, app_state, mut rx) = build_app_with_pg(pool.clone());
+
+    let before = render_metrics().await;
+    let baseline_drift = parse_unlabeled_counter(&before, "atc_pg_in_memory_drift_total");
+    let baseline_parity = parse_counter_value(&before, "parity");
+    let baseline_transient = parse_counter_value(&before, "transient");
+
+    // Step 1: Fire workflow_run.requested → PG and in-memory both reach Queued.
+    let (status, json) = post_webhook(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_requested(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "processed");
+
+    // Drain the SeqEvent that was broadcast for the seeding webhook.
+    let _seed_event = rx.recv().await.expect("must receive seeding SeqEvent");
+
+    // Step 2+3: Advance in-memory store to Completed directly, bypassing the handler.
+    // This puts in-memory ahead of PG (in-memory=Completed, PG=Queued).
+    let in_progress_fixture = common::fixture_workflow_run_in_progress();
+    let in_progress_parse = atc_github::parse_webhook("workflow_run", &in_progress_fixture)
+        .expect("fixture must parse");
+    let in_progress_env = match in_progress_parse {
+        ParseResult::Parsed(ev) => match *ev {
+            atc_github::WebhookEvent::Run(env) => env,
+            _ => panic!("expected Run event from in_progress fixture"),
+        },
+        ParseResult::Skipped { .. } => panic!("in_progress fixture must not be skipped"),
+    };
+    app_state
+        .store
+        .apply_run_event(in_progress_env)
+        .await
+        .expect("direct in-memory apply (InProgress) must succeed from Queued");
+
+    let completed_fixture = common::fixture_workflow_run_completed();
+    let completed_parse =
+        atc_github::parse_webhook("workflow_run", &completed_fixture).expect("fixture must parse");
+    let completed_env = match completed_parse {
+        ParseResult::Parsed(ev) => match *ev {
+            atc_github::WebhookEvent::Run(env) => env,
+            _ => panic!("expected Run event from completed fixture"),
+        },
+        ParseResult::Skipped { .. } => panic!("completed fixture must not be skipped"),
+    };
+    app_state
+        .store
+        .apply_run_event(completed_env)
+        .await
+        .expect("direct in-memory apply (Completed) must succeed from InProgress");
+
+    // Sanity: in-memory is now Completed; PG still has Queued.
+    let pg_status: String = sqlx::query_scalar("SELECT status FROM runs LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        pg_status, "Queued",
+        "PG must still be Queued before trigger webhook"
+    );
+
+    // Step 4: Fire workflow_run.in_progress through the handler.
+    // PG: Queued→InProgress (valid, will commit).
+    // In-memory: Completed→InProgress invalid → drift → no broadcast.
+    let (status, json) = post_webhook(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_in_progress(),
+    )
+    .await;
+
+    // AC3.3: handler must return 200/processed even on drift.
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "drift must return 200, not an error status"
+    );
+    assert_eq!(
+        json["status"], "processed",
+        "drift must return processed (PG committed)"
+    );
+
+    // No SeqEvent must have been broadcast for the drifting webhook.
+    match rx.try_recv() {
+        Err(TryRecvError::Empty) => {
+            // Correct — no broadcast on drift.
+        }
+        Ok(ev) => panic!("must not receive SeqEvent on drift; got seq={}", ev.seq),
+        Err(TryRecvError::Lagged(_)) => panic!("receiver lagged — channel capacity too small"),
+        Err(TryRecvError::Closed) => panic!("broadcast channel closed unexpectedly"),
+    }
+
+    // Drift counter must have incremented by exactly 1.
+    let after = render_metrics().await;
+    let after_drift = parse_unlabeled_counter(&after, "atc_pg_in_memory_drift_total");
+    assert_eq!(
+        after_drift,
+        baseline_drift + 1,
+        "drift counter must increment by 1; metrics:\n{after}"
+    );
+
+    // Write-failure counters must not have changed (drift is not a PG failure).
+    assert_eq!(
+        parse_counter_value(&after, "parity"),
+        baseline_parity,
+        "parity counter must not increment on drift"
+    );
+    assert_eq!(
+        parse_counter_value(&after, "transient"),
+        baseline_transient,
+        "transient counter must not increment on drift"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AC4 — Broadcast order matches durable outbox.seq order
+// ---------------------------------------------------------------------------
+
+/// AC4.1: For a single-run state-machine sequence (Requested → InProgress → Completed),
+/// the SeqEvent broadcast order matches the outbox.seq order.
+///
+/// The seq mutex serializes all three webhooks. We fire them sequentially and
+/// verify that the seq values in the outbox are strictly increasing and that
+/// the broadcast SeqEvent seqs match 0, 1, 2 in order.
+#[tokio::test]
+#[serial_test::serial]
+async fn phase_2c_outbox_ac4_1_concurrent_same_run_broadcast_matches_durable_order() {
+    let (pool, _c) = start_pg().await;
+    let (app, _state, mut rx) = build_app_with_pg(pool.clone());
+
+    // Fire Requested → InProgress → Completed for the same run sequentially.
+    // The seq mutex ensures each fires atomically; all three must commit in order.
+    post_webhook(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_requested(),
+    )
+    .await;
+    post_webhook(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_in_progress(),
+    )
+    .await;
+    post_webhook(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_completed(),
+    )
+    .await;
+
+    // Collect 3 SeqEvents from the broadcast channel in arrival order.
+    let mut broadcast_seqs: Vec<u64> = Vec::new();
+    for _ in 0..3 {
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("timed out waiting for SeqEvent")
+            .expect("broadcast channel closed unexpectedly");
+        broadcast_seqs.push(ev.seq);
+    }
+
+    // Broadcast seqs must be 0, 1, 2 in order (strictly increasing).
+    assert_eq!(
+        broadcast_seqs,
+        vec![0, 1, 2],
+        "SeqEvent broadcast order must be 0, 1, 2 for Requested→InProgress→Completed"
+    );
+
+    // All three outbox rows belong to the same run; run_id must match fixture.
+    let outbox_run_ids: Vec<i64> = sqlx::query_scalar("SELECT run_id FROM outbox ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(outbox_run_ids.len(), 3, "must have exactly 3 outbox rows");
+    let fixture_run_id = 24290980517i64;
+    for (i, &run_id) in outbox_run_ids.iter().enumerate() {
+        assert_eq!(
+            run_id, fixture_run_id,
+            "outbox row {i}: run_id must match fixture"
+        );
+    }
+
+    // Seq values in the outbox must be strictly increasing.
+    let outbox_seqs: Vec<i64> = sqlx::query_scalar("SELECT seq FROM outbox ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    for window in outbox_seqs.windows(2) {
+        assert!(
+            window[1] > window[0],
+            "outbox seq values must be strictly increasing: {} > {} failed",
+            window[1],
+            window[0]
+        );
+    }
+}
+
+/// AC4.2: For N webhooks targeting N different run_ids fired sequentially,
+/// the SeqEvent broadcast order matches the outbox.seq order.
+///
+/// Uses four fixture bodies, each mutated to carry a distinct run_id.
+/// The seq mutex guarantees that whichever order they commit, broadcast
+/// matches durable outbox.seq — the invariant the mutex is designed to enforce.
+#[tokio::test]
+#[serial_test::serial]
+async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durable_order() {
+    let (pool, _c) = start_pg().await;
+    let (app, _state, mut rx) = build_app_with_pg(pool.clone());
+
+    // Build N=4 distinct workflow_run.requested bodies by mutating the fixture run_id.
+    // The fixture has `workflow_run.id` as the canonical run identifier.
+    let base_fixture: serde_json::Value =
+        serde_json::from_slice(&common::fixture_workflow_run_requested())
+            .expect("fixture must be valid JSON");
+
+    let run_ids: Vec<i64> = vec![10000000001, 10000000002, 10000000003, 10000000004];
+    let mut bodies: Vec<Vec<u8>> = Vec::new();
+    for &run_id in &run_ids {
+        let mut payload = base_fixture.clone();
+        payload["workflow_run"]["id"] = serde_json::json!(run_id);
+        bodies.push(serde_json::to_vec(&payload).expect("re-serialization must succeed"));
+    }
+
+    // Fire all N webhooks sequentially — the seq mutex serializes each one atomically,
+    // so broadcast order is determined by the order commits land.
+    for body in &bodies {
+        post_webhook(app.clone(), "workflow_run", body).await;
+    }
+
+    // Collect N SeqEvents from the broadcast channel in arrival order.
+    let mut broadcast_run_ids: Vec<i64> = Vec::new();
+    for _ in 0..run_ids.len() {
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("timed out waiting for SeqEvent")
+            .expect("broadcast channel closed unexpectedly");
+
+        // Extract run_id from the broadcasted event.
+        let run_id = match ev.event {
+            atc_github::WebhookEvent::Run(ref env) => env.run_id.0,
+            atc_github::WebhookEvent::Job(ref env) => env.run_id.0,
+        };
+        broadcast_run_ids.push(run_id);
+    }
+
+    // Query outbox for the N run_ids in durable commit order.
+    let outbox_run_ids: Vec<i64> = sqlx::query_scalar("SELECT run_id FROM outbox ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        outbox_run_ids.len(),
+        run_ids.len(),
+        "outbox must have exactly N rows"
+    );
+
+    // The invariant: broadcast order == durable outbox.seq order.
+    assert_eq!(
+        broadcast_run_ids, outbox_run_ids,
+        "broadcast run_id order must match outbox.seq order;\n\
+         broadcast={broadcast_run_ids:?}\n\
+         outbox   ={outbox_run_ids:?}"
+    );
 }

@@ -427,6 +427,8 @@ async fn parity_metric_increments_when_pg_rejects() {
 ///
 /// Unlike Phase 2b (shadow mode: 200 always, drift tolerated), Phase 2c returns 503
 /// on transient PG failure and does NOT apply the event to the in-memory store.
+///
+/// Satisfies AC3.2
 #[tokio::test]
 #[serial_test::serial]
 async fn transient_metric_increments_on_db_outage() {
