@@ -19,7 +19,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// The PG LISTEN/NOTIFY channel name used by the outbox.
-pub(crate) const NOTIFY_CHANNEL: &str = "atc_outbox";
+pub const NOTIFY_CHANNEL: &str = "atc_outbox";
 
 /// Connect a `PgListener`, subscribe to [`NOTIFY_CHANNEL`], and return it.
 ///
