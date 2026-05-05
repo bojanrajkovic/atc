@@ -71,6 +71,8 @@ just build    # Production build
 | Design plans | `docs/design-plans/` |
 | Pre-code design & research | `docs/ideation/` (architecture research, UI design, prototype, competitive analysis) |
 | Design system config | `.impeccable.md` |
+| Planning & design workflow | `docs/planning-workflow.md` |
+| Implementation guidance | `docs/implementation-guidance.md` |
 | Human workflows & conventions | `CONTRIBUTING.md` |
 | Doc enforcement mappings | `scripts/doc-mapping.sh` |
 
@@ -90,6 +92,7 @@ This project uses a five-layer documentation model with a strict non-duplication
 - **Non-duplication rule:** Each piece of documentation has exactly one canonical home. CLAUDE.md points to docs; it does not duplicate them.
 - **Slim CLAUDE.md in every domain directory:** Every subdirectory that represents a distinct domain (crates, frontend, helm chart, .github, etc.) must have a slim `CLAUDE.md` that states its purpose, points to canonical architecture docs, and provides domain-specific guidance. Do not duplicate architecture doc content — reference it. Follow the pattern established in `backend/crates/atc-core/CLAUDE.md`.
 - **AGENTS.md symlinks:** Every `CLAUDE.md` must have a corresponding `AGENTS.md` symlink (`ln -s CLAUDE.md AGENTS.md`) in the same directory. This ensures tools that look for either filename find the same content. Create both files together — never one without the other.
+- **Implementation reads the plan:** When starting implementation from a design plan in `docs/design-plans/`, read `docs/implementation-guidance.md` before writing any code.
 
 ## Commit Format
 
