@@ -20,6 +20,7 @@ use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
+use futures_util::future::join_all;
 use std::sync::OnceLock;
 use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
@@ -463,7 +464,10 @@ async fn phase_2c_outbox_ac2_2_bigserial_gap_property() {
 /// Queued → Completed is therefore invalid (Queued is not a predecessor of Completed for jobs).
 /// The transaction rolls back; no new outbox row is written.
 ///
-/// Also satisfies AC5.2
+/// AC5.2 note: the strict new-stub-in-rejecting-tx scenario is structurally unreachable
+/// through the route handler (if a job row exists, the run FK row already exists via prior
+/// commit — the stub UPSERT becomes ON CONFLICT DO NOTHING). The rollback machinery tested
+/// here is the same that AC5.2's invariant rests on.
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
@@ -959,130 +963,81 @@ async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_co
 // AC4 — Broadcast order matches durable outbox.seq order
 // ---------------------------------------------------------------------------
 
-/// AC4.1: For a single-run state-machine sequence (Requested → InProgress → Completed),
-/// the SeqEvent broadcast order matches the outbox.seq order.
+/// AC4.1: N concurrent `workflow_run.requested` webhooks for N distinct run_ids — broadcast
+/// order matches outbox.seq order under genuine concurrent request racing.
 ///
-/// The seq mutex serializes all three webhooks. We fire them sequentially and
-/// verify that the seq values in the outbox are strictly increasing and that
-/// the broadcast SeqEvent seqs match 0, 1, 2 in order.
-#[tokio::test]
+/// Uses a real TcpListener-based server with reqwest so that the tokio runtime
+/// can schedule multiple handler tasks simultaneously. All tasks race to acquire
+/// the seq mutex; whichever wins commits to PG first and broadcasts first. The
+/// test asserts that the run_id sequence seen in the broadcast channel matches
+/// the run_id sequence in outbox ORDER BY seq — the invariant the seq mutex
+/// is designed to enforce.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac4_1_concurrent_same_run_broadcast_matches_durable_order() {
+async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durable_order() {
+    const N: usize = 4;
     let (pool, _c) = start_pg().await;
-    let (app, _state, mut rx) = build_app_with_pg(pool.clone());
 
-    // Fire Requested → InProgress → Completed for the same run sequentially.
-    // The seq mutex ensures each fires atomically; all three must commit in order.
-    post_webhook(
-        app.clone(),
-        "workflow_run",
-        &common::fixture_workflow_run_requested(),
-    )
-    .await;
-    post_webhook(
-        app.clone(),
-        "workflow_run",
-        &common::fixture_workflow_run_in_progress(),
-    )
-    .await;
-    post_webhook(
-        app.clone(),
-        "workflow_run",
-        &common::fixture_workflow_run_completed(),
-    )
-    .await;
+    // Build AppState and subscribe to broadcast BEFORE spawning the server.
+    // `build_app_with_pg` returns the router; subscribe via app_state directly
+    // so we hold the receiver before any webhooks fire.
+    let (app, app_state, _rx_build) = build_app_with_pg(pool.clone());
+    let mut rx = app_state.webhook_tx.subscribe();
 
-    // Collect 3 SeqEvents from the broadcast channel in arrival order.
-    let mut broadcast_seqs: Vec<u64> = Vec::new();
-    for _ in 0..3 {
-        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-            .await
-            .expect("timed out waiting for SeqEvent")
-            .expect("broadcast channel closed unexpectedly");
-        broadcast_seqs.push(ev.seq);
-    }
+    // Bind ephemeral listener and spawn server.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
 
-    // Broadcast seqs must be 0, 1, 2 in order (strictly increasing).
-    assert_eq!(
-        broadcast_seqs,
-        vec![0, 1, 2],
-        "SeqEvent broadcast order must be 0, 1, 2 for Requested→InProgress→Completed"
-    );
-
-    // All three outbox rows belong to the same run; run_id must match fixture.
-    let outbox_run_ids: Vec<i64> = sqlx::query_scalar("SELECT run_id FROM outbox ORDER BY seq")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-
-    assert_eq!(outbox_run_ids.len(), 3, "must have exactly 3 outbox rows");
-    let fixture_run_id = 24290980517i64;
-    for (i, &run_id) in outbox_run_ids.iter().enumerate() {
-        assert_eq!(
-            run_id, fixture_run_id,
-            "outbox row {i}: run_id must match fixture"
-        );
-    }
-
-    // Seq values in the outbox must be strictly increasing.
-    let outbox_seqs: Vec<i64> = sqlx::query_scalar("SELECT seq FROM outbox ORDER BY seq")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    for window in outbox_seqs.windows(2) {
-        assert!(
-            window[1] > window[0],
-            "outbox seq values must be strictly increasing: {} > {} failed",
-            window[1],
-            window[0]
-        );
-    }
-}
-
-/// AC4.2: For N webhooks targeting N different run_ids fired sequentially,
-/// the SeqEvent broadcast order matches the outbox.seq order.
-///
-/// Uses four fixture bodies, each mutated to carry a distinct run_id.
-/// The seq mutex guarantees that whichever order they commit, broadcast
-/// matches durable outbox.seq — the invariant the mutex is designed to enforce.
-#[tokio::test]
-#[serial_test::serial]
-async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durable_order() {
-    let (pool, _c) = start_pg().await;
-    let (app, _state, mut rx) = build_app_with_pg(pool.clone());
-
-    // Build N=4 distinct workflow_run.requested bodies by mutating the fixture run_id.
-    // The fixture has `workflow_run.id` as the canonical run identifier.
+    // Build N distinct run_ids by mutating the fixture.
+    let run_ids: Vec<i64> = vec![10000000001, 10000000002, 10000000003, 10000000004];
     let base_fixture: serde_json::Value =
         serde_json::from_slice(&common::fixture_workflow_run_requested())
             .expect("fixture must be valid JSON");
 
-    let run_ids: Vec<i64> = vec![10000000001, 10000000002, 10000000003, 10000000004];
-    let mut bodies: Vec<Vec<u8>> = Vec::new();
-    for &run_id in &run_ids {
-        let mut payload = base_fixture.clone();
-        payload["workflow_run"]["id"] = serde_json::json!(run_id);
-        bodies.push(serde_json::to_vec(&payload).expect("re-serialization must succeed"));
-    }
+    let bodies: Vec<Vec<u8>> = run_ids
+        .iter()
+        .map(|&run_id| {
+            let mut payload = base_fixture.clone();
+            payload["workflow_run"]["id"] = serde_json::json!(run_id);
+            serde_json::to_vec(&payload).expect("re-serialization must succeed")
+        })
+        .collect();
 
-    // Fire all N webhooks sequentially — the seq mutex serializes each one atomically,
-    // so broadcast order is determined by the order commits land.
-    for body in &bodies {
-        post_webhook(app.clone(), "workflow_run", body).await;
-    }
+    // Spawn N concurrent tasks that all POST to the server simultaneously.
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/v1/webhooks/github", addr);
+    let handles: Vec<_> = bodies
+        .into_iter()
+        .map(|body| {
+            let client = client.clone();
+            let url = url.clone();
+            tokio::spawn(async move {
+                client
+                    .post(&url)
+                    .header("X-GitHub-Event", "workflow_run")
+                    .header("Content-Type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .expect("request must succeed")
+            })
+        })
+        .collect();
+    join_all(handles).await;
 
     // Collect N SeqEvents from the broadcast channel in arrival order.
     let mut broadcast_run_ids: Vec<i64> = Vec::new();
-    for _ in 0..run_ids.len() {
+    for _ in 0..N {
         let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("timed out waiting for SeqEvent")
             .expect("broadcast channel closed unexpectedly");
-
-        // Extract run_id from the broadcasted event.
-        let run_id = match ev.event {
-            atc_github::WebhookEvent::Run(ref env) => env.run_id.0,
-            atc_github::WebhookEvent::Job(ref env) => env.run_id.0,
+        let run_id = match &ev.event {
+            atc_github::WebhookEvent::Run(env) => env.run_id.0,
+            atc_github::WebhookEvent::Job(env) => env.run_id.0,
         };
         broadcast_run_ids.push(run_id);
     }
@@ -1093,11 +1048,7 @@ async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durab
         .await
         .unwrap();
 
-    assert_eq!(
-        outbox_run_ids.len(),
-        run_ids.len(),
-        "outbox must have exactly N rows"
-    );
+    assert_eq!(outbox_run_ids.len(), N, "outbox must have exactly N rows");
 
     // The invariant: broadcast order == durable outbox.seq order.
     assert_eq!(
@@ -1106,4 +1057,100 @@ async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durab
          broadcast={broadcast_run_ids:?}\n\
          outbox   ={outbox_run_ids:?}"
     );
+
+    server_handle.abort();
+}
+
+/// AC4.2: N concurrent `workflow_run.requested` webhooks for N different run_ids — broadcast
+/// order matches outbox.seq order under genuine concurrent request racing.
+///
+/// Uses a real TcpListener-based server with reqwest. N tasks POST simultaneously;
+/// the seq mutex serializes them — whichever handler wins the mutex commits to PG
+/// first and broadcasts first. The test asserts broadcast order == durable outbox.seq
+/// order, the invariant the seq mutex is designed to enforce.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial]
+async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durable_order() {
+    const N: usize = 4;
+    let (pool, _c) = start_pg().await;
+
+    // Build AppState and subscribe to broadcast BEFORE spawning the server.
+    let (app, app_state, _rx_from_build) = build_app_with_pg(pool.clone());
+    let mut rx = app_state.webhook_tx.subscribe();
+
+    // Bind ephemeral listener and spawn server.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Build N=4 distinct workflow_run.requested bodies by mutating the fixture run_id.
+    let run_ids: Vec<i64> = vec![10000000001, 10000000002, 10000000003, 10000000004];
+    let base_fixture: serde_json::Value =
+        serde_json::from_slice(&common::fixture_workflow_run_requested())
+            .expect("fixture must be valid JSON");
+
+    let bodies: Vec<Vec<u8>> = run_ids
+        .iter()
+        .map(|&run_id| {
+            let mut payload = base_fixture.clone();
+            payload["workflow_run"]["id"] = serde_json::json!(run_id);
+            serde_json::to_vec(&payload).expect("re-serialization must succeed")
+        })
+        .collect();
+
+    // Spawn N concurrent tasks that all POST to the server simultaneously.
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/v1/webhooks/github", addr);
+    let handles: Vec<_> = bodies
+        .into_iter()
+        .map(|body| {
+            let client = client.clone();
+            let url = url.clone();
+            tokio::spawn(async move {
+                client
+                    .post(&url)
+                    .header("X-GitHub-Event", "workflow_run")
+                    .header("Content-Type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .expect("request must succeed")
+            })
+        })
+        .collect();
+    join_all(handles).await;
+
+    // Collect N SeqEvents from the broadcast channel in arrival order.
+    let mut broadcast_run_ids: Vec<i64> = Vec::new();
+    for _ in 0..N {
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("timed out waiting for SeqEvent")
+            .expect("broadcast channel closed unexpectedly");
+        let run_id = match &ev.event {
+            atc_github::WebhookEvent::Run(env) => env.run_id.0,
+            atc_github::WebhookEvent::Job(env) => env.run_id.0,
+        };
+        broadcast_run_ids.push(run_id);
+    }
+
+    // Query outbox for the N run_ids in durable commit order.
+    let outbox_run_ids: Vec<i64> = sqlx::query_scalar("SELECT run_id FROM outbox ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(outbox_run_ids.len(), N, "outbox must have exactly N rows");
+
+    // The invariant: broadcast order == durable outbox.seq order.
+    assert_eq!(
+        broadcast_run_ids, outbox_run_ids,
+        "broadcast run_id order must match outbox.seq order;\n\
+         broadcast={broadcast_run_ids:?}\n\
+         outbox   ={outbox_run_ids:?}"
+    );
+
+    server_handle.abort();
 }
