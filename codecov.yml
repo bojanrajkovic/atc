@@ -35,6 +35,14 @@ coverage:
         # mapping is approximate from Codecov's side, so allow some slack.
         threshold: 5%
 
+# Files excluded from coverage analysis.
+# main.rs is binary entry-point wiring (signal handling, task spawning, server bind)
+# that is never exercised by tests. metrics.rs is one-shot metric registrations with
+# no conditional branches. Both accumulate missing lines that are not meaningful gaps.
+ignore:
+  - "backend/crates/atc-server/src/main.rs"
+  - "backend/crates/atc-server/src/metrics.rs"
+
 # Suppress the bot comment on PRs that touched only docs / config (no source).
 comment:
   layout: "reach,diff,flags,tree"
