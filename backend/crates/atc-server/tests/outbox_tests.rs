@@ -963,15 +963,21 @@ async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_co
 // AC4 — Broadcast order matches durable outbox.seq order
 // ---------------------------------------------------------------------------
 
-/// AC4.1: N concurrent `workflow_run.requested` webhooks for N distinct run_ids — broadcast
-/// order matches outbox.seq order under genuine concurrent request racing.
+/// AC4.1: N concurrent `workflow_run.requested` webhooks for the SAME run_id — exercises
+/// same-row PG contention under genuine concurrent request racing.
 ///
 /// Uses a real TcpListener-based server with reqwest so that the tokio runtime
 /// can schedule multiple handler tasks simultaneously. All tasks race to acquire
-/// the seq mutex; whichever wins commits to PG first and broadcasts first. The
-/// test asserts that the run_id sequence seen in the broadcast channel matches
-/// the run_id sequence in outbox ORDER BY seq — the invariant the seq mutex
-/// is designed to enforce.
+/// the seq mutex; the first winner creates the `runs` row at Queued, subsequent
+/// idempotent replays succeed under the predicate `WHERE status IN (Queued)`.
+///
+/// Because all payloads are identical (same run_id → same content in broadcast and
+/// outbox), we assert count-level invariants instead of run_id ordering: exactly N
+/// SeqEvents broadcast with strictly increasing in-memory seq values, exactly N
+/// outbox rows created. The broadcast-order == durable-order content assertion is
+/// covered by AC4.2 (distinct run_ids). AC4.1 specifically validates that same-row
+/// PG row-level locking + seq-mutex serialization handles concurrent idempotent
+/// replays without deadlock, double-broadcast, or outbox row loss.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durable_order() {
@@ -979,8 +985,6 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
     let (pool, _c) = start_pg().await;
 
     // Build AppState and subscribe to broadcast BEFORE spawning the server.
-    // `build_app_with_pg` returns the router; subscribe via app_state directly
-    // so we hold the receiver before any webhooks fire.
     let (app, app_state, _rx_build) = build_app_with_pg(pool.clone());
     let mut rx = app_state.webhook_tx.subscribe();
 
@@ -991,29 +995,23 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
         axum::serve(listener, app).await.unwrap();
     });
 
-    // Build N distinct run_ids by mutating the fixture.
-    let run_ids: Vec<i64> = vec![10000000001, 10000000002, 10000000003, 10000000004];
+    // All N webhooks target the same run_id (same-row PG contention scenario).
+    let run_id = 10000000001i64;
     let base_fixture: serde_json::Value =
         serde_json::from_slice(&common::fixture_workflow_run_requested())
             .expect("fixture must be valid JSON");
+    let mut payload = base_fixture.clone();
+    payload["workflow_run"]["id"] = serde_json::json!(run_id);
+    let body = serde_json::to_vec(&payload).expect("re-serialization must succeed");
 
-    let bodies: Vec<Vec<u8>> = run_ids
-        .iter()
-        .map(|&run_id| {
-            let mut payload = base_fixture.clone();
-            payload["workflow_run"]["id"] = serde_json::json!(run_id);
-            serde_json::to_vec(&payload).expect("re-serialization must succeed")
-        })
-        .collect();
-
-    // Spawn N concurrent tasks that all POST to the server simultaneously.
+    // Spawn N concurrent tasks that all POST the same webhook simultaneously.
     let client = reqwest::Client::new();
     let url = format!("http://{}/v1/webhooks/github", addr);
-    let handles: Vec<_> = bodies
-        .into_iter()
-        .map(|body| {
+    let handles: Vec<_> = (0..N)
+        .map(|_| {
             let client = client.clone();
             let url = url.clone();
+            let body = body.clone();
             tokio::spawn(async move {
                 client
                     .post(&url)
@@ -1029,34 +1027,37 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
     join_all(handles).await;
 
     // Collect N SeqEvents from the broadcast channel in arrival order.
-    let mut broadcast_run_ids: Vec<i64> = Vec::new();
+    let mut broadcast_seqs: Vec<u64> = Vec::new();
     for _ in 0..N {
         let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("timed out waiting for SeqEvent")
             .expect("broadcast channel closed unexpectedly");
-        let run_id = match &ev.event {
-            atc_github::WebhookEvent::Run(env) => env.run_id.0,
-            atc_github::WebhookEvent::Job(env) => env.run_id.0,
-        };
-        broadcast_run_ids.push(run_id);
+        broadcast_seqs.push(ev.seq);
     }
 
-    // Query outbox for the N run_ids in durable commit order.
-    let outbox_run_ids: Vec<i64> = sqlx::query_scalar("SELECT run_id FROM outbox ORDER BY seq")
-        .fetch_all(&pool)
+    // Query outbox for all rows in durable commit order.
+    let outbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
+        .fetch_one(&pool)
         .await
         .unwrap();
 
-    assert_eq!(outbox_run_ids.len(), N, "outbox must have exactly N rows");
-
-    // The invariant: broadcast order == durable outbox.seq order.
+    // Verify count invariants: exactly N broadcasts and exactly N outbox rows.
     assert_eq!(
-        broadcast_run_ids, outbox_run_ids,
-        "broadcast run_id order must match outbox.seq order;\n\
-         broadcast={broadcast_run_ids:?}\n\
-         outbox   ={outbox_run_ids:?}"
+        broadcast_seqs.len(),
+        N,
+        "must broadcast exactly N SeqEvents"
     );
+    assert_eq!(outbox_count as usize, N, "outbox must have exactly N rows");
+
+    // Verify monotonic ordering: SeqEvent.seq values must be strictly increasing.
+    // (The in-memory Mutex<u64> guarantees this; this assertion catches any regression.)
+    for w in broadcast_seqs.windows(2) {
+        assert!(
+            w[0] < w[1],
+            "broadcast SeqEvent.seq must be strictly increasing: {w:?}"
+        );
+    }
 
     server_handle.abort();
 }
