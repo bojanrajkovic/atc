@@ -72,27 +72,52 @@ pub fn spawn_drain_task(
     cancel: CancellationToken,
     observed_passes: Option<Arc<AtomicU64>>,
     drain_started: Option<Arc<Notify>>,
+    drain_delay: Option<Duration>, // pass None in production, Some(d) in tests to slow drain
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut watermark: i64 = initial_watermark;
         loop {
-            // Signal test hook: we are entering a drain pass.
+            let ok = drain_pass(
+                &pool,
+                &mut watermark,
+                observed_passes.as_deref(),
+                drain_delay,
+            )
+            .await;
+            // Signal test hook: drain pass just completed.
             if let Some(ref s) = drain_started {
                 s.notify_one();
             }
-            drain_pass(&pool, &mut watermark, observed_passes.as_deref()).await;
-            tokio::select! {
-                () = cancel.cancelled() => break,
-                () = drain_notify.notified() => {}
+            if ok {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = drain_notify.notified() => {}
+                }
+            } else {
+                // Query failed: retry after 1s without requiring a fresh NOTIFY.
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
             }
         }
     })
 }
 
 /// Fetch outbox rows newer than `watermark`, log them, and advance the watermark.
-async fn drain_pass(pool: &sqlx::PgPool, watermark: &mut i64, observed_passes: Option<&AtomicU64>) {
+///
+/// Returns `true` on success (including zero rows), `false` on query error.
+async fn drain_pass(
+    pool: &sqlx::PgPool,
+    watermark: &mut i64,
+    observed_passes: Option<&AtomicU64>,
+    drain_delay: Option<Duration>,
+) -> bool {
+    if let Some(d) = drain_delay {
+        tokio::time::sleep(d).await;
+    }
     let rows = sqlx::query!(
-        "SELECT seq, kind, run_id, job_id FROM outbox WHERE seq > $1 ORDER BY seq",
+        "SELECT seq, kind, run_id, job_id, payload FROM outbox WHERE seq > $1 ORDER BY seq",
         *watermark
     )
     .fetch_all(pool)
@@ -106,6 +131,7 @@ async fn drain_pass(pool: &sqlx::PgPool, watermark: &mut i64, observed_passes: O
                     kind = %row.kind,
                     run_id = row.run_id,
                     job_id = ?row.job_id,
+                    payload = ?row.payload,
                     "outbox drain (stub: not forwarding)"
                 );
             }
@@ -113,14 +139,20 @@ async fn drain_pass(pool: &sqlx::PgPool, watermark: &mut i64, observed_passes: O
                 *watermark = last.seq;
             }
             metrics::counter!("atc_pg_drain_rows_total").increment(rows.len() as u64);
+            metrics::counter!("atc_pg_drain_passes_total").increment(1);
+            if let Some(c) = observed_passes {
+                c.fetch_add(1, Ordering::Relaxed);
+            }
+            true
         }
         Err(e) => {
             tracing::warn!(error = %e, "drain_pass query failed");
+            metrics::counter!("atc_pg_drain_passes_total").increment(1);
+            if let Some(c) = observed_passes {
+                c.fetch_add(1, Ordering::Relaxed);
+            }
+            false
         }
-    }
-    metrics::counter!("atc_pg_drain_passes_total").increment(1);
-    if let Some(c) = observed_passes {
-        c.fetch_add(1, Ordering::Relaxed);
     }
 }
 

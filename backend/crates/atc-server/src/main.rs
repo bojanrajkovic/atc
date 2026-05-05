@@ -108,6 +108,17 @@ async fn main() {
         pg_pool,
     });
 
+    // Build Prometheus layer + metrics side-port router. Must happen before
+    // register_build_info() and spawn_process_collector() because pair()
+    // installs the global metrics recorder. Also must happen before the
+    // listener/drain tasks spawn so background tasks never increment counters
+    // before the global recorder is installed.
+    let (prometheus_layer, metrics_router) = metrics::build();
+    metrics::register_build_info();
+    metrics::register_pg_write_counters();
+    metrics::register_listener_metrics();
+    metrics::spawn_process_collector();
+
     // Create a shared cancellation token for both servers and background tasks.
     // Must be created before the listener init so we can pass shutdown.clone() to the tasks.
     let shutdown = CancellationToken::new();
@@ -150,20 +161,12 @@ async fn main() {
             shutdown.clone(),
             None,
             None,
+            None, // drain_delay: None in production
         );
         (Some(lh), Some(dh))
     } else {
         (None, None)
     };
-
-    // Build Prometheus layer + metrics side-port router. Must happen before
-    // register_build_info() and spawn_process_collector() because pair()
-    // installs the global metrics recorder.
-    let (prometheus_layer, metrics_router) = metrics::build();
-    metrics::register_build_info();
-    metrics::register_pg_write_counters();
-    metrics::register_listener_metrics();
-    metrics::spawn_process_collector();
 
     let app = routes::api_routes(prometheus_layer)
         .with_state(app_state)
@@ -219,12 +222,15 @@ async fn main() {
         }
     }
 
-    // Clean up: abort the eviction and listener/drain background tasks
+    // Clean up: abort the eviction and listener/drain background tasks, then
+    // await each within a short budget to allow clean task teardown.
     eviction_handle.abort();
     if let Some(h) = listener_handle {
         h.abort();
+        let _ = tokio::time::timeout(Duration::from_millis(500), h).await;
     }
     if let Some(h) = drain_handle {
         h.abort();
+        let _ = tokio::time::timeout(Duration::from_millis(500), h).await;
     }
 }

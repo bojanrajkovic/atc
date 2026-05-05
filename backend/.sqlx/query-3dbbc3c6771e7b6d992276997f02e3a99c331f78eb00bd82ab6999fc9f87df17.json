@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT seq, kind, run_id, job_id FROM outbox WHERE seq > $1 ORDER BY seq",
+  "query": "SELECT seq, kind, run_id, job_id, payload FROM outbox WHERE seq > $1 ORDER BY seq",
   "describe": {
     "columns": [
       {
@@ -22,6 +22,11 @@
         "ordinal": 3,
         "name": "job_id",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "payload",
+        "type_info": "Jsonb"
       }
     ],
     "parameters": {
@@ -33,8 +38,9 @@
       false,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "3493e48489d0b17470e9766b82e49904706e008665b95d8572b11a710b2c321c"
+  "hash": "3dbbc3c6771e7b6d992276997f02e3a99c331f78eb00bd82ab6999fc9f87df17"
 }
