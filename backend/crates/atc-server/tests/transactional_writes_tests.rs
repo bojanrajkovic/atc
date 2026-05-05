@@ -23,9 +23,6 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
 use std::sync::OnceLock;
-use testcontainers::ImageExt;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
 // Guard: PrometheusMetricLayer::pair() installed once per binary.
@@ -69,24 +66,6 @@ fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
         }
     }
     0
-}
-
-/// Boot a fresh PG container and return a pool with migrations applied.
-async fn start_pg() -> (sqlx::PgPool, impl Drop) {
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("failed to start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("failed to get port");
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = atc_server::db::init_pool(&db_url)
-        .await
-        .expect("init_pool failed");
-    (pool, container)
 }
 
 /// Build a full router with a real PG pool mounted.
@@ -155,7 +134,7 @@ async fn post_webhook(app: axum::Router, event_type: &str, body: &[u8]) -> Statu
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_run_lifecycle() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, state, _rx) = build_app_with_pg(pool.clone());
 
     // Requested
@@ -237,7 +216,7 @@ async fn transactional_write_run_lifecycle() {
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_job_lifecycle() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Pre-insert the run first
@@ -267,7 +246,7 @@ async fn transactional_write_job_lifecycle() {
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_job_before_run_lifecycle() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Fire job first (before run)
@@ -319,7 +298,7 @@ async fn transactional_write_job_before_run_lifecycle() {
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_idempotent_replay() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, state, _rx) = build_app_with_pg(pool.clone());
 
     let body = common::fixture_workflow_run_requested();
@@ -352,7 +331,7 @@ async fn transactional_write_idempotent_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn parity_metric_increments_when_pg_rejects() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Read the baseline counter value before this test runs.
@@ -432,7 +411,7 @@ async fn parity_metric_increments_when_pg_rejects() {
 #[tokio::test]
 #[serial_test::serial]
 async fn transient_metric_increments_on_db_outage() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, state, _rx) = build_app_with_pg(pool.clone());
 
     // Read the baseline counter value before this test runs.
@@ -482,7 +461,7 @@ async fn transient_metric_increments_on_db_outage() {
 async fn pg_write_failure_counters_are_registered() {
     atc_server::metrics::register_pg_write_counters();
 
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Establish a Queued run in both stores.

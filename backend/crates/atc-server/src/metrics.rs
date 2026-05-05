@@ -80,6 +80,39 @@ pub fn register_pg_write_counters() {
     );
 }
 
+/// Register listener and drain task metrics.
+///
+/// Counters:
+/// - atc_pg_notify_emitted_total{kind} — emitted from webhook handler inside txn
+/// - atc_pg_notify_received_total — received by listener task
+/// - atc_pg_listener_recv_errors_total — recv() errors (sqlx hides successful reconnects)
+/// - atc_pg_drain_passes_total — drain task wake-ups
+/// - atc_pg_drain_rows_total — outbox rows fetched across all passes
+///
+/// Must be called after build() (which installs the global recorder).
+pub fn register_listener_metrics() {
+    metrics::describe_counter!(
+        "atc_pg_notify_emitted_total",
+        "Notifications emitted from the webhook handler, by event kind"
+    );
+    metrics::describe_counter!(
+        "atc_pg_notify_received_total",
+        "Notifications received by the listener task"
+    );
+    metrics::describe_counter!(
+        "atc_pg_listener_recv_errors_total",
+        "Listener task recv() error events (sqlx reconnects internally; this counts irrecoverable surfacings)"
+    );
+    metrics::describe_counter!(
+        "atc_pg_drain_passes_total",
+        "Drain task pass count (one per wake-up)"
+    );
+    metrics::describe_counter!(
+        "atc_pg_drain_rows_total",
+        "Total outbox rows fetched by the drain task across all passes"
+    );
+}
+
 /// Describe process metrics and spawn a background collector that ticks every
 /// 10 seconds.
 ///

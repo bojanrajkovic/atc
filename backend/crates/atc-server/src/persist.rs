@@ -540,6 +540,26 @@ pub(crate) async fn insert_outbox_run_in_txn(
     Ok(row.seq)
 }
 
+/// Emit a PG NOTIFY for the given outbox row sequence number inside an open transaction.
+///
+/// PG queues NOTIFYs during a transaction and delivers them only on COMMIT.
+/// Aborted transactions silently drop the NOTIFY — no notification if no row was written.
+#[allow(dead_code)]
+pub(crate) async fn notify_outbox_seq_in_txn(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    seq: i64,
+) -> Result<(), atc_core::PersistError> {
+    sqlx::query!(
+        "SELECT pg_notify($1::text, $2::text)",
+        crate::listener::NOTIFY_CHANNEL,
+        seq.to_string(),
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| atc_core::PersistError::Backend(Box::new(e)))?;
+    Ok(())
+}
+
 /// Insert a job event envelope into the outbox inside an open transaction.
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.

@@ -22,9 +22,6 @@ use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
 use futures_util::future::join_all;
 use std::sync::OnceLock;
-use testcontainers::ImageExt;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
 use tokio::sync::broadcast::error::TryRecvError;
 use tower::ServiceExt;
 
@@ -76,24 +73,6 @@ fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/// Boot a fresh PG container and return a pool with migrations applied.
-async fn start_pg() -> (sqlx::PgPool, impl Drop) {
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("failed to start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("failed to get port");
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = atc_server::db::init_pool(&db_url)
-        .await
-        .expect("init_pool failed");
-    (pool, container)
-}
 
 /// Build a full router with a real PG pool mounted.
 fn build_app_with_pg(
@@ -234,7 +213,7 @@ async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac1_1_run_webhook_produces_run_and_outbox_row() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     let (status, json) = post_webhook(
@@ -281,7 +260,7 @@ async fn phase_2c_outbox_ac1_1_run_webhook_produces_run_and_outbox_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac1_2_seq_strictly_increasing() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
 
     // Insert stub runs for FK satisfaction
     let run_ids = [20001i64, 20002i64, 20003i64];
@@ -322,7 +301,7 @@ async fn phase_2c_outbox_ac1_2_seq_strictly_increasing() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac1_3_payload_roundtrips_as_envelope() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     post_webhook(
@@ -370,7 +349,7 @@ async fn phase_2c_outbox_ac1_3_payload_roundtrips_as_envelope() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac2_1_parity_rejection_rolls_back_outbox() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // The fixture run_id is 24290980517
@@ -407,7 +386,7 @@ async fn phase_2c_outbox_ac2_1_parity_rejection_rolls_back_outbox() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac2_2_bigserial_gap_property() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
 
     // Insert a stub run for FK constraint satisfaction
     insert_stub_run(&pool, 99001).await;
@@ -471,7 +450,7 @@ async fn phase_2c_outbox_ac2_2_bigserial_gap_property() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Fixture shared IDs
@@ -550,7 +529,7 @@ async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac3_1_parity_rejection_returns_200_rejected() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     let before = render_metrics().await;
@@ -584,7 +563,7 @@ async fn phase_2c_outbox_ac3_1_parity_rejection_returns_200_rejected() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac3_4_success_returns_200_processed() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     let before = render_metrics().await;
@@ -675,7 +654,7 @@ async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac5_1_job_webhook_creates_stub_run_and_outbox() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // The fixtures share run_id=24290980517, job_id=70928200168
@@ -748,7 +727,7 @@ async fn phase_2c_outbox_ac5_1_job_webhook_creates_stub_run_and_outbox() {
 #[tokio::test]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Fire a run webhook first (to have a real run row for the job FK)
@@ -841,7 +820,7 @@ async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_co
     // Ensure counters are registered before baseline snapshot.
     atc_server::metrics::register_pg_write_counters();
 
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let (app, app_state, mut rx) = build_app_with_pg(pool.clone());
 
     let before = render_metrics().await;
@@ -982,7 +961,7 @@ async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_co
 #[serial_test::serial]
 async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durable_order() {
     const N: usize = 4;
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
 
     // Build AppState and subscribe to broadcast BEFORE spawning the server.
     let (app, app_state, _rx_build) = build_app_with_pg(pool.clone());
@@ -1073,7 +1052,7 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
 #[serial_test::serial]
 async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durable_order() {
     const N: usize = 4;
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
 
     // Build AppState and subscribe to broadcast BEFORE spawning the server.
     let (app, app_state, _rx_from_build) = build_app_with_pg(pool.clone());

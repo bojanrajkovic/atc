@@ -57,10 +57,17 @@ jobs:
     environment: ci
     permissions:
       contents: read
+    env:
+      # Use mold instead of lld to avoid SIGBUS/OOM crashes when linking large
+      # test binaries (ws_tests, notify_listener_tests) on GitHub-hosted runners.
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:

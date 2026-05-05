@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-04-09
+Last verified: 2026-05-04
 
 ## Purpose
 
@@ -59,6 +59,25 @@ seccompProfile:
 **Decision:** Dual routing support — optional Ingress (`networking.k8s.io/v1`) and optional HTTPRoute (`gateway.networking.k8s.io/v1`)
 **Alternatives considered:** Ingress only; Gateway API only; neither (document port-forward)
 **Rationale:** Ingress covers clusters with a classic ingress controller (nginx, traefik). HTTPRoute covers clusters running a Gateway API controller (Envoy Gateway, Cilium). Providing both optional templates at the same chart version avoids forking. The default is neither — port-forward instructions in NOTES.txt cover the zero-dependency case. (Optional templates added in Phase 4.)
+
+## Environment Variables (ATC_* surface)
+
+The chart wires Helm values to ATC_* environment variables. The canonical list is in `backend/crates/atc-server/src/config.rs`. Phase 2d adds one new optional variable:
+
+### `ATC_DATABASE_LISTENER_URL`
+
+| Property | Value |
+|----------|-------|
+| Type | Optional string |
+| Default | Falls back to `ATC_DATABASE_URL` when unset |
+
+**When to set:** When the main pool (`ATC_DATABASE_URL`) connects through transaction-mode PgBouncer, which reassigns the underlying connection between transactions and silently drops `LISTEN` registrations. Point this at a direct Postgres DSN or a session-mode PgBouncer endpoint.
+
+**Helm:** Settable via:
+- `config.databaseListenerUrl` (plain value, sets env var directly)
+- `existingSecret.databaseListenerUrlKey` (secret key reference; wins over `config.databaseListenerUrl` when both are set)
+
+When neither is set, the listener falls back to `ATC_DATABASE_URL` and no `ATC_DATABASE_LISTENER_URL` env entry is injected into the pod.
 
 ## Boundaries
 

@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-05-02 (updated 2026-05-02 for runner pinning to ubuntu-24.04)
+Last verified: 2026-05-05 (updated 2026-05-05 for mold linker on backend job)
 
 ## Purpose
 
@@ -44,6 +44,10 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 **Decision:** All cargo build/check/test invocations use `--locked`
 **Alternatives considered:** No lockfile enforcement; only enforce in release builds
 **Rationale:** `--locked` makes CI fail loudly when `Cargo.toml` is edited without committing the regenerated `Cargo.lock`, preventing dependency drift between developer machines, CI, and the released artifacts. Pairs with the release pipeline's bot-driven `Cargo.lock` refresh on release PRs (see release-pipeline.md), so the release PR's own CI passes under the same `--locked` rule. Applied to clippy, check, llvm-cov, and the release build; `cargo fmt` is exempt because it is not a build command.
+
+**Decision:** Backend job sets `RUSTFLAGS="-C link-arg=-fuse-ld=mold"` and installs `mold` via apt
+**Alternatives considered:** Keep `lld` (default); limit lld thread count via `-Wl,--threads=1`; use `sccache`
+**Rationale:** `lld`'s parallel link stage materialises the full link graph across multiple threads simultaneously and exceeds available memory on GitHub-hosted runners when linking large test binaries (`ws_tests`, `notify_listener_tests`). This produced reproducible `SIGBUS` (signal 7) linker crashes. `mold` uses a fundamentally different incremental linking approach with much lower peak memory, and is available in apt on `ubuntu-24.04` without a third-party installer. Setting `RUSTFLAGS` at the backend job level means every cargo invocation that links (`llvm-cov`, `cargo build --release`) uses `mold`; steps that do not link (`cargo fmt`, `cargo clippy`, `cargo check`) are unaffected. Local macOS development is unaffected since the flag is CI-only.
 
 ## Boundaries
 

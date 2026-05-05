@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-04 (updated 2026-05-04 for Phase 2c outbox: transactional UPSERT+outbox INSERT before in-memory apply; pg_store removed from AppState)
+Last verified: 2026-05-04 (updated 2026-05-04 for Phase 2d LISTEN/NOTIFY: listener task, drain task, ATC_DATABASE_LISTENER_URL, pg_notify inside webhook transaction, five new metrics)
 
 ## Purpose
 
@@ -131,6 +131,7 @@ Config fields and their `ATC_*` env var overrides:
 - `http_addr` (`ATC_HTTP_ADDR`) — default `0.0.0.0:8080`
 - `metrics_addr` (`ATC_METRICS_ADDR`) — default `0.0.0.0:9090` (used from Phase 2)
 - `database_url` (`ATC_DATABASE_URL`) — default `None`
+- `database_listener_url` (`ATC_DATABASE_LISTENER_URL`) — default `None` (falls back to `ATC_DATABASE_URL` when unset). Use to point the PG listener at a session-mode endpoint when the main pool runs through transaction-mode PgBouncer.
 - `log_filter` (`ATC_LOG_FILTER`) — default `"info"` (passed to `EnvFilter`)
 - `log_format` (`ATC_LOG_FORMAT`) — default `pretty` in debug builds, `json` in release builds
 
@@ -243,6 +244,18 @@ in PG (UPSERT + outbox row) and will be recoverable from the outbox.
 These counters are registered at startup via `register_pg_write_counters()` and
 appear in `/metrics` output only if PG writes have been attempted.
 
+### LISTEN/NOTIFY metrics (Phase 2d)
+
+Five counters added in Phase 2d for the listener/drain pipeline:
+
+| Counter | Description |
+|---------|-------------|
+| `atc_pg_notify_emitted_total{kind}` | Incremented in the webhook route handler after `tx.commit()` succeeds (the `pg_notify` call is emitted inside the transaction before commit, but the metric increment happens post-commit in the handler). `kind` matches the event discriminator (`run` or `job`). |
+| `atc_pg_notify_received_total` | Incremented each time the listener task receives a NOTIFY from PG. |
+| `atc_pg_listener_recv_errors_total` | Incremented each time the listener task encounters a receive error (e.g., connection drop during reconnect window). |
+| `atc_pg_drain_passes_total` | Incremented each time the drain task wakes up and executes a fetch pass (whether or not any rows are returned). |
+| `atc_pg_drain_rows_total` | Incremented by the number of outbox rows fetched in each drain pass. |
+
 ### Listener always binds
 
 The metrics listener binds unconditionally at startup regardless of the chart's
@@ -274,6 +287,8 @@ struct AppState {
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
 - **`seq`** — `tokio::sync::Mutex<u64>` counter incremented on each successfully ingested event. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across `pool.begin()` + PG commit + in-memory store mutation + seq assignment + broadcast, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches durable commit order, and REST snapshots are consistent with their cursor. Resets on server restart.
 - **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Used by the webhook handler for transactional writes and by the `/readyz` probe. `PgStore` is no longer mounted in AppState (removed in Phase 2c); the handler calls `persist::upsert_*_in_txn` and `persist::insert_outbox_*_in_txn` directly via `&mut tx`.
+
+The listener task and drain task receive a clone of the existing `CancellationToken`; `AppState` gains no new fields — task handles live in `main.rs` scope.
 
 ### SeqEvent Sidecar Contract
 
@@ -314,7 +329,8 @@ The `pool_stats_after` field carries a snapshot of the runner pool state taken u
      - Call `pool.begin()` to open a transaction. On failure → 503, drop mutex.
      - Call `persist::upsert_run_in_txn` or `persist::upsert_job_in_txn` inside the transaction. On `PersistError::InvalidTransition` → 200 `{"status":"rejected"}` (auto-rollback, increment `atc_pg_write_failures_total{kind="parity"}`). On `PersistError::Backend` → 503 (increment `kind="transient"`).
      - Call `persist::insert_outbox_run_in_txn` or `persist::insert_outbox_job_in_txn` in the same transaction. On failure, same error path as above.
-     - `tx.commit()`. On failure → 503 `{"status":"database commit failed"}`, increment `kind="transient"`.
+     - Emit `SELECT pg_notify('atc_outbox', seq::text)` inside the same transaction before commit. PG queues the NOTIFY and delivers it to all listeners on COMMIT; an aborted transaction silently drops the notification.
+     - `tx.commit()`. On failure → 503 `{"status":"database commit failed"}`, increment `kind="transient"`. On success, increment `atc_pg_notify_emitted_total{kind}` (the metric reflects a durable committed notification, not just the in-transaction call site).
      - **After commit:** apply to in-memory store under the same mutex. If in-memory apply fails after PG committed, increment `atc_pg_in_memory_drift_total`, log warning, skip broadcast. Return 200.
    - **`None` — In-memory-only path:** Apply the parsed event directly to the in-memory store via `store.apply_run_event()` or `store.apply_job_event()`. If the transition is invalid, log warning and skip broadcast (no SeqEvent emitted for rejected transitions).
 6. On successful apply (either path): increment `seq` by 1, broadcast a `SeqEvent { seq, event, pool_stats_after }` to the webhook channel (still under the mutex).
@@ -382,8 +398,15 @@ In `main.rs`:
 5. Call `metrics::register_pg_write_counters()` after the recorder is installed (Phase 2b/2c)
 6. Create `AppState` with all components (`store`, `webhook_tx`, `webhook_secret`, `seq`, `pg_pool`) and pass to Axum via `.with_state()`. Note: `pg_store` was removed in Phase 2c; the webhook handler uses `pg_pool` directly via `persist::*_in_txn` helpers.
 7. Start background eviction task: `start_eviction_task(store.clone())`
-8. Bind the server to `http_addr`
-9. On graceful shutdown, abort the eviction task
+8. **If `pg_pool` is `Some`** (Phase 2d listener init sequence, before `axum::serve`):
+   1. Derive `listener_url` from `cfg.database_listener_url` if set, else fall back to `cfg.database_url`.
+   2. `PgListener::connect(&listener_url)` — fail-fast on Err (exit(1)).
+   3. `listener.listen(NOTIFY_CHANNEL)` — fail-fast on Err (exit(1)).
+   4. `SELECT COALESCE(MAX(seq), 0) FROM outbox` — initialize watermark; fail-fast on Err (exit(1)).
+   5. Spawn listener task (receives PG NOTIFYs, fires `Arc<Notify>`).
+   6. Spawn drain task (wakes on `Arc<Notify>`, fetches `seq > watermark ORDER BY seq`, logs, advances watermark).
+9. Bind the server to `http_addr` via `axum::serve`
+10. On graceful shutdown, abort the eviction task, listener task, and drain task
 
 The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
 
@@ -391,6 +414,19 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 
 - `/readyz` — Readiness probe. Returns 200 `{"status":"ok"}` in in-memory mode (no DB configured). When `ATC_DATABASE_URL` is configured, runs `SELECT 1` against the pool; returns 200 on success or 503 `{"status":"db_unreachable"}` if the DB is unreachable.
 - `/healthz` — Liveness probe. Unchanged — process up = healthy regardless of DB state.
+
+### NOTIFY Emission and Listener Fetch-Stub (Phase 2d)
+
+**Two-task coalescing structure:** The listener pipeline splits into two cooperating tasks:
+
+1. **Listener task** — Holds a dedicated long-lived `PgListener` connection. Receives PG NOTIFY payloads on the `atc_outbox` channel, increments `atc_pg_notify_received_total`, and fires an `Arc<tokio::sync::Notify>` to wake the drain task. Does not fetch rows itself.
+2. **Drain task** — Waits on the `Arc<Notify>` (level-triggered). On each wake, fetches all outbox rows with `seq > watermark ORDER BY seq` from the pool, logs each row (Phase 2d stub — not yet forwarding to WS clients), increments `atc_pg_drain_rows_total` and `atc_pg_drain_passes_total`, and advances the local `watermark`. If a NOTIFY arrives while a drain is in progress, the coalescing flag ensures one additional pass runs after the current one completes rather than starting a concurrent fetch.
+
+**DSN session-mode contract:** The listener connection (`ATC_DATABASE_LISTENER_URL` or fallback to `ATC_DATABASE_URL`) must be a session-mode endpoint. Transaction-mode PgBouncer reassigns the underlying connection between transactions, silently dropping LISTEN registrations. When the main pool uses transaction-mode PgBouncer, set `ATC_DATABASE_LISTENER_URL` to a direct Postgres DSN or a session-mode PgBouncer endpoint.
+
+**Reconnect loss window:** If the listener task reconnects after a connection drop, any NOTIFYs delivered during the reconnect window are not received. This is healed automatically: the next NOTIFY after reconnection triggers a drain pass that fetches `seq > watermark`, catching up all rows that were inserted while the listener was disconnected. No data is lost; only latency increases during the reconnect window.
+
+**Phase 3c pivot:** The drain task currently logs rows as a stub. In Phase 3c, the only code change inside the drain loop is adding a call to `forward_to_ws_clients(rows)` — the task structure, watermark semantics, and coalescing logic are identical.
 
 ### Modules
 
@@ -410,6 +446,7 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`) (Phase 2b/2c)
 - `backend/crates/atc-server/src/persist.rs` — `PgStore` struct implementing `PersistentStore` (used in `tests/persist_pg_tests.rs`); `pub(crate)` transaction helpers for UPSERT+outbox pattern used by webhook handler (Phase 2c)
+- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify, fetches outbox rows by `seq > watermark ORDER BY seq`, logs, advances watermark). Spawned only when `pg_pool` is `Some`. (Phase 2d)
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/crates/atc-server/migrations/0002_outbox.sql` — Outbox table: `BIGSERIAL seq` PK, `kind` discriminator, `run_id`/`job_id`, `payload JSONB` (domain event envelope), `inserted_at TIMESTAMPTZ`; `outbox_run_idx` on `run_id`

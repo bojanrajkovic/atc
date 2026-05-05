@@ -130,6 +130,16 @@ config:
   #   Update strategy: RollingUpdate (zero downtime; no local volume).
   #
   databaseUrl: null
+  # -- Listener database connection URL (optional).
+  #
+  # When set, the PG LISTEN/NOTIFY task connects using this URL instead of
+  # config.databaseUrl. Use this when the main pool (config.databaseUrl) runs
+  # through transaction-mode PgBouncer, which drops LISTEN registrations between
+  # transactions and breaks the listener task. Point this at a direct Postgres
+  # connection or a session-mode PgBouncer endpoint.
+  #
+  # When unset (empty string), the listener falls back to ATC_DATABASE_URL.
+  databaseListenerUrl: ""
   # -- Tracing filter string (RUST_LOG syntax). Examples: "info", "atc=debug", "warn,atc=trace".
   logFilter: "info"
   # -- Log output format. Null means the binary decides based on build type
@@ -144,6 +154,11 @@ existingSecret:
   name: null
   # -- Key inside the Secret whose value is the database URL.
   databaseUrlKey: "database_url"
+  # -- Key inside the Secret whose value is the listener database URL (optional).
+  # When set (non-empty) and existingSecret.name is also set, the listener task
+  # uses this secret key for its connection. When empty, the listener falls back
+  # to ATC_DATABASE_URL (the main pool's connection string).
+  databaseListenerUrlKey: ""
 
 metrics:
   # -- Whether to expose the metrics port on the Service (named port "metrics" targeting 9090).

@@ -1,6 +1,6 @@
 # Rollout And Implementation
 
-Last verified: 2026-05-04 (Phase 2c transactional outbox: complete)
+Last verified: 2026-05-04 (Phase 2d LISTEN/NOTIFY: complete)
 
 ## Status
 
@@ -96,17 +96,32 @@ ADR refs: [ADR 0002 Decision 2](../../architecture-decisions/0002-state-external
 
 Wire up `LISTEN/NOTIFY` end-to-end without yet using it for forwarding.
 
-In scope:
-- Webhook handler emits `NOTIFY` after commit; payload is just the seq (or a small token) per ADR 0002 Decision 3
-- Add a separate dedicated long-lived listener connection on a session-mode-compatible path
-- Add `ATC_DATABASE_LISTENER_URL` config option that defaults to `ATC_DATABASE_URL` if unset
-- Listener task in `atc-server` runs the level-triggered drain loop (per `overlap-and-forwarding.md` pseudocode) — but instead of forwarding to WS clients, it just logs received notifications and the rows it would have fetched
-- Tests verify NOTIFY fires after commit and the listener task receives it
-- Tests verify wake-up coalescing (multiple notifications during a drain produce one extra pass, not concurrent fetches)
+**Status: complete (feat/phase-2d-notify-listener branch).**
 
-Acceptance: an integration test that fires N webhooks and confirms the listener observes N notifications and would have fetched all N outbox rows in seq order.
+In scope:
+- Webhook handler emits `SELECT pg_notify('atc_outbox', seq::text)` inside the transaction (before `tx.commit()`). Note: the API call happens before commit — PG queues the NOTIFY during the transaction and delivers it atomically on COMMIT. Delivery semantics are equivalent to "after commit," but the call site is before `tx.commit()`. Aborted transactions silently drop the queued NOTIFY. — **DONE**
+- Add a separate dedicated long-lived listener connection on a session-mode-compatible path — **DONE**
+- Add `ATC_DATABASE_LISTENER_URL` config option that defaults to `ATC_DATABASE_URL` if unset — **DONE** (IMPLEMENTED in Phase 2d)
+- Listener task in `atc-server` runs the level-triggered drain loop (per `overlap-and-forwarding.md` pseudocode) — but instead of forwarding to WS clients, it just logs received notifications and the rows it would have fetched — **DONE**
+- Tests verify NOTIFY fires after commit and the listener task receives it — **DONE**
+- Tests verify drain task fetches outbox rows and advances watermark — **DONE** (AC6: outbox row count + passes-delta assertions; AC13: pre-seeded-row zero-fetch + exact pass count after one webhook)
+- Tests verify wake-up coalescing (multiple notifications during a drain produce one extra pass, not concurrent fetches) — **DONE** (AC7: slow-drain fixture with `drain_delay=200ms`; `passes_delta ≤ 2` bound verified)
+- Helm chart wired: `config.databaseListenerUrl` (plain value) and `existingSecret.databaseListenerUrlKey` (secret key ref); existingSecret path wins when both are set — **DONE**
+- Documentation updated: `docs/architecture/backend-server.md`, `docs/architecture/deployment.md`, `backend/crates/atc-server/CLAUDE.md`, this file, ADR 0002 — **DONE**
+
+Acceptance: an integration test that fires N webhooks and confirms the listener observes N notifications and would have fetched all N outbox rows in seq order. **SATISFIED** — all 10 ACs pass; AC6/AC7/AC13 tightened on the same branch after Codex review.
 
 ADR refs: [ADR 0002 Decision 3](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (NOTIFY + connection-pool compatibility), [ADR 0002 Decision 5](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (forwarder design including startup watermark).
+
+**Phase 2d DONE checklist:**
+- [x] NOTIFY emission inside webhook transaction (`SELECT pg_notify('atc_outbox', seq::text)` before `tx.commit()`)
+- [x] Listener task (dedicated session-mode `PgListener`, fires `Arc<Notify>` on receipt)
+- [x] Drain task (wakes on `Arc<Notify>`, fetches `seq > watermark ORDER BY seq`, logs, advances watermark)
+- [x] Watermark init: `COALESCE(MAX(seq), 0)` at boot (ADR 0002 Decision 5)
+- [x] `ATC_DATABASE_LISTENER_URL` env var and config field (`database_listener_url`)
+- [x] Helm wiring: `config.databaseListenerUrl` + `existingSecret.databaseListenerUrlKey`
+- [x] Five new metrics: `atc_pg_notify_emitted_total{kind}`, `atc_pg_notify_received_total`, `atc_pg_listener_recv_errors_total`, `atc_pg_drain_passes_total`, `atc_pg_drain_rows_total`
+- [x] Documentation updated
 
 ### Phase 3: Single-replica read-path cutover
 
@@ -160,6 +175,12 @@ In scope:
 - Single-replica deployment is now fully on durable storage
 
 Acceptance: an end-to-end test that fires webhooks, confirms `GET /v1/state` returns the expected projection from PG, and confirms `/v1/ws` delivers SeqEvents in seq order via the LISTEN/drain pipeline.
+
+Note: When the drain task gains WebSocket forwarding in Phase 3c, it becomes load-bearing for cluster routing. At that point, extend `/readyz` to reflect listener health (mechanism is a Phase 3c design decision).
+
+**Phase 3c design constraint — watermark gap-healing (read before implementing):** Retiring the in-memory `seq_guard` (`Mutex<u64>`) in this phase means concurrent webhook transactions become possible even on a single replica. PostgreSQL's `BIGSERIAL` assigns `seq` via `nextval` before commit, so if transaction A (seq=10) and transaction B (seq=11) overlap and B commits first, the drain task can advance its watermark to 11 and permanently miss seq=10 when it commits later (the next `WHERE seq > 11` query skips it).
+
+The fix: share a `min_pending_seq: Arc<AtomicI64>` (init `i64::MAX`) between the listener and drain tasks. The listener calls `fetch_min(notify_seq, Relaxed)` on each NOTIFY. The drain task atomically swaps this to `i64::MAX` at the start of each pass and uses `min(watermark, swapped_val - 1)` as the actual query lower bound. A below-watermark NOTIFY (seq=10 arriving after watermark=11) causes the next pass to query from `seq > 9`, picking up the gap row. Rows between the backstop lower bound and the old watermark may be re-fetched — forwarding to WS clients must be idempotent (clients deduplicate on seq, or the forwarder tracks the last actually-forwarded seq separately from the query lower bound).
 
 ADR refs: [ADR 0002 Decision 5](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (forwarder design + startup watermark), [ADR 0003 Decision 4](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) (TTL eviction as SQL DELETE).
 
