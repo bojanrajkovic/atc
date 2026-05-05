@@ -7,11 +7,12 @@ use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::config;
 use atc_server::db;
+use atc_server::listener;
 use atc_server::metrics;
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
@@ -81,6 +82,10 @@ async fn main() {
         None
     };
 
+    // Clone the pool before it moves into AppState so the listener can use it.
+    // PgPool is internally reference-counted; this clone is cheap.
+    let pg_pool_for_listener = pg_pool.clone();
+
     // Create the shared state store with system clock and 1-hour TTL for completed entries.
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
@@ -103,12 +108,61 @@ async fn main() {
         pg_pool,
     });
 
+    // Create a shared cancellation token for both servers and background tasks.
+    // Must be created before the listener init so we can pass shutdown.clone() to the tasks.
+    let shutdown = CancellationToken::new();
+
+    // If a PG pool is configured, initialize the listener and drain background tasks.
+    let (listener_handle, drain_handle) = if let Some(pool) = pg_pool_for_listener {
+        let listener_url = cfg
+            .database_listener_url
+            .clone()
+            .or_else(|| cfg.database_url.clone())
+            .expect("pg_pool is Some only when database_url is set");
+
+        let pg_listener = listener::connect_listener(&listener_url)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "failed to connect PG listener");
+                process::exit(1);
+            });
+
+        let initial_watermark: i64 =
+            sqlx::query_scalar!("SELECT COALESCE(MAX(seq), 0) AS \"max!: i64\" FROM outbox")
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!(error = %e, "failed to query outbox watermark");
+                    process::exit(1);
+                });
+
+        let drain_notify = Arc::new(Notify::new());
+        let lh = listener::spawn_listener_task(
+            pg_listener,
+            drain_notify.clone(),
+            shutdown.clone(),
+            None,
+        );
+        let dh = listener::spawn_drain_task(
+            pool,
+            initial_watermark,
+            drain_notify,
+            shutdown.clone(),
+            None,
+            None,
+        );
+        (Some(lh), Some(dh))
+    } else {
+        (None, None)
+    };
+
     // Build Prometheus layer + metrics side-port router. Must happen before
     // register_build_info() and spawn_process_collector() because pair()
     // installs the global metrics recorder.
     let (prometheus_layer, metrics_router) = metrics::build();
     metrics::register_build_info();
     metrics::register_pg_write_counters();
+    metrics::register_listener_metrics();
     metrics::spawn_process_collector();
 
     let app = routes::api_routes(prometheus_layer)
@@ -135,9 +189,6 @@ async fn main() {
             process::exit(1);
         });
     tracing::info!("listening on http://{}", cfg.http_addr);
-
-    // Create a shared cancellation token for both servers
-    let shutdown = CancellationToken::new();
 
     // Spawn the signal handler task that will cancel the token
     let shutdown_clone = shutdown.clone();
@@ -168,6 +219,12 @@ async fn main() {
         }
     }
 
-    // Clean up: abort the eviction background task
+    // Clean up: abort the eviction and listener/drain background tasks
     eviction_handle.abort();
+    if let Some(h) = listener_handle {
+        h.abort();
+    }
+    if let Some(h) = drain_handle {
+        h.abort();
+    }
 }

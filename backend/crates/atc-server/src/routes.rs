@@ -203,29 +203,28 @@ async fn webhook_handler(
                         }
                     };
 
-                    // UPSERT + outbox INSERT inside the transaction.
-                    let txn_result: Result<(), PersistError> = match &event {
-                        atc_github::WebhookEvent::Run(env) => {
-                            let r1 = crate::persist::upsert_run_in_txn(&mut tx, env).await;
-                            if r1.is_ok() {
-                                crate::persist::insert_outbox_run_in_txn(&mut tx, env)
-                                    .await
-                                    .map(|_| ())
-                            } else {
-                                r1
+                    // UPSERT + outbox INSERT + NOTIFY inside the transaction.
+                    let mut notify_kind: Option<&'static str> = None;
+                    let txn_result: Result<(), PersistError> = async {
+                        match &event {
+                            atc_github::WebhookEvent::Run(env) => {
+                                crate::persist::upsert_run_in_txn(&mut tx, env).await?;
+                                let seq =
+                                    crate::persist::insert_outbox_run_in_txn(&mut tx, env).await?;
+                                crate::persist::notify_outbox_seq_in_txn(&mut tx, seq).await?;
+                                notify_kind = Some("run");
+                            }
+                            atc_github::WebhookEvent::Job(env) => {
+                                crate::persist::upsert_job_in_txn(&mut tx, env).await?;
+                                let seq =
+                                    crate::persist::insert_outbox_job_in_txn(&mut tx, env).await?;
+                                crate::persist::notify_outbox_seq_in_txn(&mut tx, seq).await?;
+                                notify_kind = Some("job");
                             }
                         }
-                        atc_github::WebhookEvent::Job(env) => {
-                            let r1 = crate::persist::upsert_job_in_txn(&mut tx, env).await;
-                            if r1.is_ok() {
-                                crate::persist::insert_outbox_job_in_txn(&mut tx, env)
-                                    .await
-                                    .map(|_| ())
-                            } else {
-                                r1
-                            }
-                        }
-                    };
+                        Ok(())
+                    }
+                    .await;
 
                     match txn_result {
                         Ok(()) => {
@@ -245,7 +244,11 @@ async fn webhook_handler(
                                     ),
                                 );
                             }
-                            // PG committed — fall through to in-memory apply below.
+                            // PG committed — emit NOTIFY metric and fall through to in-memory apply.
+                            if let Some(kind) = notify_kind {
+                                metrics::counter!("atc_pg_notify_emitted_total", "kind" => kind)
+                                    .increment(1);
+                            }
                         }
                         Err(PersistError::InvalidTransition) => {
                             // tx drops here → auto-rollback. No outbox row written.
