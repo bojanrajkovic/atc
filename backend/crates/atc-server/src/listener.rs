@@ -21,6 +21,10 @@ use tokio_util::sync::CancellationToken;
 /// The PG LISTEN/NOTIFY channel name used by the outbox.
 pub const NOTIFY_CHANNEL: &str = "atc_outbox";
 
+/// Maximum rows fetched per drain-pass page. Bounds memory use after a long
+/// listener outage; the drain loop continues until a partial page is returned.
+const DRAIN_BATCH_SIZE: i64 = 500;
+
 /// Connect a `PgListener`, subscribe to [`NOTIFY_CHANNEL`], and return it.
 ///
 /// Extracted as a library function so the startup sequence can be tested
@@ -104,9 +108,11 @@ pub fn spawn_drain_task(
     })
 }
 
-/// Fetch outbox rows newer than `watermark`, log them, and advance the watermark.
+/// Fetch outbox rows newer than `watermark` in bounded pages, log them, and
+/// advance the watermark. Loops until a partial page is returned so a large
+/// backlog after a listener outage does not materialize all at once.
 ///
-/// Returns `true` on success (including zero rows), `false` on query error.
+/// Returns `true` on success (including zero rows), `false` on any query error.
 async fn drain_pass(
     pool: &sqlx::PgPool,
     watermark: &mut i64,
@@ -116,42 +122,51 @@ async fn drain_pass(
     if let Some(d) = drain_delay {
         tokio::time::sleep(d).await;
     }
-    let rows = sqlx::query!(
-        "SELECT seq, kind, run_id, job_id, payload FROM outbox WHERE seq > $1 ORDER BY seq",
-        *watermark
-    )
-    .fetch_all(pool)
-    .await;
+    loop {
+        let rows = sqlx::query!(
+            "SELECT seq, kind, run_id, job_id, payload FROM outbox \
+             WHERE seq > $1 ORDER BY seq LIMIT $2",
+            *watermark,
+            DRAIN_BATCH_SIZE,
+        )
+        .fetch_all(pool)
+        .await;
 
-    match rows {
-        Ok(rows) => {
-            for row in &rows {
-                tracing::info!(
-                    seq = row.seq,
-                    kind = %row.kind,
-                    run_id = row.run_id,
-                    job_id = ?row.job_id,
-                    payload = ?row.payload,
-                    "outbox drain (stub: not forwarding)"
-                );
+        match rows {
+            Ok(rows) => {
+                for row in &rows {
+                    tracing::info!(
+                        seq = row.seq,
+                        kind = %row.kind,
+                        run_id = row.run_id,
+                        job_id = ?row.job_id,
+                        payload = ?row.payload,
+                        "outbox drain (stub: not forwarding)"
+                    );
+                }
+                let fetched = rows.len();
+                if let Some(last) = rows.last() {
+                    *watermark = last.seq;
+                }
+                metrics::counter!("atc_pg_drain_rows_total").increment(fetched as u64);
+                if fetched < DRAIN_BATCH_SIZE as usize {
+                    // Partial (or empty) page — backlog fully drained.
+                    metrics::counter!("atc_pg_drain_passes_total").increment(1);
+                    if let Some(c) = observed_passes {
+                        c.fetch_add(1, Ordering::Relaxed);
+                    }
+                    return true;
+                }
+                // Full page — more rows may be waiting; loop immediately.
             }
-            if let Some(last) = rows.last() {
-                *watermark = last.seq;
+            Err(e) => {
+                tracing::warn!(error = %e, "drain_pass query failed");
+                metrics::counter!("atc_pg_drain_passes_total").increment(1);
+                if let Some(c) = observed_passes {
+                    c.fetch_add(1, Ordering::Relaxed);
+                }
+                return false;
             }
-            metrics::counter!("atc_pg_drain_rows_total").increment(rows.len() as u64);
-            metrics::counter!("atc_pg_drain_passes_total").increment(1);
-            if let Some(c) = observed_passes {
-                c.fetch_add(1, Ordering::Relaxed);
-            }
-            true
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "drain_pass query failed");
-            metrics::counter!("atc_pg_drain_passes_total").increment(1);
-            if let Some(c) = observed_passes {
-                c.fetch_add(1, Ordering::Relaxed);
-            }
-            false
         }
     }
 }

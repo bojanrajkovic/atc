@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT seq, kind, run_id, job_id, payload FROM outbox WHERE seq > $1 ORDER BY seq",
+  "query": "SELECT seq, kind, run_id, job_id, payload FROM outbox WHERE seq > $1 ORDER BY seq LIMIT $2",
   "describe": {
     "columns": [
       {
@@ -31,6 +31,7 @@
     ],
     "parameters": {
       "Left": [
+        "Int8",
         "Int8"
       ]
     },
@@ -42,5 +43,5 @@
       false
     ]
   },
-  "hash": "3dbbc3c6771e7b6d992276997f02e3a99c331f78eb00bd82ab6999fc9f87df17"
+  "hash": "97abb07375c9f6d29e27c251bd154b5d04b7180cd29ba974a377475287702433"
 }
