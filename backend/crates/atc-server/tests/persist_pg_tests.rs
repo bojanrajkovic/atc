@@ -5,6 +5,8 @@
 //!
 //! Requires Docker (or OrbStack) to be running.
 
+mod common;
+
 use std::time::Duration;
 
 use atc_core::{
@@ -14,31 +16,6 @@ use atc_core::{
 };
 use atc_server::persist::PgStore;
 use chrono::{DateTime, Utc};
-use testcontainers::ImageExt;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Boot a fresh PG container and return a pool with migrations applied.
-async fn start_pg() -> (sqlx::PgPool, impl Drop) {
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("failed to start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("failed to get port");
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = atc_server::db::init_pool(&db_url)
-        .await
-        .expect("init_pool failed");
-    (pool, container)
-}
 
 fn ts() -> DateTime<Utc> {
     Utc::now()
@@ -184,7 +161,7 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_first_sight_creates_row() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     let env = run_requested(1001);
@@ -205,7 +182,7 @@ async fn pg_run_first_sight_creates_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_valid_transition_updates_row() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(1002)).await.unwrap();
@@ -229,7 +206,7 @@ async fn pg_run_valid_transition_updates_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_invalid_transition_returns_err() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     // Bring run to Completed
@@ -256,7 +233,7 @@ async fn pg_run_invalid_transition_returns_err() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_idempotent_same_status_replay() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(1004)).await.unwrap();
@@ -281,7 +258,7 @@ async fn pg_run_idempotent_same_status_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_first_sight_creates_row_with_existing_run() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     // Pre-insert real run
@@ -310,7 +287,7 @@ async fn pg_job_first_sight_creates_row_with_existing_run() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_valid_transition_updates_row() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(2002)).await.unwrap();
@@ -332,7 +309,7 @@ async fn pg_job_valid_transition_updates_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_invalid_transition_returns_err() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(2003)).await.unwrap();
@@ -364,7 +341,7 @@ async fn pg_job_invalid_transition_returns_err() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_idempotent_same_status_replay() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(2004)).await.unwrap();
@@ -381,7 +358,7 @@ async fn pg_job_idempotent_same_status_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_queued_to_completed_rejected() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(2005)).await.unwrap();
@@ -412,7 +389,7 @@ async fn pg_job_queued_to_completed_rejected() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_before_run_creates_stub_run() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     // Fire job event for unknown run 9001
@@ -441,7 +418,7 @@ async fn pg_job_before_run_creates_stub_run() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_real_run_event_reconciles_stub() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     // Job-before-run
@@ -488,7 +465,7 @@ async fn pg_real_run_event_reconciles_stub() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_two_jobs_same_unknown_run_share_stub() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_job_event(job_queued(8003, 9003)).await.unwrap();
@@ -509,7 +486,7 @@ async fn pg_two_jobs_same_unknown_run_share_stub() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_coalesce_preserves_workflow_name() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     // First event: workflow_name = Some("CI")
@@ -534,7 +511,7 @@ async fn pg_run_coalesce_preserves_workflow_name() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_runner() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(4002)).await.unwrap();
@@ -584,7 +561,7 @@ async fn pg_job_coalesce_preserves_runner() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_runner_group_cleared_when_runner_changes() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(4010)).await.unwrap();
@@ -649,7 +626,7 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_name_run_id_created_at() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool.clone());
 
     store.apply_run_event(run_requested(4003)).await.unwrap();
@@ -700,7 +677,7 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_store_ping_succeeds() {
-    let (pool, _c) = start_pg().await;
+    let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new(pool);
     assert!(
         store.ping().await.is_ok(),
