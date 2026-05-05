@@ -40,7 +40,6 @@ async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: Some(pool),
-        pg_store: None,
     });
     atc_server::routes::api_routes(layer).with_state(app_state)
 }

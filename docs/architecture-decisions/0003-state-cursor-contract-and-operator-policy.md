@@ -164,6 +164,13 @@ independent run-row TTL) is a Phase 2 schema decision.
 - Whether the in-memory mode survives in production binaries or becomes a
   dev-only feature flag
 
+## Implementation Status
+
+- **Decision 1** (`StateSnapshot.seq` → `lastSeq` rename, `>=` → `>` comparator flip): deferred to Phase 3a. Current wire contract still uses `seq` (next-seq-to-assign semantics).
+- **Decision 2** (monotonic-not-gapless BIGSERIAL cursor on outbox): implemented in Phase 2c. The `outbox.seq BIGSERIAL PRIMARY KEY` materializes the durable cursor. Aborted transactions consume seq values without producing committed rows — verified by `phase_2c_outbox_ac2_2_bigserial_gap_property` test. The in-memory `Mutex<u64>` cursor remains the broadcast source through Phase 3c.
+- **Decision 3** (operator error policy: 503 for transient PG failures): implemented in Phase 2c. Webhook handler returns 503 when `pool.begin()` or `tx.commit()` fail; parity rejections (predicated UPSERT 0 rows) return 200 `{"status":"rejected"}`.
+- **Decision 4** (TTL eviction via SQL DELETE; outbox retention separate from current-state retention): deferred to Phase 5.
+
 ## Related
 
 - ADR 0002 — [PostgreSQL outbox + symmetric replicas for live state](./0002-state-externalization-postgres-outbox.md)

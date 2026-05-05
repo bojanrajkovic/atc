@@ -91,6 +91,11 @@ required.
   is reorganized into a derivation in `runStore` directly
 - Frontend test restructuring details (fixture shape, assertion changes)
 
+## Implementation Status
+
+- **Outbox stores domain events only (no `pool_stats_after`)**: enforced in Phase 2c. Outbox `payload` JSONB stores `RunEventEnvelope` / `JobEventEnvelope` — the parsed-webhook domain events. `SeqEvent.pool_stats_after` is never written to the outbox. Verified by `phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event` test.
+- **Frontend derivation of pool stats**: deferred to Phase 3b. Backend still computes `pool_stats_after` under the seq mutex and broadcasts it via `SeqEvent`; frontend still receives and wholesale-replaces pool state from this field.
+
 ## Related
 
 - ADR 0002 — [PostgreSQL outbox + symmetric replicas for live state](./0002-state-externalization-postgres-outbox.md)
