@@ -2,6 +2,8 @@
 
 **Status:** Accepted (Phase 1 of state-externalization rollout, 2026-05-03)
 
+Last verified: 2026-05-04
+
 ## Context
 
 ATC's backend currently keeps all live state in process memory. `atc-server`
@@ -221,9 +223,9 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
 
 - **Decision 1** (PostgreSQL as durable state backend, sqlx crate, `sqlx::migrate!` for migrations): implemented in Phase 2a (PR #48). Schema: `runs` and `jobs` tables in `0001_initial_runs_jobs.sql`.
 - **Decision 2** (atomic current-state UPSERT + outbox INSERT in one transaction): implemented in Phase 2c. `migrations/0002_outbox.sql` adds the outbox table; `upsert_*_in_txn` and `insert_outbox_*_in_txn` helpers in `persist.rs` drive the transaction. Webhook handler holds seq mutex across `pool.begin()…tx.commit()` to preserve broadcast order = durable order.
-- **Decision 3** (NOTIFY emission after commit; listener connection using session-compatible path): infrastructure groundwork (outbox table, BIGSERIAL seq) in place. NOTIFY emission and listener stub land in Phase 2d.
+- **Decision 3** (NOTIFY emission after commit; listener connection using session-compatible path): IMPLEMENTED in Phase 2d — see feat/phase-2d-notify-listener branch. `SELECT pg_notify('atc_outbox', seq::text)` emitted inside the webhook transaction before `tx.commit()`. Dedicated `PgListener` listener task; `ATC_DATABASE_LISTENER_URL` config option for session-mode override. Five new metrics wired.
 - **Decision 4** (original pool-stats persistence — superseded by ADR 0004): outbox payload stores `RunEventEnvelope`/`JobEventEnvelope` only (no `pool_stats_after`). ADR 0004 governs pool stats from Phase 3b onward.
-- **Decision 5** (startup watermark and forwarder design): deferred to Phase 2d/3c when the forwarder is built.
+- **Decision 5** (startup watermark and forwarder design): PARTIAL — listener structure, coalescing via `Arc<Notify>`, and watermark init (`COALESCE(MAX(seq), 0)`) implemented in Phase 2d. Drain task fetches `seq > watermark ORDER BY seq` and logs rows (stub). Only `forward_to_ws_clients` step deferred to Phase 3c, when the drain loop gains the actual WS forwarding call.
 
 Phase 2c PR: `feat(server): add transactional outbox and reverse webhook error policy` (squash-merge commits `877b2c6`–`02ddd72`).
 

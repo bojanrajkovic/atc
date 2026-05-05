@@ -76,6 +76,16 @@ spec:
             - name: ATC_DATABASE_URL
               value: {{ .Values.config.databaseUrl | quote }}
             {{- end }}
+            {{- if and .Values.existingSecret.name .Values.existingSecret.databaseListenerUrlKey }}
+            - name: ATC_DATABASE_LISTENER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name | quote }}
+                  key: {{ .Values.existingSecret.databaseListenerUrlKey | quote }}
+            {{- else if .Values.config.databaseListenerUrl }}
+            - name: ATC_DATABASE_LISTENER_URL
+              value: {{ .Values.config.databaseListenerUrl | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080

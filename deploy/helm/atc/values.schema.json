@@ -123,6 +123,10 @@
           "type": ["string", "null"],
           "description": "Database connection URL (ATC_DATABASE_URL). See values.yaml for the three storage modes."
         },
+        "databaseListenerUrl": {
+          "type": "string",
+          "description": "Listener database connection URL (ATC_DATABASE_LISTENER_URL). When empty, the listener falls back to ATC_DATABASE_URL. Set when the main pool runs through transaction-mode PgBouncer."
+        },
         "logFilter": {
           "type": "string",
           "description": "Tracing filter string in RUST_LOG syntax (ATC_LOG_FILTER)."
@@ -144,6 +148,10 @@
         "databaseUrlKey": {
           "type": "string",
           "description": "Key inside the Secret whose value is the database URL."
+        },
+        "databaseListenerUrlKey": {
+          "type": "string",
+          "description": "Key inside the Secret whose value is the listener database URL. When empty, the listener falls back to ATC_DATABASE_URL."
         }
       }
     },

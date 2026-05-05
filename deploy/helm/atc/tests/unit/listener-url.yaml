@@ -1,0 +1,48 @@
+suite: Listener URL env var — three rendering branches (Phase 2d)
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: does not render ATC_DATABASE_LISTENER_URL when neither config.databaseListenerUrl nor existingSecret.databaseListenerUrlKey is set
+    set:
+      config.databaseUrl: "postgres://user:pw@pg:5432/atc"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_LISTENER_URL
+
+  - it: renders ATC_DATABASE_LISTENER_URL as a plain value when config.databaseListenerUrl is set
+    set:
+      config.databaseListenerUrl: "postgres://listener:pw@pg:5432/atc"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_LISTENER_URL
+            value: "postgres://listener:pw@pg:5432/atc"
+
+  - it: renders ATC_DATABASE_LISTENER_URL from secret when existingSecret.name and existingSecret.databaseListenerUrlKey are both set
+    set:
+      existingSecret.name: atc-db-secret
+      existingSecret.databaseListenerUrlKey: listener-db-url
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_LISTENER_URL
+            valueFrom:
+              secretKeyRef:
+                name: atc-db-secret
+                key: listener-db-url
+
+  - it: does not render ATC_DATABASE_LISTENER_URL when existingSecret.name is set but databaseListenerUrlKey is empty
+    set:
+      existingSecret.name: atc-db-secret
+      existingSecret.databaseListenerUrlKey: ""
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_LISTENER_URL

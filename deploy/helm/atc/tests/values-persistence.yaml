@@ -7,3 +7,4 @@ persistence:
 
 config:
   databaseUrl: "sqlite:///var/lib/atc/atc.db"
+  databaseListenerUrl: "postgres://listener:pw@pg:5432/atc"

@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-04 (Phase 2c outbox path: webhook handler runs transactional UPSERT+outbox INSERT before in-memory apply)
+Last verified: 2026-05-04 (Phase 2d: listener task, drain task, ATC_DATABASE_LISTENER_URL, pg_notify inside webhook transaction)
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -21,6 +21,7 @@ Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsi
 | `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
 | `metrics` | Prometheus layer, build_info gauge, process collector, PG write counter registration (`register_pg_write_counters`) (Phase 2b/2c) |
 | `persist` | `PgStore` implementing `atc-core::PersistentStore` trait; predicated UPSERTs for runs and jobs; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` for atomic outbox writes (Phase 2c) |
+| `listener` | PG LISTEN/NOTIFY background tasks: listener task receives notifications, drain task fetches outbox rows by seq > watermark, logs, advances watermark. Spawned only when pg_pool is Some. (Phase 2d) |
 | `migrations/` | SQL migration files embedded at compile time via `sqlx::migrate!()`. `0001_initial_runs_jobs.sql` creates `runs` and `jobs` tables. `0002_outbox.sql` creates the `outbox` append-only event log table with BIGSERIAL primary key, `kind` discriminator, and JSONB payload. Run automatically on startup when `ATC_DATABASE_URL` is set. |
 
 ## TypeScript Generation
@@ -38,7 +39,9 @@ Generated types are written to `frontend/src/lib/types/generated/` via `just typ
 
 These rules are enforced by implementation and verified by tests:
 
-- **Webhook ingestion:** HMAC-SHA256 verification (when secret configured), parse via atc-github, then branch on `pg_pool`: with PG — begin transaction, UPSERT run/job, INSERT outbox row, commit, then apply to in-memory store; without PG — apply directly to in-memory store. Returns 200 for successful apply or invalid transition, 503 for transient PG failures.
+- **Webhook ingestion:** HMAC-SHA256 verification (when secret configured), parse via atc-github, then branch on `pg_pool`: with PG — begin transaction, UPSERT run/job, INSERT outbox row, emit `SELECT pg_notify('atc_outbox', seq::text)`, commit, then apply to in-memory store; without PG — apply directly to in-memory store. Returns 200 for successful apply or invalid transition, 503 for transient PG failures.
+- **NOTIFY emission:** Inside the webhook handler transaction (after outbox INSERT, before commit), `SELECT pg_notify('atc_outbox', seq::text)` emits the outbox row's seq to all listeners. PG queues NOTIFYs during a txn and delivers on COMMIT; aborted txns silently drop. Metric: `atc_pg_notify_emitted_total{kind}`.
+- **Listener fetch-stub:** The drain task wakes on each `Arc<Notify>` signal, selects all outbox rows with `seq > watermark ORDER BY seq`, logs them (stub: not forwarding in Phase 2d), and advances the watermark. Watermark initializes to `COALESCE(MAX(seq), 0)` at boot (ADR 0002 Decision 5). Phase 3c adds `forward_to_ws_clients` inside the loop.
 - **Seq ordering:** `Mutex<u64>` acquired BEFORE `pool.begin()` and held across PG commit + in-memory apply + seq assignment + broadcast. This ensures two concurrent webhooks cannot commit in one order and broadcast in reverse order. Strictly monotonic with no gaps. Resets on server restart.
 - **Broadcast semantics:** Bounded channel (capacity 256) means slow subscribers may miss events. LaggingError logs warning but does not disconnect. Broadcast happens under the seq mutex so state_handler never advertises a cursor for events that haven't been broadcast yet.
 - **State snapshot:** `Mutex<u64>` held across snapshot + seq read in the state handler, ensuring the cursor matches the snapshot content. StateSnapshot.seq is the next seq to assign; all events with seq < N are reflected in snapshot.
