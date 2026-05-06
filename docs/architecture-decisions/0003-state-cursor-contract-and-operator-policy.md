@@ -171,6 +171,14 @@ independent run-row TTL) is a Phase 2 schema decision.
 - **Decision 3** (operator error policy: 503 for transient PG failures): implemented in Phase 2c. Webhook handler returns 503 when `pool.begin()` or `tx.commit()` fail; parity rejections (predicated UPSERT 0 rows) return 200 `{"status":"rejected"}`.
 - **Decision 4** (TTL eviction via SQL DELETE; outbox retention separate from current-state retention): deferred to Phase 5.
 
+## Phase 3c implementation notes (2026-05-06)
+
+REPEATABLE READ on snapshot reads is now the contract: `state_handler`'s PG branch opens a REPEATABLE READ transaction and reads runs/jobs/MAX(outbox.seq) from the same MVCC snapshot. This guarantees `lastSeq` is a true upper bound on the runs/jobs content. Without REPEATABLE READ, a concurrent webhook commit between the runs SELECT and the seq SELECT could advance `lastSeq` past content that the snapshot hasn't materialized — the frontend's `seq > lastSeq` filter at `connection.ts:113` would then permanently drop a real event.
+
+The drain task implements bounded ring-buffer dedup (2048 seqs / ~16 KB per replica) to preserve this ADR's no-frontend-dedup stance under Phase 3c's gap-healing rescans. The rescan window can re-fetch a row already broadcast (when a delayed commit arrives after a rescan-eligible commit was forwarded); the ring suppresses the duplicate broadcast. Counter: `atc_pg_drain_duplicate_skipped_total`.
+
+Decision 4 (PG-side TTL eviction deferred to Phase 5) still holds — the in-memory eviction task remains, but in PG mode the in-memory store stays empty so eviction is a no-op.
+
 ## Related
 
 - ADR 0002 — [PostgreSQL outbox + symmetric replicas for live state](./0002-state-externalization-postgres-outbox.md)

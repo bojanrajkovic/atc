@@ -1,6 +1,6 @@
 # Rollout And Implementation
 
-Last verified: 2026-05-05 (Phase 3a cursor rename + Phase 3b frontend pool-stats derivation: complete)
+Last verified: 2026-05-06 (Phase 3c read-path cutover: complete)
 
 ## Status
 
@@ -175,6 +175,11 @@ Acceptance: existing pool-display E2E tests pass with the derived store; a test 
 ADR refs: [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md) (entire ADR).
 
 #### Phase 3c: Read-path cutover
+
+**Status: Done (2026-05-06).** Implementation notes:
+- Bounded ring-buffer dedup (`DEDUP_CAP=2048` seqs, ~16 KB per replica) was added beyond this doc's spec to preserve ADR 0003's no-frontend-dedup stance under gap-healing rescans. Counter: `atc_pg_drain_duplicate_skipped_total`.
+- In-memory `seq` mutex, `webhook_tx`, and `store` are **retained for in-memory mode** (`pg_pool=None`) — intentional scope reduction from this doc's "remove in-memory store" intent.
+- PG-side TTL eviction remains deferred to Phase 5; the in-memory eviction task runs as a no-op in PG mode (the in-memory store stays empty).
 
 Switch `GET /v1/state` to read from PG and `/v1/ws` to forward from the outbox. Remove the in-memory store.
 

@@ -12,31 +12,39 @@
 mod common;
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
-use atc_github::ParseResult;
 use atc_server::state::{AppState, SeqEvent};
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
 use futures_util::future::join_all;
-use std::sync::OnceLock;
-use tokio::sync::broadcast::error::TryRecvError;
 use tower::ServiceExt;
 
 // ---------------------------------------------------------------------------
 // Prometheus singleton for tests that check /metrics counters
 // ---------------------------------------------------------------------------
 
-static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, axum::Router)> = OnceLock::new();
-
-fn prometheus_init() -> &'static (PrometheusMetricLayer<'static>, axum::Router) {
-    PROMETHEUS_INIT.get_or_init(atc_server::metrics::build)
-}
-
+/// Use the shared `common::PROMETHEUS_INIT` so this test binary installs the
+/// global `metrics` recorder exactly once. Two separate OnceLocks (one local,
+/// one common) would each call `PrometheusMetricLayer::pair()`, and the second
+/// `pair()` call panics with `SetRecorderError` because the global recorder
+/// is already installed. AC4.1/AC4.2 use the common fixture, so all tests in
+/// this binary must agree on a single OnceLock.
 fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    prometheus_init().0.clone()
+    common::PROMETHEUS_INIT
+        .get_or_init(PrometheusMetricLayer::pair)
+        .0
+        .clone()
 }
 
 /// Parse `atc_pg_write_failures_total{kind="<kind>"}` from Prometheus text output.
@@ -94,6 +102,8 @@ fn build_app_with_pg(
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: Some(pool),
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -123,19 +133,12 @@ async fn post_webhook(
     (status, json)
 }
 
-/// GET /metrics from the Prometheus side-port router.
+/// Render Prometheus metrics text. Thin wrapper over `common::render_metrics`
+/// kept async so existing `render_metrics().await` call sites compile unchanged.
 async fn render_metrics() -> String {
-    let metrics_router = prometheus_init().1.clone();
-    let req = Request::builder()
-        .method("GET")
-        .uri("/metrics")
-        .body(Body::empty())
-        .unwrap();
-    let resp = metrics_router.oneshot(req).await.unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    String::from_utf8(bytes.to_vec()).unwrap()
+    // Ensure the OnceLock is initialized before calling the common helper.
+    let _ = prometheus_layer();
+    common::render_metrics()
 }
 
 /// Insert a minimal stub runs row for FK satisfaction. Uses untyped sqlx API.
@@ -224,7 +227,11 @@ async fn phase_2c_outbox_ac1_1_run_webhook_produces_run_and_outbox_row() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
+    );
 
     // One runs row
     assert_eq!(
@@ -465,7 +472,11 @@ async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
+    );
 
     // Assert initial state: 1 stub run, 1 job (Queued), 1 outbox row
     assert_eq!(
@@ -558,11 +569,12 @@ async fn phase_2c_outbox_ac3_1_parity_rejection_returns_200_rejected() {
     );
 }
 
-/// AC3.4: Successful webhook returns HTTP 200 with body `{"status":"processed"}`
-/// and does NOT increment `atc_pg_write_failures_total`.
+/// AC3.4: Successful webhook in PG mode returns HTTP 200 with body
+/// `{"status":"accepted","seq":<i64>}` and does NOT increment
+/// `atc_pg_write_failures_total`.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac3_4_success_returns_200_processed() {
+async fn phase_2c_outbox_ac3_4_success_returns_200_accepted() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -579,8 +591,12 @@ async fn phase_2c_outbox_ac3_4_success_returns_200_processed() {
 
     assert_eq!(status, StatusCode::OK, "success must return 200");
     assert_eq!(
-        json["status"], "processed",
-        "body status must be 'processed'"
+        json["status"], "accepted",
+        "PG-mode body status must be 'accepted'"
+    );
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
     );
 
     let after = render_metrics().await;
@@ -614,6 +630,8 @@ async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -668,7 +686,11 @@ async fn phase_2c_outbox_ac5_1_job_webhook_creates_stub_run_and_outbox() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
+    );
 
     // runs: 1 stub row, status=Queued
     assert_eq!(
@@ -701,7 +723,11 @@ async fn phase_2c_outbox_ac5_1_job_webhook_creates_stub_run_and_outbox() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
+    );
 
     // runs.status should now be Completed (stub upgraded)
     assert_eq!(
@@ -797,38 +823,38 @@ async fn phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event() {
 // AC3.3 — Post-commit in-memory drift returns 200, increments drift counter
 // ---------------------------------------------------------------------------
 
-/// AC3.3: PG commits but in-memory apply rejects the same transition (drift).
+/// AC3.3 (Phase 3c rewrite): drift is structurally unreachable in PG mode.
 ///
-/// The handler returns 200/processed for the first (seeding) webhook. Then we
-/// directly advance the in-memory store past the state PG still holds, so the
-/// next webhook succeeds in PG but finds in-memory already at a terminal state.
-/// The drift counter must increment; no SeqEvent is broadcast for the drifting
-/// webhook; the write-failure counters are unchanged.
+/// Phase 3c §D4 silenced the in-memory apply in PG mode — the handler commits
+/// to PG, emits NOTIFY, and returns. The drain task is the sole writer to
+/// `webhook_tx`, and the in-memory `state.store` is never written. There is
+/// no in-memory state to drift from, so `atc_pg_in_memory_drift_total` is a
+/// stuck-at-zero counter under PG mode.
 ///
-/// Drift scenario in detail:
-///   1. Fire workflow_run.requested → both PG and in-memory: Queued.
-///   2. Directly apply workflow_run.in_progress to in-memory only (bypass handler).
-///   3. Directly apply workflow_run.completed to in-memory only (bypass handler).
-///      Now: in-memory = Completed, PG = Queued.
-///   4. Fire workflow_run.in_progress → PG: Queued→InProgress (valid, commits).
-///      In-memory: Completed→InProgress invalid (Completed not in
-///      predecessors_of(InProgress)) → drift counter increments, no broadcast.
-///   5. Assert: HTTP 200, no SeqEvent on rx, drift counter +1, no write-failure bump.
+/// The original AC3.3 scenario relied on the handler dual-writing (PG + in-mem)
+/// and detecting divergence post-commit. After 3c that whole machinery is
+/// gone: the seq mutex is unused in PG mode, the store stays empty, and the
+/// drift counter never increments.
+///
+/// This rewrite asserts the **invariant** instead of the **mechanism**: after a
+/// webhook commits in PG mode, the in-memory store is still empty, no drift
+/// counter incremented, and the response shape advertises the outbox seq
+/// (status="accepted" with seq, not "processed"). The original drift detection
+/// is preserved at the metric level — drift_total stays at baseline.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_counter() {
-    // Ensure counters are registered before baseline snapshot.
+async fn phase_2c_outbox_ac3_3_no_in_memory_drift_in_pg_mode() {
     atc_server::metrics::register_pg_write_counters();
 
     let (pool, _c, _) = common::start_pg().await;
-    let (app, app_state, mut rx) = build_app_with_pg(pool.clone());
+    let (app, app_state, _rx) = build_app_with_pg(pool.clone());
 
     let before = render_metrics().await;
     let baseline_drift = parse_unlabeled_counter(&before, "atc_pg_in_memory_drift_total");
     let baseline_parity = parse_counter_value(&before, "parity");
     let baseline_transient = parse_counter_value(&before, "transient");
 
-    // Step 1: Fire workflow_run.requested → PG and in-memory both reach Queued.
+    // Fire a webhook through the PG-mode handler.
     let (status, json) = post_webhook(
         app.clone(),
         "workflow_run",
@@ -836,105 +862,52 @@ async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_co
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["status"], "processed");
+    assert_eq!(
+        json["status"], "accepted",
+        "PG-mode handler returns 'accepted' (not 'processed') with the outbox seq"
+    );
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
+    );
 
-    // Drain the SeqEvent that was broadcast for the seeding webhook.
-    let _seed_event = rx.recv().await.expect("must receive seeding SeqEvent");
-
-    // Step 2+3: Advance in-memory store to Completed directly, bypassing the handler.
-    // This puts in-memory ahead of PG (in-memory=Completed, PG=Queued).
-    let in_progress_fixture = common::fixture_workflow_run_in_progress();
-    let in_progress_parse = atc_github::parse_webhook("workflow_run", &in_progress_fixture)
-        .expect("fixture must parse");
-    let in_progress_env = match in_progress_parse {
-        ParseResult::Parsed(ev) => match *ev {
-            atc_github::WebhookEvent::Run(env) => env,
-            _ => panic!("expected Run event from in_progress fixture"),
-        },
-        ParseResult::Skipped { .. } => panic!("in_progress fixture must not be skipped"),
-    };
-    app_state
-        .store
-        .apply_run_event(in_progress_env)
-        .await
-        .expect("direct in-memory apply (InProgress) must succeed from Queued");
-
-    let completed_fixture = common::fixture_workflow_run_completed();
-    let completed_parse =
-        atc_github::parse_webhook("workflow_run", &completed_fixture).expect("fixture must parse");
-    let completed_env = match completed_parse {
-        ParseResult::Parsed(ev) => match *ev {
-            atc_github::WebhookEvent::Run(env) => env,
-            _ => panic!("expected Run event from completed fixture"),
-        },
-        ParseResult::Skipped { .. } => panic!("completed fixture must not be skipped"),
-    };
-    app_state
-        .store
-        .apply_run_event(completed_env)
-        .await
-        .expect("direct in-memory apply (Completed) must succeed from InProgress");
-
-    // Sanity: in-memory is now Completed; PG still has Queued.
+    // PG row exists.
     let pg_status: String = sqlx::query_scalar("SELECT status FROM runs LIMIT 1")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(
-        pg_status, "Queued",
-        "PG must still be Queued before trigger webhook"
+    assert_eq!(pg_status, "Queued", "PG must reflect the committed event");
+
+    // In-memory store stays empty in PG mode — no drift can occur because the
+    // handler doesn't write to it.
+    let snap = app_state.store.snapshot().await;
+    assert!(
+        snap.runs.is_empty(),
+        "in-memory store must stay empty in PG mode; runs={:?}",
+        snap.runs
+    );
+    assert!(
+        snap.jobs.is_empty(),
+        "in-memory store must stay empty in PG mode; jobs={:?}",
+        snap.jobs
     );
 
-    // Step 4: Fire workflow_run.in_progress through the handler.
-    // PG: Queued→InProgress (valid, will commit).
-    // In-memory: Completed→InProgress invalid → drift → no broadcast.
-    let (status, json) = post_webhook(
-        app.clone(),
-        "workflow_run",
-        &common::fixture_workflow_run_in_progress(),
-    )
-    .await;
-
-    // AC3.3: handler must return 200/processed even on drift.
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "drift must return 200, not an error status"
-    );
-    assert_eq!(
-        json["status"], "processed",
-        "drift must return processed (PG committed)"
-    );
-
-    // No SeqEvent must have been broadcast for the drifting webhook.
-    match rx.try_recv() {
-        Err(TryRecvError::Empty) => {
-            // Correct — no broadcast on drift.
-        }
-        Ok(ev) => panic!("must not receive SeqEvent on drift; got seq={}", ev.seq),
-        Err(TryRecvError::Lagged(_)) => panic!("receiver lagged — channel capacity too small"),
-        Err(TryRecvError::Closed) => panic!("broadcast channel closed unexpectedly"),
-    }
-
-    // Drift counter must have incremented by exactly 1.
+    // Drift counter is stuck at zero — no apply, no detection.
     let after = render_metrics().await;
-    let after_drift = parse_unlabeled_counter(&after, "atc_pg_in_memory_drift_total");
     assert_eq!(
-        after_drift,
-        baseline_drift + 1,
-        "drift counter must increment by 1; metrics:\n{after}"
+        parse_unlabeled_counter(&after, "atc_pg_in_memory_drift_total"),
+        baseline_drift,
+        "drift counter must not increment in PG mode (handler doesn't write in-memory)"
     );
-
-    // Write-failure counters must not have changed (drift is not a PG failure).
     assert_eq!(
         parse_counter_value(&after, "parity"),
         baseline_parity,
-        "parity counter must not increment on drift"
+        "parity counter must not increment on success"
     );
     assert_eq!(
         parse_counter_value(&after, "transient"),
         baseline_transient,
-        "transient counter must not increment on drift"
+        "transient counter must not increment on success"
     );
 }
 
@@ -946,32 +919,35 @@ async fn phase_2c_outbox_ac3_3_post_commit_drift_returns_200_increments_drift_co
 /// same-row PG contention under genuine concurrent request racing.
 ///
 /// Uses a real TcpListener-based server with reqwest so that the tokio runtime
-/// can schedule multiple handler tasks simultaneously. All tasks race to acquire
-/// the seq mutex; the first winner creates the `runs` row at Queued, subsequent
-/// idempotent replays succeed under the predicate `WHERE status IN (Queued)`.
+/// can schedule multiple handler tasks simultaneously. All tasks race; whichever
+/// commits its outbox INSERT first wins seq=1, etc. PostgreSQL row-level locking
+/// on the same-id UPSERT serializes the in-flight transactions, so all N succeed
+/// as idempotent replays under the predicate `WHERE status IN (Queued)`.
 ///
 /// Because all payloads are identical (same run_id → same content in broadcast and
 /// outbox), we assert count-level invariants instead of run_id ordering: exactly N
-/// SeqEvents broadcast with strictly increasing in-memory seq values, exactly N
-/// outbox rows created. The broadcast-order == durable-order content assertion is
-/// covered by AC4.2 (distinct run_ids). AC4.1 specifically validates that same-row
-/// PG row-level locking + seq-mutex serialization handles concurrent idempotent
+/// SeqEvents broadcast with strictly increasing seq values, exactly N outbox rows
+/// created. The broadcast-order == durable-order content assertion is covered by
+/// AC4.2 (distinct run_ids). AC4.1 specifically validates that same-row PG
+/// row-level locking + drain serial broadcast handles concurrent idempotent
 /// replays without deadlock, double-broadcast, or outbox row loss.
+///
+/// Phase 3c: uses `build_app_with_pg_and_listener` (full fixture with drain task)
+/// because the drain — not the handler — is the broadcaster in PG mode.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durable_order() {
     const N: usize = 4;
-    let (pool, _c, _) = common::start_pg().await;
+    let (pool, _c, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
+    let mut rx = fixture.state.webhook_tx.subscribe();
 
-    // Build AppState and subscribe to broadcast BEFORE spawning the server.
-    let (app, app_state, _rx_build) = build_app_with_pg(pool.clone());
-    let mut rx = app_state.webhook_tx.subscribe();
-
-    // Bind ephemeral listener and spawn server.
+    // Bind ephemeral listener and spawn server with the full router (includes drain).
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let router = fixture.router.clone();
     let server_handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(listener, router).await.unwrap();
     });
 
     // All N webhooks target the same run_id (same-row PG contention scenario).
@@ -1005,7 +981,9 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
         .collect();
     join_all(handles).await;
 
-    // Collect N SeqEvents from the broadcast channel in arrival order.
+    // Collect N SeqEvents from the broadcast channel in arrival order. The
+    // drain may emit them across one or more passes depending on coalescing,
+    // but the cumulative count must hit N within the timeout.
     let mut broadcast_seqs: Vec<u64> = Vec::new();
     for _ in 0..N {
         let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
@@ -1015,13 +993,11 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
         broadcast_seqs.push(ev.seq);
     }
 
-    // Query outbox for all rows in durable commit order.
     let outbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
         .fetch_one(&pool)
         .await
         .unwrap();
 
-    // Verify count invariants: exactly N broadcasts and exactly N outbox rows.
     assert_eq!(
         broadcast_seqs.len(),
         N,
@@ -1029,8 +1005,7 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
     );
     assert_eq!(outbox_count as usize, N, "outbox must have exactly N rows");
 
-    // Verify monotonic ordering: SeqEvent.seq values must be strictly increasing.
-    // (The in-memory Mutex<u64> guarantees this; this assertion catches any regression.)
+    // Drain emits in `ORDER BY seq` so broadcast seqs must be strictly increasing.
     for w in broadcast_seqs.windows(2) {
         assert!(
             w[0] < w[1],
@@ -1039,30 +1014,35 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
     }
 
     server_handle.abort();
+    fixture.shutdown.cancel();
 }
 
-/// AC4.2: N concurrent `workflow_run.requested` webhooks for N different run_ids — broadcast
-/// order matches outbox.seq order under genuine concurrent request racing.
+/// AC4.2: N concurrent `workflow_run.requested` webhooks for N different run_ids —
+/// broadcast order matches outbox.seq order under genuine concurrent request
+/// racing.
 ///
-/// Uses a real TcpListener-based server with reqwest. N tasks POST simultaneously;
-/// the seq mutex serializes them — whichever handler wins the mutex commits to PG
-/// first and broadcasts first. The test asserts broadcast order == durable outbox.seq
-/// order, the invariant the seq mutex is designed to enforce.
+/// Uses a real TcpListener-based server with reqwest. N tasks POST
+/// simultaneously; whichever transaction commits first wins the lower seq.
+/// The drain reads `seq > watermark ORDER BY seq` so its broadcast order
+/// matches BIGSERIAL allocation order — which IS durable outbox.seq order.
+/// The test asserts broadcast order == durable outbox.seq order.
+///
+/// Phase 3c: ordering is now provided by outbox `BIGSERIAL` + drain's
+/// ascending ORDER BY (the seq mutex is bypassed in PG mode). The test
+/// uses the full fixture so the drain task is running.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
 async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durable_order() {
     const N: usize = 4;
-    let (pool, _c, _) = common::start_pg().await;
+    let (pool, _c, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
+    let mut rx = fixture.state.webhook_tx.subscribe();
 
-    // Build AppState and subscribe to broadcast BEFORE spawning the server.
-    let (app, app_state, _rx_from_build) = build_app_with_pg(pool.clone());
-    let mut rx = app_state.webhook_tx.subscribe();
-
-    // Bind ephemeral listener and spawn server.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let router = fixture.router.clone();
     let server_handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(listener, router).await.unwrap();
     });
 
     // Build N=4 distinct workflow_run.requested bodies by mutating the fixture run_id.
@@ -1133,4 +1113,5 @@ async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durab
     );
 
     server_handle.abort();
+    fixture.shutdown.cancel();
 }

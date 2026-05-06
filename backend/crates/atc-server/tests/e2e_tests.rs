@@ -9,11 +9,19 @@ mod common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::routes;
 use atc_server::state::AppState;
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 use futures_util::stream::StreamExt;
 
 /// Start an ephemeral server with full AppState, all routes, and return the server address.
@@ -29,7 +37,10 @@ use futures_util::stream::StreamExt;
 ///
 /// Returns `SocketAddr` for HTTP/WS clients to connect to.
 async fn start_test_server() -> SocketAddr {
-    let layer = common::PROMETHEUS_INIT.get_or_init(|| atc_server::metrics::build().0);
+    let layer = common::PROMETHEUS_INIT
+        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .0
+        .clone();
 
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
@@ -42,6 +53,8 @@ async fn start_test_server() -> SocketAddr {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
     });
 
     let main_router = routes::api_routes(layer.clone())

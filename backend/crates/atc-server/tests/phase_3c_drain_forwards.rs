@@ -1,0 +1,181 @@
+//! Phase 3c integration tests: drain task forwards outbox events to WS clients.
+//!
+//! T4 — Drain forwards: webhook commits to PG, drain picks up the outbox row,
+//!      and broadcasts SeqEvent to WebSocket subscribers in order.
+//! T5 — Handler does not double-broadcast: in PG mode the webhook handler is
+//!      write-only; it commits to PG but does NOT broadcast via webhook_tx.
+//!      The broadcast comes solely from the drain.
+//!
+//! Docker/OrbStack required.
+
+mod common;
+
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+use axum::http::StatusCode;
+use serial_test::serial;
+use tokio::time::timeout;
+
+// ─── T4: drain broadcasts in delivery order ──────────────────────────────────
+
+/// T4: Events committed via the PG webhook handler are broadcast by the drain
+///     in outbox seq order (1, 2, …).
+///
+/// Fires a run webhook (→ seq=1) then a job webhook (→ seq=2). Asserts both
+/// SeqEvents arrive at broadcast_rx with the correct seq numbers and in order.
+#[tokio::test]
+#[serial]
+async fn phase_3c_drain_forwards_t4_drain_broadcasts_seq_in_order() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    let mut rx = fixture.state.webhook_tx.subscribe();
+
+    // Fire run webhook (seq=1).
+    let (status1, body1) = common::post_webhook_to_router(
+        fixture.router.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_requested(),
+    )
+    .await;
+    assert_eq!(status1, StatusCode::OK);
+    // PG-mode handler returns {"status":"accepted","seq":1}.
+    assert_eq!(
+        body1["status"], "accepted",
+        "PG-mode handler should return accepted"
+    );
+    assert_eq!(
+        body1["seq"], 1,
+        "first event should be assigned seq=1 by PG"
+    );
+
+    // Fire job webhook (seq=2).
+    let (status2, body2) = common::post_webhook_to_router(
+        fixture.router.clone(),
+        "workflow_job",
+        &common::fixture_workflow_job_queued(),
+    )
+    .await;
+    assert_eq!(status2, StatusCode::OK);
+    assert_eq!(body2["status"], "accepted");
+    assert_eq!(body2["seq"], 2, "second event should be seq=2");
+
+    // Await seq=1 from the drain.
+    let ev1 = timeout(Duration::from_secs(5), async {
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.seq == 1 => return ev,
+                Ok(_) => continue,
+                Err(_) => panic!("broadcast channel closed"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for seq=1 from drain");
+
+    // Await seq=2 from the drain.
+    let ev2 = timeout(Duration::from_secs(5), async {
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.seq == 2 => return ev,
+                Ok(_) => continue,
+                Err(_) => panic!("broadcast channel closed"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for seq=2 from drain");
+
+    // Assert ordering: seq numbers must be strictly increasing.
+    assert!(
+        ev1.seq < ev2.seq,
+        "drain must broadcast seq=1 before seq=2; got seq={} then seq={}",
+        ev1.seq,
+        ev2.seq
+    );
+
+    fixture.shutdown.cancel();
+}
+
+// ─── T5: handler does NOT broadcast in PG mode ──────────────────────────────
+
+/// T5: In PG mode the webhook handler is write-only — it does NOT send to the
+///     broadcast channel directly. The drain task is the SOLE writer to
+///     `webhook_tx`.
+///
+/// Proof-of-absence: subscribe BEFORE the webhook, send the webhook, then
+/// immediately (synchronously) drain the channel. Assert that the immediate
+/// channel snapshot does not contain any events. The drain broadcasts
+/// asynchronously — if we read the channel in a brief window before the drain
+/// wakes up, nothing should be there from the handler itself.
+///
+/// To make this race-safe: we fire the webhook, await the handler's 200 OK
+/// response, then try_recv() (non-blocking) exactly once. The handler is
+/// synchronous with respect to the HTTP response — if it had broadcast, the
+/// event would be in the channel already. Any event that arrives later came
+/// from the drain.
+#[tokio::test]
+#[serial]
+async fn phase_3c_drain_forwards_t5_handler_silent_in_pg_mode() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+
+    // Subscribe before firing the webhook.
+    let mut rx = fixture.state.webhook_tx.subscribe();
+
+    // Fire webhook and await HTTP 200.
+    let (status, body) = common::post_webhook_to_router(
+        fixture.router.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_requested(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["status"], "accepted",
+        "PG-mode handler should return accepted, not processed"
+    );
+
+    // The handler has returned. If it had broadcast to webhook_tx, the event
+    // would already be in the channel. try_recv is non-blocking — if the
+    // channel is empty here, the handler didn't broadcast.
+    let immediate = rx.try_recv();
+    assert!(
+        immediate.is_err(),
+        "handler must NOT broadcast immediately in PG mode; got an event: {immediate:?}"
+    );
+
+    // The drain will eventually broadcast — confirm it does (proves the full
+    // pipe works, not just that the handler is silent).
+    let drain_ev = timeout(Duration::from_secs(5), async {
+        match rx.recv().await {
+            Ok(ev) => ev,
+            Err(_) => panic!("broadcast channel closed"),
+        }
+    })
+    .await
+    .expect("timed out waiting for drain to broadcast");
+
+    assert_eq!(
+        drain_ev.seq, 1,
+        "drain should broadcast seq=1 (first event)"
+    );
+
+    // Confirm the seq counter in AppState was NOT incremented by the handler
+    // (it stays at 0 in PG mode — only the drain path advances it via
+    // BIGSERIAL, not the in-memory seq mutex).
+    let seq_val = *fixture.state.seq.lock().await;
+    assert_eq!(
+        seq_val, 0,
+        "in PG mode, the handler must not increment the in-memory seq counter"
+    );
+
+    // observed_recv (listener notifications) should be at least 1.
+    let received = fixture.observed_recv.load(Ordering::Relaxed);
+    assert!(
+        received >= 1,
+        "listener should have received at least one NOTIFY; got {received}"
+    );
+
+    fixture.shutdown.cancel();
+}

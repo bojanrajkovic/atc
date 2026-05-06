@@ -1,11 +1,22 @@
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicI64;
 
 mod common;
 use common::{fixture_workflow_job_queued, fixture_workflow_run_requested};
 
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 /// Setup an ephemeral HTTP server for testing.
 async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState>) {
-    let layer = common::PROMETHEUS_INIT.get_or_init(|| atc_server::metrics::build().0);
+    let layer = common::PROMETHEUS_INIT
+        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .0
+        .clone();
 
     let store = std::sync::Arc::new(atc_core::StateStore::new(
         std::sync::Arc::new(atc_core::SystemClock),
@@ -18,6 +29,8 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())

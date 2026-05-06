@@ -2,11 +2,19 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 use tokio::net::TcpListener;
 
 /// Build the full server setup with metrics registration.
@@ -35,6 +43,8 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
     });
 
     // Step 5: Build main router using the production api_routes function
