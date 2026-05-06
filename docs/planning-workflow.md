@@ -90,15 +90,24 @@ Before handing off, run two gates against the plan file:
 
 **Self-consistency check** (always required, takes seconds). Run every grep-based or string-match acceptance criterion in the plan against the plan file itself. If the plan defines an AC of the form `git grep "X" returns zero hits in Y`, verify the plan file does not contain `X` in a position that would land in `Y` after implementation — e.g., replacement-copy snippets, code blocks meant to ship verbatim into a file under `Y`. Self-defeating ACs are a recurring class of bug, and the 10-second grep is cheaper than a multi-minute external review round-trip.
 
-**External codex review** (required for non-trivial plans). Plans with multi-file edit sets, ADR-coupled changes, or operational/deployment-surface changes MUST go through a codex xhigh review before exiting plan mode. Single-file fixes and doc-only edits MAY skip. Use the prompt structure documented in `reference_codex_review_design_plans.md` (project memory) — and include the executor-context section that prevents the false-positive class documented in `feedback_codex_review_executor_context.md`.
+**External codex review** (required for non-trivial plans). Plans with multi-file edit sets, ADR-coupled changes, or operational/deployment-surface changes MUST go through a codex `xhigh` review before exiting plan mode. Single-file fixes and doc-only edits MAY skip.
+
+A passing review satisfies these principles:
+
+1. **Use `codex exec` with a custom prompt.** A custom prompt targets the risk surface this plan introduces. The generic `codex review` template applies a fixed checklist that rarely overlaps with what's actually risky here.
+2. **Declare executor context in the prompt.** State that the implementation will be executed by an AI agent with access to `feedback_*.md` memories, agent tooling (`project-claude-librarian`, `codebase-investigator`, etc.), and `CLAUDE.md`/`AGENTS.md` files. Without this, codex flags those resources as missing references and produces false-positive blockers.
+3. **Name specific scrutiny points** (typically 10–15) that target concrete mechanisms, ACs, or design choices in this plan. Generic "review for quality" produces generic output; specific questions like "does the crossfade fallback work under burst?" surface real bugs.
+4. **Require tiered, structured output** (Blockers / Important / Minor / Strengths). Tiering lets triage take minutes; an undifferentiated essay burns the whole review cycle on parsing.
+5. **Constrain the reviewer to reviewing.** Forbid redesigning, restating the plan, hedging ("consider maybe…"), and flagging agent tooling as unavailable. Without these constraints, codex defaults to long, exploratory essays.
+6. **Run with `xhigh` reasoning** (set in `~/.codex/config.toml` — there is no CLI flag), sandboxed read-only, with output captured to a unique temp directory per run so prior artifacts don't leak in.
 
 When codex returns findings:
 
 - **Verify each blocker against the codebase before applying fixes.** Codex can be wrong about file paths, line numbers, or whether a file exists at all.
-- **Filter false positives per `feedback_codex_review_executor_context.md`.** Discount findings that flag `feedback_*.md` memory files, agent tooling (`project-claude-librarian`, `codebase-investigator`, etc.), or `CLAUDE.md`/`AGENTS.md` files as unavailable.
+- **Discount findings that flag agent-resolved resources** — `feedback_*.md`, `CLAUDE.md`/`AGENTS.md`, agent tooling — as missing references. Those resolve at runtime for the AI executor.
 - **Re-run the self-consistency check** after applying fixes — fixes can introduce new contradictions.
 
-Per `feedback_codex_review_prompt.md`, shell out via `mise exec -- codex exec "<custom prompt>"` (NOT `codex review`) so the review is guided by the project-specific scrutiny points in `reference_codex_review_design_plans.md`.
+Reusable prompt scaffolds satisfying these principles are kept by maintainers as personal scratch — they're one valid implementation, not the contract. Any prompt that satisfies the principles above passes the gate.
 
 ### 6. Finalize and Hand Off
 
