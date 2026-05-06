@@ -69,6 +69,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -95,6 +96,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -225,6 +227,17 @@ async fn build_app_inner(
         tokio::sync::broadcast::channel::<atc_server::state::SeqEvent>(256);
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
     let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis_for_test()));
+
+    // Initialize watermark (same logic as main.rs) using untyped API to avoid sqlx macro caching.
+    let initial_watermark: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM outbox")
+            .fetch_one(&pool)
+            .await
+            .expect("watermark query failed");
+
+    // Seed broadcast_watermark from initial_watermark so /v1/state returns a
+    // sensible lastSeq before the first post-startup drain pass completes.
+    let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
     let state = Arc::new(AppState {
         store,
         webhook_tx,
@@ -233,18 +246,12 @@ async fn build_app_inner(
         pg_pool: Some(pool.clone()),
         min_pending_seq: min_pending_seq.clone(),
         last_drain_pass_at: last_drain_pass_at.clone(),
+        broadcast_watermark: broadcast_watermark.clone(),
     });
 
     let router = atc_server::routes::api_routes(layer)
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
-
-    // Initialize watermark (same logic as main.rs) using untyped API to avoid sqlx macro caching.
-    let initial_watermark: i64 =
-        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM outbox")
-            .fetch_one(&pool)
-            .await
-            .expect("watermark query failed");
 
     // Connect the PgListener for the listener task.
     let pg_listener = listener::connect_listener(&db_url)
@@ -271,6 +278,7 @@ async fn build_app_inner(
         drain_notify,
         min_pending_seq,
         last_drain_pass_at,
+        broadcast_watermark,
         state.webhook_tx.clone(),
         shutdown.clone(),
         Some(observed_passes.clone()),

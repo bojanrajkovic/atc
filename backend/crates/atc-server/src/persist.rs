@@ -778,21 +778,6 @@ pub(crate) async fn read_all_jobs(
     Ok(jobs)
 }
 
-/// Read the highest committed outbox seq.
-///
-/// Returns the BIGSERIAL value (`i64`) — the caller converts to `u64` for the
-/// wire format. `0` means the outbox is empty (no committed events).
-#[allow(dead_code)]
-pub(crate) async fn read_last_seq(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-) -> Result<i64, PersistError> {
-    let row = sqlx::query!(r#"SELECT COALESCE(MAX(seq), 0) AS "max!: i64" FROM outbox"#)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(|e| PersistError::Backend(Box::new(e)))?;
-    Ok(row.max)
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

@@ -155,6 +155,7 @@ async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
                 .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
                 .unwrap_or(0)
         })),
+        broadcast_watermark: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
     });
     let router = atc_server::routes::api_routes(layer)
         .with_state(state.clone())

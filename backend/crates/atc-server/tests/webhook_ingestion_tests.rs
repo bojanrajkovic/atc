@@ -436,6 +436,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         pg_pool: None,
         min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())

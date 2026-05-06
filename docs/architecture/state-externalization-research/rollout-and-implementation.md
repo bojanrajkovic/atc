@@ -81,7 +81,7 @@ In scope:
 - Add `outbox` table with `BIGSERIAL seq` primary key, `kind`, `run_id`, `job_id`, `payload JSONB`, and `inserted_at` — **DONE** (`migrations/0002_outbox.sql`)
 - 4 `pub(crate)` transaction helpers in `persist.rs`: `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` — **DONE**
 - Webhook handler holds seq mutex across `pool.begin()…tx.commit()` to preserve broadcast-order = durable-order invariant — **DONE**
-- Reversed error policy: transient PG failures → 503, parity rejections → 200 `{"status":"rejected"}`, success → 200 `{"status":"processed"}` — **DONE**
+- Reversed error policy: transient PG failures → 503, parity rejections → 200 `{"status":"rejected"}`, success → 200 `{"status":"processed"}` — **DONE** (Phase 3c later changed PG-mode success to `{"status":"accepted","seq":<i64>}`; in-memory mode still returns `processed`)
 - Drop `pg_store: Option<Arc<dyn PersistentStore>>` from `AppState`; handler drives transactions directly via `&PgPool` — **DONE** (14 `pg_store: None` literals + 1 `Some(...)` helper site swept)
 - Rename metric `atc_shadow_pg_write_failures_total` → `atc_pg_write_failures_total`; add `atc_pg_in_memory_drift_total` — **DONE**
 - Rename test file `shadow_writes_tests.rs` → `transactional_writes_tests.rs` with inverted transient-failure assertion (now 503) — **DONE** (8 tests pass)

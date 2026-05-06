@@ -111,8 +111,12 @@ async fn main() {
     // Phase 3c gap-healing backstop and drain heartbeat. min_pending_seq is
     // i64::MAX at boot (no in-flight handlers); last_drain_pass_at is now()
     // so /readyz cannot 503 between bind and the first drain pass.
+    // broadcast_watermark seeds from the same MAX(seq) value used to seed the
+    // drain's local watermark — see below; we plumb that value in once the
+    // PG-pool branch computes it.
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
     let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+    let broadcast_watermark = Arc::new(AtomicI64::new(0));
 
     let app_state = Arc::new(AppState {
         store,
@@ -122,6 +126,7 @@ async fn main() {
         pg_pool,
         min_pending_seq: min_pending_seq.clone(),
         last_drain_pass_at: last_drain_pass_at.clone(),
+        broadcast_watermark: broadcast_watermark.clone(),
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before
@@ -163,6 +168,10 @@ async fn main() {
                     process::exit(1);
                 });
 
+        // Seed broadcast_watermark from the same MAX(seq) so /v1/state returns
+        // a sensible lastSeq before the first post-startup drain pass.
+        broadcast_watermark.store(initial_watermark, std::sync::atomic::Ordering::Release);
+
         let drain_notify = Arc::new(Notify::new());
         let lh = listener::spawn_listener_task(
             pg_listener,
@@ -177,6 +186,7 @@ async fn main() {
             drain_notify,
             min_pending_seq,
             last_drain_pass_at,
+            broadcast_watermark,
             webhook_tx,
             shutdown.clone(),
             None,

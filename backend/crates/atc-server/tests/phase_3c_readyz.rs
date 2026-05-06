@@ -64,6 +64,7 @@ async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
         pg_pool: Some(pool),
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
 
     let app = atc_server::routes::api_routes(layer)
@@ -119,6 +120,7 @@ async fn phase_3c_readyz_t8b_no_pg_always_200() {
         pg_pool: None, // no PG
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
 
     let app = atc_server::routes::api_routes(layer)

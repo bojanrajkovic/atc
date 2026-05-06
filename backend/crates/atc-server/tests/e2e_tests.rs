@@ -55,6 +55,7 @@ async fn start_test_server() -> SocketAddr {
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
 
     let main_router = routes::api_routes(layer.clone())

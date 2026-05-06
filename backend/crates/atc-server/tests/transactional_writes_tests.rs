@@ -101,6 +101,7 @@ pub fn build_app_with_pg(
         pg_pool: Some(pool),
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -528,6 +529,7 @@ async fn in_memory_mode_behavioral_invariance() {
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())

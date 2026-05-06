@@ -89,19 +89,32 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 /// Return current state snapshot with lastSeq cursor.
 ///
-/// PG mode: opens a single REPEATABLE READ transaction and reads runs, jobs,
-/// and `MAX(seq)` from the same MVCC snapshot. This guarantees `lastSeq` is a
-/// true upper bound on the runs/jobs content — under READ COMMITTED a
-/// concurrent commit between the runs SELECT and the seq SELECT could
-/// advance `lastSeq` past content that the snapshot hasn't materialized,
-/// causing the frontend's `seq > lastSeq` filter at `connection.ts:113` to
-/// drop a real event permanently.
+/// PG mode:
+///   1. Loads `broadcast_watermark` BEFORE opening the snapshot transaction.
+///      This is the drain's commit-order cursor — every seq ≤ this value has
+///      been fetched by the drain (which only sees committed rows) and
+///      broadcast through `webhook_tx`.
+///   2. Opens a REPEATABLE READ transaction and reads runs/jobs from the same
+///      MVCC snapshot. The snapshot view is taken at the first statement of
+///      the tx (the SET TRANSACTION call), strictly AFTER the watermark load,
+///      so every row reflected in `lastSeq` is also visible in the snapshot.
 ///
-/// In-memory mode: holds the seq mutex across the store snapshot and the
-/// seq read, providing the same content/cursor consistency.
+/// We deliberately do NOT use `MAX(outbox.seq)` as `lastSeq`: BIGSERIAL is
+/// allocated pre-commit and can commit out of order. A tx with allocated
+/// seq=10 still in-flight while seq=11 commits would let `MAX(seq)` return
+/// 11 even though seq=10's mutation isn't visible. The frontend's
+/// `seq > lastSeq` filter at `connection.ts:113` would then drop a buffered
+/// seq=10 event permanently. The drain's watermark is monotonic in commit
+/// order because the drain only ever reads committed rows.
+///
+/// In-memory mode: holds the seq mutex across the store snapshot and the seq
+/// read. Unchanged from Phase 3a/3b.
 async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(pool) = &state.pg_pool {
-        // PG path: REPEATABLE READ tx around the three reads.
+        // (1) Load the commit-order cursor BEFORE the snapshot view is taken.
+        let watermark_at_start = state.broadcast_watermark.load(Ordering::Acquire);
+
+        // (2) REPEATABLE READ tx around the runs/jobs reads.
         let mut tx = match pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -147,24 +160,13 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                     .into_response();
             }
         };
-        let max_seq = match crate::persist::read_last_seq(&mut tx).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = ?e, "state_handler: read_last_seq failed");
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(serde_json::json!({"error": "database error"})),
-                )
-                    .into_response();
-            }
-        };
         if let Err(e) = tx.commit().await {
             tracing::warn!(error = %e, "state_handler: pg commit failed");
             // Reads succeeded; fall through and return them. A failed commit
             // on a read-only REPEATABLE READ tx is non-fatal for the response.
         }
 
-        let last_seq = u64::try_from(max_seq).unwrap_or(0);
+        let last_seq = u64::try_from(watermark_at_start).unwrap_or(0);
         Json(StateSnapshot {
             last_seq,
             runs,
@@ -214,9 +216,17 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
 
 /// Handle incoming GitHub webhook payloads.
 ///
-/// Verifies HMAC signature (when configured), parses the payload into domain
-/// events, applies them to the state store, assigns a monotonic seq number,
-/// and broadcasts to WebSocket clients.
+/// Verifies HMAC signature (when configured) and parses the payload into a
+/// domain event. Then:
+///
+/// - **PG mode (`pg_pool: Some`)**: opens a transaction, UPSERTs the run/job,
+///   INSERTs the outbox row, emits `pg_notify`, commits, and returns
+///   `{"status":"accepted","seq":<i64>}`. The drain task picks up the row and
+///   broadcasts `SeqEvent` — the handler does NOT touch the in-memory store
+///   or `webhook_tx`.
+/// - **In-memory mode (`pg_pool: None`)**: holds the seq mutex across apply +
+///   broadcast and returns `{"status":"processed"}`. Unchanged from
+///   Phase 3a/3b.
 #[tracing::instrument(skip(state, body))]
 async fn webhook_handler(
     State(state): State<Arc<AppState>>,

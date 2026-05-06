@@ -22,15 +22,13 @@ use tokio::time::timeout;
 /// T1: After committing a run and job via webhooks in PG mode, GET /v1/state
 ///     returns a snapshot containing both entities and lastSeq = 2.
 ///
-/// In PG mode the state handler uses a REPEATABLE READ transaction to read
-/// runs, jobs, and MAX(seq) atomically. This test confirms the full path:
-/// webhook → PG UPSERT + outbox row → NOTIFY → drain broadcasts + advances
-/// watermark → /v1/state reads from PG.
-///
-/// Note: /v1/state reads directly from PG tables, NOT from the drain. It does
-/// NOT require the drain to have processed the outbox rows — the UPSERT happens
-/// in the same transaction as the outbox INSERT, so the run/job are immediately
-/// visible to the state handler once the webhook commits.
+/// In PG mode the state handler reads `broadcast_watermark` (the commit-order
+/// cursor advanced by the drain after each successful pass) and then opens a
+/// REPEATABLE READ transaction to read runs/jobs from a consistent snapshot.
+/// The drain is asynchronous: a webhook returns 200 with `seq=N` BEFORE the
+/// drain has necessarily processed seq=N. The test must wait for the drain
+/// to catch up before asserting `lastSeq == N` — otherwise we race the
+/// drain's first wake-up after each webhook.
 #[tokio::test]
 #[serial]
 async fn phase_3c_state_pg_read_t1_snapshot_returns_pg_state() {
@@ -59,14 +57,32 @@ async fn phase_3c_state_pg_read_t1_snapshot_returns_pg_state() {
     assert_eq!(b2["status"], "accepted");
     assert_eq!(b2["seq"], 2);
 
+    // Wait for the drain to advance broadcast_watermark to 2 — that's the
+    // commit-order cursor `state_handler` returns as `lastSeq`.
+    timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if fixture
+                .state
+                .broadcast_watermark
+                .load(std::sync::atomic::Ordering::Acquire)
+                >= 2
+            {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("drain did not advance broadcast_watermark to 2 within 5s");
+
     // GET /v1/state — REPEATABLE READ snapshot from PG.
     let (status, body) = get_state(&fixture.router).await;
     assert_eq!(status, StatusCode::OK, "GET /v1/state should return 200");
 
-    // lastSeq reflects highest committed outbox seq.
+    // lastSeq reflects the drain's commit-order cursor, now caught up.
     assert_eq!(
         body["lastSeq"], 2,
-        "lastSeq must be 2 after two committed webhooks"
+        "lastSeq must be 2 after the drain catches up to two committed webhooks"
     );
 
     // runs array contains the run from the fixture.
@@ -144,18 +160,24 @@ async fn phase_3c_state_pg_read_t1b_placeholder_runs_excluded_from_snapshot() {
 ///
 /// For each of three webhooks (each creating a distinct entity), the webhook
 /// POST and GET /v1/state are issued concurrently via `tokio::join!`. The
-/// REPEATABLE READ snapshot atomically reads entity tables AND `MAX(seq)` from
-/// the outbox in the same MVCC snapshot, so the invariant is:
+/// invariant the frontend depends on is:
 ///
-///   entity_count == last_seq  (strong equality, not just >=)
+///   **For every seq ≤ last_seq, the entity that seq mutated is reflected in
+///   the snapshot's runs/jobs view.**
 ///
-/// Two valid outcomes per iteration:
-///   - State read won the race: last_seq == i,     entity_count == i
-///   - Webhook won the race:    last_seq == i + 1, entity_count == i + 1
+/// In code terms: `entity_count >= last_seq` (the snapshot includes everything
+/// the drain has broadcast, plus possibly more recent commits the drain hasn't
+/// caught up on yet). The frontend's filter at connection.ts:113
+/// (`if (buffered.seq > snapshotLastSeq)`) drops buffered events whose
+/// mutation is already in the snapshot; this is safe iff that inequality holds.
 ///
-/// The bug this guards against: last_seq == i + 1 but entity_count == i
-/// (cursor overshoots snapshot content — possible if seq and entity rows are
-/// not read in the same atomic snapshot).
+/// Why >= and not strict equality: the cursor is `broadcast_watermark` loaded
+/// BEFORE the snapshot transaction begins. Any commit that lands between the
+/// load and the tx begin is invisible to the cursor but visible to the
+/// snapshot — that gives `entity_count > last_seq`. The other direction
+/// (`last_seq > entity_count`) would be a real bug: it would mean the cursor
+/// advanced past content that the snapshot can't see, and the frontend would
+/// permanently drop the buffered event.
 ///
 /// Distinct entities used (each creating exactly one new entity):
 ///   0: workflow_run_requested   → run  24290980517
@@ -163,26 +185,15 @@ async fn phase_3c_state_pg_read_t1b_placeholder_runs_excluded_from_snapshot() {
 ///   2: workflow_job_in_progress → job  70928200174
 ///
 /// All three fixtures reference run 24290980517. Event 0 commits the run first,
-/// so by the time job events arrive the run already exists — no placeholder stub
-/// is ever created. This preserves entity_count == lastSeq: a placeholder row
-/// would increment `MAX(seq)` without adding to `runs.len()`, which would break
-/// the invariant for the run-events-concurrent-with-state-read case.
-///
-/// Note: The PG handler sets `seq` in the outbox (BIGSERIAL), not the
-/// in-memory Mutex. The in-memory seq counter stays at 0 in PG mode — the
-/// drain increments the broadcast stream. The state handler reads `MAX(seq)`
-/// from outbox directly for `lastSeq`.
+/// so by the time job events arrive the run already exists — no placeholder
+/// stub is ever created. This keeps `entity_count` equal to the number of
+/// committed events for the cases where the drain has caught up.
 #[tokio::test]
 #[serial]
 async fn phase_3c_state_pg_read_t2_snapshot_self_consistent_under_concurrent_writes() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    // Three events that each create a distinct entity:
-    //   0: workflow_run_requested   → run  24290980517
-    //   1: workflow_job_queued      → job  70928200168
-    //   2: workflow_job_in_progress → job  70928200174
-    // After event K commits: runs.len() + jobs.len() == K + 1.
     let events: Vec<(&str, Vec<u8>)> = vec![
         ("workflow_run", common::fixture_workflow_run_requested()),
         ("workflow_job", common::fixture_workflow_job_queued()),
@@ -190,8 +201,6 @@ async fn phase_3c_state_pg_read_t2_snapshot_self_consistent_under_concurrent_wri
     ];
 
     for (i, (event_type, body)) in events.into_iter().enumerate() {
-        // Clone the router once per iteration — each oneshot() call consumes it,
-        // so we need two independent clones for the concurrent pair.
         let wh_router = fixture.router.clone();
         let state_router = fixture.router.clone();
 
@@ -219,14 +228,15 @@ async fn phase_3c_state_pg_read_t2_snapshot_self_consistent_under_concurrent_wri
         let jobs = snapshot["jobs"].as_array().unwrap();
         let entity_count = runs.len() + jobs.len();
 
-        // Under REPEATABLE READ, entity_count and last_seq come from the same
-        // MVCC snapshot — they must agree exactly.
-        // Two valid states: (last_seq == i, entity_count == i) if state won the
-        // race, or (last_seq == i + 1, entity_count == i + 1) if webhook won.
-        assert_eq!(
-            entity_count, last_seq,
-            "iteration {i}: entity_count={entity_count} != last_seq={last_seq} — \
-             REPEATABLE READ snapshot is inconsistent"
+        // The frontend invariant: entity_count >= last_seq.
+        // entity_count > last_seq just means the snapshot caught a commit
+        // the drain hasn't yet broadcast (acceptable — the buffered event
+        // for that seq will arrive and be applied idempotently).
+        // entity_count < last_seq would be a real bug.
+        assert!(
+            entity_count >= last_seq,
+            "iteration {i}: entity_count={entity_count} < last_seq={last_seq} — \
+             snapshot is missing content the cursor advertises"
         );
     }
 

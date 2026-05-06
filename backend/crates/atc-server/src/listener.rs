@@ -118,13 +118,17 @@ pub fn spawn_listener_task(
 ///
 /// Loop body:
 /// 1. `tokio::select!` either NOTIFY arrives or 5 s heartbeat tick fires.
-/// 2. Update `last_drain_pass_at` heartbeat unconditionally so `/readyz` stays
-///    fresh during quiet periods.
-/// 3. If woken by heartbeat alone, skip the pass body (no work to do).
-/// 4. Swap `min_pending_seq` to `MAX` to capture the gap-healing backstop.
-/// 5. Page through outbox rows from `min(watermark, backstop - 1)` upward,
-///    decoding payload, applying ring-buffer dedup, broadcasting on miss.
-/// 6. At pass end, advance `watermark` to the highest seq actually seen.
+/// 2. Heartbeat-only wake: refresh `last_drain_pass_at` and continue (the loop
+///    is alive, no DB work was attempted).
+/// 3. NOTIFY-driven wake: swap `min_pending_seq` to `MAX` to capture the
+///    gap-healing backstop, page through outbox rows from
+///    `min(watermark, backstop - 1)` upward, decode payload, apply ring-buffer
+///    dedup, broadcast on miss.
+/// 4. On success: advance `watermark` and `broadcast_watermark`, refresh the
+///    heartbeat, brief backoff before next iteration.
+/// 5. On failure: re-register the captured backstop (otherwise a transient
+///    query error would permanently lose the rescan signal) and DO NOT refresh
+///    the heartbeat (so `/readyz` reflects sustained drain failure).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_drain_task(
     pool: sqlx::PgPool,
@@ -132,6 +136,7 @@ pub fn spawn_drain_task(
     drain_notify: Arc<Notify>,
     min_pending_seq: Arc<AtomicI64>,
     last_drain_pass_at: Arc<AtomicI64>,
+    broadcast_watermark: Arc<AtomicI64>,
     webhook_tx: broadcast::Sender<SeqEvent>,
     cancel: CancellationToken,
     observed_passes: Option<Arc<AtomicU64>>,
@@ -160,11 +165,13 @@ pub fn spawn_drain_task(
                 }
             };
 
-            // Refresh the heartbeat unconditionally — quiet-period ticks count.
-            last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
-
             if !woken_by_notify {
-                // Heartbeat-only wake: keep /readyz fresh, no DB work to do.
+                // Heartbeat-only wake: refresh /readyz and continue. No drain
+                // work was attempted, so this is not a "drain succeeded" signal
+                // — it's a "loop is alive". Updating the timestamp here is
+                // correct because the alternative (only refresh on successful
+                // drain) would 503 quiet replicas after 30 s.
+                last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
                 continue;
             }
 
@@ -189,17 +196,34 @@ pub fn spawn_drain_task(
             if let Some(c) = observed_passes.as_deref() {
                 c.fetch_add(1, Ordering::Relaxed);
             }
-            // Refresh again after the pass body so post-pass /readyz uses the
-            // latest timestamp and slow passes still extend their freshness.
-            last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
-
             if let Some(ref s) = drain_started {
                 s.notify_one();
             }
 
-            if !pass_ok {
-                // Query failure: brief backoff then loop. Don't wait for a
-                // fresh NOTIFY because the cause may be transient on our side.
+            if pass_ok {
+                // Refresh heartbeat ONLY on success. A failed drain pass must
+                // not advertise readiness — after 30 s of failures, /readyz
+                // will go stale and traffic gets routed away.
+                last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
+                // Publish the broadcast cursor. Read by `state_handler` as the
+                // PG-mode `lastSeq` (commit-order cursor — see ADR 0003 Phase
+                // 3c notes). Using `MAX(outbox.seq)` directly is unsafe:
+                // BIGSERIAL is allocated pre-commit and can commit out of
+                // order, which would let `MAX(seq)` advance past data that
+                // hasn't materialised in a concurrent snapshot view.
+                broadcast_watermark.store(watermark, Ordering::Release);
+            } else {
+                // Re-register the captured backstop so the next pass still has
+                // the gap-healing floor. Without this, a transient query
+                // failure between two NOTIFYs (one carrying the low seq) would
+                // permanently lose the rescan signal: the swap zeroed the
+                // atomic and the failed pass never delivered the floor to the
+                // SELECT.
+                if backstop != i64::MAX {
+                    min_pending_seq.fetch_min(backstop, Ordering::Release);
+                }
+                // Brief backoff before retry. Don't refresh heartbeat — that's
+                // the entire point of this branch.
                 tokio::select! {
                     () = cancel.cancelled() => break,
                     () = tokio::time::sleep(Duration::from_secs(1)) => {}

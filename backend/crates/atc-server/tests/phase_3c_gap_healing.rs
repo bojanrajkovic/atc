@@ -1,7 +1,10 @@
 //! Phase 3c integration tests: gap-healing backstop and dedup ring buffer.
 //!
-//! T6  — Drain dedup: seq=2 broadcast by an earlier pass is not re-broadcast
-//!        when a backstop-lowered rescan covers it again.
+//! T6  — Drain dedup: reverse-order concurrent-commit A/B race from §D2.
+//!        Transaction B commits first (seq N+1), drain broadcasts it.
+//!        Transaction A commits late (seq N), triggering a backstop rescan.
+//!        Rescan picks up both rows; seq N+1 is suppressed by dedup ring,
+//!        seq N is new and gets broadcast. Dedup counter increments exactly 1.
 //! T6b — Drain pagination: a rescan triggered after seeding >DRAIN_BATCH_SIZE
 //!        rows is paginated correctly (all rows forwarded, no duplicates).
 //! T7  — min_pending_seq swap unit test: pure Rust, no testcontainers.
@@ -14,9 +17,33 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
-use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
+
+// ---------------------------------------------------------------------------
+// Local metric-parsing helpers (copied from outbox_tests.rs to avoid coupling)
+// ---------------------------------------------------------------------------
+
+/// Render Prometheus metrics as a string. Thin wrapper kept sync to match usage.
+fn render_metrics() -> String {
+    common::render_metrics()
+}
+
+/// Parse an unlabeled counter (no `{...}` label set) from Prometheus text output.
+fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
+    for line in metrics_body.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with(name)
+            && line[name.len()..].starts_with(char::is_whitespace)
+            && let Some(value_str) = line.split_whitespace().last()
+        {
+            return value_str.parse::<u64>().unwrap_or(0);
+        }
+    }
+    0
+}
 
 // ─── T7: pure unit test for min_pending_seq swap semantics ──────────────────
 
@@ -94,27 +121,20 @@ fn phase_3c_gap_healing_t7b_fetch_min_does_not_increase() {
     );
 }
 
-// ─── T6: dedup ring buffer suppresses re-broadcast ──────────────────────────
+// ─── T6: dedup ring buffer suppresses re-broadcast in real A/B race ─────────
 
-/// T6: A backstop-driven rescan does not re-broadcast a seq already in the
-///     dedup ring buffer from a previous pass.
+/// T6: Two raw concurrent SQL transactions manufacture the §D2 reverse-order
+///     concurrent-commit race: B commits first (seq N+1), drain broadcasts it
+///     and advances the watermark past N. A commits late (seq N), its deferred
+///     NOTIFY fires, backstop captures N, rescan fetches both N and N+1.
+///     seq N+1 is in the dedup ring → suppressed (counter +1). seq N is new →
+///     broadcast. The test asserts both seqs arrive, B before A, and that the
+///     duplicate-skip counter increments by exactly 1 during the rescan pass.
 ///
-/// Setup:
-///   1. Commit event B (→ seq=1 in a fresh DB). Let drain broadcast it.
-///   2. Open transaction A that will NOT commit yet.
-///      Inside txn A, commit event X (seq=2) and wait for drain to broadcast.
-///      (The NOTIFY for seq=2 fires only on A's commit; we do this via direct
-///      webhook call which commits immediately.)
-///   Wait for the drain to broadcast seq=1 (event B was first).
-///   Wait for seq=2 broadcast from drain.
-///   3. Manually insert a NOTIFY for seq=1 via `SELECT pg_notify(...)` to
-///      simulate a backstop-triggered rescan from floor=0.
-///   4. Assert drain does NOT rebroadcast seq=1 (already in ring).
-///
-/// Implementation note: to force the rescan without a real concurrent commit
-/// race, we fire `SELECT pg_notify('atc_outbox', '1')` directly — the listener
-/// picks it up, calls fetch_min(1, Release), and the drain sweeps from
-/// floor = watermark.min(1 - 1) = 0, re-examining seq=1. Dedup suppresses it.
+/// Implementation note on NOTIFY timing: `SELECT pg_notify(...)` inside an
+/// open transaction queues the notification; PG delivers it on COMMIT. So A's
+/// NOTIFY does not fire until A commits in step 6 — the listener only wakes the
+/// drain for seq_a after that point.
 #[tokio::test]
 #[serial]
 async fn phase_3c_gap_healing_t6_dedup_suppresses_rescan_rebroadcast() {
@@ -124,97 +144,147 @@ async fn phase_3c_gap_healing_t6_dedup_suppresses_rescan_rebroadcast() {
     // Subscribe a fresh broadcast receiver for seq-observation.
     let mut rx = fixture.state.webhook_tx.subscribe();
 
-    // Step 1: Fire event B — becomes seq=1 after commit.
-    let status = common::post_webhook_to_router(
-        fixture.router.clone(),
-        "workflow_run",
-        &common::fixture_workflow_run_requested(),
+    // ── Step 1: Pre-insert two stub run rows to satisfy outbox FK ─────────────
+    // Use run_id values unlikely to collide with fixture constants. We need
+    // placeholder=true because we're inserting directly without the real handler.
+    sqlx::query(
+        "INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, \
+         status, created_at, updated_at, placeholder) \
+         VALUES (42000000001, 'test', 'test', '', '', '', '', 'Queued', NOW(), NOW(), true)",
     )
+    .execute(&pool)
     .await
-    .0;
-    assert_eq!(status, StatusCode::OK, "B webhook should be accepted");
+    .expect("stub run 42000000001 insert failed");
 
-    // Wait for drain to broadcast seq=1.
-    let ev1 = timeout(Duration::from_secs(5), async {
-        loop {
-            if let Ok(ev) = rx.recv().await
-                && ev.seq == 1
-            {
-                return ev;
-            }
-        }
-    })
-    .await
-    .expect("timed out waiting for seq=1 broadcast");
-    assert_eq!(ev1.seq, 1, "first broadcast should be seq=1");
-
-    // Step 2: Fire event A (a job) — becomes seq=2.
-    let status2 = common::post_webhook_to_router(
-        fixture.router.clone(),
-        "workflow_job",
-        &common::fixture_workflow_job_queued(),
+    sqlx::query(
+        "INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, \
+         status, created_at, updated_at, placeholder) \
+         VALUES (42000000002, 'test', 'test', '', '', '', '', 'Queued', NOW(), NOW(), true)",
     )
+    .execute(&pool)
     .await
-    .0;
-    assert_eq!(status2, StatusCode::OK, "A webhook should be accepted");
+    .expect("stub run 42000000002 insert failed");
 
-    // Wait for drain to broadcast seq=2 (confirms it's in the ring).
-    timeout(Duration::from_secs(5), async {
-        loop {
-            if let Ok(ev) = rx.recv().await
-                && ev.seq == 2
-            {
-                return;
-            }
-        }
-    })
+    // ── Build valid envelope JSON for each run_id ─────────────────────────────
+    // Parse the fixture → mutate run_id → serialize back as outbox JSONB.
+    let fixture_bytes = common::fixture_workflow_run_requested();
+    let base_env = match atc_github::parse_webhook("workflow_run", &fixture_bytes)
+        .expect("fixture must parse")
+    {
+        atc_github::ParseResult::Parsed(ev) => match *ev {
+            atc_github::WebhookEvent::Run(e) => e,
+            _ => panic!("expected Run variant"),
+        },
+        atc_github::ParseResult::Skipped { .. } => panic!("fixture must not be skipped"),
+    };
+
+    let mut env_a = base_env.clone();
+    env_a.run_id = atc_core::types::RunId(42_000_000_001);
+    let payload_a = serde_json::to_value(&env_a).expect("env_a serialization failed");
+
+    let mut env_b = base_env.clone();
+    env_b.run_id = atc_core::types::RunId(42_000_000_002);
+    let payload_b = serde_json::to_value(&env_b).expect("env_b serialization failed");
+
+    // ── Step 3: Open transaction A, INSERT outbox row, pg_notify (don't commit) ─
+    // Sequentially allocate seq_a then seq_b so seq_a < seq_b is deterministic.
+    let mut tx_a = pool.begin().await.expect("begin tx_a failed");
+
+    let seq_a: i64 = sqlx::query_scalar(
+        "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 42000000001, $1) RETURNING seq",
+    )
+    .bind(&payload_a)
+    .fetch_one(&mut *tx_a)
     .await
-    .expect("timed out waiting for seq=2 broadcast");
+    .expect("outbox INSERT A failed");
 
-    // Record pass count before triggering the rescan.
-    let passes_before = fixture
-        .observed_passes
-        .load(std::sync::atomic::Ordering::Relaxed);
-
-    // Step 3: Manually send a NOTIFY for seq=1 to trigger a backstop rescan.
-    // The drain will sweep from pass_start_floor = watermark.min(1 - 1) = 0
-    // and re-encounter seq=1, which is already in the dedup ring.
-    sqlx::query("SELECT pg_notify('atc_outbox', '1')")
-        .execute(&pool)
+    sqlx::query("SELECT pg_notify('atc_outbox', $1::text)")
+        .bind(seq_a)
+        .execute(&mut *tx_a)
         .await
-        .expect("manual NOTIFY failed");
+        .expect("pg_notify A queued");
 
-    // Wait for the drain to complete at least one more pass after the NOTIFY,
-    // proving the rescan actually ran rather than the NOTIFY being dropped.
+    // ── Step 4: Open transaction B, INSERT outbox row, pg_notify, COMMIT ────────
+    let mut tx_b = pool.begin().await.expect("begin tx_b failed");
+
+    let seq_b: i64 = sqlx::query_scalar(
+        "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 42000000002, $1) RETURNING seq",
+    )
+    .bind(&payload_b)
+    .fetch_one(&mut *tx_b)
+    .await
+    .expect("outbox INSERT B failed");
+
+    sqlx::query("SELECT pg_notify('atc_outbox', $1::text)")
+        .bind(seq_b)
+        .execute(&mut *tx_b)
+        .await
+        .expect("pg_notify B queued");
+
+    tx_b.commit().await.expect("tx_b commit failed");
+
+    // ── Step 5: Wait for seq_b to land on the broadcast receiver ─────────────
+    // Drain woke on B's NOTIFY, processed seq_b, watermark advanced past seq_a.
+    let seq_b_u64 = u64::try_from(seq_b).expect("seq_b must be positive");
+    timeout(Duration::from_secs(10), async {
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.seq == seq_b_u64 => return,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for seq_b broadcast (B committed first)");
+
+    // ── Capture dedup baseline BEFORE committing A ────────────────────────────
+    let baseline_dup =
+        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+
+    // Record pass count before committing A.
+    let passes_before = fixture.observed_passes.load(Ordering::Relaxed);
+
+    // ── Step 6: Commit A — deferred NOTIFY fires, drain rescans ──────────────
+    tx_a.commit().await.expect("tx_a commit failed");
+
+    // ── Step 7: Wait for seq_a to arrive on the receiver ─────────────────────
+    // Rescan floor = min(watermark, seq_a - 1) < seq_b, so both rows returned.
+    // seq_b suppressed by dedup ring; seq_a new → broadcast.
+    let seq_a_u64 = u64::try_from(seq_a).expect("seq_a must be positive");
+    timeout(Duration::from_secs(10), async {
+        loop {
+            match rx.recv().await {
+                Ok(ev) if ev.seq == seq_a_u64 => return,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for seq_a broadcast after tx_a commit");
+
+    // ── Step 8: Wait for the rescan pass to fully complete ───────────────────
     timeout(Duration::from_secs(5), async {
         loop {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let passes_now = fixture
-                .observed_passes
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if passes_now > passes_before {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            if fixture.observed_passes.load(Ordering::Relaxed) > passes_before {
                 return;
             }
         }
     })
     .await
-    .expect("drain did not complete a rescan pass within 5s after manual NOTIFY");
+    .expect("drain did not complete the rescan pass within 5s");
 
-    // Step 4: Drain should NOT have rebroadcast seq=1. Assert that no additional
-    // event for seq=1 arrived after the rescan (the dedup ring suppressed it).
-    let rebroadcast = timeout(Duration::from_millis(500), async {
-        loop {
-            if let Ok(ev) = rx.recv().await
-                && ev.seq == 1
-            {
-                return true; // unwanted rebroadcast
-            }
-        }
-    })
-    .await;
-    assert!(
-        rebroadcast.is_err(),
-        "seq=1 must not be rebroadcast — dedup ring should suppress it"
+    // ── Assertions ────────────────────────────────────────────────────────────
+    // Dedup counter must have incremented by exactly 1 (seq_b suppressed once).
+    let after_dup =
+        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+    assert_eq!(
+        after_dup,
+        baseline_dup + 1,
+        "dedup ring must suppress seq_b exactly once during rescan; \
+         baseline={baseline_dup} after={after_dup}"
     );
 
     fixture.shutdown.cancel();
@@ -222,29 +292,32 @@ async fn phase_3c_gap_healing_t6_dedup_suppresses_rescan_rebroadcast() {
 
 // ─── T6b: drain pagination ──────────────────────────────────────────────────
 
-/// T6b: The drain paginates across `DRAIN_BATCH_SIZE` correctly without crashing.
+/// T6b: The drain paginates across `DRAIN_BATCH_SIZE` correctly and
+///      `atc_pg_drain_rows_total` advances by exactly 600 during the rescan.
 ///
-/// Seeds 600 outbox rows directly via SQL, then starts the fixture. The drain's
-/// initial pass must page through all 600 rows in batches of 500. This test
-/// verifies the pagination loop completes without deadlock or panic and that
-/// the drain advances `observed_passes` past the initial pass.
+/// Design:
+///   1. Pre-seed 600 outbox rows with valid `RunEventEnvelope` JSON BEFORE
+///      booting the fixture, so `initial_watermark = MAX(seq) = 600`.
+///   2. Boot fixture. First unconditional drain pass: floor = 600 →
+///      `SELECT > 600` returns 0 rows → `atc_pg_drain_rows_total` unchanged.
+///   3. Capture `atc_pg_drain_rows_total` baseline.
+///   4. Force a backstop-driven rescan: emit `pg_notify('atc_outbox', '1')`.
+///      Listener calls `fetch_min(1)`. Drain wakes, backstop=1 →
+///      `pass_start_floor = min(600, 0) = 0` → `SELECT > 0` returns 600 rows
+///      in 2 batches (500 + 100).
+///   5. Wait for `observed_passes` to advance (rescan complete).
+///   6. Assert `atc_pg_drain_rows_total - baseline == 600`.
 ///
-/// Note on broadcast behavior: seeded rows use a stub payload `{"type":"stub"}`
-/// that does not decode as a valid `RunEventEnvelope`. The drain logs decode
-/// errors and continues — no SeqEvents are broadcast for stub rows. The test
-/// therefore asserts on drain-pass progression, not broadcast count. A future
-/// test that needs full broadcast coverage should seed real webhook JSON.
-///
-/// The DRAIN_BATCH_SIZE is 500, so a 600-row DB forces at least 2 pagination
-/// iterations within a single pass.
+/// The DRAIN_BATCH_SIZE is 500, so a 600-row DB forces 2 pagination iterations.
+/// The counter assertion proves the loop did NOT stop at the 500-row boundary.
 #[tokio::test]
 #[serial]
-#[ignore = "heavy: seeds 600 rows, best run explicitly"]
 async fn phase_3c_gap_healing_t6b_drain_paginates_across_batch_boundary() {
     let (pool, _container, db_url) = common::start_pg().await;
 
-    // Insert a stub run row to satisfy the FK constraint on outbox.run_id.
-    // Use the untyped API (no `!`) to avoid requiring a cached query schema.
+    // ── Step 1: Pre-seed 600 outbox rows with VALID payloads ─────────────────
+    // Parse the fixture → get a real RunEventEnvelope → mutate run_id per row
+    // → serialize as JSONB so the drain can fully decode each row.
     sqlx::query(
         "INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, \
          status, created_at, updated_at, placeholder) \
@@ -254,60 +327,79 @@ async fn phase_3c_gap_healing_t6b_drain_paginates_across_batch_boundary() {
     .await
     .expect("stub run insert failed");
 
-    // Seed 600 outbox rows directly. These use a stub payload — the drain will
-    // log decode errors but must not crash.
-    for _ in 0..600i64 {
-        sqlx::query(
-            "INSERT INTO outbox (kind, run_id, payload) \
-             VALUES ('run', 40000000010, '{\"type\":\"stub\"}'::jsonb)",
-        )
-        .execute(&pool)
-        .await
-        .expect("outbox seed failed");
+    let fixture_bytes = common::fixture_workflow_run_requested();
+    let base_env = match atc_github::parse_webhook("workflow_run", &fixture_bytes)
+        .expect("fixture must parse")
+    {
+        atc_github::ParseResult::Parsed(ev) => match *ev {
+            atc_github::WebhookEvent::Run(e) => e,
+            _ => panic!("expected Run variant"),
+        },
+        atc_github::ParseResult::Skipped { .. } => panic!("fixture must not be skipped"),
+    };
+
+    for i in 0i64..600 {
+        let mut env = base_env.clone();
+        // Keep run_id at the single stub row so the FK is always satisfied.
+        env.run_id = atc_core::types::RunId(40_000_000_010);
+        let payload = serde_json::to_value(&env).expect("env serialization failed");
+        sqlx::query("INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 40000000010, $1)")
+            .bind(&payload)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("outbox seed row {i} failed: {e}"));
     }
 
-    // Verify 600 rows exist before starting the fixture.
+    // Verify 600 rows seeded.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
         .fetch_one(&pool)
         .await
-        .expect("count failed");
-    assert_eq!(count, 600, "should have seeded 600 outbox rows");
+        .expect("count query failed");
+    assert_eq!(count, 600, "should have seeded 600 outbox rows before boot");
 
-    // Start fixture — the drain's unconditional first pass will process all 600
-    // rows via pagination, then signal drain_started.
+    // ── Step 2: Boot fixture ─────────────────────────────────────────────────
+    // initial_watermark = COALESCE(MAX(seq), 0) = 600.
+    // First unconditional pass: floor = 600 → SELECT > 600 = 0 rows.
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
-    // Record the pass count after fixture startup (first unconditional pass done).
-    let passes_after_startup = fixture
-        .observed_passes
-        .load(std::sync::atomic::Ordering::Relaxed);
+    let passes_after_startup = fixture.observed_passes.load(Ordering::Relaxed);
     assert!(
         passes_after_startup >= 1,
         "at least one pass must have completed at startup (got {passes_after_startup})"
     );
 
-    // Trigger a second pass via manual NOTIFY to verify the loop can run again
-    // without crashing after the first paginated pass.
-    // Use untyped API to avoid SQLX_OFFLINE / cached schema requirement.
+    // ── Step 3: Capture rows_total baseline ──────────────────────────────────
+    let baseline_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
+
+    // ── Step 4: Force backstop-driven rescan via manual NOTIFY ───────────────
+    // NOTIFY '1' → listener fetch_min(1) → drain backstop=1 →
+    // pass_start_floor = min(600, 0) = 0 → SELECT > 0 returns 600 rows.
     sqlx::query("SELECT pg_notify('atc_outbox', '1')")
         .execute(&pool)
         .await
         .expect("manual NOTIFY failed");
 
-    // Wait for the drain to complete at least one more pass after the NOTIFY.
+    // ── Step 5: Wait for drain to complete the rescan pass ───────────────────
     timeout(Duration::from_secs(30), async {
         loop {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let passes_now = fixture
-                .observed_passes
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let passes_now = fixture.observed_passes.load(Ordering::Relaxed);
             if passes_now > passes_after_startup {
                 return;
             }
         }
     })
     .await
-    .expect("drain did not complete a second paginated pass within 30s");
+    .expect("drain did not complete the rescan pass within 30s");
+
+    // ── Step 6: Assert rows_total delta == 600 ────────────────────────────────
+    let after_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
+    assert_eq!(
+        after_rows - baseline_rows,
+        600,
+        "rescan must process exactly 600 rows (2 batches: 500+100); \
+         baseline={baseline_rows} after={after_rows}"
+    );
 
     fixture.shutdown.cancel();
 }

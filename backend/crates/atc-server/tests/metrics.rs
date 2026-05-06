@@ -45,6 +45,7 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
 
     // Step 5: Build main router using the production api_routes function

@@ -54,13 +54,29 @@ pub struct AppState {
     /// Drain-task heartbeat (epoch milliseconds, Phase 3c).
     ///
     /// The drain task stores `now_millis()` at the top of every loop iteration
-    /// (whether woken by NOTIFY or by the 5s heartbeat tick). `/readyz`
-    /// compares against the current time and returns 503 if the heartbeat is
-    /// older than 30s when `pg_pool.is_some()`. No-op in in-memory mode.
+    /// (whether woken by NOTIFY or by the 5s heartbeat tick) AND after every
+    /// successful drain pass; failed drain passes do NOT refresh, so
+    /// `/readyz` returns 503 after 30 s of sustained outbox-read failures
+    /// (e.g., schema/permission drift where `SELECT 1` still succeeds).
+    /// No-op in in-memory mode.
     ///
     /// Initialized to `now_millis()` at construction so `/readyz` cannot
     /// 503 between server bind and the first drain pass.
     pub last_drain_pass_at: Arc<AtomicI64>,
+    /// Drain-task broadcast cursor (Phase 3c).
+    ///
+    /// Highest outbox `seq` the drain has fetched and broadcast through
+    /// `webhook_tx`. Updated atomically after every successful drain pass.
+    /// Used by `state_handler` as the PG-mode `lastSeq` because it reflects
+    /// **commit order** (the drain only sees committed rows via SELECT) —
+    /// `MAX(outbox.seq)` would reflect allocation order and can advance past
+    /// data that hasn't materialised in a concurrent REPEATABLE READ snapshot.
+    /// See ADR 0003 Phase 3c implementation notes.
+    ///
+    /// Initialized at boot to the same `MAX(seq)` value that seeds the
+    /// drain's local `watermark`, so `/v1/state` returns a non-zero `lastSeq`
+    /// before the first post-startup drain pass completes.
+    pub broadcast_watermark: Arc<AtomicI64>,
 }
 
 /// A domain event annotated with a monotonic sequence number.

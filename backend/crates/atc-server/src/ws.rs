@@ -52,7 +52,20 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEve
                         tracing::debug!(seq = seq_event.seq, "forwarded event to WS client");
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(missed = n, "WebSocket client lagging");
+                        // The subscriber missed `n` events because the
+                        // bounded broadcast channel (capacity 256) advanced
+                        // past their cursor. Continuing on the same receiver
+                        // would deliver subsequent events but leave the gap
+                        // permanently filled in the client's view. Close the
+                        // socket instead — the frontend's reconnect handler
+                        // will fetch /v1/state, which returns a fresh
+                        // snapshot keyed by `broadcast_watermark` and
+                        // re-establishes the seq cursor.
+                        tracing::warn!(
+                            missed = n,
+                            "WebSocket client lagging; closing to force re-snapshot",
+                        );
+                        break "lagged";
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         break "broadcast channel closed";

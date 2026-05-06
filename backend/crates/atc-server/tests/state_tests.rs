@@ -31,6 +31,7 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         pg_pool: None,
         min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
