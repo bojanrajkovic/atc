@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-05 (Phase 3a/3b: cursor renamed to lastSeq with "highest committed seq" semantics, pre-increment seq counter, pool stats moved to frontend derivation; SeqEvent.pool_stats_after and StateSnapshot.pool_stats removed)
+Last verified: 2026-05-06 (Phase 3c: webhook handler is write-only in PG mode — commits outbox row, returns `{"status":"accepted","seq":<i64>}`, does not broadcast or apply in-memory; drain task is sole broadcaster in PG mode, adds ring-buffer dedup and gap-healing backstop; state handler uses REPEATABLE READ snapshot in PG mode; `/readyz` adds drain heartbeat staleness check; `AppState` gains `min_pending_seq` and `last_drain_pass_at`)
 
 ## Purpose
 
@@ -57,6 +57,10 @@ The `atc-core` crate implements the canonical domain model for ATC, consisting o
 - **WorkflowRun** — A GitHub Actions workflow invocation (one per push/PR/manual trigger). Identified by `run_id`. State: Queued → InProgress → Completed (Queued may skip directly to Completed for skipped/cancelled-before-start workflows).
 - **Job** — A unit of work within a run (e.g., "test-linux", "build-docker"). Identified by `job_id`. Belongs to exactly one run. State: Queued → InProgress → Completed (with optional conclusion: Success, Failure, Skipped, etc.).
 - **Step** — An individual action within a job (e.g., "Checkout code", "Run tests"). Identified by `step_id`. Belongs to exactly one job. Carries conclusion and conclusion text. Steps are immutable after completion.
+
+### PG Table Notes (Phase 3c)
+
+The `runs` PG table carries a `placeholder BOOLEAN NOT NULL DEFAULT false` column. Rows with `placeholder = true` are FK-only stubs created when a job event arrives before its parent run event; they are promoted to real rows when the matching `workflow_run` webhook arrives. The state snapshot (`/v1/state`) always reads `WHERE placeholder = false`.
 
 ### StateStore Architecture
 
@@ -154,9 +158,10 @@ ATC uses [sqlx](https://github.com/launchdarkis/sqlx) as its PostgreSQL client. 
 
 Migrations live in `backend/crates/atc-server/migrations/`. They are embedded in the binary at compile time via `sqlx::migrate!("./migrations")` and run automatically on startup. Re-running is idempotent (tracked by `_sqlx_migrations` table).
 
-Current schema (Phase 2c):
+Current schema (Phase 3c):
 - `0001_initial_runs_jobs.sql` — Creates `runs` and `jobs` tables with columns, FK, CHECK constraints, and indexes to support Phase 3c read patterns and TTL eviction.
 - `0002_outbox.sql` — Creates `outbox` table with `BIGSERIAL seq` primary key (durable monotonic-not-gapless cursor), `kind TEXT CHECK('run','job')`, `run_id BIGINT`, `job_id BIGINT NULL`, `payload JSONB` (stores `RunEventEnvelope` / `JobEventEnvelope` — NOT `SeqEvent`), `inserted_at TIMESTAMPTZ DEFAULT now()`. Index on `run_id` for Phase 3c forwarder drain. No FK to `runs` (append-only log; eviction is independent).
+- `0003_runs_placeholder.sql` — Adds `placeholder BOOLEAN NOT NULL DEFAULT false` to the `runs` table. The job-stub INSERT in `upsert_job_in_txn` writes `placeholder = true` to satisfy the FK constraint when a job event arrives before its parent run event. Real workflow_run UPSERTs leave `placeholder = false`, and the `ON CONFLICT UPDATE` clause explicitly sets `placeholder = false` to promote stubs to real rows. `/v1/state` reads `WHERE placeholder = false` to exclude stub rows from snapshots.
 
 ### sqlx feature flags
 
@@ -242,17 +247,19 @@ in PG (UPSERT + outbox row) and will be recoverable from the outbox.
 These counters are registered at startup via `register_pg_write_counters()` and
 appear in `/metrics` output only if PG writes have been attempted.
 
-### LISTEN/NOTIFY metrics (Phase 2d)
+### LISTEN/NOTIFY metrics (Phase 2d + Phase 3c)
 
-Five counters added in Phase 2d for the listener/drain pipeline:
+Seven counters for the listener/drain pipeline:
 
 | Counter | Description |
 |---------|-------------|
-| `atc_pg_notify_emitted_total{kind}` | Incremented in the webhook route handler after `tx.commit()` succeeds (the `pg_notify` call is emitted inside the transaction before commit, but the metric increment happens post-commit in the handler). `kind` matches the event discriminator (`run` or `job`). |
+| `atc_pg_notify_emitted_total{kind}` | Incremented in the webhook route handler after `tx.commit()` succeeds. `kind` matches the event discriminator (`run` or `job`). |
 | `atc_pg_notify_received_total` | Incremented each time the listener task receives a NOTIFY from PG. |
 | `atc_pg_listener_recv_errors_total` | Incremented each time the listener task encounters a receive error (e.g., connection drop during reconnect window). |
-| `atc_pg_drain_passes_total` | Incremented each time the drain task wakes up and executes a fetch pass (whether or not any rows are returned). |
-| `atc_pg_drain_rows_total` | Incremented by the number of outbox rows fetched in each drain pass. |
+| `atc_pg_drain_passes_total` | Incremented each time the drain task completes a NOTIFY-driven pass (heartbeat-only wakes do not increment). |
+| `atc_pg_drain_rows_total` | Incremented by the number of outbox rows fetched in each drain pass (across all pages). |
+| `atc_pg_drain_duplicate_skipped_total` | Incremented when a seq is fetched during a rescan but suppressed by the ring-buffer dedup (already broadcast in a previous pass). Phase 3c. |
+| `atc_pg_drain_unknown_kind_total` | Incremented when an outbox row has an unrecognized `kind` discriminator (not `run` or `job`). Phase 3c. |
 
 ### Listener always binds
 
@@ -277,16 +284,20 @@ struct AppState {
     webhook_secret: Option<String>,
     seq: Mutex<u64>,
     pg_pool: Option<sqlx::PgPool>,
+    min_pending_seq: Arc<AtomicI64>,
+    last_drain_pass_at: Arc<AtomicI64>,
 }
 ```
 
-- **`store`** — Reference to the shared `atc-core` StateStore. All webhook events are applied here, and REST/WebSocket endpoints read from here.
-- **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
+- **`store`** — Reference to the shared `atc-core` StateStore. In in-memory mode, webhook events are applied here directly. In PG mode, the store is not written by the webhook handler — it serves only as a legacy store for the in-memory path. REST/WebSocket endpoints read from PG in PG mode (state handler uses REPEATABLE READ) and from the store in in-memory mode.
+- **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). **In PG mode the drain task is the SOLE writer** (Phase 3c). In in-memory mode the webhook handler writes directly on each successful commit. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
-- **`seq`** — `tokio::sync::Mutex<u64>` counter holding the **highest committed sequence number** (Phase 3a semantics). Initial value `0` is the unambiguous "no events committed" sentinel. The counter is **pre-incremented** on each successfully applied event: `*seq_guard += 1; let seq = *seq_guard;` — so the first event to commit broadcasts `seq = 1`, never `seq = 0`. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across `pool.begin()` + PG commit + in-memory store mutation + seq assignment + broadcast, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches durable commit order, and REST snapshots are consistent with their cursor. Resets on server restart (the value is in-process; durable monotonicity comes from the outbox `BIGSERIAL`).
-- **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Used by the webhook handler for transactional writes and by the `/readyz` probe. `PgStore` is no longer mounted in AppState (removed in Phase 2c); the handler calls `persist::upsert_*_in_txn` and `persist::insert_outbox_*_in_txn` directly via `&mut tx`.
+- **`seq`** — `tokio::sync::Mutex<u64>` counter holding the **highest committed sequence number** in **in-memory mode only**. In PG mode this mutex stays at 0 (the handler does not increment it — seq comes from the outbox `BIGSERIAL`). The counter is pre-incremented on each successfully applied event in in-memory mode: `*seq_guard += 1; let seq = *seq_guard;` — so the first event broadcasts `seq = 1`. In in-memory mode, the state handler acquires this mutex across the snapshot + seq read to guarantee cursor/content consistency. In PG mode the state handler uses a REPEATABLE READ transaction instead.
+- **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Used by the webhook handler for transactional writes, by the state handler for REPEATABLE READ snapshots, and by the `/readyz` probe.
+- **`min_pending_seq`** — `Arc<AtomicI64>` initialized to `i64::MAX`. The listener task calls `fetch_min(seq, Release)` on each NOTIFY, registering the outbox seq that triggered the notification. The drain task swaps this to `i64::MAX` (`AcqRel`) at the start of each pass to capture the lowest pending seq, computing `pass_start_floor = watermark.min(backstop.saturating_sub(1))`. This **gap-healing backstop** ensures that if a NOTIFY for seq=K arrives while the drain is mid-pass, the next pass rescans from `K-1` and does not miss K. Ring-buffer dedup prevents K from being rebroadcast if it was already broadcast in the current or a recent pass.
+- **`last_drain_pass_at`** — `Arc<AtomicI64>` storing a Unix-epoch millisecond timestamp. The drain task stores `now_millis()` unconditionally on every iteration (both NOTIFY-driven passes and heartbeat-only ticks). `/readyz` checks this value when `pg_pool` is `Some`: if the age exceeds `READYZ_HEARTBEAT_STALENESS_MS` (30 s), the probe returns 503 `{"status":"drain_stale"}`.
 
-The listener task and drain task receive a clone of the existing `CancellationToken`; `AppState` gains no new fields — task handles live in `main.rs` scope.
+Task handles live in `main.rs` scope; `AppState` does not own them.
 
 ### SeqEvent Wire Contract
 
@@ -308,7 +319,7 @@ Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend der
 
 ### Webhook Ingestion (`POST /v1/webhooks/github`)
 
-**Responsibility:** Receive GitHub webhook payloads, verify signatures, parse to domain events, apply to store, and publish to broadcast channel.
+**Responsibility:** Receive GitHub webhook payloads, verify signatures, parse to domain events, and commit them durably to PG (or apply in-memory when PG is not configured).
 
 **Flow:**
 1. Extract `X-GitHub-Event` header and raw body from HTTP request.
@@ -317,18 +328,16 @@ Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend der
    - `ParseResult::Parsed(Box<WebhookEvent>)` — Continue to store ingestion
    - `ParseResult::Skipped { event_type }` — Return 200 with `{"status": "skipped"}`
    - `ParseResult::Err(ParseError)` — Return 422 with error details
-4. Unbox the event and acquire the `seq` mutex **before any PG I/O**. This is the critical ordering invariant: two concurrent webhooks that race to commit cannot broadcast in a different order than they committed.
-5. Branch on `pg_pool`:
-   - **`Some(pool)` — Transactional PG path:**
-     - Call `pool.begin()` to open a transaction. On failure → 503, drop mutex.
+4. Branch on `pg_pool`:
+   - **`Some(pool)` — Write-only PG path (Phase 3c):**
+     - Call `pool.begin()` to open a transaction. On failure → 503.
      - Call `persist::upsert_run_in_txn` or `persist::upsert_job_in_txn` inside the transaction. On `PersistError::InvalidTransition` → 200 `{"status":"rejected"}` (auto-rollback, increment `atc_pg_write_failures_total{kind="parity"}`). On `PersistError::Backend` → 503 (increment `kind="transient"`).
-     - Call `persist::insert_outbox_run_in_txn` or `persist::insert_outbox_job_in_txn` in the same transaction. On failure, same error path as above.
+     - Call `persist::insert_outbox_run_in_txn` or `persist::insert_outbox_job_in_txn` in the same transaction. The `BIGSERIAL` allocates the durable seq for this event. On failure, same error path.
      - Emit `SELECT pg_notify('atc_outbox', seq::text)` inside the same transaction before commit. PG queues the NOTIFY and delivers it to all listeners on COMMIT; an aborted transaction silently drops the notification.
-     - `tx.commit()`. On failure → 503 `{"status":"database commit failed"}`, increment `kind="transient"`. On success, increment `atc_pg_notify_emitted_total{kind}` (the metric reflects a durable committed notification, not just the in-transaction call site).
-     - **After commit:** apply to in-memory store under the same mutex. If in-memory apply fails after PG committed, increment `atc_pg_in_memory_drift_total`, log warning, skip broadcast. Return 200.
-   - **`None` — In-memory-only path:** Apply the parsed event directly to the in-memory store via `store.apply_run_event()` or `store.apply_job_event()`. If the transition is invalid, log warning and skip broadcast (no SeqEvent emitted for rejected transitions).
-6. On successful apply (either path): pre-increment `seq` by 1 (`*seq_guard += 1; let seq = *seq_guard`) — the first successful commit broadcasts `seq = 1`. Broadcast a `SeqEvent { seq, event }` to the webhook channel (still under the mutex).
-7. Release the `seq` mutex. Return 200 with `{"status": "processed"}`.
+     - `tx.commit()`. On failure → 503, increment `kind="transient"`. On success, increment `atc_pg_notify_emitted_total{kind}`.
+     - **The handler does NOT broadcast to `webhook_tx`, does NOT apply to the in-memory store, and does NOT touch the `seq` mutex.** The drain task is the sole broadcaster in PG mode.
+     - Return 200 `{"status": "accepted", "seq": <allocated_outbox_seq>}`.
+   - **`None` — In-memory-only path:** Acquire the `seq` mutex **before** any mutation (critical ordering invariant). Apply the parsed event directly to the in-memory store via `store.apply_run_event()` or `store.apply_job_event()`. If the transition is invalid, log warning and skip broadcast (no SeqEvent emitted for rejected transitions). On success, pre-increment `seq` by 1 (`*seq_guard += 1; let seq = *seq_guard`) and broadcast `SeqEvent { seq, event }` to the webhook channel (still under the mutex). Release mutex. Return 200 `{"status": "processed"}`.
 
 **Error responses:**
 - **400** — Missing `X-GitHub-Event` header
@@ -336,7 +345,9 @@ Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend der
 - **422** — Malformed JSON body or unknown action/conclusion values
 - **503** — PG `pool.begin()` failed, mid-txn backend error, or `tx.commit()` failed
 
-**Ordering guarantee:** The `seq` mutex is acquired before `pool.begin()` and released after broadcast. This serializes the full pipeline (PG begin → PG commit → in-memory apply → seq increment → broadcast) so that: (a) `seq` values are strictly monotonically increasing with no gaps, (b) their order always matches durable PG commit order, and (c) all events up to a given seq have been broadcast before the mutex is released. `state_handler` can never observe a seq cursor that advertises events WS clients haven't received yet.
+**PG mode ordering guarantee:** Seq ordering in PG mode comes from the outbox `BIGSERIAL`, which allocates strictly increasing values inside each committed transaction. The listener fires `min_pending_seq.fetch_min(seq, Release)` on each NOTIFY; the drain processes rows in `ORDER BY seq` and applies ring-buffer dedup. The seq mutex is not involved in PG mode.
+
+**In-memory mode ordering guarantee:** The `seq` mutex is acquired before `pool.begin()` and released after broadcast, serializing the full pipeline so that seq values are strictly monotonically increasing and their order always matches the in-memory apply order.
 
 ### WebSocket Event Stream (`GET /v1/ws`)
 
@@ -358,20 +369,33 @@ Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend der
 
 **Responsibility:** Return the full current state snapshot and the highest committed seq cursor.
 
-**Flow:**
-1. Acquire the `seq` mutex (prevents any webhook from committing during the read)
-2. Read the store snapshot under the store's read lock (returns a `QueryResult { runs, jobs }`; pool stats are no longer included — see ADR 0004 / Phase 3b)
-3. Read `seq` from the mutex guard as `last_seq`
-4. Release the mutex, then serialize the response as a `StateSnapshot`:
-   ```rust
-   struct StateSnapshot {
-       last_seq: u64,            // Highest committed seq; serializes as "lastSeq"
-       runs: Vec<WorkflowRun>,
-       jobs: Vec<Job>,
-   }
-   ```
-5. **Cursor semantics (Phase 3a):** `last_seq` is the highest committed seq. `last_seq = 0` means no events have been committed since startup (cold-start sentinel). All events with `seq <= last_seq` are reflected in the snapshot; the next event to commit will receive `seq = last_seq + 1`. This guarantee holds because the mutex excludes concurrent webhook writes during the read.
-6. Return 200 with the JSON snapshot.
+**PG mode flow (Phase 3c):**
+1. Open a `pool.begin()` transaction. On failure → 503.
+2. Set `TRANSACTION ISOLATION LEVEL REPEATABLE READ`. This ensures the three subsequent reads see the same MVCC snapshot — preventing the "cursor overshoot" bug where a concurrent commit between the runs SELECT and the outbox MAX(seq) SELECT would advance `lastSeq` past content the snapshot hasn't materialized.
+3. Call `persist::read_all_runs(&mut tx)` — reads `WHERE placeholder=false` (FK-stub rows excluded).
+4. Call `persist::read_all_jobs(&mut tx)`.
+5. Call `persist::read_last_seq(&mut tx)` — reads `SELECT COALESCE(MAX(seq), 0) FROM outbox`.
+6. Commit the transaction (read-only; a commit failure is non-fatal for the response content).
+7. Convert `last_seq: i64` to `u64`; serialize the response as `StateSnapshot`.
+
+**In-memory mode flow:**
+1. Acquire the `seq` mutex (prevents any webhook from committing during the read).
+2. Read the store snapshot under the store's read lock (`QueryResult { runs, jobs }`).
+3. Read `seq` as `last_seq`.
+4. Release the mutex and serialize.
+
+**StateSnapshot:**
+```rust
+struct StateSnapshot {
+    last_seq: u64,            // Highest committed seq; serializes as "lastSeq"
+    runs: Vec<WorkflowRun>,
+    jobs: Vec<Job>,
+}
+```
+
+**Cursor semantics (Phase 3a/3c):** `last_seq` is the highest committed seq. `last_seq = 0` means no events have been committed since startup (cold-start sentinel). All events with `seq <= last_seq` are reflected in the snapshot. In PG mode the REPEATABLE READ isolation guarantees this: any entity visible was committed with an outbox row in the same atomic transaction, so `MAX(seq)` over those rows equals the entity count.
+
+Return 200 with the JSON snapshot.
 
 **Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `lastSeq`, then connect to `GET /v1/ws` and filter incoming `SeqEvent`s to those with `seq > lastSeq` (strictly greater than — buffered events with `seq <= lastSeq` are already reflected in the snapshot and discarded). This protocol allows robust reconnection and bootstrap.
 
@@ -396,8 +420,9 @@ In `main.rs`:
    2. `PgListener::connect(&listener_url)` — fail-fast on Err (exit(1)).
    3. `listener.listen(NOTIFY_CHANNEL)` — fail-fast on Err (exit(1)).
    4. `SELECT COALESCE(MAX(seq), 0) FROM outbox` — initialize watermark; fail-fast on Err (exit(1)).
-   5. Spawn listener task (receives PG NOTIFYs, fires `Arc<Notify>`).
-   6. Spawn drain task (wakes on `Arc<Notify>`, fetches `seq > watermark ORDER BY seq`, logs, advances watermark).
+   5. Initialize `min_pending_seq = Arc::new(AtomicI64::new(i64::MAX))` and `last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()))`. Mount both in `AppState`.
+   6. Spawn listener task (receives PG NOTIFYs, calls `min_pending_seq.fetch_min(seq, Release)`, fires `Arc<Notify>`).
+   7. Spawn drain task (wakes on `Arc<Notify>` or 5 s heartbeat tick; NOTIFY-driven passes fetch `seq > pass_start_floor ORDER BY seq` in pages, apply ring-buffer dedup, broadcast `SeqEvent`s, advance `watermark`; every iteration updates `last_drain_pass_at`).
 9. Bind the server to `http_addr` via `axum::serve`
 10. On graceful shutdown, abort the eviction task, listener task, and drain task
 
@@ -405,28 +430,35 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 
 ### Health Probes
 
-- `/readyz` — Readiness probe. Returns 200 `{"status":"ok"}` in in-memory mode (no DB configured). When `ATC_DATABASE_URL` is configured, runs `SELECT 1` against the pool; returns 200 on success or 503 `{"status":"db_unreachable"}` if the DB is unreachable.
-- `/healthz` — Liveness probe. Unchanged — process up = healthy regardless of DB state.
+- `/readyz` — Readiness probe. In in-memory mode (no PG pool), returns 200 immediately. When `ATC_DATABASE_URL` is configured: (1) runs `SELECT 1` against the pool — 503 `{"status":"db_unreachable"}` if the DB is unreachable; (2) checks the drain heartbeat age — if `last_drain_pass_at` is older than `READYZ_HEARTBEAT_STALENESS_MS` (30 s), returns 503 `{"status":"drain_stale"}`. A healthy drain updates its heartbeat every 5 s (`HEARTBEAT_TICK`), so any value older than 30 s indicates the drain task has stalled. Returns 200 `{"status":"ok"}` when both checks pass.
+- `/healthz` — Liveness probe. Returns 200 unconditionally — process up = alive regardless of DB state.
 
-### NOTIFY Emission and Listener Fetch-Stub (Phase 2d)
+### NOTIFY Emission and Drain Pipeline (Phase 2d + Phase 3c)
 
 **Two-task coalescing structure:** The listener pipeline splits into two cooperating tasks:
 
-1. **Listener task** — Holds a dedicated long-lived `PgListener` connection. Receives PG NOTIFY payloads on the `atc_outbox` channel, increments `atc_pg_notify_received_total`, and fires an `Arc<tokio::sync::Notify>` to wake the drain task. Does not fetch rows itself.
-2. **Drain task** — Waits on the `Arc<Notify>` (level-triggered). On each wake, fetches all outbox rows with `seq > watermark ORDER BY seq` from the pool, logs each row (Phase 2d stub — not yet forwarding to WS clients), increments `atc_pg_drain_rows_total` and `atc_pg_drain_passes_total`, and advances the local `watermark`. If a NOTIFY arrives while a drain is in progress, the coalescing flag ensures one additional pass runs after the current one completes rather than starting a concurrent fetch.
+1. **Listener task** — Holds a dedicated long-lived `PgListener` connection. Receives PG NOTIFY payloads on the `atc_outbox` channel, increments `atc_pg_notify_received_total`, calls `min_pending_seq.fetch_min(seq, Release)` to register the notified seq for gap-healing, and fires an `Arc<tokio::sync::Notify>` to wake the drain task. Does not fetch rows itself.
+
+2. **Drain task** — Waits on `Arc<Notify>` (level-triggered), but also wakes on a 5 s heartbeat tick to refresh `last_drain_pass_at`. On every iteration (notify or tick): stores `now_millis()` to `last_drain_pass_at`. On heartbeat-only wakes, skips the pass body. On NOTIFY-driven wakes:
+   - Swaps `min_pending_seq` to `i64::MAX` (AcqRel) to capture the gap-healing backstop. Computes `pass_start_floor = watermark.min(backstop.saturating_sub(1))`.
+   - **Pagination loop:** fetches pages of `DRAIN_BATCH_SIZE=500` rows `WHERE seq > page_cursor ORDER BY seq`, advancing `page_cursor` on each page until a partial page is returned.
+   - For each row: decodes the JSONB payload as `RunEventEnvelope` or `JobEventEnvelope`. On decode failure, logs an error and skips. On unknown `kind`, increments `atc_pg_drain_unknown_kind_total` and skips.
+   - **Ring-buffer dedup:** Before broadcasting a seq, checks `recent_set` (HashSet over the ring buffer of capacity `DEDUP_CAP=2048`). If already seen, increments `atc_pg_drain_duplicate_skipped_total` and skips. If new, inserts into ring and set; evicts the oldest entry if the ring is full.
+   - **Broadcasts** `SeqEvent { seq: u64, event: WebhookEvent }` on `webhook_tx` for each row that passes dedup.
+   - After the full pagination loop, advances `watermark` to the highest seq seen. Refreshes `last_drain_pass_at` again.
+
+**Gap-healing backstop:** The concurrent-commits race: webhook A commits seq=1 and fires NOTIFY, but before the drain wakes, webhook B commits seq=2. The drain wakes on B's NOTIFY, calls `swap(MAX, AcqRel)`, gets backstop=1 (A registered it first), computes `floor = watermark.min(0) = 0`, and scans from 0 — fetching both seq=1 and seq=2 in order. Without the backstop, a drain that woke on B's NOTIFY and started scanning from `watermark=0` would also catch A; the backstop is a safety net for the case where the drain has already advanced `watermark` past where A's NOTIFY would land.
 
 **DSN session-mode contract:** The listener connection (`ATC_DATABASE_LISTENER_URL` or fallback to `ATC_DATABASE_URL`) must be a session-mode endpoint. Transaction-mode PgBouncer reassigns the underlying connection between transactions, silently dropping LISTEN registrations. When the main pool uses transaction-mode PgBouncer, set `ATC_DATABASE_LISTENER_URL` to a direct Postgres DSN or a session-mode PgBouncer endpoint.
 
 **Reconnect loss window:** If the listener task reconnects after a connection drop, any NOTIFYs delivered during the reconnect window are not received. This is healed automatically: the next NOTIFY after reconnection triggers a drain pass that fetches `seq > watermark`, catching up all rows that were inserted while the listener was disconnected. No data is lost; only latency increases during the reconnect window.
 
-**Phase 3c pivot:** The drain task currently logs rows as a stub. In Phase 3c, the only code change inside the drain loop is adding a call to `forward_to_ws_clients(rows)` — the task structure, watermark semantics, and coalescing logic are identical.
-
 ### Modules
 
-- **`state.rs`** — `AppState` struct (fields: `store`, `webhook_tx`, `webhook_secret`, `seq`, `pg_pool`) and the `SeqEvent { seq, event }` broadcast type
-- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`; defines `StateSnapshot { last_seq, runs, jobs }` (Phase 3a/3b); webhook handler transactional outbox flow (Phase 2c)
+- **`state.rs`** — `AppState` struct (fields: `store`, `webhook_tx`, `webhook_secret`, `seq`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`) and the `SeqEvent { seq, event }` broadcast type
+- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`, `/healthz`, `/readyz`; defines `StateSnapshot { last_seq, runs, jobs }`; webhook handler is **write-only in PG mode** (Phase 3c — commits outbox row + NOTIFY, returns `{"status":"accepted","seq":<i64>}`, no broadcast); state handler uses REPEATABLE READ in PG mode; `/readyz` checks drain heartbeat staleness in PG mode
 - **`ws.rs`** — WebSocket connection handling and message broadcast logic
-- **`persist.rs`** — `PgStore` implementing `PersistentStore` trait (used in integration tests); `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` called by the webhook handler (Phase 2c)
+- **`persist.rs`** — `PgStore` implementing `PersistentStore` trait (used in integration tests); `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn` called by the webhook handler; `read_all_runs`, `read_all_jobs`, `read_last_seq` used by the state handler (Phase 3c)
 
 ## Files
 
@@ -439,7 +471,7 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`) (Phase 2b/2c)
 - `backend/crates/atc-server/src/persist.rs` — `PgStore` struct implementing `PersistentStore` (used in `tests/persist_pg_tests.rs`); `pub(crate)` transaction helpers for UPSERT+outbox pattern used by webhook handler (Phase 2c)
-- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify, fetches outbox rows by `seq > watermark ORDER BY seq`, logs, advances watermark). Spawned only when `pg_pool` is `Some`. (Phase 2d)
+- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. Spawned only when `pg_pool` is `Some`. (Phase 2d + Phase 3c)
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/crates/atc-server/migrations/0002_outbox.sql` — Outbox table: `BIGSERIAL seq` PK, `kind` discriminator, `run_id`/`job_id`, `payload JSONB` (domain event envelope), `inserted_at TIMESTAMPTZ`; `outbox_run_idx` on `run_id`

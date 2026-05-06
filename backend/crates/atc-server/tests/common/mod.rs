@@ -2,19 +2,42 @@
 
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::listener;
 use atc_server::state::AppState;
 use axum_prometheus::PrometheusMetricLayer;
+use axum_prometheus::metrics_exporter_prometheus::PrometheusHandle;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 // Guard: PrometheusMetricLayer::pair() is called only once per test binary.
 // Tests that use this must be marked with #[serial_test::serial] to avoid concurrent execution.
-pub static PROMETHEUS_INIT: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
+// Stores both the layer (for routing) and the handle (for metric assertions via render_metrics()).
+pub static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, PrometheusHandle)> =
+    OnceLock::new();
+
+/// Render current Prometheus metrics as text.
+///
+/// Panics if `PROMETHEUS_INIT` has not been initialized yet. Call after any
+/// call to `build_app_with_secret`, `build_app_no_secret`, or
+/// `build_app_with_pg_and_listener` — all of which call `get_or_init`.
+pub fn render_metrics() -> String {
+    PROMETHEUS_INIT
+        .get()
+        .expect("PROMETHEUS_INIT not yet initialized — call a build_app_* helper first")
+        .1
+        .render()
+}
 
 /// Compute HMAC-SHA256 signature in the format GitHub expects: sha256=<hex>
 pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
@@ -29,7 +52,10 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 
 /// Build app with a specific webhook secret
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT.get_or_init(|| PrometheusMetricLayer::pair().0);
+    let layer = PROMETHEUS_INIT
+        .get_or_init(PrometheusMetricLayer::pair)
+        .0
+        .clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -41,6 +67,9 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         webhook_secret: Some(secret.to_string()),
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -50,7 +79,10 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 
 /// Build app with no webhook secret (verification bypassed)
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT.get_or_init(|| PrometheusMetricLayer::pair().0);
+    let layer = PROMETHEUS_INIT
+        .get_or_init(PrometheusMetricLayer::pair)
+        .0
+        .clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -62,6 +94,9 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -181,7 +216,8 @@ async fn build_app_inner(
     use std::sync::atomic::Ordering;
 
     let layer = PROMETHEUS_INIT
-        .get_or_init(|| PrometheusMetricLayer::pair().0)
+        .get_or_init(PrometheusMetricLayer::pair)
+        .0
         .clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
@@ -189,17 +225,8 @@ async fn build_app_inner(
     ));
     let (webhook_tx, broadcast_rx) =
         tokio::sync::broadcast::channel::<atc_server::state::SeqEvent>(256);
-    let state = Arc::new(AppState {
-        store,
-        webhook_tx,
-        webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
-        pg_pool: Some(pool.clone()),
-    });
-
-    let router = atc_server::routes::api_routes(layer)
-        .with_state(state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
+    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis_for_test()));
 
     // Initialize watermark (same logic as main.rs) using untyped API to avoid sqlx macro caching.
     let initial_watermark: i64 =
@@ -207,6 +234,24 @@ async fn build_app_inner(
             .fetch_one(&pool)
             .await
             .expect("watermark query failed");
+
+    // Seed broadcast_watermark from initial_watermark so /v1/state returns a
+    // sensible lastSeq before the first post-startup drain pass completes.
+    let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
+    let state = Arc::new(AppState {
+        store,
+        webhook_tx,
+        webhook_secret: None,
+        seq: tokio::sync::Mutex::new(0),
+        pg_pool: Some(pool.clone()),
+        min_pending_seq: min_pending_seq.clone(),
+        last_drain_pass_at: last_drain_pass_at.clone(),
+        broadcast_watermark: broadcast_watermark.clone(),
+    });
+
+    let router = atc_server::routes::api_routes(layer)
+        .with_state(state.clone())
+        .fallback(atc_server::assets::fallback_handler());
 
     // Connect the PgListener for the listener task.
     let pg_listener = listener::connect_listener(&db_url)
@@ -222,6 +267,7 @@ async fn build_app_inner(
     let listener_handle = listener::spawn_listener_task(
         pg_listener,
         drain_notify.clone(),
+        min_pending_seq.clone(),
         shutdown.clone(),
         Some(observed_recv.clone()),
     );
@@ -230,6 +276,10 @@ async fn build_app_inner(
         pool.clone(),
         initial_watermark,
         drain_notify,
+        min_pending_seq,
+        last_drain_pass_at,
+        broadcast_watermark,
+        state.webhook_tx.clone(),
         shutdown.clone(),
         Some(observed_passes.clone()),
         Some(drain_started.clone()),

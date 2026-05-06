@@ -1,7 +1,15 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
@@ -28,6 +36,9 @@ fn build_full_app() -> axum::Router {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     atc_server::routes::api_routes(layer.clone())
         .with_state(app_state)

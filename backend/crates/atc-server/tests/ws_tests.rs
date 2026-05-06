@@ -8,11 +8,19 @@ mod common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 use futures_util::stream::StreamExt;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -21,7 +29,10 @@ use tokio_tungstenite::tungstenite::Message;
 /// Returns (server_address, AppState with broadcast channel).
 async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     // Use the shared PROMETHEUS_INIT to avoid multiple initializations
-    let layer = common::PROMETHEUS_INIT.get_or_init(|| atc_server::metrics::build().0);
+    let layer = common::PROMETHEUS_INIT
+        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .0
+        .clone();
 
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
@@ -34,6 +45,9 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
 
     let main_router = routes::api_routes(layer.clone())
@@ -241,6 +255,21 @@ async fn ac3_4_disconnect_does_not_crash_server() {
         serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
     assert_eq!(seq_event.seq, 1, "Client 2 should receive the event");
 }
+
+// TODO(coverage): The `Lagged` close arm in `ws.rs:handle_socket` (lines 54-68)
+// is currently at 0% coverage. To cover it deterministically we need to:
+//   1. Use `test_setup(2)` (capacity-2 channel).
+//   2. Subscribe the WS client, then WITHOUT reading from the socket, call
+//      `state.webhook_tx.send(...)` ≥3 times synchronously so the ring laps.
+//   3. Then read from the WS — expect the connection to close (None or Close frame).
+// The main obstacle is that the `webhook_tx` handle on `AppState` is not easily
+// accessible once the server is running in a background task, so we need to
+// either clone `app_state` before spawning (the `test_setup` helper already
+// returns it) or inject events via the webhook HTTP endpoint and accept that
+// the handler task consumes them before the WS handler can lag.
+// Deferred because (a) the 2 lines are not load-bearing for the coverage
+// threshold and (b) `ac3_5` below already exercises the capacity-2 setup and
+// its assertions would need revisiting once lag-driven close is deterministic.
 
 /// AC3.5: Lagging client receives warning log, continues receiving (not disconnected)
 #[tokio::test]

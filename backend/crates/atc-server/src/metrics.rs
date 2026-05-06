@@ -88,6 +88,8 @@ pub fn register_pg_write_counters() {
 /// - atc_pg_listener_recv_errors_total — recv() errors (sqlx hides successful reconnects)
 /// - atc_pg_drain_passes_total — drain task wake-ups
 /// - atc_pg_drain_rows_total — outbox rows fetched across all passes
+/// - atc_pg_drain_duplicate_skipped_total — broadcasts suppressed by ring-buffer dedup (Phase 3c)
+/// - atc_pg_drain_unknown_kind_total — outbox rows with an unrecognized kind discriminator (Phase 3c)
 ///
 /// Must be called after build() (which installs the global recorder).
 pub fn register_listener_metrics() {
@@ -110,6 +112,14 @@ pub fn register_listener_metrics() {
     metrics::describe_counter!(
         "atc_pg_drain_rows_total",
         "Total outbox rows fetched by the drain task across all passes"
+    );
+    metrics::describe_counter!(
+        "atc_pg_drain_duplicate_skipped_total",
+        "Outbox rows whose broadcast was suppressed by the dedup ring buffer (Phase 3c)"
+    );
+    metrics::describe_counter!(
+        "atc_pg_drain_unknown_kind_total",
+        "Outbox rows with an unrecognized kind discriminator (Phase 3c)"
     );
 }
 

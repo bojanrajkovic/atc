@@ -134,7 +134,8 @@ async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
     use axum_prometheus::PrometheusMetricLayer;
 
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(|| PrometheusMetricLayer::pair().0)
+        .get_or_init(PrometheusMetricLayer::pair)
+        .0
         .clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
@@ -147,6 +148,14 @@ async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None, // in-memory mode
+        min_pending_seq: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: std::sync::Arc::new(std::sync::atomic::AtomicI64::new({
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+                .unwrap_or(0)
+        })),
+        broadcast_watermark: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
     });
     let router = atc_server::routes::api_routes(layer)
         .with_state(state.clone())

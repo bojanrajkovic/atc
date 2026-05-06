@@ -15,6 +15,7 @@
 mod common;
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
@@ -24,6 +25,13 @@ use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
 use std::sync::OnceLock;
 use tower::ServiceExt;
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 
 // Guard: PrometheusMetricLayer::pair() installed once per binary.
 // All tests in this file must be #[serial_test::serial].
@@ -91,6 +99,9 @@ pub fn build_app_with_pg(
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: Some(pool),
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -135,28 +146,32 @@ async fn post_webhook(app: axum::Router, event_type: &str, body: &[u8]) -> Statu
 #[serial_test::serial]
 async fn transactional_write_run_lifecycle() {
     let (pool, _c, _) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone());
+    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+
+    // Fixture run_id for workflow_run_requested.json (24290980517)
+    let run_id = 24290980517i64;
 
     // Requested
     let body = common::fixture_workflow_run_requested();
     let (status, json) = post_webhook_full(app.clone(), "workflow_run", &body).await;
     assert_eq!(status, StatusCode::OK, "Requested should return 200");
-    assert_eq!(json["status"], "processed", "should be processed");
-
-    let snap = state.store.snapshot().await;
-    let mem_run = &snap.runs[0];
     assert_eq!(
-        format!("{:?}", mem_run.status),
-        "Queued",
-        "in-memory should be Queued"
+        json["status"], "accepted",
+        "PG-mode handler returns 'accepted'"
+    );
+    assert!(
+        json["seq"].is_number(),
+        "PG-mode handler must include outbox seq in response, got: {json}"
     );
 
-    let pg_row = sqlx::query!("SELECT status FROM runs WHERE id = $1", mem_run.id.0)
-        .fetch_optional(&pool)
-        .await
-        .unwrap();
-    let pg_status = pg_row.map(|r| r.status).unwrap_or_default();
-    assert_eq!(pg_status, "Queued", "PG should also be Queued");
+    // In PG mode the handler does not write to the in-memory store — assert via PG.
+    let pg_status: String =
+        sqlx::query_scalar("SELECT status FROM runs WHERE id = $1 AND placeholder = false")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(pg_status, "Queued", "PG must reflect committed event");
 
     let outbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
         .fetch_one(&pool)
@@ -169,14 +184,14 @@ async fn transactional_write_run_lifecycle() {
     let status = post_webhook(app.clone(), "workflow_run", &body).await;
     assert_eq!(status, StatusCode::OK, "InProgress should return 200");
 
-    let snap = state.store.snapshot().await;
-    let mem_run = &snap.runs[0];
-    assert_eq!(format!("{:?}", mem_run.status), "InProgress");
-    let pg_row = sqlx::query!("SELECT status FROM runs WHERE id = $1", mem_run.id.0)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(pg_row.status, "InProgress");
+    // In PG mode the handler does not write to the in-memory store — assert via PG.
+    let pg_status: String =
+        sqlx::query_scalar("SELECT status FROM runs WHERE id = $1 AND placeholder = false")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(pg_status, "InProgress", "PG must reflect committed event");
 
     let outbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
         .fetch_one(&pool)
@@ -192,17 +207,22 @@ async fn transactional_write_run_lifecycle() {
     let status = post_webhook(app.clone(), "workflow_run", &body).await;
     assert_eq!(status, StatusCode::OK, "Completed should return 200");
 
-    let snap = state.store.snapshot().await;
-    let mem_run = &snap.runs[0];
-    assert_eq!(format!("{:?}", mem_run.status), "Completed");
-    let pg_row = sqlx::query!(
-        "SELECT status, conclusion FROM runs WHERE id = $1",
-        mem_run.id.0
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(pg_row.status, "Completed");
+    // In PG mode the handler does not write to the in-memory store — assert via PG.
+    #[derive(sqlx::FromRow)]
+    struct CompletedRow {
+        status: String,
+        conclusion: Option<String>,
+    }
+    let pg_row: CompletedRow =
+        sqlx::query_as("SELECT status, conclusion FROM runs WHERE id = $1 AND placeholder = false")
+            .bind(run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        pg_row.status, "Completed",
+        "PG must reflect committed event"
+    );
     assert!(pg_row.conclusion.is_some(), "conclusion should be set");
 
     let outbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
@@ -294,12 +314,12 @@ async fn transactional_write_job_before_run_lifecycle() {
     assert_eq!(total_outbox, 2, "outbox should have 2 total rows");
 }
 
-/// Phase 2c: Idempotent replay — same webhook twice → both stores stable.
+/// Phase 2c: Idempotent replay — same webhook twice → PG stable.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_idempotent_replay() {
     let (pool, _c, _) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone());
+    let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     let body = common::fixture_workflow_run_requested();
 
@@ -307,14 +327,12 @@ async fn transactional_write_idempotent_replay() {
     let s2 = post_webhook(app.clone(), "workflow_run", &body).await;
 
     // Second webhook is a same-status replay (Queued→Queued), which is idempotent.
-    // Both should return 200. The second returns "processed" (in-memory accepts idempotent
-    // replay) or "rejected" depending on whether the predicate matches.
+    // Both should return 200 (PG mode returns "accepted" for the first; "rejected"
+    // or "accepted" for the second depending on whether the predicate matches).
     assert_eq!(s1, StatusCode::OK);
     assert_eq!(s2, StatusCode::OK);
 
-    let snap = state.store.snapshot().await;
-    assert_eq!(snap.runs.len(), 1, "exactly one run in memory");
-
+    // In PG mode the in-memory store is never written — assert via PG count.
     let pg_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs")
         .fetch_one(&pool)
         .await
@@ -352,15 +370,11 @@ async fn parity_metric_increments_when_pg_rejects() {
         .await
         .unwrap();
 
-    // 3. Also reset in-memory to Queued by building a fresh in-memory path equivalent.
-    //    (The existing in-memory store already has the run at Queued since it was
-    //    applied after the first webhook. We can't easily force it to a different state
-    //    without another event.)
-    //
-    // The scenario: PG has Completed, in-memory has Queued.
-    // Fire InProgress: in-memory: Queued→InProgress valid; PG: Completed not in
-    // predecessors_of(InProgress) → 0 rows affected → InvalidTransition → parity metric.
-    // Phase 2c: returns 200 rejected (parity rejection is not a transient failure).
+    // 3. Fire InProgress against the PG row now at Completed.
+    // PG: Completed not in predecessors_of(InProgress) → 0 rows affected →
+    // InvalidTransition → parity metric. In PG mode the in-memory store is never
+    // written, so the parity check is purely PG-driven.
+    // Phase 3c: returns 200 rejected (parity rejection is not a transient failure).
     let (status, json) = post_webhook_full(
         app.clone(),
         "workflow_run",
@@ -513,6 +527,9 @@ async fn in_memory_mode_behavioral_invariance() {
         webhook_secret: None,
         seq: tokio::sync::Mutex::new(0),
         pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())

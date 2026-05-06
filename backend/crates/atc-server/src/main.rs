@@ -5,7 +5,8 @@ mod assets;
 
 use std::process;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::AtomicI64;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Mutex, Notify};
 
@@ -17,6 +18,13 @@ use atc_server::metrics;
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 
 async fn shutdown_signal(shutdown: CancellationToken) {
     use tokio::signal::unix::{SignalKind, signal};
@@ -100,12 +108,25 @@ async fn main() {
     // and should re-fetch via GET /v1/state.
     let (webhook_tx, _rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
 
+    // Phase 3c gap-healing backstop and drain heartbeat. min_pending_seq is
+    // i64::MAX at boot (no in-flight handlers); last_drain_pass_at is now()
+    // so /readyz cannot 503 between bind and the first drain pass.
+    // broadcast_watermark seeds from the same MAX(seq) value used to seed the
+    // drain's local watermark — see below; we plumb that value in once the
+    // PG-pool branch computes it.
+    let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
+    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+    let broadcast_watermark = Arc::new(AtomicI64::new(0));
+
     let app_state = Arc::new(AppState {
         store,
-        webhook_tx,
+        webhook_tx: webhook_tx.clone(),
         webhook_secret: cfg.github.webhook_secret.clone(),
         seq: Mutex::new(0),
         pg_pool,
+        min_pending_seq: min_pending_seq.clone(),
+        last_drain_pass_at: last_drain_pass_at.clone(),
+        broadcast_watermark: broadcast_watermark.clone(),
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before
@@ -147,10 +168,15 @@ async fn main() {
                     process::exit(1);
                 });
 
+        // Seed broadcast_watermark from the same MAX(seq) so /v1/state returns
+        // a sensible lastSeq before the first post-startup drain pass.
+        broadcast_watermark.store(initial_watermark, std::sync::atomic::Ordering::Release);
+
         let drain_notify = Arc::new(Notify::new());
         let lh = listener::spawn_listener_task(
             pg_listener,
             drain_notify.clone(),
+            min_pending_seq.clone(),
             shutdown.clone(),
             None,
         );
@@ -158,6 +184,10 @@ async fn main() {
             pool,
             initial_watermark,
             drain_notify,
+            min_pending_seq,
+            last_drain_pass_at,
+            broadcast_watermark,
+            webhook_tx,
             shutdown.clone(),
             None,
             None,
