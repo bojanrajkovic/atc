@@ -884,4 +884,170 @@ mod tests {
             JobStatus::Completed
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // parse_* error paths — cover the unknown-string Err arms (Goal 1 / Codecov)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn parse_run_status_valid_variants() {
+        assert!(matches!(parse_run_status("Queued"), Ok(RunStatus::Queued)));
+        assert!(matches!(
+            parse_run_status("InProgress"),
+            Ok(RunStatus::InProgress)
+        ));
+        assert!(matches!(
+            parse_run_status("Completed"),
+            Ok(RunStatus::Completed)
+        ));
+    }
+
+    #[test]
+    fn parse_run_status_unknown_returns_backend_error() {
+        let result = parse_run_status("Frobnicated");
+        assert!(
+            matches!(result, Err(PersistError::Backend(_))),
+            "expected Backend error, got: {result:?}"
+        );
+        let err_str = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_str.contains("Frobnicated"),
+            "error should mention the bad input; got {err_str}"
+        );
+    }
+
+    #[test]
+    fn parse_job_status_valid_variants() {
+        assert!(matches!(parse_job_status("Queued"), Ok(JobStatus::Queued)));
+        assert!(matches!(
+            parse_job_status("Waiting"),
+            Ok(JobStatus::Waiting)
+        ));
+        assert!(matches!(
+            parse_job_status("InProgress"),
+            Ok(JobStatus::InProgress)
+        ));
+        assert!(matches!(
+            parse_job_status("Completed"),
+            Ok(JobStatus::Completed)
+        ));
+    }
+
+    #[test]
+    fn parse_job_status_unknown_returns_backend_error() {
+        let result = parse_job_status("Obliterated");
+        assert!(
+            matches!(result, Err(PersistError::Backend(_))),
+            "expected Backend error, got: {result:?}"
+        );
+        let err_str = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_str.contains("Obliterated"),
+            "error should mention the bad input; got {err_str}"
+        );
+    }
+
+    #[test]
+    fn parse_run_conclusion_valid_variants() {
+        assert!(matches!(
+            parse_run_conclusion("Success"),
+            Ok(RunConclusion::Success)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("Failure"),
+            Ok(RunConclusion::Failure)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("Cancelled"),
+            Ok(RunConclusion::Cancelled)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("TimedOut"),
+            Ok(RunConclusion::TimedOut)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("ActionRequired"),
+            Ok(RunConclusion::ActionRequired)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("Stale"),
+            Ok(RunConclusion::Stale)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("Neutral"),
+            Ok(RunConclusion::Neutral)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("Skipped"),
+            Ok(RunConclusion::Skipped)
+        ));
+        assert!(matches!(
+            parse_run_conclusion("StartupFailure"),
+            Ok(RunConclusion::StartupFailure)
+        ));
+    }
+
+    #[test]
+    fn parse_run_conclusion_unknown_returns_backend_error() {
+        let result = parse_run_conclusion("Exploded");
+        assert!(
+            matches!(result, Err(PersistError::Backend(_))),
+            "expected Backend error, got: {result:?}"
+        );
+        let err_str = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_str.contains("Exploded"),
+            "error should mention the bad input; got {err_str}"
+        );
+    }
+
+    #[test]
+    fn parse_job_conclusion_valid_variants() {
+        assert!(matches!(
+            parse_job_conclusion("Success"),
+            Ok(JobConclusion::Success)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("Failure"),
+            Ok(JobConclusion::Failure)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("Cancelled"),
+            Ok(JobConclusion::Cancelled)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("TimedOut"),
+            Ok(JobConclusion::TimedOut)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("ActionRequired"),
+            Ok(JobConclusion::ActionRequired)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("Stale"),
+            Ok(JobConclusion::Stale)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("Neutral"),
+            Ok(JobConclusion::Neutral)
+        ));
+        assert!(matches!(
+            parse_job_conclusion("Skipped"),
+            Ok(JobConclusion::Skipped)
+        ));
+    }
+
+    #[test]
+    fn parse_job_conclusion_unknown_returns_backend_error() {
+        let result = parse_job_conclusion("Vaporized");
+        assert!(
+            matches!(result, Err(PersistError::Backend(_))),
+            "expected Backend error, got: {result:?}"
+        );
+        let err_str = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_str.contains("Vaporized"),
+            "error should mention the bad input; got {err_str}"
+        );
+    }
 }

@@ -256,6 +256,21 @@ async fn ac3_4_disconnect_does_not_crash_server() {
     assert_eq!(seq_event.seq, 1, "Client 2 should receive the event");
 }
 
+// TODO(coverage): The `Lagged` close arm in `ws.rs:handle_socket` (lines 54-68)
+// is currently at 0% coverage. To cover it deterministically we need to:
+//   1. Use `test_setup(2)` (capacity-2 channel).
+//   2. Subscribe the WS client, then WITHOUT reading from the socket, call
+//      `state.webhook_tx.send(...)` ≥3 times synchronously so the ring laps.
+//   3. Then read from the WS — expect the connection to close (None or Close frame).
+// The main obstacle is that the `webhook_tx` handle on `AppState` is not easily
+// accessible once the server is running in a background task, so we need to
+// either clone `app_state` before spawning (the `test_setup` helper already
+// returns it) or inject events via the webhook HTTP endpoint and accept that
+// the handler task consumes them before the WS handler can lag.
+// Deferred because (a) the 2 lines are not load-bearing for the coverage
+// threshold and (b) `ac3_5` below already exercises the capacity-2 setup and
+// its assertions would need revisiting once lag-driven close is deterministic.
+
 /// AC3.5: Lagging client receives warning log, continues receiving (not disconnected)
 #[tokio::test]
 #[serial_test::serial]

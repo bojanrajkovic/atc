@@ -403,3 +403,127 @@ async fn phase_3c_gap_healing_t6b_drain_paginates_across_batch_boundary() {
 
     fixture.shutdown.cancel();
 }
+
+// ─── T8: drain silently skips bogus-payload rows ────────────────────────────
+
+/// T8: Drain payload-decode error paths: `kind='run'` and `kind='job'` rows
+///     with payloads that do not deserialize as the expected envelope types.
+///
+/// The CHECK constraint on `outbox.kind` is `kind IN ('run', 'job')`, so the
+/// unknown-kind discriminator path in `drain_pass` is unreachable from
+/// constrained SQL. We therefore only exercise the two bogus-payload paths.
+/// The unknown-kind counter (`atc_pg_drain_unknown_kind_total`) is expected to
+/// stay at its baseline (0 additional increments).
+///
+/// Design:
+/// 1. Boot fixture (empty DB → initial watermark = 0, first pass sees 0 rows).
+/// 2. Subscribe a fresh broadcast receiver AFTER boot so the startup pass
+///    produces no events on this receiver.
+/// 3. Insert a stub run row to satisfy outbox FK.
+/// 4. Insert TWO bad outbox rows directly via SQL:
+///    - kind='run', payload='{"bogus":true}'::jsonb  (won't decode as RunEventEnvelope)
+///    - kind='job', payload='{"bogus":true}'::jsonb  (won't decode as JobEventEnvelope)
+/// 5. Force a rescan via `SELECT pg_notify('atc_outbox', '1')`.
+/// 6. Wait for drain to advance observed_passes (pass completed).
+/// 7. Assert `rx.try_recv()` returns Empty (no broadcasts emitted for bad rows).
+/// 8. Assert metric counters:
+///    - `atc_pg_drain_rows_total` advanced by 2.
+///    - `atc_pg_drain_unknown_kind_total` unchanged (no unknown-kind rows inserted).
+///    - `atc_pg_drain_duplicate_skipped_total` unchanged.
+#[tokio::test]
+#[serial]
+async fn phase_3c_t8_drain_skips_bogus_payload_rows() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
+
+    let passes_after_startup = fixture.observed_passes.load(Ordering::Relaxed);
+
+    // Subscribe AFTER boot so the startup pass (0 rows) doesn't noise the receiver.
+    let mut rx = fixture.state.webhook_tx.subscribe();
+
+    // ── Capture metric baselines ─────────────────────────────────────────────
+    let baseline_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
+    let baseline_dup =
+        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+    let baseline_unknown =
+        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_unknown_kind_total");
+
+    // ── Insert stub run row to satisfy outbox FK ──────────────────────────────
+    sqlx::query(
+        "INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, \
+         status, created_at, updated_at, placeholder) \
+         VALUES (50000000001, 'test', 'test', '', '', '', '', 'Queued', NOW(), NOW(), true)",
+    )
+    .execute(&pool)
+    .await
+    .expect("stub run insert failed");
+
+    // ── Insert two bad outbox rows ────────────────────────────────────────────
+    // kind='run' with payload that won't decode as RunEventEnvelope.
+    sqlx::query(
+        "INSERT INTO outbox (kind, run_id, payload) \
+         VALUES ('run', 50000000001, '{\"bogus\":true}'::jsonb)",
+    )
+    .execute(&pool)
+    .await
+    .expect("bad run outbox insert failed");
+
+    // kind='job' with payload that won't decode as JobEventEnvelope.
+    sqlx::query(
+        "INSERT INTO outbox (kind, run_id, payload) \
+         VALUES ('job', 50000000001, '{\"bogus\":true}'::jsonb)",
+    )
+    .execute(&pool)
+    .await
+    .expect("bad job outbox insert failed");
+
+    // ── Force a backstop rescan via manual NOTIFY ─────────────────────────────
+    // NOTIFY '1' → listener fetch_min(1) → drain backstop=1 →
+    // pass_start_floor = min(0, 0) = 0 → SELECT > 0 returns both bad rows.
+    sqlx::query("SELECT pg_notify('atc_outbox', '1')")
+        .execute(&pool)
+        .await
+        .expect("manual NOTIFY failed");
+
+    // ── Wait for drain to complete the pass ──────────────────────────────────
+    timeout(Duration::from_secs(10), async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            if fixture.observed_passes.load(Ordering::Relaxed) > passes_after_startup {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("drain did not complete the pass within 10s");
+
+    // ── Assert: no broadcast events emitted for bad rows ─────────────────────
+    assert!(
+        rx.try_recv().is_err(),
+        "no SeqEvents should be broadcast for rows with bogus payloads"
+    );
+
+    // ── Assert metric counters ────────────────────────────────────────────────
+    let after_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
+    let after_dup =
+        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+    let after_unknown =
+        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_unknown_kind_total");
+
+    assert_eq!(
+        after_rows - baseline_rows,
+        2,
+        "drain should have processed 2 bad rows; baseline={baseline_rows} after={after_rows}"
+    );
+    assert_eq!(
+        after_dup, baseline_dup,
+        "duplicate-skip counter must not advance for bogus-payload rows"
+    );
+    assert_eq!(
+        after_unknown, baseline_unknown,
+        "unknown-kind counter must not advance (no unknown-kind rows inserted; \
+         the CHECK constraint prevents kind outside 'run'/'job')"
+    );
+
+    fixture.shutdown.cancel();
+}
