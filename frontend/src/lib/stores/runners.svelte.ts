@@ -40,9 +40,14 @@ export function computePoolStats(jobs: Job[]): RunnerPoolStats[] {
   }
 
   return [...statsMap.values()].sort((a, b) => {
-    const ka = JSON.stringify(a.labels)
-    const kb = JSON.stringify(b.labels)
-    return ka < kb ? -1 : ka > kb ? 1 : 0
+    const la = a.labels
+    const lb = b.labels
+    const len = Math.min(la.length, lb.length)
+    for (let i = 0; i < len; i++) {
+      if (la[i]! < lb[i]!) return -1
+      if (la[i]! > lb[i]!) return 1
+    }
+    return la.length - lb.length
   })
 }
 
