@@ -1,6 +1,6 @@
 # CLAUDE.md — deploy/helm/atc
 
-Last verified: 2026-05-04
+Last verified: 2026-05-06
 
 > Canonical documentation lives in `docs/architecture/deployment.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -14,15 +14,19 @@ Helm chart packaging ATC for Kubernetes deployment. Published as OCI artifact to
 |------|------|
 | `Chart.yaml` | Chart metadata and version |
 | `values.yaml` | Default values (restricted Pod Security Standards) |
-| `values.schema.json` | JSON Schema for values validation |
-| `templates/` | Kubernetes manifests (Deployment, Service, ServiceAccount, optional Ingress/HTTPRoute/PVC/ServiceMonitor) |
+| `values.schema.json` | JSON Schema for values validation (`additionalProperties: false`) |
+| `templates/` | Kubernetes manifests (Deployment, Service, ServiceAccount, optional Ingress/HTTPRoute/ServiceMonitor) |
 | `tests/` | helm-unittest test suites |
 
 ## Contracts
 
 - **Restricted security by default:** `runAsNonRoot: true`, UID 65532, seccomp RuntimeDefault. Overridable via values for operator edge cases.
-- **Optional resources gated by flags:** Ingress, HTTPRoute, PVC, ServiceMonitor each default to `false`.
+- **Optional resources gated by flags:** Ingress, HTTPRoute, ServiceMonitor each default to `false`.
 - **PgBouncer + listener compatibility:** Operators running the main pool through transaction-mode PgBouncer MUST set `ATC_DATABASE_LISTENER_URL` (via `config.databaseListenerUrl` or `existingSecret.databaseListenerUrlKey`) to point the PG listener at a session-mode endpoint. Transaction-mode PgBouncer reassigns the underlying connection between transactions, silently dropping `LISTEN` registrations and breaking the listener task. The `existingSecret` path wins over the plain-value path when both are set.
+- **Multi-replica precondition:** `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. Enforced at template-render time via a `{{ fail }}` guard in `templates/deployment.yaml`.
+- **URL scheme validation:** the inline `config.databaseUrl` path is rejected at render time unless it starts with `postgres://` or `postgresql://`. The `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`), which exits with a remediation-naming log line before any sqlx connect call.
+- **Sticky sessions are NOT required.** Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design. Configuring sticky cookies is discouraged outside specific cost-tuning scenarios — it can mask gap-healing regressions in development.
+- **Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8.
 
 ## Commands
 
@@ -36,4 +40,5 @@ helm template atc deploy/helm/atc | kubeconform -strict  # Validate against k8s 
 ## Key References
 
 - Architecture: `docs/architecture/deployment.md`
+- Multi-replica smoke test runbook: `docs/architecture/deployment.md#multi-replica-smoke-test`
 - CI matrix: `docs/architecture/ci-pipeline.md` (Helm job section)

@@ -150,6 +150,7 @@ ATC uses [sqlx](https://github.com/launchdarkis/sqlx) as its PostgreSQL client. 
 | Scenario | Behavior |
 |---|---|
 | `ATC_DATABASE_URL` unset | In-memory mode; `pg_pool = None`; no migration step |
+| `ATC_DATABASE_URL` (or `ATC_DATABASE_LISTENER_URL`) set with a non-`postgres://` / `postgresql://` scheme | `ensure_pg_scheme()` in `main.rs` logs `"<VAR> must be a postgres:// or postgresql:// URL; got scheme <X>. ATC only supports external PostgreSQL."` and `process::exit(1)` BEFORE any sqlx call. Mirrors the chart-time guard in `deploy/helm/atc/templates/deployment.yaml`. |
 | `ATC_DATABASE_URL` set, connect fails | `tracing::error!` + `process::exit(1)` |
 | `ATC_DATABASE_URL` set, connect succeeds, migrations fail | `tracing::error!` + `process::exit(1)` |
 | `ATC_DATABASE_URL` set, everything succeeds, DB lost at runtime | Process stays up; `/readyz` returns 503 |

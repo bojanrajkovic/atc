@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-05-05 (updated 2026-05-05 for mold linker on backend job)
+Last verified: 2026-05-06 (updated 2026-05-06 for Phase 4 helm matrix swap: persistence → multi-replica)
 
 ## Purpose
 
@@ -21,9 +21,9 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 **Alternatives considered:** Always run all checks, run on label, run based on file extensions
 **Rationale:** PRs often touch only one stack (frontend or backend). Running only the affected stack's tests reduces CI time and feedback latency. Pushes to main always run both stacks to catch integration issues.
 
-**Decision:** Helm job uses a 2 × 5 matrix (Kubernetes versions × test values files) for `helm template | kubeconform`
-**Alternatives considered:** Single k8s version; inline bash loop instead of matrix; separate `helm lint` job
-**Rationale:** A two-endpoint matrix (oldest supported, latest stable) catches API deprecations and removals without the combinatorial overhead of testing every minor version. Five values files correspond to the five distinct feature surfaces defined in Phase 4 (defaults, ingress, gateway, persistence, metrics) — exhaustive coverage without duplication. `helm lint` runs inside the matrix job rather than a separate pre-requisite job because it is fast (<1s) and the workflow complexity of a separate job outweighs the marginal redundancy of 10 lint runs.
+**Decision:** Helm validation is split across two jobs — `helm-lint` (single instance, runs `helm lint` + `helm unittest`) and `helm` (2 × 5 matrix of Kubernetes versions × test values files for `helm template | kubeconform`)
+**Alternatives considered:** Single k8s version; inline bash loop instead of matrix; combine lint and matrix into one job; matrix-multiply lint over k8s versions
+**Rationale:** A two-endpoint matrix (oldest supported, latest stable) catches API deprecations and removals without the combinatorial overhead of testing every minor version. Five values files correspond to the five distinct feature surfaces (defaults, ingress, gateway, multi-replica, metrics) — exhaustive coverage without duplication. `helm lint` and `helm unittest` are k8s-version-independent (they don't run against an API server), so they live in a single non-matrixed `helm-lint` job rather than running ten times across the matrix. The two jobs land under one `helm-result` gate so branch protection treats them as a single required check.
 
 **Decision:** kubeconform uses datreeio/CRDs-catalog as a supplemental schema location
 **Alternatives considered:** Skip CRD validation; vendor CRD schemas into the repo; use kubeconform's built-in `--ignore-missing-schemas`
