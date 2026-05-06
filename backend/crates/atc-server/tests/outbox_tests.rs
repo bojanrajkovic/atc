@@ -637,7 +637,7 @@ async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
 
     // In-memory store reflects the event — no outbox to check in this mode
     let snap = app_state.store.snapshot().await;
-    assert_eq!(snap.0.runs.len(), 1, "run must be in the in-memory store");
+    assert_eq!(snap.runs.len(), 1, "run must be in the in-memory store");
 }
 
 // ---------------------------------------------------------------------------

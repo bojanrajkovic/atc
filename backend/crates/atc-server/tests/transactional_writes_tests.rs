@@ -144,7 +144,7 @@ async fn transactional_write_run_lifecycle() {
     assert_eq!(json["status"], "processed", "should be processed");
 
     let snap = state.store.snapshot().await;
-    let mem_run = &snap.0.runs[0];
+    let mem_run = &snap.runs[0];
     assert_eq!(
         format!("{:?}", mem_run.status),
         "Queued",
@@ -170,7 +170,7 @@ async fn transactional_write_run_lifecycle() {
     assert_eq!(status, StatusCode::OK, "InProgress should return 200");
 
     let snap = state.store.snapshot().await;
-    let mem_run = &snap.0.runs[0];
+    let mem_run = &snap.runs[0];
     assert_eq!(format!("{:?}", mem_run.status), "InProgress");
     let pg_row = sqlx::query!("SELECT status FROM runs WHERE id = $1", mem_run.id.0)
         .fetch_one(&pool)
@@ -193,7 +193,7 @@ async fn transactional_write_run_lifecycle() {
     assert_eq!(status, StatusCode::OK, "Completed should return 200");
 
     let snap = state.store.snapshot().await;
-    let mem_run = &snap.0.runs[0];
+    let mem_run = &snap.runs[0];
     assert_eq!(format!("{:?}", mem_run.status), "Completed");
     let pg_row = sqlx::query!(
         "SELECT status, conclusion FROM runs WHERE id = $1",
@@ -313,7 +313,7 @@ async fn transactional_write_idempotent_replay() {
     assert_eq!(s2, StatusCode::OK);
 
     let snap = state.store.snapshot().await;
-    assert_eq!(snap.0.runs.len(), 1, "exactly one run in memory");
+    assert_eq!(snap.runs.len(), 1, "exactly one run in memory");
 
     let pg_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs")
         .fetch_one(&pool)
@@ -440,7 +440,7 @@ async fn transient_metric_increments_on_db_outage() {
     // In-memory store must NOT have the run (transaction never committed)
     let snap = state.store.snapshot().await;
     assert!(
-        snap.0.runs.is_empty(),
+        snap.runs.is_empty(),
         "in-memory store must be empty: transaction never committed"
     );
 
@@ -531,5 +531,5 @@ async fn in_memory_mode_behavioral_invariance() {
 
     // In-memory snapshot should reflect the event
     let snap = app_state.store.snapshot().await;
-    assert_eq!(snap.0.runs.len(), 1, "run should be in-memory");
+    assert_eq!(snap.runs.len(), 1, "run should be in-memory");
 }

@@ -7,7 +7,6 @@ import {
 } from '$lib/__tests__/connection-test-helpers'
 import { ConnectionManager } from '$lib/connection'
 import { connectionStore } from '$lib/stores/connection.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
@@ -33,7 +32,6 @@ describe('ConnectionManager', () => {
     server.resetHandlers()
     // Clear stores between tests
     runStore.clear()
-    runnerStore.clear()
     connectionStore.status = 'disconnected'
     connectionStore.reconnectAttempt = 0
     connectionStore.lastEventAt = null
@@ -162,17 +160,15 @@ describe('ConnectionManager', () => {
       let stateRequestCount = 0
 
       const snapshot1: StateSnapshot = {
-        seq: 5n,
+        lastSeq: 5n,
         runs: [],
         jobs: [],
-        poolStats: [],
       }
 
       const snapshot2: StateSnapshot = {
-        seq: 10n,
+        lastSeq: 10n,
         runs: [],
         jobs: [],
-        poolStats: [],
       }
 
       server.use(

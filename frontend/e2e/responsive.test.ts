@@ -42,10 +42,9 @@ async function setupWithRuns(page: Page) {
       contentType: 'application/json',
       body: JSON.stringify(
         {
-          seq: 1n,
+          lastSeq: 1n,
           runs: [makeRun(1, 'Queued'), makeRun(2, 'InProgress'), makeRun(3, 'Completed')],
           jobs: [],
-          poolStats: [],
         } satisfies StateSnapshot,
         bigintReplacer,
       ),

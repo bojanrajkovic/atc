@@ -5,8 +5,9 @@ use tower::ServiceExt;
 mod common;
 
 use common::{
-    build_app_no_secret, fixture_workflow_job_queued, fixture_workflow_run_completed,
-    fixture_workflow_run_in_progress, fixture_workflow_run_requested,
+    build_app_no_secret, fixture_workflow_job_completed, fixture_workflow_job_queued,
+    fixture_workflow_run_completed, fixture_workflow_run_in_progress,
+    fixture_workflow_run_requested,
 };
 
 /// AC2.1: workflow_run event parsed and applied to StateStore, returns {"status": "processed"}
@@ -180,7 +181,10 @@ async fn webhook_ingestion_backward_transition_returns_200_no_broadcast() {
         .await
         .expect("timeout waiting for first broadcast")
         .expect("failed to receive first broadcast event");
-    assert_eq!(seq_event1.seq, 0);
+    assert_eq!(
+        seq_event1.seq, 1,
+        "pre-increment: first broadcast must have seq=1"
+    );
 
     // Second request: send workflow_run_in_progress (backward transition)
     let body_in_progress = fixture_workflow_run_in_progress();
@@ -246,7 +250,10 @@ async fn webhook_ingestion_broadcast_single_event_with_seq() {
         .expect("timeout waiting for broadcast")
         .expect("failed to receive broadcast event");
 
-    assert_eq!(seq_event.seq, 0);
+    assert_eq!(
+        seq_event.seq, 1,
+        "pre-increment: first broadcast must have seq=1"
+    );
     // Verify it's a Run event
     assert!(matches!(seq_event.event, atc_github::WebhookEvent::Run(_)));
 }
@@ -312,15 +319,22 @@ async fn webhook_concurrent_requests_produce_ordered_seq() {
         .expect("timeout waiting for second broadcast")
         .expect("recv failed");
 
-    // The critical invariant: seq values are strictly ordered 0, 1.
+    // The critical invariant: seq values are strictly ordered 1, 2.
+    // With pre-increment, seq=0 is the cold-start sentinel and first broadcast is seq=1.
     // With the old AtomicU64 code, concurrent requests could assign
     // seq values out of store-commit order.
-    assert_eq!(ev1.seq, 0, "first broadcast event should have seq 0");
-    assert_eq!(ev2.seq, 1, "second broadcast event should have seq 1");
+    assert_eq!(
+        ev1.seq, 1,
+        "first broadcast event should have seq 1 (pre-increment)"
+    );
+    assert_eq!(
+        ev2.seq, 2,
+        "second broadcast event should have seq 2 (pre-increment)"
+    );
     assert!(ev2.seq > ev1.seq, "seq must be strictly increasing");
 }
 
-/// AC2.8: Consecutive events have strictly increasing seq values (0, 1, ...)
+/// AC2.8: Consecutive events have strictly increasing seq values (1, 2, ... — pre-increment, seq=0 is cold-start sentinel)
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
@@ -352,7 +366,10 @@ async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
         .expect("timeout waiting for first broadcast")
         .expect("failed to receive first broadcast event");
 
-    assert_eq!(seq_event1.seq, 0);
+    assert_eq!(
+        seq_event1.seq, 1,
+        "pre-increment: first broadcast must have seq=1"
+    );
 
     // Send second valid workflow_job event
     let body2 = fixture_workflow_job_queued();
@@ -377,5 +394,135 @@ async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
         .expect("timeout waiting for second broadcast")
         .expect("failed to receive second broadcast event");
 
-    assert_eq!(seq_event2.seq, 1);
+    assert_eq!(
+        seq_event2.seq, 2,
+        "pre-increment: second broadcast must have seq=2"
+    );
+}
+
+/// Pre-increment invariant: the first webhook after server start broadcasts seq=1, never seq=0.
+///
+/// This tests the Phase 3a pre-increment fix that eliminates the cold-start race
+/// between snapshot reads and the first broadcast. With pre-increment, seq=0
+/// is an unambiguous sentinel meaning "no events committed" and seq=1 is the
+/// smallest valid broadcast seq.
+#[tokio::test]
+#[serial_test::serial]
+async fn first_webhook_broadcasts_seq_1_not_seq_0() {
+    let layer = common::PROMETHEUS_INIT.get_or_init(|| atc_server::metrics::build().0);
+
+    let store = std::sync::Arc::new(atc_core::StateStore::new(
+        std::sync::Arc::new(atc_core::SystemClock),
+        std::time::Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _rx) = tokio::sync::broadcast::channel(256);
+    let mut subscriber = webhook_tx.subscribe();
+    let app_state = std::sync::Arc::new(atc_server::state::AppState {
+        store,
+        webhook_tx,
+        webhook_secret: None,
+        seq: tokio::sync::Mutex::new(0),
+        pg_pool: None,
+    });
+
+    let main_router = atc_server::routes::api_routes(layer.clone())
+        .with_state(app_state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, main_router).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/webhooks/github", addr))
+        .header("X-GitHub-Event", "workflow_run")
+        .body(common::fixture_workflow_run_requested())
+        .send()
+        .await
+        .expect("POST failed");
+
+    assert_eq!(resp.status(), 200);
+
+    let seq_event = subscriber.recv().await.expect("should receive event");
+    assert_eq!(
+        seq_event.seq, 1,
+        "first broadcast must have seq=1 (pre-increment: seq=0 is the cold-start sentinel)"
+    );
+}
+
+/// AC1.5: A Job event that returns a store transition error results in no broadcast.
+///
+/// Drive a job to Queued via POST webhook, then attempt an invalid backward transition
+/// (Queued → Completed, which is invalid for jobs: predecessors_of(Completed) = [InProgress, Completed]).
+/// Assert the second POST does NOT cause a broadcast — no SeqEvent is emitted for
+/// rejected transitions.
+#[tokio::test]
+#[serial_test::serial]
+async fn failed_job_transition_produces_no_broadcast() {
+    let (app, state) = build_app_no_secret();
+
+    // POST workflow_run_requested to create the run first (run_id=24290980517)
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_run")
+                .body(Body::from(fixture_workflow_run_requested()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+
+    // POST workflow_job_queued to create job 70928200168 at Queued status
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_job")
+                .body(Body::from(fixture_workflow_job_queued()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+
+    // Subscribe AFTER setup events so we have a clean baseline.
+    // By this point, two SeqEvents have already been broadcast and consumed.
+    let mut rx = state.webhook_tx.subscribe();
+
+    // POST workflow_job_completed for the SAME job (still Queued in the store).
+    // Queued → Completed is invalid for jobs: predecessors_of(Completed) = [InProgress, Completed].
+    // The store apply_job_event will return an InvalidTransition error.
+    // The handler must NOT broadcast a SeqEvent for this rejected transition.
+    let resp3 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_job")
+                .body(Body::from(fixture_workflow_job_completed()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp3.status(),
+        StatusCode::OK,
+        "rejected transition still returns 200"
+    );
+
+    // No SeqEvent must have been broadcast for the rejected backward transition.
+    assert!(
+        rx.try_recv().is_err(),
+        "expected no broadcast for rejected job backward transition (Queued → Completed), but received an event"
+    );
 }

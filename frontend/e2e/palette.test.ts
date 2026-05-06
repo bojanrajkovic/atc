@@ -123,16 +123,21 @@ test.describe('Command palette', () => {
       ])
     })
 
-    // Seed a runner pool so the Runner Pools section appears
+    // Seed a runner pool via an InProgress job so the Runner Pools section appears
     await page.evaluate(() => {
-      window.__stores!.runnerStore!.loadPools([
+      window.__stores!.runStore!.jobsByRun.set(999n, [
         {
+          id: 9001n,
+          runId: 999n,
+          name: 'linux-pool-job',
+          status: 'InProgress' as const,
+          conclusion: null,
+          runner: { id: 1n, name: 'runner-1', groupId: 1n, groupName: 'linux' },
           labels: ['linux'],
-          running: 1,
-          queued: 0,
-          total: 2,
-          isElastic: false,
-          groupName: 'linux',
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null,
         },
       ])
     })
@@ -341,16 +346,21 @@ test.describe('Command palette', () => {
   })
 
   test('AC1.6 selecting a pool sets activePoolFilter and closes palette', async ({ page }) => {
-    // Seed a runner pool
+    // Seed a runner pool via an InProgress job
     await page.evaluate(() => {
-      window.__stores!.runnerStore!.loadPools([
+      window.__stores!.runStore!.jobsByRun.set(998n, [
         {
+          id: 9002n,
+          runId: 998n,
+          name: 'linux-x86-pool-job',
+          status: 'InProgress' as const,
+          conclusion: null,
+          runner: { id: 2n, name: 'runner-2', groupId: 1n, groupName: 'linux' },
           labels: ['linux', 'x86'],
-          running: 1,
-          queued: 0,
-          total: 4,
-          isElastic: false,
-          groupName: 'linux',
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null,
         },
       ])
     })
@@ -554,34 +564,78 @@ test.describe('Command palette', () => {
   test('AC1.11 pool rows show three states (browse / query-active / focused) via CSS', async ({
     page,
   }) => {
-    // Seed THREE pools. Bits UI Command auto-selects the first option in the list
-    // (sets data-selected on it). Probing pool #2 guarantees it does NOT carry
-    // data-selected, so the browse-state nowrap assertion is valid.
+    // Seed THREE pools via InProgress/Queued jobs. Bits UI Command auto-selects the first
+    // option in the list (sets data-selected on it). Probing pool #2 guarantees it does NOT
+    // carry data-selected, so the browse-state nowrap assertion is valid.
     await page.evaluate(() => {
-      window.__stores!.runnerStore!.loadPools([
+      window.__stores!.runStore!.jobsByRun.set(997n, [
+        // Pool 1: windows/x64 with groupName 'windows'
         {
+          id: 9010n,
+          runId: 997n,
+          name: 'windows-job',
+          status: 'InProgress' as const,
+          conclusion: null,
+          runner: { id: 10n, name: 'win-runner', groupId: 2n, groupName: 'windows' },
           labels: ['windows', 'x64'],
-          running: 0,
-          queued: 0,
-          total: 2,
-          isElastic: false,
-          groupName: 'windows',
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null,
         },
+        // Pool 2: linux/self-hosted/x86/big-runners with groupName 'foo'
         {
+          id: 9011n,
+          runId: 997n,
+          name: 'linux-job-1',
+          status: 'InProgress' as const,
+          conclusion: null,
+          runner: { id: 11n, name: 'linux-runner-1', groupId: 0n, groupName: 'foo' },
           labels: ['linux', 'self-hosted', 'x86', 'big-runners'],
-          running: 2,
-          queued: 1,
-          total: 4,
-          isElastic: true,
-          groupName: 'foo',
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null,
         },
         {
+          id: 9012n,
+          runId: 997n,
+          name: 'linux-job-2',
+          status: 'InProgress' as const,
+          conclusion: null,
+          runner: { id: 12n, name: 'linux-runner-2', groupId: 0n, groupName: 'foo' },
+          labels: ['linux', 'self-hosted', 'x86', 'big-runners'],
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+        },
+        {
+          id: 9013n,
+          runId: 997n,
+          name: 'linux-job-queued',
+          status: 'Queued' as const,
+          conclusion: null,
+          runner: null,
+          labels: ['linux', 'self-hosted', 'x86', 'big-runners'],
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: null,
+          completedAt: null,
+        },
+        // Pool 3: macos/arm64 with groupName 'macos'
+        {
+          id: 9014n,
+          runId: 997n,
+          name: 'macos-job',
+          status: 'InProgress' as const,
+          conclusion: null,
+          runner: { id: 13n, name: 'macos-runner', groupId: 3n, groupName: 'macos' },
           labels: ['macos', 'arm64'],
-          running: 1,
-          queued: 0,
-          total: 3,
-          isElastic: false,
-          groupName: 'macos',
+          steps: [],
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null,
         },
       ])
     })

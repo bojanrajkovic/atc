@@ -29,7 +29,7 @@ test.describe('Kanban board', () => {
     await stateRoute!.fulfill({
       contentType: 'application/json',
       body: JSON.stringify(
-        { seq: 1n, runs: [], jobs: [], poolStats: [] } satisfies StateSnapshot,
+        { lastSeq: 1n, runs: [], jobs: [] } satisfies StateSnapshot,
         bigintReplacer,
       ),
     })
@@ -71,7 +71,7 @@ test.describe('Kanban board', () => {
         contentType: 'application/json',
         body: JSON.stringify(
           {
-            seq: 1n,
+            lastSeq: 1n,
             runs: [
               {
                 id: 1002n,
@@ -93,7 +93,6 @@ test.describe('Kanban board', () => {
               },
             ],
             jobs: [],
-            poolStats: [],
           } satisfies StateSnapshot,
           bigintReplacer,
         ),
@@ -171,7 +170,7 @@ test.describe('Kanban board', () => {
         contentType: 'application/json',
         body: JSON.stringify(
           {
-            seq: 1n,
+            lastSeq: 1n,
             runs: [
               {
                 id: 1003n,
@@ -193,7 +192,6 @@ test.describe('Kanban board', () => {
               },
             ],
             jobs: [],
-            poolStats: [],
           } satisfies StateSnapshot,
           bigintReplacer,
         ),

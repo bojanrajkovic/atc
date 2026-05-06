@@ -102,6 +102,15 @@ class RunStore {
     return result
   })
 
+  /** Flat view across all runs. */
+  jobs = $derived.by<Job[]>(() => {
+    const result: Job[] = []
+    for (const arr of this.jobsByRun.values()) {
+      for (const job of arr) result.push(job)
+    }
+    return result
+  })
+
   applyRunEvent(envelope: RunEventEnvelope): void {
     const runId = envelope.runId
 

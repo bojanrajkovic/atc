@@ -27,7 +27,7 @@ async function setupPage(page: import('@playwright/test').Page) {
   await page.route('**/v1/state', (route) => {
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ seq: 1, runs: [], jobs: [], poolStats: [] }),
+      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
     })
   })
   await page.goto('/')
@@ -74,7 +74,6 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
           data: { runner: null, labels: LINUX_LABELS, steps: [] },
         },
       },
-      poolStatsAfter: null,
     }),
   )
 
@@ -104,24 +103,6 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
         completedAt: null,
         action: { type: 'Queued', data: { labels: WINDOWS_LABELS, steps: [] } },
       },
-      poolStatsAfter: [
-        {
-          labels: LINUX_LABELS,
-          queued: 0,
-          running: 1,
-          groupName: 'linux-builders',
-          isElastic: false,
-          total: 4,
-        },
-        {
-          labels: WINDOWS_LABELS,
-          queued: 1,
-          running: 0,
-          groupName: 'windows-builders',
-          isElastic: false,
-          total: 2,
-        },
-      ],
     }),
   )
 }

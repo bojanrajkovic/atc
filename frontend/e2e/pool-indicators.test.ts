@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test'
 import type { JobEventEnvelope } from '../src/lib/types/generated/JobEventEnvelope'
-import type { RunnerPoolStats } from '../src/lib/types/generated/RunnerPoolStats'
 import { makeJobSeqEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 test.describe('Pool indicators update live', () => {
@@ -16,16 +15,8 @@ test.describe('Pool indicators update live', () => {
     // Wait for the connection to establish and initial state to populate
     await page.waitForTimeout(500)
 
-    // Dispatch a Queued Job event with poolStatsAfter showing 1 queued runner
-    const queuedPool: RunnerPoolStats = {
-      labels: ['ubuntu-latest'],
-      queued: 1,
-      running: 0,
-      groupName: 'GitHub Actions',
-      isElastic: true,
-      total: null,
-    }
-
+    // Step 1: Dispatch a Queued Job event (no runner assigned yet)
+    // Pool is derived from the job: labels.join(', ') = 'ubuntu-latest' since groupName is null
     const queuedJobEnvelope: JobEventEnvelope = {
       jobId: 1n,
       runId: 100n,
@@ -44,29 +35,15 @@ test.describe('Pool indicators update live', () => {
       },
     }
 
-    await sendWS(
-      page,
-      makeJobSeqEvent(10, {
-        jobData: queuedJobEnvelope,
-        poolStatsAfter: [queuedPool],
-      }),
-    )
+    await sendWS(page, makeJobSeqEvent(10, { jobData: queuedJobEnvelope }))
 
-    // Assert TopBar pool indicator shows the pool with queued count
-    const poolIndicator = page.getByTestId('runner-pool-GitHub Actions')
-    await expect(poolIndicator).toBeVisible()
-    await expect(poolIndicator).toContainText(/\+1 queued/i)
+    // Pool indicator shows 'ubuntu-latest' (no groupName yet — derived from labels)
+    const queuedPoolIndicator = page.getByTestId('runner-pool-ubuntu-latest')
+    await expect(queuedPoolIndicator).toBeVisible()
+    await expect(queuedPoolIndicator).toContainText(/\+1 queued/i)
 
-    // Dispatch InProgress event with poolStatsAfter showing 0 queued, 1 running
-    const inProgressPool: RunnerPoolStats = {
-      labels: ['ubuntu-latest'],
-      queued: 0,
-      running: 1,
-      groupName: 'GitHub Actions',
-      isElastic: true,
-      total: null,
-    }
-
+    // Step 2: Dispatch InProgress event with runner that has groupName='GitHub Actions'
+    // Pool display name switches to groupName once the runner is assigned
     const inProgressJobEnvelope: JobEventEnvelope = {
       jobId: 1n,
       runId: 100n,
@@ -79,28 +56,29 @@ test.describe('Pool indicators update live', () => {
       action: {
         type: 'InProgress',
         data: {
-          runner: null,
+          runner: {
+            id: 1n,
+            name: 'runner-1',
+            groupId: 0n,
+            groupName: 'GitHub Actions',
+          },
           labels: ['ubuntu-latest'],
           steps: [],
         },
       },
     }
 
-    await sendWS(
-      page,
-      makeJobSeqEvent(11, {
-        jobData: inProgressJobEnvelope,
-        poolStatsAfter: [inProgressPool],
-      }),
-    )
+    await sendWS(page, makeJobSeqEvent(11, { jobData: inProgressJobEnvelope }))
 
-    // Assert TopBar pool indicator updates: queued badge gone, running count shows
-    await expect(poolIndicator).toContainText(/1/) // Should show running count
-    // Ensure queued badge is gone
-    const queuedBadge = poolIndicator.getByText(/queued/)
+    // Pool indicator now shows 'GitHub Actions' (groupName takes over as display name)
+    const runningPoolIndicator = page.getByTestId('runner-pool-GitHub Actions')
+    await expect(runningPoolIndicator).toBeVisible()
+    // queued badge gone, running count shows
+    await expect(runningPoolIndicator).toContainText(/1/)
+    const queuedBadge = runningPoolIndicator.getByText(/queued/)
     await expect(queuedBadge).not.toBeVisible()
 
-    // Dispatch Completed event with poolStatsAfter = [] (pool removed)
+    // Step 3: Dispatch Completed event — pool should disappear entirely
     const completedJobEnvelope: JobEventEnvelope = {
       jobId: 1n,
       runId: 100n,
@@ -114,22 +92,21 @@ test.describe('Pool indicators update live', () => {
         type: 'Completed',
         data: {
           conclusion: 'Success',
-          runner: null,
+          runner: {
+            id: 1n,
+            name: 'runner-1',
+            groupId: 0n,
+            groupName: 'GitHub Actions',
+          },
           labels: ['ubuntu-latest'],
           steps: [],
         },
       },
     }
 
-    await sendWS(
-      page,
-      makeJobSeqEvent(12, {
-        jobData: completedJobEnvelope,
-        poolStatsAfter: [],
-      }),
-    )
+    await sendWS(page, makeJobSeqEvent(12, { jobData: completedJobEnvelope }))
 
-    // Assert the pool indicator is gone
-    await expect(poolIndicator).not.toBeVisible()
+    // Pool indicator is gone — no active jobs remain
+    await expect(runningPoolIndicator).not.toBeVisible()
   })
 })

@@ -113,7 +113,7 @@ async fn ac3_2_ws_receives_webhook_event() {
     let seq_event: SeqEvent =
         serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
 
-    assert_eq!(seq_event.seq, 0, "First event should have seq=0");
+    assert_eq!(seq_event.seq, 1, "First event should have seq=1");
     // Just verify it's a Run event variant (don't deep-inspect the enum)
     match &seq_event.event {
         atc_github::WebhookEvent::Run(_) => {}
@@ -185,7 +185,7 @@ async fn ac3_3_multiple_clients_receive_same_event() {
         seq_event1.seq, seq_event2.seq,
         "Both clients should receive event with same seq"
     );
-    assert_eq!(seq_event1.seq, 0, "First event seq should be 0");
+    assert_eq!(seq_event1.seq, 1, "First event seq should be 1");
 }
 
 /// AC3.4: Client disconnect does not crash server or affect other clients
@@ -239,7 +239,7 @@ async fn ac3_4_disconnect_does_not_crash_server() {
 
     let seq_event: SeqEvent =
         serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
-    assert_eq!(seq_event.seq, 0, "Client 2 should receive the event");
+    assert_eq!(seq_event.seq, 1, "Client 2 should receive the event");
 }
 
 /// AC3.5: Lagging client receives warning log, continues receiving (not disconnected)

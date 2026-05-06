@@ -374,114 +374,17 @@ impl StateStore {
         QueryResult { runs, jobs }
     }
 
-    /// Return a consistent snapshot of all state: runs, jobs, and pool stats.
+    /// Return a consistent snapshot of all state.
     ///
     /// Reads everything under a single `RwLock` acquisition so the
-    /// returned data describes the same point in time. The REST handler
-    /// uses this instead of separate `query_all()` + `pool_stats()` calls
-    /// to prevent interleaving with concurrent webhook mutations.
-    pub async fn snapshot(&self) -> (QueryResult, Vec<RunnerPoolStats>) {
+    /// returned data describes the same point in time.
+    pub async fn snapshot(&self) -> QueryResult {
         let state = self.state.read().await;
 
         let runs: Vec<WorkflowRun> = state.runs.values().cloned().collect();
         let jobs: Vec<Job> = state.jobs.values().cloned().collect();
 
-        // Compute pool stats inline (same logic as pool_stats() but
-        // under the same lock acquisition).
-        let mut stats_map: HashMap<LabelSet, RunnerPoolStats> = HashMap::new();
-        for job in state.jobs.values() {
-            if matches!(job.status, JobStatus::Waiting | JobStatus::Completed) {
-                continue;
-            }
-            let label_set = LabelSet::new(job.labels.iter().cloned());
-            let entry = stats_map
-                .entry(label_set.clone())
-                .or_insert_with(|| RunnerPoolStats {
-                    labels: label_set,
-                    queued: 0,
-                    running: 0,
-                    group_name: None,
-                    is_elastic: false,
-                    total: None,
-                });
-            match job.status {
-                JobStatus::Queued => entry.queued += 1,
-                JobStatus::InProgress => {
-                    entry.running += 1;
-                    // Track group_name from most recently observed runner (AC4.4)
-                    if let Some(ref runner) = job.runner {
-                        if runner.group_name.is_some() {
-                            entry.group_name.clone_from(&runner.group_name);
-                        }
-                        // Derive is_elastic: group_id == 0 means GitHub-hosted (AC3.3)
-                        if runner.group_id == Some(0) {
-                            entry.is_elastic = true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut pool_stats: Vec<RunnerPoolStats> = stats_map.into_values().collect();
-        pool_stats.sort_by(|a, b| a.labels.cmp(&b.labels));
-
-        (QueryResult { runs, jobs }, pool_stats)
-    }
-
-    /// Compute runner pool statistics from current job state.
-    ///
-    /// Groups all queued and in-progress jobs by their `LabelSet` to
-    /// produce per-pool counts. The `group_name` is taken from the most
-    /// recently observed `RunnerInfo` for each label set.
-    ///
-    /// Completed and waiting jobs are excluded from pool stats.
-    pub async fn pool_stats(&self) -> Vec<RunnerPoolStats> {
-        let state = self.state.read().await;
-
-        let mut stats_map: HashMap<LabelSet, RunnerPoolStats> = HashMap::new();
-
-        for job in state.jobs.values() {
-            if matches!(job.status, JobStatus::Waiting | JobStatus::Completed) {
-                continue;
-            }
-
-            let label_set = LabelSet::new(job.labels.iter().cloned());
-            let entry = stats_map
-                .entry(label_set.clone())
-                .or_insert_with(|| RunnerPoolStats {
-                    labels: label_set,
-                    queued: 0,
-                    running: 0,
-                    group_name: None,
-                    is_elastic: false,
-                    total: None,
-                });
-
-            match job.status {
-                JobStatus::Queued => {
-                    entry.queued += 1;
-                }
-                JobStatus::InProgress => {
-                    entry.running += 1;
-                    // Track group_name from most recently observed runner (AC4.4)
-                    if let Some(ref runner) = job.runner {
-                        if runner.group_name.is_some() {
-                            entry.group_name.clone_from(&runner.group_name);
-                        }
-                        // Derive is_elastic: group_id == 0 means GitHub-hosted (AC3.3)
-                        if runner.group_id == Some(0) {
-                            entry.is_elastic = true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut pool_stats: Vec<RunnerPoolStats> = stats_map.into_values().collect();
-        pool_stats.sort_by(|a, b| a.labels.cmp(&b.labels));
-        pool_stats
+        QueryResult { runs, jobs }
     }
 
     /// Evict completed jobs that have exceeded the configured TTL.

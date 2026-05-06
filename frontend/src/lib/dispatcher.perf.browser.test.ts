@@ -111,7 +111,6 @@ describe('frontend-1-0-polish.AC7.1: deterministic 1000-event burst coalescing',
     return {
       seq: BigInt(id),
       event: { type: 'Run', data: envelope },
-      poolStatsAfter: null,
     }
   }
 

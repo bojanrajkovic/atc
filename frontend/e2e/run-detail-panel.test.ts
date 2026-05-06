@@ -190,7 +190,6 @@ test.describe('Run detail panel', () => {
             completedAt: null,
             action: { type: 'InProgress', data: { runner: null, labels: ['linux'], steps: [] } },
           },
-          poolStatsAfter: null,
         }),
       )
     }
@@ -352,7 +351,6 @@ test.describe('Run detail panel', () => {
               },
             },
           },
-          poolStatsAfter: null,
         }),
       )
     }

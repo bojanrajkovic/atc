@@ -104,10 +104,10 @@ async fn ac5_1_webhook_to_rest_state() {
     let state: serde_json::Value =
         serde_json::from_str(&state_json).expect("should parse state JSON");
 
-    // Assert seq is 1 (next seq to assign; one event committed with seq=0)
+    // Assert lastSeq is 1 (highest committed; one event committed with seq=1)
     assert_eq!(
-        state["seq"], 1,
-        "seq should be 1 (next to assign) after one event"
+        state["lastSeq"], 1,
+        "lastSeq should be 1 (highest committed) after one event"
     );
 
     // Assert runs array has 1 entry with run_id matching the fixture
@@ -185,8 +185,8 @@ async fn ac5_2_webhook_to_websocket() {
     let seq_event: atc_server::state::SeqEvent =
         serde_json::from_str(&text).expect("should deserialize SeqEvent");
 
-    // Assert seq is 0 (first event)
-    assert_eq!(seq_event.seq, 0, "first event should have seq=0");
+    // Assert seq is 1 (first event)
+    assert_eq!(seq_event.seq, 1, "first event should have seq=1");
 
     // Assert event is a Run variant
     match seq_event.event {
@@ -271,10 +271,10 @@ async fn ac5_3_multi_event_sequence() {
         seq_values.push(seq_event.seq);
     }
 
-    // Assert seq values are 0, 1, 2 (strictly increasing)
+    // Assert seq values are 1, 2, 3 (strictly increasing)
     assert_eq!(
         seq_values,
-        vec![0, 1, 2],
+        vec![1, 2, 3],
         "WS events should have strictly increasing seq values"
     );
 
@@ -293,10 +293,10 @@ async fn ac5_3_multi_event_sequence() {
     let state: serde_json::Value =
         serde_json::from_str(&state_json).expect("should parse state JSON");
 
-    // Assert seq is 3 (next seq to assign; three events committed with seq 0, 1, 2)
+    // Assert lastSeq is 3 (highest committed; three events committed with seq 1, 2, 3)
     assert_eq!(
-        state["seq"], 3,
-        "seq should be 3 (next to assign) after three events"
+        state["lastSeq"], 3,
+        "lastSeq should be 3 (highest committed) after three events"
     );
 
     // Assert runs has 1 entry
@@ -323,14 +323,5 @@ async fn ac5_3_multi_event_sequence() {
     assert_ne!(
         job_id_1, job_id_2,
         "jobs should have different job_ids (70928200168 and 70928200174)"
-    );
-
-    // Pool stats should be non-empty (both jobs' label sets)
-    let pool_stats = &state["poolStats"];
-    assert!(pool_stats.is_array(), "poolStats should be an array");
-    let pool_stats_array = pool_stats.as_array().expect("poolStats is array");
-    assert!(
-        !pool_stats_array.is_empty(),
-        "poolStats should not be empty after two jobs"
     );
 }

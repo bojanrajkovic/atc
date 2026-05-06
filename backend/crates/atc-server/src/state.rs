@@ -41,9 +41,4 @@ pub struct SeqEvent {
     pub seq: u64,
     /// The domain event that was ingested.
     pub event: WebhookEvent,
-    /// Snapshot of derived runner pool stats taken under the seq mutex
-    /// immediately after the event applied. Populated for Job events,
-    /// `None` for Run events. Clients wholesale-replace their pool state
-    /// from this field when populated.
-    pub pool_stats_after: Option<Vec<atc_core::RunnerPoolStats>>,
 }

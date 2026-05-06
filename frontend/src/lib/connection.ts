@@ -1,7 +1,6 @@
 import { liveRegion } from '$lib/aria/live-region.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
@@ -11,7 +10,7 @@ export class ConnectionManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private abortController: AbortController | null = null
   private baseUrl: string
-  private snapshotSeq: bigint = 0n
+  private snapshotLastSeq: bigint = 0n
   private preConnectBuffer: SeqEvent[] = []
   private connected = false
 
@@ -22,7 +21,7 @@ export class ConnectionManager {
   /** JSON reviver to convert numeric fields to bigint for known i64/u64 fields */
   private jsonReviver(key: string, value: unknown): unknown {
     if (
-      ['seq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
+      ['seq', 'lastSeq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
       (typeof value === 'number' || typeof value === 'string')
     ) {
       try {
@@ -105,15 +104,14 @@ export class ConnectionManager {
 
       // Step 5: Load snapshot into stores
       runStore.loadSnapshot(snapshot.runs, snapshot.jobs)
-      runnerStore.loadPools(snapshot.poolStats)
-      this.snapshotSeq = snapshot.seq
+      this.snapshotLastSeq = snapshot.lastSeq
 
       // Step 6: Flush buffered events, discarding stale ones
       // Detach any prior setOnFlush callback so buffered-replay events do not
       // produce announcements (AC6.7: reconnect silence during buffered drain).
       eventDispatcher.setOnFlush(null)
       for (const buffered of this.preConnectBuffer) {
-        if (buffered.seq >= this.snapshotSeq) {
+        if (buffered.seq > this.snapshotLastSeq) {
           eventDispatcher.dispatch(buffered)
         }
       }

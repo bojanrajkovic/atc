@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-05-02
+Last verified: 2026-05-05 (Phase 3a/3b: snapshot cursor renamed to `lastSeq`, buffer filter inverted to `seq > lastSeq`, runner pools `$derived.by(() => computePoolStats(runStore.jobs))` — no `loadPools`, no `SeqEvent.poolStatsAfter` sidecar)
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -22,9 +22,11 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `vitest.config.browser.ts` | Vitest browser project (Playwright chromium, `*.browser.test.ts`) |
 | `playwright.config.ts` | Playwright E2E test configuration with webServer auto-start |
 | `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts`, `palette.svelte.ts` |
+| `src/lib/stores/runners.svelte.ts` | RunnerStore — `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))` (Phase 3b). Module also exports `computePoolStats(jobs: Job[]): RunnerPoolStats[]` as a pure function (skip Waiting/Completed; group by sorted `JSON.stringify(labels)`; bigint-aware `groupId === 0n` for `isElastic`). No `loadPools`, no `clear` |
+| `src/lib/stores/runs.svelte.ts` | RunStore — adds `jobs: $derived.by<Job[]>` flat view across `jobsByRun.values()` (Phase 3b) used as the single dependency for `runnerStore.pools` |
 | `src/lib/stores/palette.svelte.ts` | PaletteStore — `paletteOpen`, `paletteQuery`, `recentRunIds`; separate store for high-frequency typing state and recent-items lifecycle (see `docs/architecture/frontend-app.md`) |
 | `src/lib/filters/pool.ts` | `PoolKey` branded type + `poolKey()` factory + `filterRunsByPool()` — first branded TypeScript type in the codebase; see ADR `docs/architecture-decisions/0001-pool-key-branded-type.md` |
-| `src/lib/dispatcher.ts` | EventDispatcher — routes primitive WebSocket events to stores; applies `SeqEvent.poolStatsAfter` sidecar to `runnerStore` when present; batches via requestAnimationFrame |
+| `src/lib/dispatcher.ts` | EventDispatcher — routes primitive WebSocket events (`Run`, `Job`) to `runStore`; batches via requestAnimationFrame; exposes `setOnFlush` post-flush hook for the ARIA live region. Phase 3b: no longer touches `runnerStore` (pool stats are derived from `runStore.jobs`) |
 | `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
 | `src/lib/types/generated/` | ts-rs generated TypeScript types from Rust (do not hand-edit) |
 | `src/lib/components/AppShell.svelte` | Layout container: 100dvh flex column with TopBar + slot for content area |
@@ -69,17 +71,29 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/lib/format/runners.ts` | Pure: `summarizeRunners(jobs)` — single / `N runners` / null branches |
 | `src/lib/format/status-key.ts` | Pure: `StatusKey` union (11 values) + `resolveStatusKey(run)` |
 | `src/lib/design-tokens.test.ts` | WCAG contrast gate: 11 status tokens × 4 themes × 2 modes against `--surface` |
-| `e2e/lib/ws-mock.ts` | Shared Playwright harness: `makeRunEvent`, `makeJobSeqEvent` (with `poolStatsAfter` sidecar), `sendWS` (routes Job and Run events through `window.__stores` bridge) |
+| `e2e/lib/ws-mock.ts` | Shared Playwright harness: `makeRunEvent`, `makeJobSeqEvent`, `sendWS`, `sendWSBatch` (routes Job and Run events through `window.eventDispatcher` bridge). Phase 3b: `makeJobSeqEvent` no longer emits a `poolStatsAfter` sidecar — pool state is now derived from job mutations |
 | `e2e/` | Playwright E2E tests (see directory: theme, app-shell, kanban, run-cards, run-card-interactivity, palette, pool-filter, pool-indicators, run-detail-panel, stacking) |
 
-## Store Additions (Sub-Phase 4)
+## Store Additions
+
+**Sub-Phase 4:**
 
 - `uiStore.nowMs` — `$state<number>` refreshed every 1s by a constructor `setInterval` (mirrors `connectionStore.tick`). Shared signal that feeds every live-duration derivation; single timer replaces per-card intervals. `uiStore.destroy()` clears it (used by tests only).
 - `runStore.jobStatsByRun` — `$derived.by<ReadonlyMap<bigint, JobStats>>` total-map aggregate iterating `this.runs.keys()` so every known run resolves to a `JobStats` entry (completed/total/runnerSummary), even when the run has no jobs yet. Consumers never need to fall back.
 
+**Phase 3b (frontend pool-stats derivation):**
+
+- `runStore.jobs` — `$derived.by<Job[]>` flat view across `jobsByRun.values()`. Single stable dependency for the runner-pool derivation. The pool-derivation chain is `runStore.jobsByRun` → `runStore.jobs` → `runnerStore.pools`.
+- `runnerStore.pools` — `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))`. Replaces the previous `$state` array + `loadPools()`/`clear()` API. Pool state self-heals on every job event without explicit dispatch.
+- `computePoolStats(jobs: Job[]): RunnerPoolStats[]` — exported pure function in `runners.svelte.ts`. Skips `Waiting`/`Completed` jobs, groups by sorted-label set (using `JSON.stringify(sortedLabels)` as map key), increments `queued`/`running` per job status, derives `groupName` from latest observed runner, sets `isElastic` when any runner has `groupId === 0n` (bigint-aware), sorts result lexicographically by labels.
+
 ## Status
 
-Complete through Sub-Phase 6b (polish + responsive) — all frontend sub-phases for the 1.0 release are complete. App shell with TopBar (logo, runner pool indicators with active-filter highlight, PoolFilterPill, connection indicator, settings popover). Kanban board with three-column view (responsive: 1 col <640px, 2 cols 640–1279px, 3 cols ≥1280px), card animations via shared crossfade, sorted derived arrays. RunCard composes five leaves with `--status-color` inline, state-aware `$derived.by` duration, halo animation on InProgress cards, hover-peek popover (HoverPeekPopover), and keyboard-activatable inner button for panel-open. Sub-Phase 5 added: Cmd+K command palette, slide-over run detail panel, pool filter integration, and Bits UI dialog stacking. Sub-Phase 6a (kanban keyboard navigation) added: `<RovingFocusProvider>` with 2D arrow + Home/End navigation, card-stable focus through FLIP/crossfade, and lost-trigger restoration on panel close. Sub-Phase 6b added: `EmptyState` component (schematic-preview treatment), responsive kanban/TopBar/RunnerPool breakpoints, reduced-motion audit (CommandPalette submenu slide gated), global `.atc-scrollbar` styling, `:focus-visible` rules on four custom elements, and the `lib/aria/` module — `LiveRegion` rune-class store with `BurstAccumulator` (announces `RunEvent::Requested` and `RunEvent::Completed` via `EventDispatcher.setOnFlush` callback hook), `AriaLiveRegion.svelte` (`role="status" aria-live="polite" aria-atomic="true" aria-busy`). Performance verification: Tier 1 deterministic RAF-coalescing gate (`dispatcher.perf.browser.test.ts`, 1000-event burst, exactly 10 flush callbacks, CI hard fail) and Tier 2 informational frame-budget trace artifact (`frame-budget.test.ts`, `test-results/frame-budget-trace.json`). See `docs/architecture/frontend-app.md` for the full architecture, store-ceiling rationale, new design tokens, AriaLiveRegion module, and performance verification methodology. All 756 unit/browser tests + 147 E2E tests passing.
+Complete through Sub-Phase 6b (polish + responsive) — all frontend sub-phases for the 1.0 release are complete. App shell with TopBar (logo, runner pool indicators with active-filter highlight, PoolFilterPill, connection indicator, settings popover). Kanban board with three-column view (responsive: 1 col <640px, 2 cols 640–1279px, 3 cols ≥1280px), card animations via shared crossfade, sorted derived arrays. RunCard composes five leaves with `--status-color` inline, state-aware `$derived.by` duration, halo animation on InProgress cards, hover-peek popover (HoverPeekPopover), and keyboard-activatable inner button for panel-open. Sub-Phase 5 added: Cmd+K command palette, slide-over run detail panel, pool filter integration, and Bits UI dialog stacking. Sub-Phase 6a (kanban keyboard navigation) added: `<RovingFocusProvider>` with 2D arrow + Home/End navigation, card-stable focus through FLIP/crossfade, and lost-trigger restoration on panel close. Sub-Phase 6b added: `EmptyState` component (schematic-preview treatment), responsive kanban/TopBar/RunnerPool breakpoints, reduced-motion audit (CommandPalette submenu slide gated), global `.atc-scrollbar` styling, `:focus-visible` rules on four custom elements, and the `lib/aria/` module — `LiveRegion` rune-class store with `BurstAccumulator` (announces `RunEvent::Requested` and `RunEvent::Completed` via `EventDispatcher.setOnFlush` callback hook), `AriaLiveRegion.svelte` (`role="status" aria-live="polite" aria-atomic="true" aria-busy`). Performance verification: Tier 1 deterministic RAF-coalescing gate (`dispatcher.perf.browser.test.ts`, 1000-event burst, exactly 10 flush callbacks, CI hard fail) and Tier 2 informational frame-budget trace artifact (`frame-budget.test.ts`, `test-results/frame-budget-trace.json`).
+
+Phase 3a/3b (state externalization, wire contract): the snapshot cursor renamed to `lastSeq` (highest committed seq; `0` is the cold-start sentinel) and `connection.ts` filters buffered events with `seq > lastSeq` (was `>=`). Runner pool stats are now derived on the frontend — `runnerStore.pools = $derived.by(() => computePoolStats(runStore.jobs))` consumes a new `runStore.jobs` flat view; the `SeqEvent.poolStatsAfter` sidecar and `StateSnapshot.poolStats` field were removed in lockstep with the backend. See ADRs 0003 and 0004 in `docs/architecture-decisions/`.
+
+See `docs/architecture/frontend-app.md` for the full architecture, store-ceiling rationale, new design tokens, AriaLiveRegion module, and performance verification methodology. All 756 unit/browser tests + 147 E2E tests passing.
 
 ## Commands
 
