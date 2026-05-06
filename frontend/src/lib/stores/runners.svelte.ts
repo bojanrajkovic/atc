@@ -39,9 +39,11 @@ export function computePoolStats(jobs: Job[]): RunnerPoolStats[] {
     }
   }
 
-  return [...statsMap.values()].sort((a, b) =>
-    JSON.stringify(a.labels).localeCompare(JSON.stringify(b.labels)),
-  )
+  return [...statsMap.values()].sort((a, b) => {
+    const ka = JSON.stringify(a.labels)
+    const kb = JSON.stringify(b.labels)
+    return ka < kb ? -1 : ka > kb ? 1 : 0
+  })
 }
 
 class RunnerStore {

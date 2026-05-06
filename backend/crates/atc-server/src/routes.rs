@@ -60,12 +60,12 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
-/// Return current state snapshot with seq cursor.
+/// Return current state snapshot with lastSeq cursor.
 ///
 /// Holds the seq mutex across both the store snapshot and the seq
 /// read, ensuring no webhook can commit between them. This
 /// guarantees the cursor matches the snapshot content: a response
-/// at `seq: N` reflects exactly all events with event seq < N.
+/// at `lastSeq: N` reflects exactly all committed events with seq <= N.
 async fn state_handler(State(state): State<Arc<AppState>>) -> Json<StateSnapshot> {
     let seq_guard = state.seq.lock().await;
     let result = state.store.snapshot().await;

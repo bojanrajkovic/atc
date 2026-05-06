@@ -24,7 +24,7 @@ async function setupPage(page: import('@playwright/test').Page) {
   await page.route('**/v1/state', (route) =>
     route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify({ seq: 1, runs: [], jobs: [], poolStats: [] }),
+      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
     }),
   )
   await page.goto('/')

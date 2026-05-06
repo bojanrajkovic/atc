@@ -120,7 +120,7 @@ describe('ConnectionManager', () => {
       manager.destroy()
     })
 
-    it('discards buffered events with seq < snapshot.seq', async () => {
+    it('discards buffered events with seq <= snapshot.lastSeq', async () => {
       const manager = new ConnectionManager(baseUrl)
 
       const snapshotWithSeq: StateSnapshot = {

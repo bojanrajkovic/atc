@@ -10,10 +10,9 @@ test.describe('Command palette', () => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1,
+          lastSeq: 1,
           runs: [],
           jobs: [],
-          poolStats: [],
         }),
       })
     })
