@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-04 (updated 2026-05-04 for Phase 2d LISTEN/NOTIFY: listener task, drain task, ATC_DATABASE_LISTENER_URL, pg_notify inside webhook transaction, five new metrics)
+Last verified: 2026-05-05 (Phase 3a/3b: cursor renamed to lastSeq with "highest committed seq" semantics, pre-increment seq counter, pool stats moved to frontend derivation; SeqEvent.pool_stats_after and StateSnapshot.pool_stats removed)
 
 ## Purpose
 
@@ -89,11 +89,11 @@ Events are created from GitHub webhook payloads by `atc-github` and applied to t
 
 The `evict_expired()` method runs periodically (e.g., every 30 minutes) and removes completed jobs whose completion timestamp exceeds the configured TTL. Active jobs (Queued, InProgress) are never evicted; only Completed jobs are candidates. Eviction removes entries from all maps (`jobs`, `jobs_by_repo`, `jobs_by_run`) and cleans up empty index entries.
 
-### Runner Pool Stats (Derived Views)
+### Runner Pool Stats (Frontend-Derived)
 
-Runner pool statistics are derived views over the store's current state, computed on-demand by query methods. They reflect the number of active jobs, grouped by runner labels (e.g., "linux", "windows", "arm64"), along with pool metadata. These stats are served via REST API endpoints and do not require separate storage.
+Runner pool statistics are derived views over the current job state. As of Phase 3b they are computed entirely on the frontend by `computePoolStats(jobs: Job[]): RunnerPoolStats[]` (in `frontend/src/lib/stores/runners.svelte.ts`); the backend no longer ships them on the wire. The `RunnerPoolStats` type still derives `#[derive(TS)]` so the generated TypeScript type used by the frontend stays under ts-rs control.
 
-**RunnerPoolStats fields:**
+**RunnerPoolStats fields (used by the frontend derivation):**
 - `labels: Vec<String>` — Runner label set (e.g., ["linux", "x86_64"]) grouped into this pool
 - `group_name: String` — Friendly pool name (e.g., "Default", "macOS")
 - `running: u32` — Count of currently running jobs in this pool
@@ -101,9 +101,7 @@ Runner pool statistics are derived views over the store's current state, compute
 - `is_elastic: bool` — Derived from runner `group_id == Some(0)`. Indicates whether the pool auto-scales (true) or has fixed capacity (false).
 - `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented in a later phase. Used to render capacity bars and thresholds in the frontend.
 
-#### Sort Order Contract
-
-Both `StateStore::snapshot()` and `StateStore::pool_stats()` return `Vec<RunnerPoolStats>` sorted by `labels` lexicographically. This is the canonical wire order: sorting is centralized at these two producer sites so that every consumer (broadcast sidecar, REST endpoint, tests) receives the same deterministic order without re-sorting. Clients can perform exact `Vec<RunnerPoolStats>` equality comparisons without additional sorting logic.
+**Phase 3b removals:** `StateStore::pool_stats()` was deleted, the snapshot-time inline pool-stats computation in `StateStore::snapshot()` was deleted (snapshot now returns `QueryResult` only), and the wire fields `StateSnapshot.pool_stats` and `SeqEvent.pool_stats_after` were removed (see ADR 0004). The lexicographic sort by `labels` is now the responsibility of `computePoolStats` on the frontend.
 
 ## Key Decisions
 
@@ -285,32 +283,28 @@ struct AppState {
 - **`store`** — Reference to the shared `atc-core` StateStore. All webhook events are applied here, and REST/WebSocket endpoints read from here.
 - **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). Every successfully processed webhook is broadcast as a `SeqEvent`. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
-- **`seq`** — `tokio::sync::Mutex<u64>` counter incremented on each successfully ingested event. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across `pool.begin()` + PG commit + in-memory store mutation + seq assignment + broadcast, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches durable commit order, and REST snapshots are consistent with their cursor. Resets on server restart.
+- **`seq`** — `tokio::sync::Mutex<u64>` counter holding the **highest committed sequence number** (Phase 3a semantics). Initial value `0` is the unambiguous "no events committed" sentinel. The counter is **pre-incremented** on each successfully applied event: `*seq_guard += 1; let seq = *seq_guard;` — so the first event to commit broadcasts `seq = 1`, never `seq = 0`. Protected by a mutex (not an atomic) so that the webhook handler holds the lock across `pool.begin()` + PG commit + in-memory store mutation + seq assignment + broadcast, and the state handler holds it across snapshot + seq read. This ensures WS event seq order matches durable commit order, and REST snapshots are consistent with their cursor. Resets on server restart (the value is in-process; durable monotonicity comes from the outbox `BIGSERIAL`).
 - **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Used by the webhook handler for transactional writes and by the `/readyz` probe. `PgStore` is no longer mounted in AppState (removed in Phase 2c); the handler calls `persist::upsert_*_in_txn` and `persist::insert_outbox_*_in_txn` directly via `&mut tx`.
 
 The listener task and drain task receive a clone of the existing `CancellationToken`; `AppState` gains no new fields — task handles live in `main.rs` scope.
 
-### SeqEvent Sidecar Contract
+### SeqEvent Wire Contract
 
-`SeqEvent` is the broadcast envelope carrying domain events and derived state:
+`SeqEvent` is the broadcast envelope carrying a domain event and the seq it was assigned at commit time:
 
 ```rust
 pub struct SeqEvent {
     pub seq: u64,
     pub event: WebhookEvent,
-    pub pool_stats_after: Option<Vec<RunnerPoolStats>>,
 }
 ```
 
-The `pool_stats_after` field carries a snapshot of the runner pool state taken under the seq mutex immediately after a successful event application:
+Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend derives `RunnerPoolStats` from the underlying job state via `computePoolStats(runStore.jobs)` — see `frontend/src/lib/stores/runners.svelte.ts`. The webhook handler no longer takes a pool-stats snapshot under the seq mutex.
 
-- **Job events:** `pool_stats_after` is `Some(vec)`, containing the pool stats at that moment. The vector is sorted by `labels` lexicographically per the sort-order contract.
-- **Run events:** `pool_stats_after` is `None`. Run-level state does not derive into pool stats.
+- **All successful events (Run or Job):** `SeqEvent { seq, event }` is broadcast. `seq` is the value of the AppState `seq` counter after pre-increment (first commit broadcasts `seq=1`).
 - **Failed transitions:** No broadcast occurs and no `SeqEvent` is emitted. Clients never receive events that are not reflected in the store (per AC1.5).
 
-**Wire format:** The field serializes as `poolStatsAfter` (camelCase) in JSON via `#[serde(rename_all = "camelCase")]`. TypeScript types are emitted as `poolStatsAfter: Array<RunnerPoolStats> | null` via ts-rs.
-
-**Interaction with REST:** The `pool_stats_after` sidecar complements (does not replace) `StateSnapshot.poolStats` on `GET /v1/state`. The REST snapshot is the only consistent, atomic view a client needs to bootstrap; the WebSocket sidecar is an incremental, real-time feed for display updates.
+**Wire format:** Serialized via `#[serde(rename_all = "camelCase")]`; TypeScript type emitted by ts-rs as `{ seq: bigint, event: WebhookEvent }`.
 
 ### Webhook Ingestion (`POST /v1/webhooks/github`)
 
@@ -333,7 +327,7 @@ The `pool_stats_after` field carries a snapshot of the runner pool state taken u
      - `tx.commit()`. On failure → 503 `{"status":"database commit failed"}`, increment `kind="transient"`. On success, increment `atc_pg_notify_emitted_total{kind}` (the metric reflects a durable committed notification, not just the in-transaction call site).
      - **After commit:** apply to in-memory store under the same mutex. If in-memory apply fails after PG committed, increment `atc_pg_in_memory_drift_total`, log warning, skip broadcast. Return 200.
    - **`None` — In-memory-only path:** Apply the parsed event directly to the in-memory store via `store.apply_run_event()` or `store.apply_job_event()`. If the transition is invalid, log warning and skip broadcast (no SeqEvent emitted for rejected transitions).
-6. On successful apply (either path): increment `seq` by 1, broadcast a `SeqEvent { seq, event, pool_stats_after }` to the webhook channel (still under the mutex).
+6. On successful apply (either path): pre-increment `seq` by 1 (`*seq_guard += 1; let seq = *seq_guard`) — the first successful commit broadcasts `seq = 1`. Broadcast a `SeqEvent { seq, event }` to the webhook channel (still under the mutex).
 7. Release the `seq` mutex. Return 200 with `{"status": "processed"}`.
 
 **Error responses:**
@@ -362,25 +356,24 @@ The `pool_stats_after` field carries a snapshot of the runner pool state taken u
 
 ### REST State Snapshot (`GET /v1/state`)
 
-**Responsibility:** Return the full current state snapshot and the next `seq` to assign.
+**Responsibility:** Return the full current state snapshot and the highest committed seq cursor.
 
 **Flow:**
 1. Acquire the `seq` mutex (prevents any webhook from committing during the read)
-2. Read the store snapshot under the store's read lock
-3. Read `seq` from the mutex guard
+2. Read the store snapshot under the store's read lock (returns a `QueryResult { runs, jobs }`; pool stats are no longer included — see ADR 0004 / Phase 3b)
+3. Read `seq` from the mutex guard as `last_seq`
 4. Release the mutex, then serialize the response as a `StateSnapshot`:
    ```rust
    struct StateSnapshot {
-       seq: u64,           // Next seq to assign; acts as a cursor
+       last_seq: u64,            // Highest committed seq; serializes as "lastSeq"
        runs: Vec<WorkflowRun>,
        jobs: Vec<Job>,
-       pool_stats: Vec<PoolStat>,
    }
    ```
-5. The `seq` value reflects the state: all events with `seq < N` are reflected in the snapshot; the next event will receive `seq = N`. This guarantee holds because the mutex excludes concurrent webhook writes during the read.
+5. **Cursor semantics (Phase 3a):** `last_seq` is the highest committed seq. `last_seq = 0` means no events have been committed since startup (cold-start sentinel). All events with `seq <= last_seq` are reflected in the snapshot; the next event to commit will receive `seq = last_seq + 1`. This guarantee holds because the mutex excludes concurrent webhook writes during the read.
 6. Return 200 with the JSON snapshot.
 
-**Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `seq`, then connect to `GET /v1/ws` and filter incoming `SeqEvent`s to those with `seq >= cursor`. This protocol allows robust reconnection and bootstrap.
+**Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `lastSeq`, then connect to `GET /v1/ws` and filter incoming `SeqEvent`s to those with `seq > lastSeq` (strictly greater than — buffered events with `seq <= lastSeq` are already reflected in the snapshot and discarded). This protocol allows robust reconnection and bootstrap.
 
 ### Configuration
 
@@ -430,8 +423,8 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 
 ### Modules
 
-- **`state.rs`** — `AppState` struct (fields: `store`, `webhook_tx`, `webhook_secret`, `seq`, `pg_pool`), `SeqEvent`, `StateSnapshot` types
-- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`; webhook handler transactional outbox flow (Phase 2c)
+- **`state.rs`** — `AppState` struct (fields: `store`, `webhook_tx`, `webhook_secret`, `seq`, `pg_pool`) and the `SeqEvent { seq, event }` broadcast type
+- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`; defines `StateSnapshot { last_seq, runs, jobs }` (Phase 3a/3b); webhook handler transactional outbox flow (Phase 2c)
 - **`ws.rs`** — WebSocket connection handling and message broadcast logic
 - **`persist.rs`** — `PgStore` implementing `PersistentStore` trait (used in integration tests); `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` called by the webhook handler (Phase 2c)
 
@@ -441,7 +434,7 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
 - `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
-- `backend/crates/atc-server/src/state.rs` — AppState struct, SeqEvent, StateSnapshot types
+- `backend/crates/atc-server/src/state.rs` — AppState struct and `SeqEvent { seq, event }` type (Phase 3b removed `pool_stats_after`); `StateSnapshot` lives in `routes.rs`
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`) (Phase 2b/2c)

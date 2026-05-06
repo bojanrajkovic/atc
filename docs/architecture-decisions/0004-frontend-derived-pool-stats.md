@@ -93,8 +93,11 @@ required.
 
 ## Implementation Status
 
+**Status: complete (Phase 3b, feat/phase-3a-3b-wire-contract).**
+
 - **Outbox stores domain events only (no `pool_stats_after`)**: enforced in Phase 2c. Outbox `payload` JSONB stores `RunEventEnvelope` / `JobEventEnvelope` — the parsed-webhook domain events. `SeqEvent.pool_stats_after` is never written to the outbox. Verified by `phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event` test.
-- **Frontend derivation of pool stats**: deferred to Phase 3b. Backend still computes `pool_stats_after` under the seq mutex and broadcasts it via `SeqEvent`; frontend still receives and wholesale-replaces pool state from this field.
+- **Frontend derivation of pool stats**: complete in Phase 3b. The pure function `computePoolStats(jobs: Job[]): RunnerPoolStats[]` is exported from `frontend/src/lib/stores/runners.svelte.ts` and replicates the original backend algorithm: dedupe labels via `Set` then sort, use `JSON.stringify(sortedLabels)` as the map key (collision-free given the sorted normalization), skip `Waiting`/`Completed` jobs, count `Queued` and `InProgress` per label set, derive `groupName` from the most recent observed `runner.groupName`, set `isElastic = true` when any observed `runner.groupId === 0n` (bigint-aware), and return the resulting array sorted lexicographically by labels. `RunnerStore` exposes `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))` — no `$state`, no `loadPools`, no `clear`. The flat `runStore.jobs` `$derived.by<Job[]>` view (added in `runs.svelte.ts`) is the single dependency.
+- **Backend deletions**: `StateStore::pool_stats()` removed; the snapshot-time inline pool-stats computation in `StateStore::snapshot()` removed (snapshot now returns `QueryResult { runs, jobs }` only); `StateSnapshot.pool_stats` field removed; `SeqEvent.pool_stats_after` field removed; `tests/sidecar_tests.rs` (~530 lines) deleted; `store/tests/runner_pools.rs` (512 lines) deleted; the dispatcher's `if (seqEvent.poolStatsAfter != null)` block removed; `connection.ts` no longer calls `runnerStore.loadPools(snapshot.poolStats)` on snapshot load; `e2e/lib/ws-mock.ts` `makeJobSeqEvent` no longer emits `poolStatsAfter`.
 
 ## Related
 

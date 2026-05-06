@@ -38,7 +38,7 @@ test.describe('EmptyState', () => {
     await stateRoute!.fulfill({
       contentType: 'application/json',
       body: JSON.stringify(
-        { seq: 1n, runs: [], jobs: [], poolStats: [] } satisfies StateSnapshot,
+        { lastSeq: 1n, runs: [], jobs: [] } satisfies StateSnapshot,
         bigintReplacer,
       ),
     })
@@ -59,7 +59,7 @@ test.describe('EmptyState', () => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify(
-          { seq: 1n, runs: [], jobs: [], poolStats: [] } satisfies StateSnapshot,
+          { lastSeq: 1n, runs: [], jobs: [] } satisfies StateSnapshot,
           bigintReplacer,
         ),
       })
@@ -83,7 +83,7 @@ test.describe('EmptyState', () => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify(
-          { seq: 1n, runs: [], jobs: [], poolStats: [] } satisfies StateSnapshot,
+          { lastSeq: 1n, runs: [], jobs: [] } satisfies StateSnapshot,
           bigintReplacer,
         ),
       })

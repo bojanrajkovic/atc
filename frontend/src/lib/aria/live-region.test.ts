@@ -51,7 +51,6 @@ function makeRunSeqEvent(opts: {
         action: actionPayload as any,
       },
     },
-    poolStatsAfter: null,
   }
 }
 
@@ -76,7 +75,6 @@ function makeJobSeqEvent(runId: bigint): SeqEvent {
         },
       },
     },
-    poolStatsAfter: null,
   }
 }
 

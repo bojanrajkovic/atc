@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
+import type { Job } from '$lib/types/generated/Job'
+import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
 
 // Mock localStorage since browsers still need this mock in some contexts
 const mockLocalStorage = (() => {
@@ -23,41 +24,58 @@ const mockLocalStorage = (() => {
 vi.stubGlobal('localStorage', mockLocalStorage)
 
 describe('TopBar (browser mode)', () => {
-  // Helper to create RunnerPoolStats with sensible defaults
-  function makePool(opts: {
-    groupName: string | null
-    labels: string[]
-    queued?: number
-    running?: number
-    total?: number | null
-    isElastic?: boolean
-  }): RunnerPoolStats {
+  // Helper to create an InProgress Job with a runner (for pool derivation)
+  function makeInProgressJob(
+    id: bigint,
+    runId: bigint,
+    labels: string[],
+    runner: RunnerInfo | null,
+  ): Job {
     return {
-      labels: opts.labels,
-      groupName: opts.groupName,
-      queued: opts.queued ?? 0,
-      running: opts.running ?? 1,
-      total: opts.total ?? null,
-      isElastic: opts.isElastic ?? true,
+      id,
+      runId,
+      name: `job-${id}`,
+      status: 'InProgress',
+      conclusion: null,
+      labels,
+      runner,
+      steps: [],
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      completedAt: null,
     }
   }
+
+  // Helper to create a runner with given groupName/groupId
+  function makeRunner(groupName: string | null, groupId: bigint | null = null): RunnerInfo {
+    return {
+      id: 1n,
+      name: 'runner-1',
+      groupId,
+      groupName,
+    }
+  }
+
   let TopBar: typeof import('./TopBar.svelte').default
   let connectionStore: typeof import('$lib/stores/connection.svelte')['connectionStore']
-  let runnerStore: typeof import('$lib/stores/runners.svelte')['runnerStore']
+  let runStore: typeof import('$lib/stores/runs.svelte')['runStore']
 
   beforeEach(async () => {
     mockLocalStorage.clear()
     vi.resetModules()
     const connModule = await import('$lib/stores/connection.svelte')
-    const runnerModule = await import('$lib/stores/runners.svelte')
+    const runModule = await import('$lib/stores/runs.svelte')
     const topBarModule = await import('./TopBar.svelte')
     connectionStore = connModule.connectionStore
-    runnerStore = runnerModule.runnerStore
+    runStore = runModule.runStore
     TopBar = topBarModule.default
+
+    runStore.jobsByRun.clear()
   })
 
   afterEach(() => {
     mockLocalStorage.clear()
+    runStore.jobsByRun.clear()
   })
 
   it('renders Logo text', () => {
@@ -85,7 +103,7 @@ describe('TopBar (browser mode)', () => {
   it('renders RunnerBar with empty pools by default', () => {
     render(TopBar)
 
-    // Default runnerStore.pools is empty, so the empty-state copy appears.
+    // Default runnerStore.pools is empty (no jobs), so the empty-state copy appears.
     const noPools = screen.getByText('No active runners')
     expect(noPools).toBeTruthy()
   })
@@ -105,27 +123,15 @@ describe('TopBar (browser mode)', () => {
     expect(indicator).toBeTruthy()
   })
 
-  it('renders runner pools when loaded', async () => {
+  it('renders runner pools when jobs are present', async () => {
     render(TopBar)
 
-    // Load pools into runnerStore
-    runnerStore.loadPools([
-      {
-        labels: ['linux'],
-        groupName: null,
-        queued: 0,
-        running: 3,
-        isElastic: false,
-        total: 10,
-      },
-      {
-        labels: ['windows', 'large'],
-        groupName: 'windows-group',
-        queued: 2,
-        running: 1,
-        isElastic: false,
-        total: null,
-      },
+    // Seed jobs to derive pools from
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['linux'], makeRunner(null)),
+      makeInProgressJob(2n, 1n, ['linux'], makeRunner(null)),
+      makeInProgressJob(3n, 1n, ['linux'], makeRunner(null)),
+      makeInProgressJob(4n, 1n, ['windows', 'large'], makeRunner('windows-group')),
     ])
 
     // Wait for reactivity
@@ -149,9 +155,9 @@ describe('TopBar (browser mode)', () => {
 
   it('AC3.1 — two pools sharing a groupName render with disambiguated labels', async () => {
     render(TopBar)
-    runnerStore.loadPools([
-      makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-latest'] }),
-      makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-24.04'] }),
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(2n, 1n, ['ubuntu-24.04'], makeRunner('GitHub Actions', 0n)),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -162,7 +168,9 @@ describe('TopBar (browser mode)', () => {
 
   it('AC3.2 — single pool with non-null groupName renders without suffix', async () => {
     render(TopBar)
-    runnerStore.loadPools([makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-latest'] })])
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
+    ])
     await new Promise((r) => setTimeout(r, 50))
 
     expect(screen.getByText('GitHub Actions')).toBeTruthy()
@@ -171,18 +179,20 @@ describe('TopBar (browser mode)', () => {
 
   it('AC3.3 — pool with null groupName falls back to joined labels', async () => {
     render(TopBar)
-    runnerStore.loadPools([makePool({ groupName: null, labels: ['self-hosted', 'linux'] })])
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['self-hosted', 'linux'], makeRunner(null)),
+    ])
     await new Promise((r) => setTimeout(r, 50))
 
-    expect(screen.getByText('self-hosted, linux')).toBeTruthy()
+    expect(screen.getByText('linux, self-hosted')).toBeTruthy()
   })
 
   it('AC3.4 — three pools sharing a groupName each get the suffix', async () => {
     render(TopBar)
-    runnerStore.loadPools([
-      makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-latest'] }),
-      makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-24.04'] }),
-      makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-22.04'] }),
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(2n, 1n, ['ubuntu-24.04'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(3n, 1n, ['ubuntu-22.04'], makeRunner('GitHub Actions', 0n)),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -194,15 +204,25 @@ describe('TopBar (browser mode)', () => {
 
   it('AC3.5 — mixed ambiguous and unambiguous pools', async () => {
     render(TopBar)
-    runnerStore.loadPools([
-      makePool({ groupName: 'GitHub Actions', labels: ['ubuntu-latest'] }),
-      makePool({ groupName: 'self-hosted-linux-group', labels: ['self-hosted', 'x86_64'] }),
-      makePool({ groupName: 'self-hosted-linux-group', labels: ['self-hosted', 'arm64'] }),
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(
+        2n,
+        1n,
+        ['self-hosted', 'x86_64'],
+        makeRunner('self-hosted-linux-group', 42n),
+      ),
+      makeInProgressJob(
+        3n,
+        1n,
+        ['self-hosted', 'arm64'],
+        makeRunner('self-hosted-linux-group', 42n),
+      ),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
     expect(screen.getByText('GitHub Actions')).toBeTruthy()
     expect(screen.getByText('self-hosted-linux-group · self-hosted, x86_64')).toBeTruthy()
-    expect(screen.getByText('self-hosted-linux-group · self-hosted, arm64')).toBeTruthy()
+    expect(screen.getByText('self-hosted-linux-group · arm64, self-hosted')).toBeTruthy()
   })
 })

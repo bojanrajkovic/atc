@@ -9,7 +9,6 @@ import {
 import { ConnectionManager } from '$lib/connection'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
@@ -37,7 +36,6 @@ describe('ConnectionManager', () => {
     server.resetHandlers()
     // Clear stores between tests
     runStore.clear()
-    runnerStore.clear()
     connectionStore.status = 'disconnected'
     connectionStore.reconnectAttempt = 0
     connectionStore.lastEventAt = null
@@ -97,7 +95,6 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
-          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(event, (_key, value) => {
@@ -114,7 +111,7 @@ describe('ConnectionManager', () => {
 
       await connectPromise
 
-      // The buffered event should have been dispatched (seq 10 >= snapshot seq 5)
+      // The buffered event should have been dispatched (seq 10 > snapshot lastSeq 5)
       eventDispatcher.flush()
 
       // Verify the run from the buffered event is in the store
@@ -123,14 +120,13 @@ describe('ConnectionManager', () => {
       manager.destroy()
     })
 
-    it('discards buffered events with seq < snapshot.seq', async () => {
+    it('discards buffered events with seq <= snapshot.lastSeq', async () => {
       const manager = new ConnectionManager(baseUrl)
 
       const snapshotWithSeq: StateSnapshot = {
-        seq: 10n,
+        lastSeq: 10n,
         runs: [],
         jobs: [],
-        poolStats: [],
       }
 
       let resolveStateFetch: (() => void) | undefined
@@ -151,7 +147,7 @@ describe('ConnectionManager', () => {
       // Give the WebSocket time to connect
       await new Promise((resolve) => setTimeout(resolve, 10))
 
-      // Get the mock WebSocket and send an event with seq < snapshot.seq (should be discarded)
+      // Get the mock WebSocket and send an event with seq <= snapshot.lastSeq (should be discarded)
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
         const staleEvent: SeqEvent = {
@@ -178,7 +174,6 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
-          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(staleEvent, (_key, value) => {
@@ -197,20 +192,19 @@ describe('ConnectionManager', () => {
 
       eventDispatcher.flush()
 
-      // The stale event (seq 5 < snapshot seq 10) should NOT have been dispatched
+      // The stale event (seq 5 <= snapshot lastSeq 10) should NOT have been dispatched
       expect(runStore.runs.has(888n)).toBe(false)
 
       manager.destroy()
     })
 
-    it('dispatches buffered events with seq >= snapshot.seq', async () => {
+    it('discards buffered events with seq === lastSeq', async () => {
       const manager = new ConnectionManager(baseUrl)
 
       const snapshotWithSeq: StateSnapshot = {
-        seq: 10n,
+        lastSeq: 10n,
         runs: [],
         jobs: [],
-        poolStats: [],
       }
 
       let resolveStateFetch: (() => void) | undefined
@@ -231,7 +225,7 @@ describe('ConnectionManager', () => {
       // Give the WebSocket time to connect
       await new Promise((resolve) => setTimeout(resolve, 10))
 
-      // Get the mock WebSocket and send an event with seq >= snapshot.seq (should be dispatched)
+      // Get the mock WebSocket and send an event with seq === snapshot.lastSeq (should be discarded)
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
         const freshEvent: SeqEvent = {
@@ -258,7 +252,6 @@ describe('ConnectionManager', () => {
               },
             } as RunEventEnvelope,
           },
-          poolStatsAfter: null,
         }
         ws.receiveMessage(
           JSON.stringify(freshEvent, (_key, value) => {
@@ -277,18 +270,22 @@ describe('ConnectionManager', () => {
 
       eventDispatcher.flush()
 
-      // The fresh event (seq 10 >= snapshot seq 10) should have been dispatched
-      expect(runStore.runs.has(777n)).toBe(true)
+      // The event (seq 10 === lastSeq 10) should be DISCARDED — equality no longer replays
+      expect(runStore.runs.has(777n)).toBe(false)
 
       manager.destroy()
     })
-  })
 
-  describe('live-pool-stats.AC2.4: Success — Pre-connect buffer applies sidecars after snapshot', () => {
-    it('buffers Job events with poolStatsAfter sidecars and applies them after snapshot load', async () => {
+    it('replays buffered event with seq=1 when snapshot lastSeq=0 (pre-increment cold-start fix)', async () => {
       const manager = new ConnectionManager(baseUrl)
-      let resolveStateFetch: (() => void) | undefined
 
+      const emptySnapshot: StateSnapshot = {
+        lastSeq: 0n,
+        runs: [],
+        jobs: [],
+      }
+
+      let resolveStateFetch: (() => void) | undefined
       const statePromise = new Promise<void>((resolve) => {
         resolveStateFetch = () => resolve()
       })
@@ -296,126 +293,52 @@ describe('ConnectionManager', () => {
       server.use(
         http.get('http://localhost:*/v1/state', async () => {
           await statePromise
-          return HttpResponse.json(snapshotToJSON(defaultSnapshot))
+          return HttpResponse.json(snapshotToJSON(emptySnapshot))
         }),
       )
 
       const connectPromise = manager.connect()
-
-      // Give the WebSocket time to connect
       await new Promise((resolve) => setTimeout(resolve, 10))
 
-      // Get the mock WebSocket and send two Job events with poolStatsAfter sidecars while state fetch is paused
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        // First Job event with poolStatsAfter = P1
-        const event1: SeqEvent = {
-          seq: 10n,
+        // seq=1 is the first broadcast seq with pre-increment counter
+        const firstEvent: SeqEvent = {
+          seq: 1n,
           event: {
-            type: 'Job',
+            type: 'Run',
             data: {
-              jobId: 100n,
-              runId: 1n,
+              runId: 42n,
               org: 'org',
               repo: 'repo',
-              name: 'test-job-1',
+              workflowName: 'test',
+              workflowPath: '.github/workflows/test.yml',
+              branch: 'main',
+              headSha: 'abc123',
+              commitMessage: 'first commit',
+              triggerEvent: 'push',
+              displayTitle: 'First run',
+              htmlUrl: 'https://github.com/org/repo/actions/runs/42',
               createdAt: new Date().toISOString(),
-              startedAt: null,
-              completedAt: null,
-              action: {
-                type: 'Queued',
-                data: {
-                  labels: ['ubuntu-latest'],
-                  steps: [],
-                },
-              },
-            },
+              runStartedAt: null,
+              updatedAt: new Date().toISOString(),
+              action: { type: 'Requested' },
+            } as RunEventEnvelope,
           },
-          poolStatsAfter: [
-            {
-              labels: ['ubuntu-latest'],
-              queued: 1,
-              running: 0,
-              groupName: 'GitHub Actions',
-              isElastic: true,
-              total: null,
-            },
-          ],
         }
-
         ws.receiveMessage(
-          JSON.stringify(event1, (_key, value) => {
-            if (typeof value === 'bigint') {
-              return value.toString()
-            }
-            return value
-          }),
-        )
-
-        // Second Job event with poolStatsAfter = P2
-        const event2: SeqEvent = {
-          seq: 11n,
-          event: {
-            type: 'Job',
-            data: {
-              jobId: 101n,
-              runId: 1n,
-              org: 'org',
-              repo: 'repo',
-              name: 'test-job-2',
-              createdAt: new Date().toISOString(),
-              startedAt: null,
-              completedAt: null,
-              action: {
-                type: 'InProgress',
-                data: {
-                  runner: null,
-                  labels: ['ubuntu-latest'],
-                  steps: [],
-                },
-              },
-            },
-          },
-          poolStatsAfter: [
-            {
-              labels: ['ubuntu-latest'],
-              queued: 0,
-              running: 1,
-              groupName: 'GitHub Actions',
-              isElastic: true,
-              total: null,
-            },
-          ],
-        }
-
-        ws.receiveMessage(
-          JSON.stringify(event2, (_key, value) => {
-            if (typeof value === 'bigint') {
-              return value.toString()
-            }
-            return value
-          }),
+          JSON.stringify(firstEvent, (_key, value) =>
+            typeof value === 'bigint' ? value.toString() : value,
+          ),
         )
       }
 
-      // Resolve the state fetch, triggering buffer replay
       resolveStateFetch?.()
-
       await connectPromise
+      eventDispatcher.flush()
 
-      // After buffer flush, runnerStore.pools should equal P2 (last sidecar wins)
-      const expectedP2 = [
-        {
-          labels: ['ubuntu-latest'],
-          queued: 0,
-          running: 1,
-          groupName: 'GitHub Actions',
-          isElastic: true,
-          total: null,
-        },
-      ]
-
-      expect(runnerStore.pools).toEqual(expectedP2)
+      // seq=1 > lastSeq=0 → DISPATCHED (pre-increment cold-start race correctly handled)
+      expect(runStore.runs.has(42n)).toBe(true)
 
       manager.destroy()
     })

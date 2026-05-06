@@ -7,9 +7,7 @@ import {
 } from '$lib/__tests__/connection-test-helpers'
 import { ConnectionManager } from '$lib/connection'
 import { connectionStore } from '$lib/stores/connection.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
-import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
 describe('ConnectionManager', () => {
@@ -34,7 +32,6 @@ describe('ConnectionManager', () => {
     server.resetHandlers()
     // Clear stores between tests
     runStore.clear()
-    runnerStore.clear()
     connectionStore.status = 'disconnected'
     connectionStore.reconnectAttempt = 0
     connectionStore.lastEventAt = null
@@ -64,7 +61,7 @@ describe('ConnectionManager', () => {
     it('loads snapshot data into stores', async () => {
       // Create a custom snapshot with data
       const snapshotWithData: StateSnapshot = {
-        seq: 10n,
+        lastSeq: 10n,
         runs: [
           {
             id: 1n,
@@ -86,7 +83,6 @@ describe('ConnectionManager', () => {
           },
         ],
         jobs: [],
-        poolStats: [],
       }
 
       server.use(
@@ -100,53 +96,6 @@ describe('ConnectionManager', () => {
 
       // Verify snapshot was loaded into stores
       expect(runStore.runs.has(1n)).toBe(true)
-
-      manager.destroy()
-    })
-  })
-
-  describe('live-pool-stats.AC2.3: Success — Snapshot seeds runnerStore.pools', () => {
-    it('loads snapshot poolStats into runnerStore.pools', async () => {
-      const poolStats: RunnerPoolStats[] = [
-        {
-          labels: ['ubuntu-latest'],
-          queued: 2,
-          running: 1,
-          groupName: 'GitHub Actions',
-          isElastic: true,
-          total: null,
-        },
-        {
-          labels: ['self-hosted', 'linux'],
-          queued: 0,
-          running: 1,
-          groupName: 'Custom Runners',
-          isElastic: false,
-          total: 4,
-        },
-      ]
-
-      const snapshotWithPools: StateSnapshot = {
-        seq: 5n,
-        runs: [],
-        jobs: [],
-        poolStats,
-      }
-
-      server.use(
-        http.get('http://localhost:*/v1/state', () => {
-          return HttpResponse.json(snapshotToJSON(snapshotWithPools))
-        }),
-      )
-
-      const manager = new ConnectionManager(baseUrl)
-      await manager.connect()
-
-      // Verify runnerStore.pools equals the snapshot poolStats
-      expect(runnerStore.pools).toEqual(poolStats)
-
-      // Belt-and-suspenders: verify connected status
-      expect(connectionStore.status).toBe('connected')
 
       manager.destroy()
     })

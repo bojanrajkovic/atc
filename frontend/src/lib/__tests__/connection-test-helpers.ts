@@ -70,10 +70,9 @@ export const snapshotToJSON = (snapshot: StateSnapshot) => {
 
 // Default state snapshot for most tests
 export const defaultSnapshot: StateSnapshot = {
-  seq: 5n,
+  lastSeq: 5n,
   runs: [],
   jobs: [],
-  poolStats: [],
 }
 
 // Setup test server with WebSocket mock

@@ -31,30 +31,41 @@ test.describe('App shell', () => {
       })
     })
 
-    // Intercept /v1/state fetch and return mock pool data
+    // Intercept /v1/state fetch — seed jobs so computePoolStats derives the pools
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1,
+          lastSeq: 1,
           runs: [],
-          jobs: [],
-          poolStats: [
+          jobs: [
+            // InProgress job on the linux/x86_64 pool → derives 'Default' pool label
             {
+              id: 1,
+              name: 'build',
+              runId: 1,
+              status: 'InProgress',
+              conclusion: null,
+              runner: { id: 1, name: 'runner-1', groupId: null, groupName: 'Default' },
               labels: ['linux', 'x86_64'],
-              queued: 2,
-              running: 3,
-              groupName: 'Default',
-              isElastic: false,
-              total: 10,
+              steps: [],
+              createdAt: '2026-01-01T00:00:00Z',
+              startedAt: '2026-01-01T00:00:01Z',
+              completedAt: null,
             },
+            // InProgress job on the macos pool → derives 'macOS' pool label
             {
+              id: 2,
+              name: 'test-macos',
+              runId: 2,
+              status: 'InProgress',
+              conclusion: null,
+              runner: { id: 2, name: 'runner-2', groupId: 0, groupName: 'macOS' },
               labels: ['macos'],
-              queued: 0,
-              running: 1,
-              groupName: 'macOS',
-              isElastic: true,
-              total: null,
+              steps: [],
+              createdAt: '2026-01-01T00:00:00Z',
+              startedAt: '2026-01-01T00:00:01Z',
+              completedAt: null,
             },
           ],
         }),

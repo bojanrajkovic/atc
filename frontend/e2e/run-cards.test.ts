@@ -127,10 +127,9 @@ test.describe('run-cards (Sub-Phase 4)', () => {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1 as unknown as bigint,
+          lastSeq: 1 as unknown as bigint,
           runs: STATUS_FIXTURE.map(makeWorkflowRun),
           jobs: [],
-          poolStats: [],
         } satisfies StateSnapshot),
       })
     })
@@ -161,7 +160,7 @@ test.describe('run-cards (Sub-Phase 4)', () => {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1 as unknown as bigint,
+          lastSeq: 1 as unknown as bigint,
           runs: [
             {
               id: 42 as unknown as bigint,
@@ -183,7 +182,6 @@ test.describe('run-cards (Sub-Phase 4)', () => {
             },
           ],
           jobs: [],
-          poolStats: [],
         } satisfies StateSnapshot),
       })
     })
@@ -224,7 +222,7 @@ test.describe('run-cards (Sub-Phase 4)', () => {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1 as unknown as bigint,
+          lastSeq: 1 as unknown as bigint,
           runs: [
             {
               id: 1 as unknown as bigint,
@@ -265,7 +263,6 @@ test.describe('run-cards (Sub-Phase 4)', () => {
               completedAt: null,
             },
           ],
-          poolStats: [],
         } satisfies StateSnapshot),
       })
     })
@@ -308,7 +305,7 @@ test.describe('run-cards (Sub-Phase 4)', () => {
       await route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify({
-          seq: 1 as unknown as bigint,
+          lastSeq: 1 as unknown as bigint,
           runs: [
             {
               id: 1 as unknown as bigint,
@@ -330,7 +327,6 @@ test.describe('run-cards (Sub-Phase 4)', () => {
             },
           ],
           jobs: [],
-          poolStats: [],
         } satisfies StateSnapshot),
       })
     })

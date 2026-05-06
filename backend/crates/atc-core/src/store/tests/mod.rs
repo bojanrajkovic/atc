@@ -8,7 +8,6 @@ mod edge_cases;
 mod event_ingestion;
 mod eviction;
 mod queries;
-mod runner_pools;
 mod webhook_domain_updates;
 
 /// Helper to build a `RunEventEnvelope` with sensible defaults.

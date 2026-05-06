@@ -1,6 +1,6 @@
 # Rollout And Implementation
 
-Last verified: 2026-05-04 (Phase 2d LISTEN/NOTIFY: complete)
+Last verified: 2026-05-05 (Phase 3a cursor rename + Phase 3b frontend pool-stats derivation: complete)
 
 ## Status
 
@@ -127,19 +127,25 @@ ADR refs: [ADR 0002 Decision 3](../../architecture-decisions/0002-state-external
 
 Switch every read path to the durable backend. The cursor rename and pool stats removal both ship in Phase 3 because they're wire-contract changes that need to land before the read path can use the new shape; they cannot be deferred to Phase 4 without risking inconsistency.
 
+**Phase 3a (cursor rename) and Phase 3b (pool stats moved to frontend) are complete** as of feat/phase-3a-3b-wire-contract. Phase 3c (read-path cutover) is the next sub-phase.
+
 #### Phase 3a: Cursor rename
 
 Rename the snapshot cursor and ship the lockstep frontend change.
 
+**Status: complete (PR #XX — feat/phase-3a-3b-wire-contract).**
+
 In scope:
-- Rename `StateSnapshot.seq` → `StateSnapshot.lastSeq`; semantics shift from "next seq to assign" to "highest committed seq"
-- ts-rs regenerates the `StateSnapshot` TypeScript type
-- Frontend `connection.ts:14` rename `snapshotSeq` → `snapshotLastSeq` (or similar)
-- Frontend `connection.ts:116` invert the comparator from `>=` to `>`
-- Update test fixtures and assertions referencing the old field name and comparator
+- Rename `StateSnapshot.seq` → `StateSnapshot.lastSeq`; semantics shift from "next seq to assign" to "highest committed seq" — **DONE** (`backend/crates/atc-server/src/routes.rs` defines `StateSnapshot { last_seq, runs, jobs }` with `#[serde(rename_all = "camelCase")]`)
+- ts-rs regenerates the `StateSnapshot` TypeScript type — **DONE** (`frontend/src/lib/types/generated/StateSnapshot.ts`)
+- The in-memory `Mutex<u64>` counter shifts from post-increment to pre-increment: `*seq_guard += 1; let seq = *seq_guard;`. First successful event broadcasts `seq=1` (not `seq=0`); `lastSeq=0` is now the unambiguous "no events committed since startup" sentinel — **DONE** (`backend/crates/atc-server/src/routes.rs` PG and in-memory paths) — **NEW: not specified in original Phase 3a scope; chosen as the implementation strategy for the renamed semantics**
+- Frontend `connection.ts:13` rename `snapshotSeq` → `snapshotLastSeq` — **DONE**
+- Frontend `connection.ts:114` invert the comparator from `>=` to `>` (buffered drain now keeps `seq > snapshotLastSeq`) — **DONE**
+- Frontend `connection.ts:24` jsonReviver allowlist adds `'lastSeq'` to the bigint conversion list — **DONE**
+- Update test fixtures and assertions referencing the old field name and comparator — **DONE** (connection.buffering.test.ts, connection.connect.test.ts, e2e_tests.rs, state_tests.rs, ws_tests.rs)
 - Backend and frontend ship together in one binary version (no transition window per [ADR 0003 Context](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md))
 
-Acceptance: existing connection-buffering tests pass with the new field name and comparator; an end-to-end test confirms a buffered event with `seq == lastSeq` is correctly discarded (vs. previously replayed).
+Acceptance: existing connection-buffering tests pass with the new field name and comparator; an end-to-end test confirms a buffered event with `seq == lastSeq` is correctly discarded (vs. previously replayed). **SATISFIED.**
 
 ADR refs: [ADR 0003 Decision 1](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) (cursor rename), [ADR 0003 Context](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) (single-binary deployment shape).
 
@@ -147,17 +153,24 @@ ADR refs: [ADR 0003 Decision 1](../../architecture-decisions/0003-state-cursor-c
 
 Remove backend pool stats computation; add frontend derivation.
 
+**Status: complete (PR #XX — feat/phase-3a-3b-wire-contract).**
+
 In scope:
-- Backend: delete `StateStore::pool_stats()` and the snapshot-time inline pool-stats computation
-- Backend: remove `pool_stats` from `StateSnapshot` and `pool_stats_after` from `SeqEvent`
-- Backend: webhook handler no longer computes `pool_stats_after` under the seq mutex
-- Frontend: add a `pools` `$derived.by` to `runStore` (or thin wrapper in `runnerStore`) that replicates the existing backend algorithm — skip Waiting/Completed, group by sorted-label set, count Queued/InProgress, derive `group_name` and `is_elastic` from observed runners, sort lexicographically by labels
-- Frontend: remove `runnerStore.loadPools()` call sites and the dispatcher's `if (seqEvent.poolStatsAfter != null)` block
-- ts-rs regenerates the affected types
-- Test churn: backend tests asserting on `pool_stats_after` go away; frontend tests fed `poolStatsAfter` through fixtures now drive derivation through the underlying jobs
+- Backend: delete `StateStore::pool_stats()` and the snapshot-time inline pool-stats computation — **DONE** (`backend/crates/atc-core/src/store.rs`: `snapshot()` now returns `QueryResult { runs, jobs }` only; `pool_stats()` and the `runner_pools` test module deleted)
+- Backend: remove `pool_stats` from `StateSnapshot` and `pool_stats_after` from `SeqEvent` — **DONE** (`backend/crates/atc-server/src/state.rs`, `backend/crates/atc-server/src/routes.rs`)
+- Backend: webhook handler no longer computes `pool_stats_after` under the seq mutex — **DONE** (`backend/crates/atc-server/src/routes.rs`)
+- Backend: `tests/sidecar_tests.rs` (531 lines) deleted as obsolete — **DONE**
+- Frontend: `RunnerStore.pools` rewritten to `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))`; `loadPools()` and `clear()` removed — **DONE** (`frontend/src/lib/stores/runners.svelte.ts`)
+- Frontend: `computePoolStats(jobs: Job[]): RunnerPoolStats[]` exported as a pure function in `runners.svelte.ts` — replicates backend algorithm: skip Waiting/Completed, group by sorted-label set (using `JSON.stringify(sortedLabels)` as map key), count Queued/InProgress, derive `groupName` from latest observed runner and `isElastic = true` if any runner has `groupId === 0n`, sort lexicographically by labels — **DONE**
+- Frontend: `runStore.jobs: $derived.by<Job[]>` flat view added so the runner pool derivation has a single stable dependency rather than threading the per-run `SvelteMap` — **DONE** (`frontend/src/lib/stores/runs.svelte.ts`)
+- Frontend: dispatcher's `if (seqEvent.poolStatsAfter != null)` block removed; dispatcher no longer touches `runnerStore` — **DONE** (`frontend/src/lib/dispatcher.ts`)
+- Frontend: `connection.ts` no longer calls `runnerStore.loadPools(snapshot.poolStats)` on snapshot load — **DONE**
+- Frontend: `e2e/lib/ws-mock.ts` `makeJobSeqEvent` no longer carries `poolStatsAfter` — **DONE**
+- ts-rs regenerates the affected types — **DONE** (`frontend/src/lib/types/generated/SeqEvent.ts`, `StateSnapshot.ts`)
+- Test churn: backend tests asserting on `pool_stats_after` go away (sidecar_tests.rs deletion); frontend tests fed `poolStatsAfter` through fixtures now drive derivation through the underlying jobs — **DONE**
 - Backend and frontend ship together in one binary version
 
-Acceptance: existing pool-display E2E tests pass with the derived store; a test confirms duplicate Job events produce idempotent recomputes that yield the same pool stats.
+Acceptance: existing pool-display E2E tests pass with the derived store; a test confirms duplicate Job events produce idempotent recomputes that yield the same pool stats. **SATISFIED.** All 131 atc-core tests + atc-server suite + frontend Vitest/browser/E2E suites pass.
 
 ADR refs: [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md) (entire ADR).
 

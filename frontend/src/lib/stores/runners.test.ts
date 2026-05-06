@@ -1,153 +1,136 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
-import { runnerStore } from './runners.svelte'
+import type { Job } from '$lib/types/generated/Job'
+import { computePoolStats } from './runners.svelte'
+import { runStore } from './runs.svelte'
 
-describe('RunnerStore', () => {
+// Minimal Job factory
+function makeJob(
+  overrides: Partial<Job> & { id: bigint; runId: bigint; status: Job['status']; labels: string[] },
+): Job {
+  const {
+    id,
+    runId,
+    status,
+    labels,
+    runner,
+    conclusion,
+    steps,
+    createdAt,
+    startedAt,
+    completedAt,
+  } = overrides
+  return {
+    id,
+    runId,
+    name: overrides.name ?? 'test-job',
+    status,
+    conclusion: conclusion ?? null,
+    labels,
+    runner: runner ?? null,
+    steps: steps ?? [],
+    createdAt: createdAt ?? new Date().toISOString(),
+    startedAt: startedAt ?? null,
+    completedAt: completedAt ?? null,
+  }
+}
+
+describe('computePoolStats (pure function)', () => {
+  it('returns empty array for no jobs', () => {
+    expect(computePoolStats([])).toEqual([])
+  })
+
+  it('skips Waiting and Completed jobs', () => {
+    const jobs = [
+      makeJob({ id: 1n, runId: 1n, status: 'Waiting', labels: ['ubuntu-latest'] }),
+      makeJob({ id: 2n, runId: 1n, status: 'Completed', labels: ['ubuntu-latest'] }),
+    ]
+    expect(computePoolStats(jobs)).toHaveLength(0)
+  })
+
+  it('counts Queued jobs', () => {
+    const jobs = [
+      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
+      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
+    ]
+    const pools = computePoolStats(jobs)
+    expect(pools).toHaveLength(1)
+    expect(pools[0]?.queued).toBe(2)
+    expect(pools[0]?.running).toBe(0)
+  })
+
+  it('sets isElastic=true when groupId===0n', () => {
+    const job = makeJob({
+      id: 1n,
+      runId: 1n,
+      status: 'InProgress',
+      labels: ['ubuntu-latest'],
+      runner: { id: 1n, name: 'r', groupId: 0n, groupName: 'GitHub' },
+    })
+    const pools = computePoolStats([job])
+    expect(pools[0]?.isElastic).toBe(true)
+    expect(pools[0]?.groupName).toBe('GitHub')
+  })
+
+  it('does NOT set isElastic when groupId is non-zero bigint', () => {
+    const job = makeJob({
+      id: 1n,
+      runId: 1n,
+      status: 'InProgress',
+      labels: ['ubuntu-latest'],
+      runner: { id: 1n, name: 'r', groupId: 42n, groupName: 'Group' },
+    })
+    const pools = computePoolStats([job])
+    expect(pools[0]?.isElastic).toBe(false)
+  })
+
+  it('LabelSet parity: deduplicates labels before keying', () => {
+    const jobs = [
+      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['a', 'a', 'b'] }),
+      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['a', 'b'] }),
+    ]
+    const pools = computePoolStats(jobs)
+    expect(pools).toHaveLength(1)
+    expect(pools[0]?.queued).toBe(2)
+    expect(pools[0]?.labels).toEqual(['a', 'b'])
+  })
+
+  it('sorts result by JSON-stringified labels', () => {
+    const jobs = [
+      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['z'] }),
+      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['a'] }),
+    ]
+    const pools = computePoolStats(jobs)
+    expect(pools[0]?.labels).toEqual(['a'])
+    expect(pools[1]?.labels).toEqual(['z'])
+  })
+})
+
+describe('runnerStore.pools (derived)', () => {
   beforeEach(() => {
-    runnerStore.clear()
+    runStore.jobsByRun.clear()
   })
 
   afterEach(() => {
-    runnerStore.clear()
+    runStore.jobsByRun.clear()
   })
 
-  // AC3.6: RunnerStore.loadPools() replaces pool stats
-  describe('AC3.6: Load and replace pool stats', () => {
-    it('should load pools into the store', () => {
-      const pools: RunnerPoolStats[] = [
-        {
-          labels: ['linux', 'x86_64'],
-          queued: 2,
-          running: 1,
-          groupName: 'Default',
-          isElastic: false,
-          total: null,
-        },
-        {
-          labels: ['windows', 'x86_64'],
-          queued: 0,
-          running: 3,
-          groupName: 'Windows Runners',
-          isElastic: false,
-          total: null,
-        },
-      ]
+  it('starts empty', () => {
+    expect(runStore.jobs).toHaveLength(0)
+  })
 
-      runnerStore.loadPools(pools)
+  it('reflects pools after adding jobs to runStore', async () => {
+    const { runnerStore } = await import('./runners.svelte')
+    const job = makeJob({ id: 1n, runId: 10n, status: 'Queued', labels: ['ubuntu-latest'] })
+    runStore.jobsByRun.set(10n, [job])
 
-      expect(runnerStore.pools.length).toBe(2)
-      const pool0 = runnerStore.pools[0]
-      const pool1 = runnerStore.pools[1]
-      expect(pool0?.queued).toBe(2)
-      expect(pool0?.running).toBe(1)
-      expect(pool0?.groupName).toBe('Default')
-      expect(pool1?.queued).toBe(0)
-      expect(pool1?.running).toBe(3)
-      expect(pool1?.groupName).toBe('Windows Runners')
-    })
+    expect(runnerStore.pools).toHaveLength(1)
+    expect(runnerStore.pools[0]?.queued).toBe(1)
+  })
 
-    it('should replace all pools when loadPools is called again', () => {
-      const initialPools: RunnerPoolStats[] = [
-        {
-          labels: ['linux', 'x86_64'],
-          queued: 1,
-          running: 0,
-          groupName: 'Old Pool',
-          isElastic: false,
-          total: null,
-        },
-      ]
-
-      runnerStore.loadPools(initialPools)
-      expect(runnerStore.pools.length).toBe(1)
-      const initialPool0 = runnerStore.pools[0]
-      expect(initialPool0?.groupName).toBe('Old Pool')
-
-      // Load different pools
-      const newPools: RunnerPoolStats[] = [
-        {
-          labels: ['macos', 'amd64'],
-          queued: 5,
-          running: 2,
-          groupName: 'macOS',
-          isElastic: false,
-          total: null,
-        },
-        {
-          labels: ['linux', 'arm64'],
-          queued: 0,
-          running: 1,
-          groupName: 'ARM Linux',
-          isElastic: false,
-          total: null,
-        },
-        {
-          labels: ['windows', 'x86_64'],
-          queued: 3,
-          running: 4,
-          groupName: 'Windows',
-          isElastic: false,
-          total: null,
-        },
-      ]
-
-      runnerStore.loadPools(newPools)
-
-      // Verify old pools are completely replaced, not appended
-      expect(runnerStore.pools.length).toBe(3)
-      expect(runnerStore.pools.map((p) => p.groupName)).toContain('macOS')
-      expect(runnerStore.pools.map((p) => p.groupName)).toContain('ARM Linux')
-      expect(runnerStore.pools.map((p) => p.groupName)).toContain('Windows')
-      expect(runnerStore.pools.map((p) => p.groupName)).not.toContain('Old Pool')
-    })
-
-    it('should handle loading an empty pool list', () => {
-      const pools: RunnerPoolStats[] = [
-        {
-          labels: ['linux'],
-          queued: 1,
-          running: 0,
-          groupName: 'Default',
-          isElastic: false,
-          total: null,
-        },
-      ]
-
-      runnerStore.loadPools(pools)
-      expect(runnerStore.pools.length).toBe(1)
-
-      // Load empty list
-      runnerStore.loadPools([])
-      expect(runnerStore.pools.length).toBe(0)
-    })
-
-    it('should handle pools with null groupName', () => {
-      const pools: RunnerPoolStats[] = [
-        {
-          labels: ['linux'],
-          queued: 1,
-          running: 0,
-          groupName: null,
-          isElastic: false,
-          total: null,
-        },
-        {
-          labels: ['windows'],
-          queued: 2,
-          running: 1,
-          groupName: 'Windows Group',
-          isElastic: false,
-          total: null,
-        },
-      ]
-
-      runnerStore.loadPools(pools)
-
-      expect(runnerStore.pools.length).toBe(2)
-      const pool0 = runnerStore.pools[0]
-      const pool1 = runnerStore.pools[1]
-      expect(pool0?.groupName).toBeNull()
-      expect(pool1?.groupName).toBe('Windows Group')
-    })
+  it('runnerStore.pools has no loadPools method (compile-time check: only verify the store shape)', async () => {
+    const { runnerStore } = await import('./runners.svelte')
+    // Type-level check: loadPools should not exist on the store
+    expect('loadPools' in runnerStore).toBe(false)
+    expect('clear' in runnerStore).toBe(false)
   })
 })

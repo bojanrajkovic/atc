@@ -44,7 +44,6 @@ function makeRunSeqEvent(action: { type: string; data?: unknown }): SeqEvent {
         action: action as any,
       },
     },
-    poolStatsAfter: null,
   }
 }
 
@@ -68,7 +67,6 @@ function makeJobSeqEvent(): SeqEvent {
         },
       },
     },
-    poolStatsAfter: null,
   }
 }
 

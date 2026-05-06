@@ -53,14 +53,12 @@ async fn test_ac4_1_empty_state() {
 
     let json: serde_json::Value = resp.json().await.expect("response is valid JSON");
 
-    assert_eq!(json["seq"], 0, "seq should be 0 when no events ingested");
+    assert_eq!(
+        json["lastSeq"], 0,
+        "lastSeq should be 0 when no events ingested"
+    );
     assert_eq!(json["runs"], serde_json::json!([]), "runs should be empty");
     assert_eq!(json["jobs"], serde_json::json!([]), "jobs should be empty");
-    assert_eq!(
-        json["poolStats"],
-        serde_json::json!([]),
-        "poolStats should be empty"
-    );
 }
 
 /// AC4.2: GET /v1/state after workflow_run_requested webhook returns seq: 1, run in runs
@@ -97,7 +95,7 @@ async fn test_ac4_2_state_after_run_event() {
 
     let json: serde_json::Value = resp.json().await.expect("response is valid JSON");
 
-    assert_eq!(json["seq"], 1, "seq should be 1 after one event");
+    assert_eq!(json["lastSeq"], 1, "lastSeq should be 1 after one event");
     assert!(
         !json["runs"].as_array().unwrap().is_empty(),
         "runs should contain the workflow run"
@@ -107,90 +105,24 @@ async fn test_ac4_2_state_after_run_event() {
         serde_json::json!([]),
         "jobs should still be empty"
     );
-    assert_eq!(
-        json["poolStats"],
-        serde_json::json!([]),
-        "poolStats should still be empty"
-    );
 }
 
-/// AC4.3: GET /v1/state after workflow_job_queued webhook returns pool_stats non-empty
-#[tokio::test]
-#[serial_test::serial]
-async fn test_ac4_3_state_with_pool_stats() {
-    let (server_addr, _) = test_setup().await;
-
-    let client = reqwest::Client::new();
-
-    // POST workflow_run_requested first
-    let body = fixture_workflow_run_requested();
-    let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
-
-    let resp = client
-        .post(&webhook_url)
-        .header("X-GitHub-Event", "workflow_run")
-        .body(body)
-        .send()
-        .await
-        .expect("Webhook POST failed");
-
-    assert_eq!(resp.status(), 200);
-
-    // POST workflow_job_queued
-    let body = fixture_workflow_job_queued();
-    let resp = client
-        .post(&webhook_url)
-        .header("X-GitHub-Event", "workflow_job")
-        .body(body)
-        .send()
-        .await
-        .expect("Webhook POST failed");
-
-    assert_eq!(resp.status(), 200);
-
-    // Now GET /v1/state
-    let state_url = format!("http://{}/v1/state", server_addr);
-    let resp = client
-        .get(&state_url)
-        .send()
-        .await
-        .expect("GET /v1/state failed");
-
-    assert_eq!(resp.status(), 200);
-
-    let json: serde_json::Value = resp.json().await.expect("response is valid JSON");
-
-    assert_eq!(json["seq"], 2, "seq should be 2 after two events");
-    assert!(
-        !json["runs"].as_array().unwrap().is_empty(),
-        "runs should contain the workflow run"
-    );
-    assert!(
-        !json["jobs"].as_array().unwrap().is_empty(),
-        "jobs should contain the queued job"
-    );
-    assert!(
-        !json["poolStats"].as_array().unwrap().is_empty(),
-        "poolStats should be non-empty with job labels"
-    );
-}
-
-/// Snapshot seq is always consistent with snapshot content under concurrent writes.
+/// Snapshot lastSeq is always consistent with snapshot content under concurrent writes.
 ///
 /// This test would have caught the bug where state_handler read the store
 /// snapshot and the seq counter separately — a webhook completing between
-/// the two reads could produce seq: N+1 with a snapshot missing event N.
+/// the two reads could produce lastSeq: N+1 with a snapshot missing event N.
 ///
 /// The fix holds the seq Mutex across both reads so no webhook can commit
 /// between the snapshot and the cursor read.
 ///
 /// Design: each event creates a DISTINCT entity (1 run + 2 jobs with
-/// different job_ids), so entity count correlates 1:1 with seq. For each
+/// different job_ids), so entity count correlates 1:1 with lastSeq. For each
 /// event we fire the webhook and GET /v1/state concurrently. The snapshot
 /// must be in one of two consistent states:
-///   - seq=K (before this event): entity count = K
-///   - seq=K+1 (after this event): entity count = K+1
-/// The old bug would produce seq=K+1 with entity count still at K.
+///   - lastSeq=K (before this event): entity count = K
+///   - lastSeq=K+1 (after this event): entity count = K+1
+/// The old bug would produce lastSeq=K+1 with entity count still at K.
 #[tokio::test]
 #[serial_test::serial]
 async fn test_snapshot_seq_consistent_under_concurrent_writes() {
@@ -237,20 +169,20 @@ async fn test_snapshot_seq_consistent_under_concurrent_writes() {
         let state_resp = state_result.expect("GET /v1/state failed");
         let json: serde_json::Value = state_resp.json().await.unwrap();
 
-        let seq = json["seq"].as_u64().unwrap() as usize;
+        let last_seq = json["lastSeq"].as_u64().unwrap() as usize;
         let runs = json["runs"].as_array().unwrap().len();
         let jobs = json["jobs"].as_array().unwrap().len();
         let entity_count = runs + jobs;
 
-        // The snapshot must be self-consistent: entity_count == seq.
+        // The snapshot must be self-consistent: entity_count == last_seq.
         // Two valid outcomes per iteration:
-        //   - State read won the race: seq == i,     entity_count == i
-        //   - Webhook won the race:    seq == i + 1, entity_count == i + 1
-        // The old bug: seq == i + 1 but entity_count == i (cursor
+        //   - State read won the race: last_seq == i,     entity_count == i
+        //   - Webhook won the race:    last_seq == i + 1, entity_count == i + 1
+        // The old bug: last_seq == i + 1 but entity_count == i (cursor
         // overshoots snapshot content).
         assert_eq!(
-            entity_count, seq,
-            "iteration {i}: entity_count={entity_count} but seq={seq} — \
+            entity_count, last_seq,
+            "iteration {i}: entity_count={entity_count} but last_seq={last_seq} — \
              snapshot content does not match cursor"
         );
     }
@@ -265,7 +197,7 @@ async fn test_ac4_4_state_seq_consistency() {
     let client = reqwest::Client::new();
     let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
 
-    // POST workflow_run_requested (seq 0 assigned)
+    // POST workflow_run_requested (seq 1 assigned)
     let body = fixture_workflow_run_requested();
     let resp = client
         .post(&webhook_url)
@@ -277,7 +209,7 @@ async fn test_ac4_4_state_seq_consistency() {
 
     assert_eq!(resp.status(), 200);
 
-    // POST workflow_job_queued (seq 1 assigned)
+    // POST workflow_job_queued (seq 2 assigned)
     let body = fixture_workflow_job_queued();
     let resp = client
         .post(&webhook_url)
@@ -289,7 +221,7 @@ async fn test_ac4_4_state_seq_consistency() {
 
     assert_eq!(resp.status(), 200);
 
-    // GET /v1/state should return seq: 2 (next seq to assign)
+    // GET /v1/state should return lastSeq: 2 (highest committed)
     let state_url = format!("http://{}/v1/state", server_addr);
     let resp = client
         .get(&state_url)
@@ -302,8 +234,8 @@ async fn test_ac4_4_state_seq_consistency() {
     let json: serde_json::Value = resp.json().await.expect("response is valid JSON");
 
     assert_eq!(
-        json["seq"], 2,
-        "seq should be 2 (next to assign); reflects events with seq 0 and 1"
+        json["lastSeq"], 2,
+        "lastSeq should be 2 (highest committed); reflects events with seq 1 and 2"
     );
     let runs = json["runs"].as_array().unwrap();
     let jobs = json["jobs"].as_array().unwrap();
@@ -314,87 +246,5 @@ async fn test_ac4_4_state_seq_consistency() {
     assert!(
         !jobs.is_empty(),
         "jobs should reflect the workflow_job event"
-    );
-}
-
-/// AC1.6 (serialization): SeqEvent with Some(pool_stats) serializes poolStatsAfter as camelCase array
-#[test]
-fn seq_event_serializes_populated_pool_stats_after_as_camelcase_array() {
-    use atc_core::{LabelSet, RunnerPoolStats};
-    use atc_github::ParseResult;
-
-    // Load a real webhook fixture and parse it
-    let fixture = include_bytes!("../../atc-github/tests/fixtures/workflow_run_requested.json");
-    let parse_result =
-        atc_github::parse_webhook("workflow_run", fixture).expect("fixture should parse");
-    let event = match parse_result {
-        ParseResult::Parsed(event) => *event,
-        ParseResult::Skipped { event_type } => {
-            panic!("fixture should be parsed, not skipped: {}", event_type)
-        }
-    };
-
-    // Create a minimal pool stat
-    let labels = LabelSet::new(vec!["ubuntu-latest"]);
-    let pool_stat = RunnerPoolStats {
-        labels,
-        queued: 1,
-        running: 0,
-        group_name: None,
-        is_elastic: false,
-        total: None,
-    };
-
-    // Construct SeqEvent with pool_stats_after
-    let seq_event = atc_server::state::SeqEvent {
-        seq: 1,
-        event,
-        pool_stats_after: Some(vec![pool_stat]),
-    };
-
-    let json = serde_json::to_value(&seq_event).expect("serialization should succeed");
-
-    // Assert the key exists and is an array (camelCase rendering)
-    assert!(
-        json["poolStatsAfter"].is_array(),
-        "poolStatsAfter should be serialized as camelCase array, got: {}",
-        json
-    );
-    assert_eq!(
-        json["poolStatsAfter"].as_array().unwrap().len(),
-        1,
-        "should have one pool stat"
-    );
-}
-
-/// AC1.6 (serialization): SeqEvent with None pool_stats serializes poolStatsAfter as null
-#[test]
-fn seq_event_serializes_none_pool_stats_after_as_null() {
-    use atc_github::ParseResult;
-
-    // Load a real webhook fixture and parse it
-    let fixture = include_bytes!("../../atc-github/tests/fixtures/workflow_run_requested.json");
-    let parse_result =
-        atc_github::parse_webhook("workflow_run", fixture).expect("fixture should parse");
-    let event = match parse_result {
-        ParseResult::Parsed(event) => *event,
-        ParseResult::Skipped { event_type } => {
-            panic!("fixture should be parsed, not skipped: {}", event_type)
-        }
-    };
-
-    let seq_event = atc_server::state::SeqEvent {
-        seq: 1,
-        event,
-        pool_stats_after: None,
-    };
-
-    let json = serde_json::to_value(&seq_event).expect("serialization should succeed");
-
-    // Assert the key exists and is null (camelCase rendering)
-    assert!(
-        json["poolStatsAfter"].is_null(),
-        "poolStatsAfter should be present and serialized as null, not absent. got: {}",
-        json
     );
 }

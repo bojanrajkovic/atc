@@ -20,7 +20,6 @@ import { liveRegion } from '$lib/aria/live-region.svelte'
 import { ConnectionManager } from '$lib/connection'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
@@ -50,7 +49,6 @@ function makeRequestedRunEvent(runId: bigint, seq: bigint): SeqEvent {
         action: { type: 'Requested' },
       } as RunEventEnvelope,
     },
-    poolStatsAfter: null,
   }
 }
 
@@ -98,7 +96,6 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
   afterEach(() => {
     server.resetHandlers()
     runStore.clear()
-    runnerStore.clear()
     connectionStore.status = 'disconnected'
     connectionStore.reconnectAttempt = 0
     connectionStore.lastEventAt = null
@@ -111,12 +108,11 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
   })
 
   it('suppresses observeFlush during buffered drain on both first and second connect cycles, fires normally for live events', async () => {
-    // Snapshot seq = 5; buffered events use seq >= 5 so they survive the filter.
+    // Snapshot lastSeq = 5; buffered events use seq > 5 so they survive the filter.
     const snapshotWithSeq: StateSnapshot = {
-      seq: 5n,
+      lastSeq: 5n,
       runs: [],
       jobs: [],
-      poolStats: [],
     }
 
     // --- Spy on liveRegion.observeFlush ---
@@ -243,7 +239,7 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
 
     server.use(
       http.get('http://localhost:*/v1/state', () =>
-        HttpResponse.json(snapshotToJSON({ seq: 5n, runs: [], jobs: [], poolStats: [] })),
+        HttpResponse.json(snapshotToJSON({ lastSeq: 5n, runs: [], jobs: [] })),
       ),
     )
 
@@ -271,7 +267,7 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
 
     server.use(
       http.get('http://localhost:*/v1/state', () =>
-        HttpResponse.json(snapshotToJSON({ seq: 5n, runs: [], jobs: [], poolStats: [] })),
+        HttpResponse.json(snapshotToJSON({ lastSeq: 5n, runs: [], jobs: [] })),
       ),
     )
 
@@ -295,7 +291,7 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
 
     server.use(
       http.get('http://localhost:*/v1/state', () =>
-        HttpResponse.json(snapshotToJSON({ seq: 5n, runs: [], jobs: [], poolStats: [] })),
+        HttpResponse.json(snapshotToJSON({ lastSeq: 5n, runs: [], jobs: [] })),
       ),
     )
 

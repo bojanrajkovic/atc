@@ -1,7 +1,6 @@
 import type { Page } from '@playwright/test'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 import type { RunEvent } from '$lib/types/generated/RunEvent'
-import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
 
 /**
  * JS-level WebSocket mock for E2E tests.
@@ -120,12 +119,11 @@ export function makeRunEvent(
   })
 }
 
-/** Helper: build a SeqEvent JSON payload for a Job event with optional pool stats sidecar. */
+/** Helper: build a SeqEvent JSON payload for a Job event. */
 export function makeJobSeqEvent(
   seq: number,
   opts: {
     jobData: JobEventEnvelope
-    poolStatsAfter: RunnerPoolStats[] | null
   },
 ): string {
   return JSON.stringify(
@@ -135,7 +133,6 @@ export function makeJobSeqEvent(
         type: 'Job',
         data: opts.jobData,
       },
-      poolStatsAfter: opts.poolStatsAfter,
     },
     bigintReplacer,
   )

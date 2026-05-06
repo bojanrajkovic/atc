@@ -24,17 +24,16 @@ struct HealthResponse {
 
 /// REST state snapshot for client backfill.
 ///
-/// Returned by `GET /v1/state`. `seq` is the next sequence number to
-/// assign — clients discard buffered WS events with `seq < snapshot_seq`.
-/// A snapshot at `seq: N` reflects all committed events with event seq < N.
+/// Returned by `GET /v1/state`. `last_seq` is the highest committed sequence
+/// number — clients discard buffered WS events with `seq <= last_seq`.
+/// A snapshot at `last_seq: N` reflects all committed events with event seq <= N.
 #[derive(Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 struct StateSnapshot {
-    seq: u64,
+    last_seq: u64,
     runs: Vec<atc_core::WorkflowRun>,
     jobs: Vec<atc_core::Job>,
-    pool_stats: Vec<atc_core::RunnerPoolStats>,
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -61,23 +60,22 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
-/// Return current state snapshot with seq cursor.
+/// Return current state snapshot with lastSeq cursor.
 ///
 /// Holds the seq mutex across both the store snapshot and the seq
 /// read, ensuring no webhook can commit between them. This
 /// guarantees the cursor matches the snapshot content: a response
-/// at `seq: N` reflects exactly all events with event seq < N.
+/// at `lastSeq: N` reflects exactly all committed events with seq <= N.
 async fn state_handler(State(state): State<Arc<AppState>>) -> Json<StateSnapshot> {
     let seq_guard = state.seq.lock().await;
-    let (result, pool_stats) = state.store.snapshot().await;
-    let seq = *seq_guard;
+    let result = state.store.snapshot().await;
+    let last_seq = *seq_guard;
     drop(seq_guard);
 
     Json(StateSnapshot {
-        seq,
+        last_seq,
         runs: result.runs,
         jobs: result.jobs,
-        pool_stats,
     })
 }
 
@@ -285,40 +283,33 @@ async fn webhook_handler(
 
                     // ── Apply to in-memory store (still under mutex) ──────
                     // PG committed. Apply to in-memory store and broadcast.
-                    let broadcast_event: Option<Option<Vec<atc_core::RunnerPoolStats>>> =
-                        match &event {
-                            atc_github::WebhookEvent::Run(env) => {
-                                match state.store.apply_run_event(env.clone()).await {
-                                    Ok(_) => Some(None),
-                                    Err(e) => {
-                                        metrics::counter!("atc_pg_in_memory_drift_total")
-                                            .increment(1);
-                                        tracing::warn!(error = %e, "post-commit in-memory drift (run)");
-                                        None
-                                    }
+                    let should_broadcast = match &event {
+                        atc_github::WebhookEvent::Run(env) => {
+                            match state.store.apply_run_event(env.clone()).await {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    metrics::counter!("atc_pg_in_memory_drift_total").increment(1);
+                                    tracing::warn!(error = %e, "post-commit in-memory drift (run)");
+                                    false
                                 }
                             }
-                            atc_github::WebhookEvent::Job(env) => {
-                                match state.store.apply_job_event(env.clone()).await {
-                                    Ok(_) => Some(Some(state.store.pool_stats().await)),
-                                    Err(e) => {
-                                        metrics::counter!("atc_pg_in_memory_drift_total")
-                                            .increment(1);
-                                        tracing::warn!(error = %e, "post-commit in-memory drift (job)");
-                                        None
-                                    }
+                        }
+                        atc_github::WebhookEvent::Job(env) => {
+                            match state.store.apply_job_event(env.clone()).await {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    metrics::counter!("atc_pg_in_memory_drift_total").increment(1);
+                                    tracing::warn!(error = %e, "post-commit in-memory drift (job)");
+                                    false
                                 }
                             }
-                        };
+                        }
+                    };
 
-                    if let Some(pool_stats_after) = broadcast_event {
-                        let seq = *seq_guard;
+                    if should_broadcast {
                         *seq_guard += 1;
-                        let seq_event = SeqEvent {
-                            seq,
-                            event,
-                            pool_stats_after,
-                        };
+                        let seq = *seq_guard;
+                        let seq_event = SeqEvent { seq, event };
                         let _ = state.webhook_tx.send(seq_event);
                         tracing::info!(event_type, seq, "event processed (pg+mem)");
                     } else {
@@ -342,36 +333,31 @@ async fn webhook_handler(
                     // Only assign seq and broadcast on successful store mutation.
                     // Failed transitions should not produce SeqEvents — clients
                     // must never receive events that aren't reflected in the store.
-                    let pool_stats_after: Option<Option<Vec<atc_core::RunnerPoolStats>>> =
-                        match &event {
-                            atc_github::WebhookEvent::Run(envelope) => {
-                                match state.store.apply_run_event(envelope.clone()).await {
-                                    Ok(_) => Some(None),
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "store run transition warning");
-                                        None
-                                    }
+                    let should_broadcast = match &event {
+                        atc_github::WebhookEvent::Run(envelope) => {
+                            match state.store.apply_run_event(envelope.clone()).await {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "store run transition warning");
+                                    false
                                 }
                             }
-                            atc_github::WebhookEvent::Job(envelope) => {
-                                match state.store.apply_job_event(envelope.clone()).await {
-                                    Ok(_) => Some(Some(state.store.pool_stats().await)),
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "store job transition warning");
-                                        None
-                                    }
+                        }
+                        atc_github::WebhookEvent::Job(envelope) => {
+                            match state.store.apply_job_event(envelope.clone()).await {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "store job transition warning");
+                                    false
                                 }
                             }
-                        };
+                        }
+                    };
 
-                    if let Some(pool_stats_after) = pool_stats_after {
-                        let seq = *seq_guard;
+                    if should_broadcast {
                         *seq_guard += 1;
-                        let seq_event = SeqEvent {
-                            seq,
-                            event,
-                            pool_stats_after,
-                        };
+                        let seq = *seq_guard;
+                        let seq_event = SeqEvent { seq, event };
                         let _ = state.webhook_tx.send(seq_event);
                         tracing::info!(event_type, seq, "event processed");
                     } else {

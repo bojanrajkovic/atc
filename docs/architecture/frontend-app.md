@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-05-02
+Last verified: 2026-05-05 (Phase 3a/3b: snapshot cursor renamed to `lastSeq`, buffer filter inverted to `seq > lastSeq`, runner pools now `$derived.by(() => computePoolStats(runStore.jobs))` — no more `loadPools` and no more `SeqEvent.poolStatsAfter` sidecar)
 
 ## Purpose
 
@@ -303,12 +303,13 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 - Receives and applies `RunEvent` mutations from the WebSocket
 - Derives: three sorted arrays (`queuedRuns` ascending by createdAt, `inProgressRuns` descending by runStartedAt, `completedRuns` descending by updatedAt), each with run.id tie-breaker; direct lexical ISO-8601 comparison, no Date parsing
 - Uses `SvelteMap<bigint, WorkflowRun>` and `SvelteMap<bigint, Job[]>` from `svelte/reactivity` (not plain `$state<Map>`). `SvelteMap` tracks reads per-key and per-iteration: `.get(key)` / `.set(key, v)` invalidates only consumers of that key; `.values()` / `.keys()` / `.size` invalidate iterating consumers on any structural change. Plain class fields (no `$state` wrapper) — reassignment is intentionally *not* supported since it would replace the reactive instance and silently drop subscribers; mutations go through `.set()` / `.delete()` / `.clear()`. `loadSnapshot` and `clear` call `.clear()` then re-populate, preserving the reactive instance's identity.
+- **`jobs: $derived.by<Job[]>`** (Phase 3b) — flat view across all runs. Iterates `this.jobsByRun.values()` and concatenates each `Job[]` into a single array. Consumed by `runnerStore.pools` (`computePoolStats(runStore.jobs)`) so the runner-pool derivation has a stable single dependency rather than threading the per-run `SvelteMap` itself.
 
 **RunnerStore** (`src/lib/stores/runners.svelte.ts`)
-- Holds `pools: RunnerPoolStats[]` as a single `$state`-backed array (single consumer — `TopBar`'s pool indicator `$derived` reads the whole collection).
-- Exposes `loadPools(pools)` (wholesale replace) and `clear()`. No per-pool update path — intentional: see `feedback_cow_semantics.md` for why `RunnerStore` uses wholesale replace while `RunStore` uses `SvelteMap` per-key reactivity.
-- Seeded at WS-connect from `StateSnapshot.poolStats` via `runnerStore.loadPools(snapshot.poolStats)` in `ConnectionManager`.
-- Updated live by the `SeqEvent.poolStatsAfter` sidecar: `EventDispatcher.routeEvent` calls `runnerStore.loadPools(seqEvent.poolStatsAfter)` whenever it is non-null. Null sidecars (Run events) are not applied. Derivation stays on the backend; the frontend never recomputes `RunnerPoolStats`.
+- Phase 3b: `pools` is `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))`. No `$state`, no `loadPools`, no `clear`, no manual sidecar.
+- `computePoolStats(jobs: Job[]): RunnerPoolStats[]` is exported from the same module as a pure function. It dedupes labels via `new Set(...)`, sorts them, uses `JSON.stringify(sortedLabels)` as a collision-free map key, skips jobs with status `Waiting` or `Completed`, increments `queued` / `running` per status, sets `groupName` from the most recent observed `runner.groupName`, sets `isElastic = true` whenever any observed `runner.groupId === 0n` (bigint-aware), and returns the resulting array sorted lexicographically by labels.
+- The derivation chain is: `runStore.jobsByRun` (mutated by `applyJobEvent`) → `runStore.jobs` (`$derived.by<Job[]>` flat view) → `runnerStore.pools`. Pool state self-heals on every job event without any explicit dispatch into the runner store.
+- See ADR 0004 (`docs/architecture-decisions/0004-frontend-derived-pool-stats.md`) for the rationale (multi-replica concurrent-writer correctness).
 
 **UIStore** (`src/lib/stores/ui.svelte.ts`)
 - Transient UI state: theme, dark/light mode, density, and selections
@@ -516,13 +517,16 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 2. `ConnectionManager` opens WebSocket to `/v1/ws`
 3. While WS is connecting, inbound messages are buffered in `preConnectBuffer`
 4. WS opens; client fetches full state snapshot via REST `/v1/state`
-5. Snapshot is loaded into stores; buffered events with seq >= snapshot seq are flushed synchronously
+5. Snapshot is loaded into stores; the `lastSeq` cursor is captured into `this.snapshotLastSeq`; buffered events with `seq > snapshotLastSeq` are flushed synchronously (events with `seq <= snapshotLastSeq` are already reflected in the snapshot and discarded)
 6. Connection transitions to `'connected'`; subsequent WS events are dispatched via `EventDispatcher`
 
-**Seq reconciliation:**
+**Seq reconciliation (Phase 3a):**
 - Each event carries a monotonic sequence number (`SeqEvent.seq`)
-- Buffered pre-connect events with seq < snapshot seq are discarded as stale
-- No explicit gap detection — reconnect re-fetches the full snapshot via `/v1/state`
+- The snapshot returns `StateSnapshot.lastSeq: bigint` — the **highest committed** seq, not the next-to-assign. `lastSeq = 0n` is the unambiguous "no events committed since startup" sentinel.
+- Buffered pre-connect events with `seq <= lastSeq` are discarded as stale (already in the snapshot)
+- Buffered pre-connect events with `seq > lastSeq` are dispatched in order
+- `this.jsonReviver` includes `'lastSeq'` in the bigint conversion allowlist alongside `'seq'`, `'id'`, `'runId'`, `'jobId'`, `'groupId'`, and `'number'`
+- No explicit gap detection — reconnect re-fetches the full snapshot via `/v1/state`. The contract is strictly monotonic, not gapless (ADR 0003 Decision 2: `BIGSERIAL` consumes seq values on aborted transactions).
 
 **Reconnect:**
 - Connection loss triggers exponential backoff (1s, 2s, 4s, ..., max 30s)
@@ -558,7 +562,7 @@ The post-snapshot buffered drain (`connection.ts` step 6) does flow through `eve
 2. Snapshot fetched; `eventDispatcher.clear()` drains stale dispatcher state
 3. `dispatcher.setOnFlush(null)` — explicitly silence the callback for the drain
 4. Snapshot loaded into stores (`runStore.loadSnapshot`)
-5. Buffered events with seq >= snapshot seq dispatched and flushed — stores updated silently
+5. Buffered events with `seq > snapshotLastSeq` dispatched and flushed — stores updated silently
 6. **`dispatcher.setOnFlush((events) => liveRegion.observeFlush(events))`** — wired here, after the drain
 7. Subsequent live events announce normally
 
@@ -642,7 +646,7 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 **Stores & State Management**
 - `frontend/src/lib/stores/connection.svelte.ts` — ConnectionStore: WebSocket lifecycle and status
 - `frontend/src/lib/stores/runs.svelte.ts` — RunsStore: WorkflowRun state and mutations
-- `frontend/src/lib/stores/runners.svelte.ts` — RunnersStore: Runner state and mutations
+- `frontend/src/lib/stores/runners.svelte.ts` — RunnerStore (Phase 3b: `pools` is `$derived.by(() => computePoolStats(runStore.jobs))`); also exports `computePoolStats(jobs: Job[]): RunnerPoolStats[]` as a pure function
 - `frontend/src/lib/stores/ui.svelte.ts` — UIStore: Local UI state (theme, mode, density, selectedRunId, selectedJobId, lastTriggerRunId, activePoolFilter, nowMs)
 - `frontend/src/lib/stores/palette.svelte.ts` — PaletteStore: command palette open/query/recent/submenu state
 

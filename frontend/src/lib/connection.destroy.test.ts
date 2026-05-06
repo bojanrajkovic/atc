@@ -2,7 +2,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { MockWebSocket, setupConnectionTestServer } from '$lib/__tests__/connection-test-helpers'
 import { ConnectionManager } from '$lib/connection'
 import { connectionStore } from '$lib/stores/connection.svelte'
-import { runnerStore } from '$lib/stores/runners.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 
 describe('ConnectionManager', () => {
@@ -27,7 +26,6 @@ describe('ConnectionManager', () => {
     server.resetHandlers()
     // Clear stores between tests
     runStore.clear()
-    runnerStore.clear()
     connectionStore.status = 'disconnected'
     connectionStore.reconnectAttempt = 0
     connectionStore.lastEventAt = null
