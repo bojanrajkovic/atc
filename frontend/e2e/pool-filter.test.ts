@@ -71,7 +71,11 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
         completedAt: null,
         action: {
           type: 'InProgress',
-          data: { runner: null, labels: LINUX_LABELS, steps: [] },
+          data: {
+            runner: { id: 1n, name: 'runner-1', groupId: null, groupName: 'linux-builders' },
+            labels: LINUX_LABELS,
+            steps: [],
+          },
         },
       },
     }),
@@ -139,7 +143,7 @@ test.describe('Pool filter integration', () => {
     }, linuxKey)
 
     const matching = page.locator('[data-testid="runner-pool-linux-builders"]')
-    const other = page.locator('[data-testid="runner-pool-windows-builders"]')
+    const other = page.locator('[data-testid="runner-pool-self-hosted, windows"]')
     await expect(matching).toHaveClass(/is-active-filter/)
     await expect(other).not.toHaveClass(/is-active-filter/)
   })
