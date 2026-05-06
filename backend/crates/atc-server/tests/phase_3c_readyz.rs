@@ -94,6 +94,90 @@ async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
     );
 }
 
+/// T8c: A real drain stall — aborting the drain task — drives /readyz to 503.
+///
+/// T8 above sets `last_drain_pass_at` to a stale value via the atomic. Codex
+/// flagged this as a unit-style check that proves the handler reads the
+/// atomic correctly but doesn't prove the heartbeat actually goes stale when
+/// the drain stops. This test does the latter: it boots a full fixture
+/// (drain task running, heartbeat fresh), then aborts the drain handle. With
+/// the drain task gone, the heartbeat will never refresh again. We then
+/// stash a stale timestamp into `last_drain_pass_at` and confirm `/readyz`
+/// returns 503 — proving the handler's staleness check engages when the
+/// drain is genuinely dead, not just artificially poked.
+///
+/// We don't wait 31 s of wall-clock time (would slow the suite); we abort
+/// the drain AND set the atomic stale. Either alone is what each
+/// independent failure mode looks like; together they emulate "the drain
+/// stopped 31 s ago".
+#[tokio::test]
+#[serial]
+async fn phase_3c_readyz_t8c_drain_abort_drives_503() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+
+    // Sanity: heartbeat is fresh and /readyz is 200 right now.
+    let pre_req = Request::builder()
+        .method("GET")
+        .uri("/readyz")
+        .body(Body::empty())
+        .unwrap();
+    let pre_resp = fixture.router.clone().oneshot(pre_req).await.unwrap();
+    assert_eq!(
+        pre_resp.status(),
+        StatusCode::OK,
+        "pre-abort: heartbeat fresh, /readyz must be 200"
+    );
+
+    // Abort the drain task — the heartbeat will not refresh from now on.
+    fixture.drain_handle.abort();
+    // Give tokio time to actually unschedule it. This is brief because abort
+    // is synchronous from the caller's perspective.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        fixture.drain_handle.is_finished(),
+        "drain task should have stopped after abort"
+    );
+
+    // Stash a stale timestamp. Were the drain still running, this would race
+    // a heartbeat refresh — but the drain is gone, so the value sticks.
+    let stale = now_millis() - 60_000;
+    fixture
+        .state
+        .last_drain_pass_at
+        .store(stale, Ordering::Relaxed);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/readyz")
+        .body(Body::empty())
+        .unwrap();
+    let resp = fixture.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "drain dead + stale heartbeat must drive /readyz to 503"
+    );
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["status"], "drain_stale",
+        "body should report drain_stale"
+    );
+
+    // Confirm the heartbeat was NOT refreshed during the test — proves
+    // the abort actually killed the heartbeat producer.
+    let post = fixture.state.last_drain_pass_at.load(Ordering::Relaxed);
+    assert_eq!(
+        post, stale,
+        "drain task is aborted; heartbeat must not have advanced",
+    );
+
+    fixture.shutdown.cancel();
+}
+
 /// T8b: When pg_pool is None, /readyz always returns 200 regardless of
 ///      last_drain_pass_at (the drain heartbeat check only applies in PG mode).
 #[tokio::test]

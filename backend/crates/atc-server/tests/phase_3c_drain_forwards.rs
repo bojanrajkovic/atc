@@ -103,24 +103,32 @@ async fn phase_3c_drain_forwards_t4_drain_broadcasts_seq_in_order() {
 ///     broadcast channel directly. The drain task is the SOLE writer to
 ///     `webhook_tx`.
 ///
-/// Proof-of-absence: subscribe BEFORE the webhook, send the webhook, then
-/// immediately (synchronously) drain the channel. Assert that the immediate
-/// channel snapshot does not contain any events. The drain broadcasts
-/// asynchronously — if we read the channel in a brief window before the drain
-/// wakes up, nothing should be there from the handler itself.
-///
-/// To make this race-safe: we fire the webhook, await the handler's 200 OK
-/// response, then try_recv() (non-blocking) exactly once. The handler is
-/// synchronous with respect to the HTTP response — if it had broadcast, the
-/// event would be in the channel already. Any event that arrives later came
-/// from the drain.
+/// Determinism strategy: inject a 500 ms `drain_delay` so each drain pass
+/// sleeps before querying the outbox. After the handler returns 200, there is
+/// a guaranteed window (≪500 ms) during which the drain has not yet
+/// processed the row — any event in the channel during that window must have
+/// come from the handler. The window is long enough for tokio to schedule
+/// the drain task if it wanted to broadcast (the drain wakes on `notified()`
+/// inside the select; the delay is awaited AFTER the wake), so the proof
+/// of absence is real and not just a scheduling race.
 #[tokio::test]
 #[serial]
 async fn phase_3c_drain_forwards_t5_handler_silent_in_pg_mode() {
     let (pool, _container, db_url) = common::start_pg().await;
-    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    // Slow the drain so the handler's return strictly precedes any drain
+    // broadcast for the row it just committed. drain_delay sleeps at the
+    // start of each drain_pass — the listener wakes the drain on NOTIFY,
+    // the drain enters drain_pass, then sleeps drain_delay before SELECT.
+    let fixture = common::build_app_with_pg_and_slow_drain(
+        pool,
+        db_url,
+        std::time::Duration::from_millis(500),
+    )
+    .await;
 
-    // Subscribe before firing the webhook.
+    // Subscribe AFTER fixture build so the startup pass (which runs
+    // immediately in build_app_inner before the delay setting matters) has
+    // already cleared. The fixture's drain_started signal fires after that.
     let mut rx = fixture.state.webhook_tx.subscribe();
 
     // Fire webhook and await HTTP 200.
@@ -136,29 +144,35 @@ async fn phase_3c_drain_forwards_t5_handler_silent_in_pg_mode() {
         "PG-mode handler should return accepted, not processed"
     );
 
-    // The handler has returned. If it had broadcast to webhook_tx, the event
-    // would already be in the channel. try_recv is non-blocking — if the
-    // channel is empty here, the handler didn't broadcast.
+    // Window: between handler-return and drain-broadcast there is a
+    // guaranteed 500 ms gap (drain_delay). Sleep 100 ms — well inside the
+    // gap — and assert the channel is empty. If the handler broadcast,
+    // the event would be here.
+    tokio::time::sleep(Duration::from_millis(100)).await;
     let immediate = rx.try_recv();
     assert!(
         immediate.is_err(),
-        "handler must NOT broadcast immediately in PG mode; got an event: {immediate:?}"
+        "handler must not broadcast in PG mode; saw event during drain_delay window: {immediate:?}",
     );
 
-    // The drain will eventually broadcast — confirm it does (proves the full
-    // pipe works, not just that the handler is silent).
-    let drain_ev = timeout(Duration::from_secs(5), async {
-        match rx.recv().await {
-            Ok(ev) => ev,
-            Err(_) => panic!("broadcast channel closed"),
-        }
-    })
-    .await
-    .expect("timed out waiting for drain to broadcast");
-
+    // Wait past the delay for the drain to broadcast. Confirms the full
+    // pipe works — silence is meaningful only if the drain DOES broadcast
+    // afterward.
+    let drain_ev = timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .expect("timed out waiting for drain to broadcast")
+        .expect("broadcast channel closed");
     assert_eq!(
         drain_ev.seq, 1,
         "drain should broadcast seq=1 (first event)"
+    );
+
+    // After the drain broadcasts seq=1, no second event is expected for
+    // this webhook. Wait one more drain_delay window and assert silence.
+    let extra = timeout(Duration::from_millis(700), rx.recv()).await;
+    assert!(
+        extra.is_err(),
+        "no second broadcast expected (drain is the only writer); got {extra:?}",
     );
 
     // Confirm the seq counter in AppState was NOT incremented by the handler
