@@ -19,6 +19,31 @@ use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 
+/// Validates that a database URL uses a scheme ATC supports (postgres:// or
+/// postgresql://) and exits the process with an actionable log message if not.
+///
+/// Called eagerly at startup for both `ATC_DATABASE_URL` and
+/// `ATC_DATABASE_LISTENER_URL` (when set) so that misconfigurations fail fast
+/// with a remediation-naming message instead of bottoming out as
+/// `sqlx::Error::Configuration` deep inside `PgPool::connect` or
+/// `connect_listener`. Mirrors the chart-time guard in
+/// `deploy/helm/atc/templates/deployment.yaml`, which catches the same
+/// misconfiguration at `helm template/install` time on the inline
+/// `config.databaseUrl` path; this binary check covers the `existingSecret`
+/// path (whose contents are opaque to the chart) and any out-of-cluster
+/// invocations.
+fn ensure_pg_scheme(label: &str, url: &str) {
+    if url.starts_with("postgres://") || url.starts_with("postgresql://") {
+        return;
+    }
+    let scheme = url.split("://").next().unwrap_or("");
+    tracing::error!(
+        url_scheme = scheme,
+        "{label} must be a postgres:// or postgresql:// URL; got scheme {scheme:?}. ATC only supports external PostgreSQL.",
+    );
+    process::exit(1);
+}
+
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -72,6 +97,13 @@ async fn main() {
             .with_env_filter(filter)
             .pretty()
             .init();
+    }
+
+    if let Some(ref db_url) = cfg.database_url {
+        ensure_pg_scheme("ATC_DATABASE_URL", db_url);
+    }
+    if let Some(ref listener_url) = cfg.database_listener_url {
+        ensure_pg_scheme("ATC_DATABASE_LISTENER_URL", listener_url);
     }
 
     let pg_pool: Option<sqlx::PgPool> = if let Some(ref db_url) = cfg.database_url {

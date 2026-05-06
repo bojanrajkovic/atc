@@ -179,6 +179,15 @@ The drain task implements bounded ring-buffer dedup (2048 seqs / ~16 KB per repl
 
 Decision 4 (PG-side TTL eviction deferred to Phase 5) still holds — the in-memory eviction task remains, but in PG mode the in-memory store stays empty so eviction is a no-op.
 
+## Phase 4 implementation note (2026-05-06)
+
+Decision 3 was implemented in Phase 4 (`docs/design-plans/2026-05-06-phase-4-multi-replica-enablement.md`, PR closing #7). Two clarifications worth recording for later readers:
+
+- **`persistence.*` machinery removed alongside SQLite.** ADR 0003 D3 says SQLite is "removed entirely" but does not directly speak to the chart's `persistence.*` value surface, the `templates/pvc.yaml` template, or the persistence-conditional volume mounts in `deployment.yaml` — those existed only because SQLite-with-PVC was Mode 2. With SQLite gone, an audit (`grep -rn -i "persistence|persistent_volume|PersistentVolume|PVC"` over `backend/`, `frontend/src/`, and non-Helm `docs/`) returned zero hits referring to Kubernetes PVCs. There was no current consumer and no roadmapped consumer that requires a PVC over a ConfigMap/env-var configuration model, so the persistence surface was retired. If a future use case requires a PVC (e.g., a sidecar buffering audit logs to disk), the surface should be re-introduced tightly scoped to that consumer rather than as a general-purpose toggle.
+- **The "existing guard ... stays in place" passage above no longer applies.** It referred to the pre-Phase-4 `persistence.enabled=true` + `replicaCount > 1` guard. That guard became unreachable when persistence was removed; Phase 4 replaced it with a `replicaCount > 1` ⇒ Postgres URL required guard at the same site in `templates/deployment.yaml`. The new guard is checked at template-render time, allowing remediation guidance in the failure message.
+
+The chart now has two storage modes (ephemeral, external-Postgres) and a constant `RollingUpdate` strategy. Operators upgrading from a pre-Phase-4 chart with `persistence:` keys in their values files will see schema validation reject the unknown property — a deliberate breaking change in a 0.x chart, called out in the Phase 4 PR's release notes. See `docs/architecture/deployment.md` § "Storage-mode evolution" for the full historical context.
+
 ## Related
 
 - ADR 0002 — [PostgreSQL outbox + symmetric replicas for live state](./0002-state-externalization-postgres-outbox.md)
@@ -188,5 +197,6 @@ Decision 4 (PG-side TTL eviction deferred to Phase 5) still holds — the in-mem
   - [`frontend-impact.md`](../architecture/state-externalization-research/frontend-impact.md) — cursor rename impact, optional hardening
   - [`rollout-and-implementation.md`](../architecture/state-externalization-research/rollout-and-implementation.md) — phased rollout plan
 - Frontend cursor handling: `frontend/src/lib/connection.ts:14` (private field), `:116` (comparator)
-- Current Helm guard: `deploy/helm/atc/templates/deployment.yaml:5-6`
-- Chart storage-mode docs (to be updated in Phase 4): `deploy/helm/atc/values.yaml:106-132`
+- Helm multi-replica guard (Phase 4): `deploy/helm/atc/templates/deployment.yaml` (top of file)
+- Chart storage-mode docs (Phase 4): `deploy/helm/atc/values.yaml` (the two-mode block under `config.databaseUrl`)
+- Storage-mode-evolution history: `docs/architecture/deployment.md` § "Storage-mode evolution"

@@ -1,5 +1,7 @@
 # Helm Chart Design
 
+> **Revised by Phase 4 (ADR 0003 D3):** SQLite and persistence machinery removed; chart now supports two storage modes (ephemeral in-memory single-replica, external-Postgres any replica count). The PVC template, `persistence.*` values, persistence-conditional volume mounts, and the persistence-driven update-strategy flip are all gone. A new template-render-time `{{ fail }}` guard ties `replicaCount > 1` to a Postgres URL. See [`docs/design-plans/2026-05-06-phase-4-multi-replica-enablement.md`](2026-05-06-phase-4-multi-replica-enablement.md) for the rationale and execution.
+
 ## Summary
 
 Phase 6 of ATC ships a production-grade Helm chart at `deploy/helm/atc/` alongside the minimum backend changes required to deploy cleanly under Kubernetes' `restricted` Pod Security Standards. The work is sequenced in eight phases: the backend comes first (configuration, metrics, health endpoint rename), then the chart templates, then CI validation, then release publishing, and finally release-please integration. Each phase's outputs are the prerequisites for the next, so nothing lands in isolation.

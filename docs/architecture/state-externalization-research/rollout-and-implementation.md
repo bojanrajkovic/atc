@@ -1,6 +1,6 @@
 # Rollout And Implementation
 
-Last verified: 2026-05-06 (Phase 3c read-path cutover: complete)
+Last verified: 2026-05-06 (Phase 4 multi-replica enablement: complete)
 
 ## Status
 
@@ -204,20 +204,26 @@ ADR refs: [ADR 0002 Decision 5](../../architecture-decisions/0002-state-external
 
 ### Phase 4: Multi-replica enablement
 
+**Status: Done (2026-05-06).** Closed issue #7 in substance. Implementation notes:
+- Phase 4 also retired the chart's `persistence.*` machinery (PVC template, values block, schema entry, conditional volume mounts) alongside SQLite — an audit found zero application-code consumers of Kubernetes PVCs at the time of removal. Rationale captured in [ADR 0003 Phase 4 implementation note](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) and `deployment.md` § "Storage-mode evolution".
+- The `Recreate`/`RollingUpdate` strategy flip went away with persistence — both surviving modes (ephemeral, external-Postgres) are RWO-volume-free, so a single constant `RollingUpdate` (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both.
+- Validation gate is two-part: `helm-unittest` covers the new precondition guard and post-removal renders; the operational two-replica deploy is documented as a [Multi-replica smoke test runbook](../deployment.md#multi-replica-smoke-test) in `deployment.md`. Issue #12 tracks adding kind-based chart-testing to CI.
+- Issues #8 (HPA), #9 (PDB), and #10 (anti-affinity) were unblocked by Phase 4 closing.
+
 Update Helm chart and operationally validate multi-replica. This is the phase where issue #7 is closed in substance.
 
 In scope:
-- Update Helm chart: gate `replicaCount > 1` on the presence of a `postgres://` URL via `config.databaseUrl` or `existingSecret`
-- Remove SQLite mode from chart entirely (per ADR 0003 Decision 3): the chart's storage-mode story collapses from three modes (ephemeral / local-SQLite / external-Postgres) to two (ephemeral / external-Postgres)
-- Update `deploy/helm/atc/values.yaml:106-132` storage-mode docs
-- Remove SQLite values-matrix tests under `deploy/helm/atc/tests/`
-- Update existing `{{ fail }}` guard logic for the new mode constraints
-- Operationally test: deploy with `replicaCount = 2` against a shared Postgres; verify both replicas serve snapshots, both forward events, and clients on either replica see consistent state
-- Update `docs/architecture/deployment.md` to reflect the two-mode story
+- Update Helm chart: gate `replicaCount > 1` on the presence of a `postgres://` URL via `config.databaseUrl` or `existingSecret` — **DONE** (template-render-time `{{ fail }}` guard at the top of `templates/deployment.yaml`)
+- Remove SQLite mode from chart entirely (per ADR 0003 Decision 3): the chart's storage-mode story collapses from three modes (ephemeral / local-SQLite / external-Postgres) to two (ephemeral / external-Postgres) — **DONE** (also retired `persistence.*` machinery; see above)
+- Update `deploy/helm/atc/values.yaml` storage-mode docs to the two-mode block — **DONE**
+- Remove SQLite values-matrix tests under `deploy/helm/atc/tests/` — **DONE** (`tests/values-persistence.yaml` and `tests/unit/pvc-invariant.yaml` deleted; `tests/values-multi-replica.yaml` added; CI matrix updated)
+- Update existing `{{ fail }}` guard logic for the new mode constraints — **DONE** (replaces the SQLite + persistence guards with the new multi-replica guard; tested in `tests/unit/fail-guards.yaml`)
+- Operationally test: deploy with `replicaCount = 2` against a shared Postgres; verify both replicas serve snapshots, both forward events, and clients on either replica see consistent state — **DONE via runbook** (the [Multi-replica smoke test](../deployment.md#multi-replica-smoke-test) in `deployment.md` is the closure evidence; AC11 measurement protocol)
+- Update `docs/architecture/deployment.md` to reflect the two-mode story — **DONE** (two-mode storage decision, Multi-replica section, Multi-replica smoke test runbook, Storage-mode evolution note)
 
-Acceptance: a multi-replica test deployment shows two pods both serving `/v1/state` and `/v1/ws` against the same PG, with consistent state across both.
+Acceptance: a multi-replica test deployment shows two pods both serving `/v1/state` and `/v1/ws` against the same PG, with consistent state across both. **SATISFIED via runbook execution against OrbStack k8s 1.33.9 + PostgreSQL 18.3 (2026-05-06).** The smoke test asserts (a) `/v1/state` `lastSeq` convergence within 5 seconds across both pod-local endpoints, (b) exactly one `SeqEvent` per replica's WebSocket tap (`scripts/ws-tap.js`) per webhook (single-delivery via ring-buffer dedup), (c) both `/readyz` endpoints return 200 throughout. Evidence captured in PR #57.
 
-ADR refs: [ADR 0003 Decision 3](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) (Helm gating + SQLite removal).
+ADR refs: [ADR 0003 Decision 3](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) (Helm gating + SQLite removal), [ADR 0002 Decision 5](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (symmetric replicas + reconnect-then-snapshot).
 
 ### Phase 5: Hardening and cleanup
 

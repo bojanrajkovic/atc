@@ -1,9 +1,14 @@
 {{- $dbUrl := .Values.config.databaseUrl | default "" -}}
-{{- if and (hasPrefix "sqlite://" $dbUrl) (not (hasPrefix "sqlite:////tmp/" $dbUrl)) (not .Values.persistence.enabled) -}}
-{{- fail "sqlite:// database URL requires persistence.enabled=true (path outside /tmp requires a PersistentVolume). Either set persistence.enabled=true or use a database URL pointing inside /tmp." -}}
+{{- $hasInlineDbUrl := ne $dbUrl "" -}}
+{{- if $hasInlineDbUrl -}}
+{{- if not (or (hasPrefix "postgres://" $dbUrl) (hasPrefix "postgresql://" $dbUrl)) -}}
+{{- $scheme := (splitn "://" 2 $dbUrl)._0 -}}
+{{- fail (printf "config.databaseUrl must use the postgres:// or postgresql:// scheme; got %q. ATC only supports external PostgreSQL." $scheme) -}}
 {{- end -}}
-{{- if and .Values.persistence.enabled (gt (int .Values.replicaCount) 1) -}}
-{{- fail "persistence.enabled=true requires replicaCount=1 because ReadWriteOnce PersistentVolumes cannot be mounted by multiple Pods simultaneously. Disable persistence or reduce replicaCount to 1." -}}
+{{- end -}}
+{{- $hasDbUrl := or (and .Values.existingSecret.name .Values.existingSecret.databaseUrlKey) $hasInlineDbUrl -}}
+{{- if and (gt (int .Values.replicaCount) 1) (not $hasDbUrl) -}}
+{{- fail "replicaCount > 1 requires a PostgreSQL connection string. Set config.databaseUrl=postgres://... or existingSecret.name (with existingSecret.databaseUrlKey). The chart's ephemeral in-memory mode is single-replica only." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -12,16 +17,11 @@ metadata:
   labels:
     {{- include "atc.labels" . | nindent 4 }}
 spec:
-  {{- if .Values.persistence.enabled }}
-  strategy:
-    type: Recreate
-  {{- else }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 0
-  {{- end }}
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
@@ -108,18 +108,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.persistence.enabled }}
-            - name: data
-              mountPath: {{ .Values.persistence.mountPath }}
-            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
-        {{- if .Values.persistence.enabled }}
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "atc.fullname" .)) | quote }}
-        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

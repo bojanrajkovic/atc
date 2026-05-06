@@ -1,22 +1,79 @@
-suite: Fail guards — constraint violations (AC4.5, AC4.6)
+suite: Fail guards — replicaCount > 1 ⇒ Postgres URL required (AC1, AC2, AC3)
 
 templates:
   - deployment.yaml
 
 tests:
-  - it: fails when sqlite:// database URL is set without persistence enabled
+  - it: renders successfully when replicaCount > 1 is paired with config.databaseUrl
     set:
-      config.databaseUrl: "sqlite:///var/lib/atc/atc.db"
-      persistence.enabled: false
+      replicaCount: 2
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
     asserts:
-      - failedTemplate:
-          errorPattern: "sqlite:// database URL requires persistence.enabled=true"
+      - equal:
+          path: spec.replicas
+          value: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_URL
+            value: "postgres://atc:atc@postgres:5432/atc"
 
-  - it: fails when persistence is enabled with replicaCount > 1
+  - it: renders successfully when replicaCount > 1 is paired with existingSecret, with ATC_DATABASE_URL pulled via secretKeyRef
     set:
-      persistence.enabled: true
-      replicaCount: 3
+      replicaCount: 2
+      existingSecret.name: atc-db-secret
+      existingSecret.databaseUrlKey: database_url
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: atc-db-secret
+                key: database_url
+
+  - it: fails when replicaCount > 1 is set with neither config.databaseUrl nor existingSecret — message names all three remediation paths
+    set:
+      replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: "config\\.databaseUrl"
+      - failedTemplate:
+          errorPattern: "existingSecret\\.name"
+      - failedTemplate:
+          errorPattern: "existingSecret\\.databaseUrlKey"
+
+  - it: accepts the postgresql:// scheme as well as postgres://
+    set:
+      replicaCount: 2
+      config.databaseUrl: "postgresql://atc:atc@postgres:5432/atc"
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: rejects sqlite:// as the config.databaseUrl scheme
+    set:
       config.databaseUrl: "sqlite:///var/lib/atc/atc.db"
     asserts:
       - failedTemplate:
-          errorPattern: "persistence.enabled=true requires replicaCount=1"
+          errorPattern: "postgres://"
+      - failedTemplate:
+          errorPattern: "postgresql://"
+      - failedTemplate:
+          errorPattern: "sqlite"
+
+  - it: rejects mysql:// as the config.databaseUrl scheme
+    set:
+      config.databaseUrl: "mysql://user:pw@host:3306/atc"
+    asserts:
+      - failedTemplate:
+          errorPattern: "postgres://"
+      - failedTemplate:
+          errorPattern: "postgresql://"
+      - failedTemplate:
+          errorPattern: "mysql"

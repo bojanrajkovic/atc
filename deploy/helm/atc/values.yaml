@@ -1,7 +1,8 @@
 # -- Number of replicas.
-# NOTE: replicaCount > 1 is incompatible with persistence.enabled=true because most
-# StorageClasses provide ReadWriteOnce volumes that block pod handoff during rolling
-# updates. The chart enforces this constraint with a {{ fail }} guard.
+# NOTE: replicaCount > 1 requires an external PostgreSQL connection string via
+# config.databaseUrl or existingSecret. The chart enforces this at template-render
+# time via a {{ fail }} guard in templates/deployment.yaml. The ephemeral
+# in-memory mode is single-replica only.
 replicaCount: 1
 
 image:
@@ -100,35 +101,26 @@ config:
   metricsAddr: "0.0.0.0:9090"
   # -- Database connection URL.
   #
-  # Three storage modes are supported:
+  # Two storage modes are supported:
   #
-  # Mode 1 — Ephemeral / demo (default):
-  #   Leave databaseUrl unset. No database is configured; ATC runs stateless.
-  #   Use case: first-touch homelab, demos, testing.
-  #   Update strategy: RollingUpdate (zero downtime).
+  # Mode 1 — Ephemeral (in-memory, single replica):
+  #   Leave databaseUrl unset (the default).
+  #   ATC holds workflow run/job state in memory; pod restart loses state.
+  #   Required: replicaCount = 1. The chart enforces multi-replica
+  #   configurations to use external Postgres; see the {{ fail }} guard in
+  #   templates/deployment.yaml.
+  #   Use case: dev, CI, "I just want to see it run" homelabs.
   #
-  # Mode 2 — Local SQLite:
-  #   Set databaseUrl: "sqlite:///var/lib/atc/atc.db" AND persistence.enabled: true.
-  #   ATC stores state in a SQLite file on a PersistentVolume.
-  #   Use case: single-instance homelab or work cluster without an external database.
-  #   Update strategy: Recreate (brief downtime; ReadWriteOnce volume constraint).
-  #   NOTE: Setting databaseUrl to a sqlite:// path outside /tmp without
-  #   persistence.enabled=true is a configuration error — the chart will fail at
-  #   render time with an explicit message.
+  # Mode 2 — External Postgres (any replica count):
+  #   Set databaseUrl: "postgres://user:pass@host:5432/atc"
+  #   OR provide existingSecret.name with existingSecret.databaseUrlKey.
+  #   ATC writes via the transactional outbox and reads from the live PG
+  #   state. Multi-replica: each replica runs its own LISTEN/NOTIFY listener
+  #   and drain task; symmetric, no leader.
+  #   Use case: production, multi-replica homelab/work clusters.
   #
-  # Mode 2b — Ephemeral SQLite (/tmp):
-  #   Set databaseUrl: "sqlite:////tmp/atc.db" (NO persistence.enabled needed).
-  #   ATC stores state in a SQLite file on the ephemeral emptyDir at /tmp.
-  #   Use case: temporary demos or integration tests where state is expected to be lost on pod restart.
-  #   Update strategy: RollingUpdate (zero downtime; state not preserved across restarts).
-  #   This mode runs without a PersistentVolume — the database file is lost when the pod is deleted.
-  #
-  # Mode 3 — External Postgres:
-  #   Set databaseUrl: "postgres://user:pass@host:5432/atc" (or use existingSecret).
-  #   ATC connects to an operator-managed Postgres instance.
-  #   Use case: work cluster with an operated Postgres service.
-  #   Update strategy: RollingUpdate (zero downtime; no local volume).
-  #
+  # See docs/architecture/deployment.md for the full multi-replica runbook
+  # and the storage-mode evolution history.
   databaseUrl: null
   # -- Listener database connection URL (optional).
   #
@@ -176,24 +168,6 @@ metrics:
     # -- additionalLabels: extra labels added to the ServiceMonitor metadata.
     # Use these to match the label selector of your Prometheus Operator installation.
     additionalLabels: {}
-
-persistence:
-  # -- Whether to mount a PersistentVolumeClaim for database storage.
-  # Required when config.databaseUrl uses a sqlite:// path outside /tmp.
-  # Enabling persistence automatically switches the Deployment strategy to Recreate.
-  enabled: false
-  # -- Storage class for the PVC. Leave empty to use the cluster default.
-  storageClass: ""
-  # -- Access modes for the PVC.
-  accessModes:
-    - ReadWriteOnce
-  # -- Storage size for the PVC.
-  size: 1Gi
-  # -- Name of an existing PVC to use instead of creating a new one.
-  # When set, the chart does not create a PVC; the Deployment volume references this claim directly.
-  existingClaim: ""
-  # -- Mount path for the persistence volume inside the container.
-  mountPath: "/var/lib/atc"
 
 ingress:
   # -- Whether to create an Ingress resource.

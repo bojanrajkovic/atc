@@ -1,6 +1,6 @@
 # State Externalization Research
 
-Last verified: 2026-05-03
+Last verified: 2026-05-06 (Phase 4: multi-replica enabled with external Postgres; SQLite-mode-removed passage updated)
 
 ## Purpose
 
@@ -57,7 +57,7 @@ External reference inputs:
 Two points matter before evaluating alternatives:
 
 1. The implemented server contract is now stricter than the older Phase 9 design plan. `atc-server` no longer uses an `AtomicU64`; it uses `Mutex<u64>` held across store mutation plus seq assignment, and `GET /v1/state` holds the same mutex across snapshot plus seq read. The code is already built around atomic snapshot/stream handoff.
-2. The issue body's statement that Helm blocks all `replicaCount > 1` deployments no longer matches the repository as of 2026-05-03. The current Helm `fail` guard only rejects `persistence.enabled=true` with `replicaCount > 1`. Stateless multi-replica still renders, but it is not semantically correct because live state remains process-local.
+2. The issue body's statement that Helm blocks all `replicaCount > 1` deployments was already loose as of 2026-05-03 (the guard only rejected `persistence.enabled=true` with `replicaCount > 1`; stateless multi-replica still rendered without any precondition). Phase 4 (2026-05-06) replaced that guard with a template-render-time `{{ fail }}` that ties `replicaCount > 1` to the presence of a Postgres URL via `config.databaseUrl` or `existingSecret`. The persistence machinery itself was retired alongside SQLite (see ADR 0003 Phase 4 implementation note and `deployment.md` § "Storage-mode evolution"). Symmetric stateless-multi-replica is no longer renderable.
 
 ## Document Map
 
