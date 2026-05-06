@@ -222,6 +222,17 @@ pub fn spawn_drain_task(
                 if backstop != i64::MAX {
                     min_pending_seq.fetch_min(backstop, Ordering::Release);
                 }
+                // Force the next iteration to attempt another drain pass.
+                // Without this, the loop would re-enter the `tokio::select!`
+                // and — if no new webhook arrives — wait on the 5 s heartbeat
+                // tick, take the heartbeat-only arm, refresh the timestamp,
+                // and `continue` without ever retrying the drain. A single
+                // committed row pending after a transient query failure could
+                // then sit undelivered indefinitely while `/readyz` stayed
+                // healthy via heartbeat ticks. `notify_one()` adds a permit
+                // so the next `drain_notify.notified()` resolves immediately
+                // and the next iteration runs as a NOTIFY-driven pass.
+                drain_notify.notify_one();
                 // Brief backoff before retry. Don't refresh heartbeat — that's
                 // the entire point of this branch.
                 tokio::select! {
