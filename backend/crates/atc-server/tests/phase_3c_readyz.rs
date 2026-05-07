@@ -19,7 +19,6 @@ use atc_core::{StateStore, SystemClock};
 use atc_server::state::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum_prometheus::PrometheusMetricLayer;
 use serial_test::serial;
 use tower::ServiceExt;
 
@@ -44,7 +43,7 @@ async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
     let store = Arc::new(StateStore::new(
@@ -184,7 +183,7 @@ async fn phase_3c_readyz_t8c_drain_abort_drives_503() {
 #[serial]
 async fn phase_3c_readyz_t8b_no_pg_always_200() {
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
     let store = Arc::new(StateStore::new(

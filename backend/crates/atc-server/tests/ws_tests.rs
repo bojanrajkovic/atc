@@ -30,7 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     // Use the shared PROMETHEUS_INIT to avoid multiple initializations
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
 

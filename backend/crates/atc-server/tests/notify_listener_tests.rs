@@ -131,10 +131,9 @@ async fn phase_2d_notify_listener_ac2_no_notify_on_rollback() {
 async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
     use atc_core::{StateStore, SystemClock};
     use atc_server::state::AppState;
-    use axum_prometheus::PrometheusMetricLayer;
 
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
     let store = Arc::new(StateStore::new(

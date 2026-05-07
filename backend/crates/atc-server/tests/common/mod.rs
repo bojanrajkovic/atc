@@ -9,7 +9,8 @@ use atc_core::{StateStore, SystemClock};
 use atc_server::listener;
 use atc_server::state::AppState;
 use axum_prometheus::PrometheusMetricLayer;
-use axum_prometheus::metrics_exporter_prometheus::PrometheusHandle;
+use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use axum_prometheus::utils::SECONDS_DURATION_BUCKETS;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +21,43 @@ fn now_millis_for_test() -> i64 {
         .unwrap_or(0)
 }
 
-// Guard: PrometheusMetricLayer::pair() is called only once per test binary.
+/// Mirror of the production `metrics::build()` install path so test fixtures
+/// validate the same custom-bucket configuration as production. Without this
+/// mirror, tests would exercise the default-recorder path while production
+/// uses the install-recorder path, masking real divergence.
+///
+/// All test binaries that share [`PROMETHEUS_INIT`] must use this initializer
+/// (instead of `PrometheusMetricLayer::pair`) so the global recorder for the
+/// binary has consistent bucket configuration regardless of which test fires
+/// first.
+pub fn install_test_recorder() -> (PrometheusMetricLayer<'static>, PrometheusHandle) {
+    let handle = PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("atc_pg_drain_startup_seconds".to_string()),
+            &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+        )
+        .expect("valid drain-startup bucket spec")
+        .set_buckets_for_metric(
+            Matcher::Suffix("_seconds".to_string()),
+            SECONDS_DURATION_BUCKETS,
+        )
+        .expect("valid _seconds suffix bucket spec")
+        .install_recorder()
+        .expect("install global Prometheus recorder");
+
+    let upkeep_handle = handle.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            upkeep_handle.run_upkeep();
+        }
+    });
+
+    (PrometheusMetricLayer::new(), handle)
+}
+
+// Guard: install_test_recorder() is called only once per test binary.
 // Tests that use this must be marked with #[serial_test::serial] to avoid concurrent execution.
 // Stores both the layer (for routing) and the handle (for metric assertions via render_metrics()).
 pub static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, PrometheusHandle)> =
@@ -52,10 +89,7 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 
 /// Build app with a specific webhook secret
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
-        .0
-        .clone();
+    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -79,10 +113,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 
 /// Build app with no webhook secret (verification bypassed)
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
-        .0
-        .clone();
+    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -215,10 +246,7 @@ async fn build_app_inner(
 ) -> AppFixture {
     use std::sync::atomic::Ordering;
 
-    let layer = PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
-        .0
-        .clone();
+    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),

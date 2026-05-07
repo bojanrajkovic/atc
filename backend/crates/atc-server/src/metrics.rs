@@ -3,6 +3,8 @@ use std::time::Duration;
 use axum::http::header;
 use axum::{Router, routing::get};
 use axum_prometheus::PrometheusMetricLayer;
+use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use axum_prometheus::utils::SECONDS_DURATION_BUCKETS;
 
 /// Prometheus text exposition format Content-Type.
 ///
@@ -10,8 +12,63 @@ use axum_prometheus::PrometheusMetricLayer;
 /// `text/plain; charset=utf-8`, which is missing the `version` parameter that
 /// the Prometheus exposition format v0.0.4 spec requires. Real scrapers fall
 /// back to defaults when the header is missing, but we set it explicitly so
-/// the `/metrics` response matches the spec and the design plan's AC2.2.
+/// the `/metrics` response matches the spec.
 const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+
+/// Custom histogram buckets for `atc_pg_drain_startup_seconds`.
+///
+/// Skips the sub-50ms range (startup latency is dominated by the COALESCE
+/// round-trip and drain task scheduling, not microsecond-class events) and
+/// stops at 10s — values beyond that indicate startup pathology and warrant
+/// alerting, not finer bucket resolution.
+const DRAIN_STARTUP_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
+
+/// Install the global Prometheus recorder with custom histogram buckets and
+/// spawn the per-thread upkeep loop.
+///
+/// The recorder is shared by `axum-prometheus` (which records HTTP request
+/// metrics through the global `metrics` macros) and our own `atc_pg_*`
+/// emissions. Bucket overrides:
+///
+/// - `Matcher::Full("atc_pg_drain_startup_seconds")` — custom buckets covering
+///   typical 50ms–10s startup latency (see [`DRAIN_STARTUP_BUCKETS`]).
+/// - `Matcher::Suffix("_seconds")` — `SECONDS_DURATION_BUCKETS` (the standard
+///   axum-prometheus HTTP duration distribution). Without this fallback,
+///   `metrics-exporter-prometheus` 0.18 emits unmatched histograms as Summary
+///   (no `_bucket` lines), which regresses the existing
+///   `axum_http_requests_duration_seconds_bucket` and Phase 5
+///   `atc_pg_outbox_lag_seconds_bucket` / `atc_pg_drain_pass_duration_seconds_bucket`
+///   assertions.
+///
+/// Matchers sort with `Full` before `Suffix`, so the startup-specific override
+/// wins for that one metric while every other `_seconds` histogram falls
+/// through to the standard distribution.
+fn install_recorder() -> PrometheusHandle {
+    let handle = PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("atc_pg_drain_startup_seconds".to_string()),
+            DRAIN_STARTUP_BUCKETS,
+        )
+        .expect("valid drain-startup bucket spec")
+        .set_buckets_for_metric(
+            Matcher::Suffix("_seconds".to_string()),
+            SECONDS_DURATION_BUCKETS,
+        )
+        .expect("valid _seconds suffix bucket spec")
+        .install_recorder()
+        .expect("install global Prometheus recorder");
+
+    let upkeep_handle = handle.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            upkeep_handle.run_upkeep();
+        }
+    });
+
+    handle
+}
 
 /// Build the metrics layer (for the main router) and the metrics side-port router.
 ///
@@ -20,13 +77,20 @@ const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8"
 /// - `side_router` exposes `GET /metrics` in Prometheus text format with the
 ///   canonical `text/plain; version=0.0.4; charset=utf-8` Content-Type.
 ///
+/// `PrometheusBuilder::install_recorder()` is called explicitly to configure
+/// custom histogram buckets. The 5-second upkeep loop is spawned manually
+/// (axum-prometheus's `pair()` spawns it internally; when we hand-install we
+/// own this responsibility). `PrometheusMetricLayer::new()` does not install a
+/// recorder; it records to the global one we installed.
+///
 /// # Panics
 ///
-/// Panics if a global metrics recorder has already been installed. Do not call
-/// `PrometheusBuilder::install()` separately — axum-prometheus installs the
-/// recorder internally.
+/// Panics if a global metrics recorder has already been installed (e.g. by a
+/// prior `build()` call or by `pair()` elsewhere). Tests that share the global
+/// recorder must serialize via `OnceLock` and `#[serial_test::serial]`.
 pub fn build() -> (PrometheusMetricLayer<'static>, Router) {
-    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+    let metric_handle = install_recorder();
+    let prometheus_layer = PrometheusMetricLayer::new();
 
     let metrics_router = Router::new().route(
         "/metrics",
