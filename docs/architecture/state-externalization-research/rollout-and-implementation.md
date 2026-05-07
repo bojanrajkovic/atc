@@ -231,11 +231,11 @@ After multi-replica correctness is proven. These items are independent and can l
 
 In scope:
 - ~~Add metrics for outbox lag, forwarding watermark, wake-up coalescing, and replay duration~~ — **DONE 2026-05-06**, six metrics shipped per `docs/design-plans/2026-05-06-phase-5-operational-metrics.md` (the implemented "drain startup" metric replaces the originally-named "replay duration"; see ADR 0002 Implementation Status for rationale)
-- Decide whether the production in-memory path remains as a dev-only mode or is removed entirely (per ADR 0003 Out of scope) (separate plan)
-- Decide outbox retention duration and eviction strategy; implement the chosen approach (per ADR 0003 Decision 4: retention is decided separately from current-state TTL) (separate plan)
-- Optionally: persist raw GitHub webhook JSON alongside domain events for audit/debug (per ADR 0002 Out of scope) (separate plan)
+- ~~Decide whether the production in-memory path remains as a dev-only mode or is removed entirely~~ — **CLOSED 2026-05-07** as documented dev-only path; in-memory mode remains for `just dev` against curl/smee.io-fired webhooks. See `docs/architecture/backend-server.md` § "Storage modes — operator guidance" for the canonical write-up. The Helm chart's `replicaCount > 1` ⇒ Postgres URL required guard already enforces this operationally; no code removal required.
+- ~~Decide outbox retention duration and eviction strategy; implement the chosen approach~~ — **TRACKED at #67** (`chore(server): design outbox retention / eviction strategy`). Per ADR 0003 Decision 4, outbox retention is decided separately from current-state TTL; #67 captures the open design questions.
+- ~~Optionally: persist raw GitHub webhook JSON alongside domain events for audit/debug~~ — **TRACKED at #65** (`feat(server): persist raw GitHub webhook JSON alongside domain-event projection`). Per ADR 0002 "Out of scope"; #65 captures the open questions on storage location, retention parity, and privacy.
 
-ADR refs: various ADR Out of scope sections.
+ADR refs: various ADR Out of scope sections. **All Phase 5 items now resolved as of 2026-05-07** — metrics shipped (PR #63), in-memory mode closed as dev-only doc note, three remaining items issue-tracked (#65, #67) plus chart-track follow-up (#64).
 
 ## Implementation Checklist
 
@@ -268,7 +268,7 @@ Defaults the implementation should prefer unless there is a specific reason to d
 
 Worthwhile improvements that are not first-order requirements.
 
-1. Persist raw webhook JSON alongside domain events for audit/debug — Phase 5, ADR 0002 Out of scope
+1. ~~Persist raw webhook JSON alongside domain events for audit/debug~~ — **TRACKED at #65** (Phase 5 deferral resolved as future-work issue, ADR 0002 Out of scope)
 2. ~~Add operational metrics (outbox lag, forwarding watermark, wake-up coalescing, replay duration)~~ — **DONE 2026-05-06** in Phase 5 (`docs/design-plans/2026-05-06-phase-5-operational-metrics.md`)
 3. Server-side leader election for a single active forwarder topology — explicitly rejected as the primary mechanism in ADR 0002 Decision 5; only attractive if the system wants a distinguished forwarder for broader reasons
 

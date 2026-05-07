@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-06 (Phase 5 operational metrics: six metrics added — atc_pg_outbox_lag_seconds, atc_pg_drain_pass_duration_seconds, atc_pg_wake_coalesced_total, atc_pg_drain_startup_seconds, atc_pg_broadcast_watermark, atc_pg_min_pending_seq; metric authoring contract codified; Phase 3c webhook-handler/drain notes from prior version preserved below)
+Last verified: 2026-05-07 (in-memory mode reframed as dev-only per Phase 5 follow-up; see "Storage modes — operator guidance" subsection. Phase 5 operational metrics + Phase 3c webhook-handler/drain notes from prior versions preserved below)
 
 ## Purpose
 
@@ -144,6 +144,15 @@ Config fields and their `ATC_*` env var overrides:
 ## PostgreSQL Integration (Phase 2a)
 
 ATC uses [sqlx](https://github.com/launchdarkis/sqlx) as its PostgreSQL client. The pool is created on startup when `ATC_DATABASE_URL` is set.
+
+### Storage modes — operator guidance
+
+ATC supports two runtime storage modes:
+
+- **External Postgres** (`ATC_DATABASE_URL` set) — the production-supported mode. Required for any deployment with `replicaCount > 1` (the Helm chart's template-render-time `{{ fail }}` guard refuses to render multi-replica without a Postgres URL). The webhook handler is write-only (transactional UPSERT + outbox INSERT + `pg_notify`); the drain task is the sole broadcaster; `/v1/state` reads from a REPEATABLE READ snapshot.
+- **In-memory** (`ATC_DATABASE_URL` unset) — **dev-only**. Single-replica only. State lives in `atc_core::StateStore` behind an `RwLock`; events broadcast directly from the webhook handler under the seq mutex; on process exit, all state is lost. Useful for `just dev` against curl-fired or smee.io-tunneled webhooks; do not run this in production. Multi-replica deployments using this mode would silently fork state per replica with no convergence — there is no leader, no write replication, and no readback synchronization.
+
+If you find yourself wanting to run in-memory mode against more than one replica, the answer is: configure Postgres. The chart guard catches this at `helm template` / `helm install` time; the binary's `ensure_pg_scheme()` catches the misconfigured-URL variant at startup.
 
 ### Startup behavior
 

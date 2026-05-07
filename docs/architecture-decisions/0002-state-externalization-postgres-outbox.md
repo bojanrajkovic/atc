@@ -208,7 +208,7 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
 - Connection pooling / Postgres client choice (`sqlx`, `tokio-postgres`,
   `deadpool-postgres`, etc.)
 - Whether raw GitHub webhook JSON is also persisted for audit, separate from
-  the canonical domain-event projection
+  the canonical domain-event projection — tracked at [#65](https://github.com/bojanrajkovic/atc/issues/65)
 - Database connection configuration shape (single `ATC_DATABASE_URL` vs.
   separate main and listener URLs). The two-path requirement above is fixed;
   how it is exposed in config is a Phase 2 implementation decision
