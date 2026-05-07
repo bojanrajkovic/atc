@@ -230,10 +230,10 @@ ADR refs: [ADR 0003 Decision 3](../../architecture-decisions/0003-state-cursor-c
 After multi-replica correctness is proven. These items are independent and can land as separate PRs.
 
 In scope:
-- Add metrics for outbox lag, forwarding watermark, wake-up coalescing, and replay duration (per ADR 0002 Out of scope: operational metrics)
-- Decide whether the production in-memory path remains as a dev-only mode or is removed entirely (per ADR 0003 Out of scope)
-- Decide outbox retention duration and eviction strategy; implement the chosen approach (per ADR 0003 Decision 4: retention is decided separately from current-state TTL)
-- Optionally: persist raw GitHub webhook JSON alongside domain events for audit/debug (per ADR 0002 Out of scope)
+- ~~Add metrics for outbox lag, forwarding watermark, wake-up coalescing, and replay duration~~ — **DONE 2026-05-06**, six metrics shipped per `docs/design-plans/2026-05-06-phase-5-operational-metrics.md` (the implemented "drain startup" metric replaces the originally-named "replay duration"; see ADR 0002 Implementation Status for rationale)
+- Decide whether the production in-memory path remains as a dev-only mode or is removed entirely (per ADR 0003 Out of scope) (separate plan)
+- Decide outbox retention duration and eviction strategy; implement the chosen approach (per ADR 0003 Decision 4: retention is decided separately from current-state TTL) (separate plan)
+- Optionally: persist raw GitHub webhook JSON alongside domain events for audit/debug (per ADR 0002 Out of scope) (separate plan)
 
 ADR refs: various ADR Out of scope sections.
 
@@ -269,7 +269,7 @@ Defaults the implementation should prefer unless there is a specific reason to d
 Worthwhile improvements that are not first-order requirements.
 
 1. Persist raw webhook JSON alongside domain events for audit/debug — Phase 5, ADR 0002 Out of scope
-2. Add operational metrics (outbox lag, forwarding watermark, wake-up coalescing, replay duration) — Phase 5
+2. ~~Add operational metrics (outbox lag, forwarding watermark, wake-up coalescing, replay duration)~~ — **DONE 2026-05-06** in Phase 5 (`docs/design-plans/2026-05-06-phase-5-operational-metrics.md`)
 3. Server-side leader election for a single active forwarder topology — explicitly rejected as the primary mechanism in ADR 0002 Decision 5; only attractive if the system wants a distinguished forwarder for broader reasons
 
 ### Not Recommended

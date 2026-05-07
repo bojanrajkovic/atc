@@ -14,7 +14,7 @@ fn now_millis_for_test() -> i64 {
 /// Setup an ephemeral HTTP server for testing.
 async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState>) {
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
 

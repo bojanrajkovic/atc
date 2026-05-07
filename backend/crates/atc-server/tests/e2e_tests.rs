@@ -38,7 +38,7 @@ use futures_util::stream::StreamExt;
 /// Returns `SocketAddr` for HTTP/WS clients to connect to.
 async fn start_test_server() -> SocketAddr {
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
 

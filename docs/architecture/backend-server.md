@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-06 (Phase 3c: webhook handler is write-only in PG mode — commits outbox row, returns `{"status":"accepted","seq":<i64>}`, does not broadcast or apply in-memory; drain task is sole broadcaster in PG mode, adds ring-buffer dedup and gap-healing backstop; state handler uses REPEATABLE READ snapshot in PG mode; `/readyz` adds drain heartbeat staleness check; `AppState` gains `min_pending_seq` and `last_drain_pass_at`)
+Last verified: 2026-05-06 (Phase 5 operational metrics: six metrics added — atc_pg_outbox_lag_seconds, atc_pg_drain_pass_duration_seconds, atc_pg_wake_coalesced_total, atc_pg_drain_startup_seconds, atc_pg_broadcast_watermark, atc_pg_min_pending_seq; metric authoring contract codified; Phase 3c webhook-handler/drain notes from prior version preserved below)
 
 ## Purpose
 
@@ -154,6 +154,7 @@ ATC uses [sqlx](https://github.com/launchdarkis/sqlx) as its PostgreSQL client. 
 | `ATC_DATABASE_URL` set, connect fails | `tracing::error!` + `process::exit(1)` |
 | `ATC_DATABASE_URL` set, connect succeeds, migrations fail | `tracing::error!` + `process::exit(1)` |
 | `ATC_DATABASE_URL` set, everything succeeds, DB lost at runtime | Process stays up; `/readyz` returns 503 |
+| `ATC_DATABASE_URL` set, drain task active | First-pass startup latency observed via `atc_pg_drain_startup_seconds` (one observation per process lifetime) |
 
 ### Schema migrations
 
@@ -191,6 +192,20 @@ metrics on a separate port keeps the metrics surface out of the application
 ingress and allows Kubernetes `NetworkPolicy` rules to grant scrape access to
 Prometheus without exposing the full API.
 
+### Metric authoring contract
+
+Every metric exposed at `/metrics` MUST ship with documentation in this section covering its interpretation surface — the contextual information an operator needs to read alerts, build dashboards, and decide which aggregator to use. Specifically, every metric documents:
+
+1. **Name** — exact metric family name as scraped.
+2. **Type** — counter / gauge / histogram.
+3. **Labels** — every label name AND its source. Distinguish *emitted* labels (added by the application) from *scrape-injected* labels (e.g., `pod`, `instance`, added by the ServiceMonitor at scrape time).
+4. **Measures** — one sentence stating what the metric value means in operational terms (not implementation terms).
+5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (pod)` or `without (pod)`.
+6. **Aggregation guidance** — recommended cross-replica aggregator (`avg`/`max`/`sum`/`p99`) with one-sentence rationale.
+7. **Example PromQL** — one canonical query that operators can copy-paste into Grafana to see meaningful data.
+
+This contract applies to every metric added to the codebase, not just Postgres-path metrics. Plans that add metrics MUST extend this section with the new metric's seven-element block before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) enforces that backend metric changes must update `backend-server.md`; this contract narrows the requirement from "update the doc" to "update the doc with the seven-element block."
+
 ### axum-prometheus placement
 
 `PrometheusMetricLayer` wraps the main API router (not the metrics router).
@@ -198,9 +213,24 @@ Every request to `http_addr` is counted in `axum_http_requests_total` and timed
 in `axum_http_requests_duration_seconds`. The metrics router itself is never
 wrapped — scrape requests do not appear in request metrics.
 
-`axum-prometheus` installs the global `metrics` recorder via
-`PrometheusMetricLayer::pair()`. Do not install `PrometheusBuilder` separately;
-doing so will panic with a duplicate-recorder error.
+`metrics::build()` installs the global `metrics` recorder explicitly via
+`PrometheusBuilder::install_recorder()` and spawns the 5-second
+`run_upkeep()` loop manually (axum-prometheus's `pair()` would do this
+internally, but the explicit install lets us register custom histogram
+buckets first). `PrometheusMetricLayer::new()` does not install a recorder;
+it records to the global one we installed. The build path registers two
+bucket overrides:
+
+- `Matcher::Full("atc_pg_drain_startup_seconds")` — custom buckets
+  `[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]` covering typical 50ms–10s
+  startup latency.
+- `Matcher::Suffix("_seconds")` — `axum_prometheus::utils::SECONDS_DURATION_BUCKETS`,
+  the standard `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]`
+  distribution. Without this fallback, `metrics-exporter-prometheus` 0.18
+  emits unmatched histograms as Summary (no `_bucket` lines) and the
+  `axum_http_requests_duration_seconds_bucket` and Phase 5
+  `atc_pg_outbox_lag_seconds_bucket` /
+  `atc_pg_drain_pass_duration_seconds_bucket` series would not appear.
 
 ### atc_build_info labels
 
@@ -261,6 +291,70 @@ Seven counters for the listener/drain pipeline:
 | `atc_pg_drain_rows_total` | Incremented by the number of outbox rows fetched in each drain pass (across all pages). |
 | `atc_pg_drain_duplicate_skipped_total` | Incremented when a seq is fetched during a rescan but suppressed by the ring-buffer dedup (already broadcast in a previous pass). Phase 3c. |
 | `atc_pg_drain_unknown_kind_total` | Incremented when an outbox row has an unrecognized `kind` discriminator (not `run` or `job`). Phase 3c. |
+
+### Operational metrics
+
+All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added by the monitoring stack at scrape time as standard target labels (`pod`, `instance`) — the exact attachment mechanism depends on the deployment (Prometheus Operator ServiceMonitor, plain Prometheus with `kubernetes_sd_configs`, VictoriaMetrics, etc.); the metrics themselves are agnostic. Cross-replica aggregation in alerts and dashboards uses `avg by (pod)`, `max by (pod)`, etc.
+
+#### `atc_pg_outbox_lag_seconds`
+
+- **Name:** `atc_pg_outbox_lag_seconds`
+- **Type:** histogram
+- **Labels:** none emitted; `pod`, `instance` added by the scraper (scrape-injected)
+- **Measures:** Event age at broadcast — `Utc::now() - row.inserted_at` recorded once per broadcast row. The metric is more accurately "event age at broadcast" than "drain lag": `inserted_at DEFAULT now()` evaluates `transaction_timestamp()` (transaction start, not commit), so the metric includes writer-side transaction latency in addition to drain queueing. Operators reading p99/p95 should interpret it as "how stale is a typical row at broadcast time," not "how far behind is my drain task."
+- **Per-replica vs cluster:** Per-replica — each replica's drain task records its own observations from its own broadcasts.
+- **Aggregation:** `histogram_quantile(0.99, sum(rate(...)) by (le, pod))` then `max by (pod)` for alerting — the slowest replica is the operationally relevant signal because all replicas serve traffic.
+- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_outbox_lag_seconds_bucket[5m])) by (le, pod))`
+
+#### `atc_pg_drain_pass_duration_seconds`
+
+- **Name:** `atc_pg_drain_pass_duration_seconds`
+- **Type:** histogram
+- **Labels:** none emitted; `pod`, `instance` (scrape-injected)
+- **Measures:** Wall time from drain-pass start to drain-pass exit, including all paginated batches in the pass. NOT recorded for heartbeat-only wakes.
+- **Per-replica vs cluster:** Per-replica — drain runs independently on each replica.
+- **Aggregation:** `histogram_quantile(0.99, ...)` `by (pod)` for per-replica latency; `avg by (pod)` for trend tracking.
+- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_pass_duration_seconds_bucket[5m])) by (le, pod))`
+
+#### `atc_pg_wake_coalesced_total`
+
+- **Name:** `atc_pg_wake_coalesced_total`
+- **Type:** counter
+- **Labels:** none emitted; `pod`, `instance` (scrape-injected)
+- **Measures:** NOTIFY arrivals observed by the listener while a drain pass was in flight (`drain_in_flight=true`). Counts arrival rate, NOT extra-pass rate (Tokio's `Notify` permit collapses N permits into 1 — the metric is about NOTIFY arrival vs drain-pass scheduling, which is what operators want).
+- **Per-replica vs cluster:** Per-replica.
+- **Aggregation:** `rate(... [5m]) by (pod)` then `max by (pod)` — sustained high values on any replica indicate a NOTIFY storm or slow drain.
+- **Example PromQL:** `rate(atc_pg_wake_coalesced_total[5m])`
+
+#### `atc_pg_drain_startup_seconds`
+
+- **Name:** `atc_pg_drain_startup_seconds`
+- **Type:** histogram (custom buckets `[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]`)
+- **Labels:** none emitted; `pod`, `instance` (scrape-injected)
+- **Measures:** Startup readiness latency — wall time from `COALESCE(MAX(seq),0)` watermark init through first drain pass exit. One observation per process lifetime. Per Phase 3c restart-recovery contract there is no historical replay; this measures startup readiness, NOT catch-up backlog.
+- **Per-replica vs cluster:** Per-replica.
+- **Aggregation:** `max by (pod)` over a window covering recent deploys (1h) — the slowest replica's startup is the operational signal.
+- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_startup_seconds_bucket[1h])) by (le, pod))`
+
+#### `atc_pg_broadcast_watermark`
+
+- **Name:** `atc_pg_broadcast_watermark`
+- **Type:** gauge
+- **Labels:** none emitted; `pod`, `instance` (scrape-injected)
+- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Mirrors the per-replica `Arc<AtomicI64>` after each successful drain pass; seeded at startup from `COALESCE(MAX(seq),0)`.
+- **Per-replica vs cluster:** Per-replica — each replica advances its watermark independently.
+- **Aggregation:** Display per-pod (`atc_pg_broadcast_watermark`); for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)` (or equivalently `min without (pod, instance)`). Note: `min by (pod) (atc_pg_broadcast_watermark)` would just preserve one series per pod — same as the per-pod display.
+- **Example PromQL:** `atc_pg_broadcast_watermark`
+
+#### `atc_pg_min_pending_seq`
+
+- **Name:** `atc_pg_min_pending_seq`
+- **Type:** gauge
+- **Labels:** none emitted; `pod`, `instance` (scrape-injected)
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Mirrors the per-replica `min_pending_seq: Arc<AtomicI64>` after each listener `fetch_min`; reset to `f64::NAN` (the sentinel state) when the drain swaps the atomic to `i64::MAX` after catching up. NaN is preferred over `i64::MAX as f64` (≈ 9.22e18) because the float64 representation would push the y-axis of dashboards displaying watermark and min_pending_seq together to ~9e18, hiding the actual divergence signal at the watermark level.
+- **Per-replica vs cluster:** Per-replica.
+- **Aggregation:** Display per-pod alongside `atc_pg_broadcast_watermark`. Filter NaN with `... unless on() (atc_pg_min_pending_seq != atc_pg_min_pending_seq)` if needed.
+- **Example PromQL:** `atc_pg_min_pending_seq` (Grafana renders NaN as gaps)
 
 ### Listener always binds
 

@@ -36,13 +36,13 @@ use tower::ServiceExt;
 
 /// Use the shared `common::PROMETHEUS_INIT` so this test binary installs the
 /// global `metrics` recorder exactly once. Two separate OnceLocks (one local,
-/// one common) would each call `PrometheusMetricLayer::pair()`, and the second
-/// `pair()` call panics with `SetRecorderError` because the global recorder
-/// is already installed. AC4.1/AC4.2 use the common fixture, so all tests in
-/// this binary must agree on a single OnceLock.
+/// one common) would each install the recorder, and the second installation
+/// panics with `SetRecorderError` because the global recorder is already in
+/// place. AC4.1/AC4.2 use the common fixture, so all tests in this binary must
+/// agree on a single OnceLock and a single initializer.
 fn prometheus_layer() -> PrometheusMetricLayer<'static> {
     common::PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone()
 }

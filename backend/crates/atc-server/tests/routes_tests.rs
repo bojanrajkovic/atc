@@ -1,3 +1,5 @@
+mod common;
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 
@@ -12,19 +14,16 @@ fn now_millis_for_test() -> i64 {
 }
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use axum_prometheus::PrometheusMetricLayer;
-use std::sync::OnceLock;
 use std::time::Duration;
 use tower::ServiceExt;
 
-// Guard: PrometheusMetricLayer::pair() is called only once per test binary.
-// Tests that use this must be marked with #[serial_test::serial] to avoid concurrent execution.
-static PROMETHEUS_INIT: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
-
 /// Helper to build and test the full app with API routes and asset fallback.
-/// Must be used in tests marked with #[serial_test::serial] since pair() installs a global recorder.
+/// Must be used in tests marked with #[serial_test::serial] since the global
+/// recorder install can only happen once per binary.
 fn build_full_app() -> axum::Router {
-    let layer = PROMETHEUS_INIT.get_or_init(|| PrometheusMetricLayer::pair().0);
+    let layer = &common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0;
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),

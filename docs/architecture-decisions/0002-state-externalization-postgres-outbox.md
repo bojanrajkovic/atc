@@ -209,8 +209,6 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
   `deadpool-postgres`, etc.)
 - Whether raw GitHub webhook JSON is also persisted for audit, separate from
   the canonical domain-event projection
-- Operational metrics (outbox lag, forwarder watermark, wake-up coalescing,
-  replay duration)
 - Database connection configuration shape (single `ATC_DATABASE_URL` vs.
   separate main and listener URLs). The two-path requirement above is fixed;
   how it is exposed in config is a Phase 2 implementation decision
@@ -226,6 +224,7 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
 - **Decision 3** (NOTIFY emission after commit; listener connection using session-compatible path): IMPLEMENTED in Phase 2d — see feat/phase-2d-notify-listener branch. `SELECT pg_notify('atc_outbox', seq::text)` emitted inside the webhook transaction before `tx.commit()`. Dedicated `PgListener` listener task; `ATC_DATABASE_LISTENER_URL` config option for session-mode override. Five new metrics wired.
 - **Decision 4** (original pool-stats persistence — superseded by ADR 0004): outbox payload stores `RunEventEnvelope`/`JobEventEnvelope` only (no `pool_stats_after`). ADR 0004 governs pool stats from Phase 3b onward.
 - **Decision 5** (startup watermark and forwarder design): PARTIAL — listener structure, coalescing via `Arc<Notify>`, and watermark init (`COALESCE(MAX(seq), 0)`) implemented in Phase 2d. Drain task fetches `seq > watermark ORDER BY seq` and logs rows (stub). Only `forward_to_ws_clients` step deferred to Phase 3c, when the drain loop gains the actual WS forwarding call.
+- **Operational metrics** (Out of scope item, now implemented): six metrics shipped on 2026-05-06 in `docs/design-plans/2026-05-06-phase-5-operational-metrics.md` — `atc_pg_outbox_lag_seconds`, `atc_pg_drain_pass_duration_seconds`, `atc_pg_wake_coalesced_total`, `atc_pg_drain_startup_seconds`, `atc_pg_broadcast_watermark`, `atc_pg_min_pending_seq`. Per-metric documentation lives in `docs/architecture/backend-server.md` § Operational metrics, governed by the Metric authoring contract subsection codified in the same file. The original ADR text said "replay duration" — the implemented metric is `atc_pg_drain_startup_seconds` and measures startup-init latency, not replay backlog (Phase 3c restart-recovery contract precludes a historical-replay backlog).
 
 Phase 2c PR: `feat(server): add transactional outbox and reverse webhook error policy` (squash-merge commits `877b2c6`–`02ddd72`).
 

@@ -5,8 +5,8 @@ mod assets;
 
 use std::process;
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Mutex, Notify};
 
@@ -149,6 +149,11 @@ async fn main() {
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
     let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
     let broadcast_watermark = Arc::new(AtomicI64::new(0));
+    // Wake-coalesce instrumentation: the listener observes this flag in its
+    // NOTIFY recv loop to count arrivals that overlapped an in-flight drain
+    // pass. The drain task brackets each `drain_pass(...)` call with
+    // `store(true)` ... `store(false)`.
+    let drain_in_flight = Arc::new(AtomicBool::new(false));
 
     let app_state = Arc::new(AppState {
         store,
@@ -191,6 +196,11 @@ async fn main() {
                 process::exit(1);
             });
 
+        // Capture startup_at BEFORE the COALESCE round-trip so the drain
+        // startup histogram includes the cold-pool query cost. Observed once
+        // by the drain task after its first pass returns.
+        let startup_at = Instant::now();
+
         let initial_watermark: i64 =
             sqlx::query_scalar!("SELECT COALESCE(MAX(seq), 0) AS \"max!: i64\" FROM outbox")
                 .fetch_one(&pool)
@@ -203,22 +213,27 @@ async fn main() {
         // Seed broadcast_watermark from the same MAX(seq) so /v1/state returns
         // a sensible lastSeq before the first post-startup drain pass.
         broadcast_watermark.store(initial_watermark, std::sync::atomic::Ordering::Release);
+        #[allow(clippy::cast_precision_loss)]
+        ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
 
         let drain_notify = Arc::new(Notify::new());
         let lh = listener::spawn_listener_task(
             pg_listener,
             drain_notify.clone(),
             min_pending_seq.clone(),
+            drain_in_flight.clone(),
             shutdown.clone(),
             None,
         );
         let dh = listener::spawn_drain_task(
             pool,
             initial_watermark,
+            startup_at,
             drain_notify,
             min_pending_seq,
             last_drain_pass_at,
             broadcast_watermark,
+            drain_in_flight,
             webhook_tx,
             shutdown.clone(),
             None,

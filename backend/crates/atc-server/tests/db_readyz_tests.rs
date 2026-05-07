@@ -4,12 +4,15 @@
 //! `atc_server::db::init_pool`, and verifies GET /readyz behavior in healthy and
 //! unreachable DB states. Requires Docker (or OrbStack) to be running.
 
+mod common;
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use atc_core::{StateStore, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
+use axum_prometheus::PrometheusMetricLayer;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -20,18 +23,15 @@ fn now_millis_for_test() -> i64 {
 use axum::body::Body;
 use axum::body::to_bytes;
 use axum::http::{Request, StatusCode};
-use axum_prometheus::PrometheusMetricLayer;
-use std::sync::OnceLock;
 use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
-static PROMETHEUS_INIT: OnceLock<PrometheusMetricLayer<'static>> = OnceLock::new();
-
 fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    PROMETHEUS_INIT
-        .get_or_init(|| PrometheusMetricLayer::pair().0)
+    common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0
         .clone()
 }
 

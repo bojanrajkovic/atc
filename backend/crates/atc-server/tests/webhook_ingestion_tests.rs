@@ -418,7 +418,7 @@ async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
 #[serial_test::serial]
 async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     let layer = common::PROMETHEUS_INIT
-        .get_or_init(axum_prometheus::PrometheusMetricLayer::pair)
+        .get_or_init(common::install_test_recorder)
         .0
         .clone();
 

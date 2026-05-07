@@ -9,7 +9,8 @@ use atc_core::{StateStore, SystemClock};
 use atc_server::listener;
 use atc_server::state::AppState;
 use axum_prometheus::PrometheusMetricLayer;
-use axum_prometheus::metrics_exporter_prometheus::PrometheusHandle;
+use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use axum_prometheus::utils::SECONDS_DURATION_BUCKETS;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -20,7 +21,43 @@ fn now_millis_for_test() -> i64 {
         .unwrap_or(0)
 }
 
-// Guard: PrometheusMetricLayer::pair() is called only once per test binary.
+/// Mirror of the production `metrics::build()` install path so test fixtures
+/// validate the same custom-bucket configuration as production. Without this
+/// mirror, tests would exercise the default-recorder path while production
+/// uses the install-recorder path, masking real divergence.
+///
+/// All test binaries that share [`PROMETHEUS_INIT`] must use this initializer
+/// (instead of `PrometheusMetricLayer::pair`) so the global recorder for the
+/// binary has consistent bucket configuration regardless of which test fires
+/// first.
+pub fn install_test_recorder() -> (PrometheusMetricLayer<'static>, PrometheusHandle) {
+    let handle = PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("atc_pg_drain_startup_seconds".to_string()),
+            &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+        )
+        .expect("valid drain-startup bucket spec")
+        .set_buckets_for_metric(
+            Matcher::Suffix("_seconds".to_string()),
+            SECONDS_DURATION_BUCKETS,
+        )
+        .expect("valid _seconds suffix bucket spec")
+        .install_recorder()
+        .expect("install global Prometheus recorder");
+
+    let upkeep_handle = handle.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            upkeep_handle.run_upkeep();
+        }
+    });
+
+    (PrometheusMetricLayer::new(), handle)
+}
+
+// Guard: install_test_recorder() is called only once per test binary.
 // Tests that use this must be marked with #[serial_test::serial] to avoid concurrent execution.
 // Stores both the layer (for routing) and the handle (for metric assertions via render_metrics()).
 pub static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, PrometheusHandle)> =
@@ -29,14 +66,65 @@ pub static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, Prometheus
 /// Render current Prometheus metrics as text.
 ///
 /// Panics if `PROMETHEUS_INIT` has not been initialized yet. Call after any
-/// call to `build_app_with_secret`, `build_app_no_secret`, or
-/// `build_app_with_pg_and_listener` — all of which call `get_or_init`.
+/// call to `build_app_with_secret`, `build_app_no_secret`,
+/// `build_app_with_pg_and_listener`, or [`ensure_recorder_installed`].
 pub fn render_metrics() -> String {
     PROMETHEUS_INIT
         .get()
         .expect("PROMETHEUS_INIT not yet initialized — call a build_app_* helper first")
         .1
         .render()
+}
+
+/// Ensure the global Prometheus recorder is installed without constructing a
+/// full `TestApp`. Useful for tests that need to capture a baseline scrape
+/// before they exercise the code under test.
+pub fn ensure_recorder_installed() {
+    PROMETHEUS_INIT.get_or_init(install_test_recorder);
+}
+
+/// Locate an unlabeled metric line in a Prometheus exposition body and return
+/// the value as a string slice.
+///
+/// The Prometheus text format is one metric per line: `<name>[{labels}] <value>`.
+/// This helper scans for a line whose name part is exactly `name` (no labels
+/// allowed), skipping `# HELP`/`# TYPE` comments. Returns `None` if no such
+/// line is found.
+fn unlabeled_metric_value<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    for line in body.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(name) else {
+            continue;
+        };
+        // The next character must be whitespace (no labels, no extra suffix).
+        if !rest.starts_with(char::is_whitespace) {
+            continue;
+        }
+        if let Some(value) = line.split_whitespace().last() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Parse an unlabeled counter or histogram `_count` value. Returns 0 if the
+/// metric is absent — convenient for delta computations against a baseline
+/// scrape captured before the metric had any observations.
+pub fn parse_unlabeled_counter(body: &str, name: &str) -> u64 {
+    unlabeled_metric_value(body, name)
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// Parse an unlabeled gauge or histogram `_sum` value. Returns `None` if the
+/// metric is absent so callers can distinguish "missing" from "present and
+/// equal to zero". Returned `f64` may be `NaN` (gauges that emit `f64::NAN`
+/// — e.g., `atc_pg_min_pending_seq` at its sentinel state — render as `NaN`
+/// in the exposition body and parse back into `f64::NAN`).
+pub fn parse_unlabeled_gauge(body: &str, name: &str) -> Option<f64> {
+    unlabeled_metric_value(body, name).and_then(|v| v.parse::<f64>().ok())
 }
 
 /// Compute HMAC-SHA256 signature in the format GitHub expects: sha256=<hex>
@@ -52,10 +140,7 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 
 /// Build app with a specific webhook secret
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
-        .0
-        .clone();
+    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -79,10 +164,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 
 /// Build app with no webhook secret (verification bypassed)
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
-        .0
-        .clone();
+    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -213,12 +295,11 @@ async fn build_app_inner(
     db_url: String,
     drain_delay: Option<Duration>,
 ) -> AppFixture {
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
+    use std::time::Instant;
 
-    let layer = PROMETHEUS_INIT
-        .get_or_init(PrometheusMetricLayer::pair)
-        .0
-        .clone();
+    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
     let store = Arc::new(StateStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -227,6 +308,10 @@ async fn build_app_inner(
         tokio::sync::broadcast::channel::<atc_server::state::SeqEvent>(256);
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
     let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis_for_test()));
+    // Mirror of main.rs: drain_in_flight bracket for wake-coalesce
+    // observation, and startup_at captured before the watermark query.
+    let drain_in_flight = Arc::new(AtomicBool::new(false));
+    let startup_at = Instant::now();
 
     // Initialize watermark (same logic as main.rs) using untyped API to avoid sqlx macro caching.
     let initial_watermark: i64 =
@@ -238,6 +323,8 @@ async fn build_app_inner(
     // Seed broadcast_watermark from initial_watermark so /v1/state returns a
     // sensible lastSeq before the first post-startup drain pass completes.
     let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
+    #[allow(clippy::cast_precision_loss)]
+    ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
     let state = Arc::new(AppState {
         store,
         webhook_tx,
@@ -268,6 +355,7 @@ async fn build_app_inner(
         pg_listener,
         drain_notify.clone(),
         min_pending_seq.clone(),
+        drain_in_flight.clone(),
         shutdown.clone(),
         Some(observed_recv.clone()),
     );
@@ -275,10 +363,12 @@ async fn build_app_inner(
     let drain_handle = listener::spawn_drain_task(
         pool.clone(),
         initial_watermark,
+        startup_at,
         drain_notify,
         min_pending_seq,
         last_drain_pass_at,
         broadcast_watermark,
+        drain_in_flight,
         state.webhook_tx.clone(),
         shutdown.clone(),
         Some(observed_passes.clone()),
