@@ -1,12 +1,19 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-06 (Phase 5 operational metrics added — six new families register via register_listener_metrics; install_recorder pattern replaces axum-prometheus pair() for custom histogram buckets; Phase 3c notes from prior version preserved below)
+Last verified: 2026-05-07 (in-memory mode reframed as dev-only per Phase 5 follow-up; see "Storage modes" subsection. Phase 5 operational metrics + Phase 3c notes from prior versions preserved below)
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
 ## Purpose
 
 Axum HTTP server wiring `atc-core` (state store) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. **Phase 2c:** PostgreSQL writes are driven directly via `AppState.pg_pool` (`&PgPool`) in the webhook handler; the `PgStore` wrapper is retained in `persist.rs` for use by `tests/persist_pg_tests.rs` but is no longer mounted in `AppState`.
+
+## Storage modes
+
+Two runtime modes; **only external Postgres is production-supported** — see `docs/architecture/backend-server.md` § "Storage modes — operator guidance" for the canonical write-up.
+
+- **External Postgres** (`ATC_DATABASE_URL` set) — required for `replicaCount > 1` (chart guard refuses to render otherwise). Drain task is sole broadcaster.
+- **In-memory** (`ATC_DATABASE_URL` unset) — **dev-only**, single-replica only. Useful for `just dev` against curl/smee.io-fired webhooks; lossy on restart; do not deploy to production. The webhook handler broadcasts directly under the seq mutex (see `routes.rs:432-436`).
 
 ## Modules
 

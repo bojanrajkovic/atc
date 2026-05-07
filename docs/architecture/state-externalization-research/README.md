@@ -1,6 +1,6 @@
 # State Externalization Research
 
-Last verified: 2026-05-06 (Phase 4: multi-replica enabled with external Postgres; SQLite-mode-removed passage updated)
+Last verified: 2026-05-07 (state-externalization rollout closed: all five phases shipped or issue-tracked; see "Status" section for the disposition map)
 
 ## Purpose
 
@@ -16,7 +16,17 @@ The canonical decisions are now in:
 - [ADR 0003](../../architecture-decisions/0003-state-cursor-contract-and-operator-policy.md) — `last_seq` cursor and multi-replica operator policy
 - [ADR 0004](../../architecture-decisions/0004-frontend-derived-pool-stats.md) — Frontend-derived pool stats
 
-The ADRs are canonical. This document set is preserved for analysis and rejected alternatives. Notable decisions that diverge from the research recommendations:
+The ADRs are canonical. This document set is preserved for analysis and rejected alternatives.
+
+**Rollout status: complete as of 2026-05-07.** All five implementation phases shipped: Phase 2a (PR #48 — sqlx pool + migrations), Phase 2b/2c (transactional outbox), Phase 2d (LISTEN/NOTIFY listener), Phase 3a/3b (wire contract alignment, PR #54), Phase 3c (PG-backed read path), Phase 4 (multi-replica enablement, PR #57 closing #7), Phase 5 (operational metrics, PR #63). Out-of-scope follow-ups deferred during the rollout are now tracked as discrete issues:
+
+- [#50](https://github.com/bojanrajkovic/atc/issues/50) — Reconcile `PersistentStore` trait with transactional outbox (post-2c code cleanup)
+- [#64](https://github.com/bojanrajkovic/atc/issues/64) — Bundle the Grafana dashboard as a Helm ConfigMap
+- [#65](https://github.com/bojanrajkovic/atc/issues/65) — Persist raw GitHub webhook JSON alongside domain-event projection
+- [#66](https://github.com/bojanrajkovic/atc/issues/66) — Backfill seven-element interpretation blocks for legacy `atc_pg_*` counters
+- [#67](https://github.com/bojanrajkovic/atc/issues/67) — Design outbox retention / eviction strategy
+
+Notable decisions that diverge from the research recommendations:
 
 - **Pool stats are derived frontend-side, not persisted as a sidecar** (ADR 0004) — supersedes recommendations here to persist `poolStatsAfter` in the outbox
 - **Frontend live-stream dedupe is not added** — supersedes recommendations here to add `highestAppliedSeq` as defense in depth (the forwarder design prevents overlap by construction)
