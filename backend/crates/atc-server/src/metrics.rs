@@ -152,8 +152,18 @@ pub fn register_pg_write_counters() {
 /// - atc_pg_listener_recv_errors_total — recv() errors (sqlx hides successful reconnects)
 /// - atc_pg_drain_passes_total — drain task wake-ups
 /// - atc_pg_drain_rows_total — outbox rows fetched across all passes
-/// - atc_pg_drain_duplicate_skipped_total — broadcasts suppressed by ring-buffer dedup (Phase 3c)
-/// - atc_pg_drain_unknown_kind_total — outbox rows with an unrecognized kind discriminator (Phase 3c)
+/// - atc_pg_drain_duplicate_skipped_total — broadcasts suppressed by ring-buffer dedup
+/// - atc_pg_drain_unknown_kind_total — outbox rows with an unrecognized kind discriminator
+/// - atc_pg_wake_coalesced_total — NOTIFYs observed while a drain pass was in flight
+///
+/// Histograms:
+/// - atc_pg_outbox_lag_seconds — wall time between outbox row insert and broadcast (one per row)
+/// - atc_pg_drain_pass_duration_seconds — wall time for one drain pass (including pagination)
+/// - atc_pg_drain_startup_seconds — wall time from watermark init through first drain pass exit
+///
+/// Gauges:
+/// - atc_pg_broadcast_watermark — highest outbox seq broadcast by this replica
+/// - atc_pg_min_pending_seq — lowest pending NOTIFY seq below the watermark, NaN when caught up
 ///
 /// Must be called after build() (which installs the global recorder).
 pub fn register_listener_metrics() {
@@ -184,6 +194,30 @@ pub fn register_listener_metrics() {
     metrics::describe_counter!(
         "atc_pg_drain_unknown_kind_total",
         "Outbox rows with an unrecognized kind discriminator (Phase 3c)"
+    );
+    metrics::describe_counter!(
+        "atc_pg_wake_coalesced_total",
+        "NOTIFY arrivals observed by the listener while a drain pass was in flight"
+    );
+    metrics::describe_histogram!(
+        "atc_pg_outbox_lag_seconds",
+        "Event age at broadcast: wall time between outbox row inserted_at and broadcast (one observation per broadcast row)"
+    );
+    metrics::describe_histogram!(
+        "atc_pg_drain_pass_duration_seconds",
+        "Wall time for one NOTIFY-driven drain pass, including paginated batches"
+    );
+    metrics::describe_histogram!(
+        "atc_pg_drain_startup_seconds",
+        "Startup readiness latency: wall time from watermark init through first drain pass exit (one observation per process)"
+    );
+    metrics::describe_gauge!(
+        "atc_pg_broadcast_watermark",
+        "Highest outbox seq broadcast by this replica (commit-order cursor; per-replica)"
+    );
+    metrics::describe_gauge!(
+        "atc_pg_min_pending_seq",
+        "Lowest pending NOTIFY seq registered with the gap-healing backstop, or NaN when the drain has caught up (sentinel)"
     );
 }
 

@@ -14,8 +14,8 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use atc_github::WebhookEvent;
 use tokio::sync::{Notify, broadcast};
@@ -70,6 +70,7 @@ pub fn spawn_listener_task(
     mut listener: sqlx::postgres::PgListener,
     drain_notify: Arc<Notify>,
     min_pending_seq: Arc<AtomicI64>,
+    drain_in_flight: Arc<AtomicBool>,
     cancel: CancellationToken,
     received_counter: Option<Arc<AtomicU64>>,
 ) -> JoinHandle<()> {
@@ -83,9 +84,24 @@ pub fn spawn_listener_task(
                         if let Some(c) = received_counter.as_ref() {
                             c.fetch_add(1, Ordering::Relaxed);
                         }
+                        // Wake-coalesce observation: if a drain pass is in
+                        // flight when this NOTIFY arrived, count it. Tokio's
+                        // Notify still collapses the permits — this counter
+                        // reports arrival rate vs. drain pass rate.
+                        if drain_in_flight.load(Ordering::Acquire) {
+                            metrics::counter!("atc_pg_wake_coalesced_total").increment(1);
+                        }
                         match notification.payload().parse::<i64>() {
                             Ok(seq) => {
-                                min_pending_seq.fetch_min(seq, Ordering::Release);
+                                let prev = min_pending_seq.fetch_min(seq, Ordering::Release);
+                                let new_min = prev.min(seq);
+                                #[allow(clippy::cast_precision_loss)]
+                                let gauge_value = if new_min == i64::MAX {
+                                    f64::NAN
+                                } else {
+                                    new_min as f64
+                                };
+                                metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -133,10 +149,12 @@ pub fn spawn_listener_task(
 pub fn spawn_drain_task(
     pool: sqlx::PgPool,
     initial_watermark: i64,
+    startup_at: Instant,
     drain_notify: Arc<Notify>,
     min_pending_seq: Arc<AtomicI64>,
     last_drain_pass_at: Arc<AtomicI64>,
     broadcast_watermark: Arc<AtomicI64>,
+    drain_in_flight: Arc<AtomicBool>,
     webhook_tx: broadcast::Sender<SeqEvent>,
     cancel: CancellationToken,
     observed_passes: Option<Arc<AtomicU64>>,
@@ -152,6 +170,9 @@ pub fn spawn_drain_task(
         // fire once at startup. This preserves the test fixture invariant
         // (build_app waits for drain_started) and matches Phase 2d behavior.
         let mut first_iter = true;
+        // Startup readiness latency is observed exactly once per process,
+        // after the first pass exits. See `atc_pg_drain_startup_seconds`.
+        let mut startup_recorded = false;
 
         loop {
             let woken_by_notify = if first_iter {
@@ -177,10 +198,22 @@ pub fn spawn_drain_task(
 
             // Capture the gap-healing backstop and reset the atomic. AcqRel
             // pairs with the listener's Release fetch_min so any registration
-            // visible before this swap is observed here.
+            // visible before this swap is observed here. Mirror the swap into
+            // the gauge: the post-swap value is i64::MAX (sentinel), rendered
+            // as NaN so dashboards distinguish "no pending NOTIFY below
+            // watermark" from "pending NOTIFY at seq 0".
             let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);
+            metrics::gauge!("atc_pg_min_pending_seq").set(f64::NAN);
             let pass_start_floor = watermark.min(backstop.saturating_sub(1));
 
+            // Wake-coalesce instrumentation bracket: the listener counts
+            // NOTIFYs that arrive between the `store(true)` and `store(false)`
+            // pair. The bracket is unconditional — if drain_pass panics,
+            // Tokio terminates the task and the AtomicBool stays `true`,
+            // operationally identical to "drain task is gone" so no scope
+            // guard is required.
+            drain_in_flight.store(true, Ordering::Release);
+            let pass_start = Instant::now();
             let pass_ok = drain_pass(
                 &pool,
                 pass_start_floor,
@@ -191,6 +224,15 @@ pub fn spawn_drain_task(
                 drain_delay,
             )
             .await;
+            drain_in_flight.store(false, Ordering::Release);
+            metrics::histogram!("atc_pg_drain_pass_duration_seconds")
+                .record(pass_start.elapsed().as_secs_f64());
+
+            if !startup_recorded {
+                metrics::histogram!("atc_pg_drain_startup_seconds")
+                    .record(startup_at.elapsed().as_secs_f64());
+                startup_recorded = true;
+            }
 
             metrics::counter!("atc_pg_drain_passes_total").increment(1);
             if let Some(c) = observed_passes.as_deref() {
@@ -212,6 +254,8 @@ pub fn spawn_drain_task(
                 // order, which would let `MAX(seq)` advance past data that
                 // hasn't materialised in a concurrent snapshot view.
                 broadcast_watermark.store(watermark, Ordering::Release);
+                #[allow(clippy::cast_precision_loss)]
+                metrics::gauge!("atc_pg_broadcast_watermark").set(watermark as f64);
             } else {
                 // Re-register the captured backstop so the next pass still has
                 // the gap-healing floor. Without this, a transient query
@@ -272,7 +316,7 @@ async fn drain_pass(
 
     loop {
         let rows = sqlx::query!(
-            "SELECT seq, kind, payload FROM outbox \
+            "SELECT seq, kind, payload, inserted_at FROM outbox \
              WHERE seq > $1 ORDER BY seq LIMIT $2",
             page_cursor,
             DRAIN_BATCH_SIZE,
@@ -345,6 +389,18 @@ async fn drain_pass(
                     seq: seq_u64,
                     event,
                 });
+
+                // Event age at broadcast: now() - inserted_at, recorded once
+                // per broadcast row. The metric over-reports by the writer's
+                // transaction duration because `inserted_at DEFAULT now()`
+                // evaluates `transaction_timestamp()` (transaction start),
+                // not commit. See `backend-server.md` § Operational metrics.
+                #[allow(clippy::cast_precision_loss)]
+                let lag = (chrono::Utc::now() - row.inserted_at)
+                    .num_microseconds()
+                    .unwrap_or(0) as f64
+                    / 1_000_000.0;
+                metrics::histogram!("atc_pg_outbox_lag_seconds").record(lag);
 
                 recent_ring.push_back(row.seq);
                 recent_set.insert(row.seq);
