@@ -278,3 +278,18 @@ Created only for high-risk directories where AI agents make costly mistakes. Eac
 ```
 
 Do not create these speculatively — wait until agents encounter sharp edges in a specific directory, then create a targeted directive extract.
+
+### Metrics
+
+ATC exposes Prometheus metrics at `/metrics`. Two rules apply when adding or modifying metrics.
+
+**Naming convention:**
+- `atc_` project prefix on every metric
+- `pg_` subsystem prefix for Postgres-path metrics; reserve future subsystem prefixes (`http_`, `ws_`, etc.) for analogous separation
+- `_total` suffix for monotonic counters
+- `_seconds` suffix for time-valued metrics regardless of metric type (counter, gauge, histogram). Prometheus best practice — `process_start_time_seconds` is a gauge, `axum_http_requests_duration_seconds` is a histogram
+- `_bytes` suffix for memory or byte-valued metrics
+- Gauges that aren't time- or byte-valued carry no unit suffix; the description names the unit
+- No replica or pod label is baked into any metric — replica identity is added by the monitoring stack at scrape time as standard target labels (e.g., `pod`, `instance`)
+
+**Authoring contract:** every new metric ships with the seven-element interpretation-surface block (name, type, labels with source, semantics, per-replica scope, aggregation guidance, example PromQL) in [`docs/architecture/backend-server.md`](docs/architecture/backend-server.md) § "Metric authoring contract". The contract is canonically defined there — this section codifies the rule that contributors who add metrics MUST extend that section before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) blocks the push if backend metric changes land without the matching `backend-server.md` update.
