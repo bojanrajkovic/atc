@@ -205,7 +205,7 @@ pub fn register_listener_metrics() {
     );
     metrics::describe_histogram!(
         "atc_pg_drain_pass_duration_seconds",
-        "Wall time for one NOTIFY-driven drain pass, including paginated batches"
+        "Wall time for one drain pass, including paginated batches; heartbeat-only wakes excluded"
     );
     metrics::describe_histogram!(
         "atc_pg_drain_startup_seconds",

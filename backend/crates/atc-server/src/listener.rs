@@ -262,9 +262,20 @@ pub fn spawn_drain_task(
                 // failure between two NOTIFYs (one carrying the low seq) would
                 // permanently lose the rescan signal: the swap zeroed the
                 // atomic and the failed pass never delivered the floor to the
-                // SELECT.
+                // SELECT. Mirror the gauge alongside the atomic — the swap at
+                // pass start cleared the gauge to NaN, so without this re-mirror
+                // the gauge would advertise "drain caught up" while a pending
+                // backstop is queued for the next attempt.
                 if backstop != i64::MAX {
-                    min_pending_seq.fetch_min(backstop, Ordering::Release);
+                    let prev = min_pending_seq.fetch_min(backstop, Ordering::Release);
+                    let new_min = prev.min(backstop);
+                    #[allow(clippy::cast_precision_loss)]
+                    let gauge_value = if new_min == i64::MAX {
+                        f64::NAN
+                    } else {
+                        new_min as f64
+                    };
+                    metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
                 }
                 // Force the next iteration to attempt another drain pass.
                 // Without this, the loop would re-enter the `tokio::select!`

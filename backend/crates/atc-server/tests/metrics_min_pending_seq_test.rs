@@ -65,13 +65,22 @@ async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
     );
 
     // Step 2: abort the drain so it cannot swap min_pending_seq back to
-    // i64::MAX (gauge → NaN). The listener task stays alive. We yield and
-    // briefly sleep so Tokio actually processes the abort before the next
-    // NOTIFY arrives — `JoinHandle::abort()` schedules the cancellation,
-    // it does not synchronously stop the task.
+    // i64::MAX (gauge → NaN). The listener task stays alive. Wait for the
+    // join handle to actually finish — `abort()` schedules cancellation but
+    // doesn't synchronously stop the task, and a fixed sleep gives no
+    // guarantee that the drain's `notified().await` has been canceled before
+    // our pg_notify drives the listener.
     fixture.drain_handle.abort();
-    tokio::task::yield_now().await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let drain_finished = timeout(Duration::from_secs(5), async {
+        while !fixture.drain_handle.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        drain_finished.is_ok(),
+        "drain task did not finish within 5s after abort()"
+    );
 
     // Step 3: drive a NOTIFY for seq=0, which is below the post-webhook
     // watermark (>=1). The listener's `fetch_min` mirrors this finite
@@ -136,19 +145,32 @@ async fn metrics_min_pending_seq_is_nan_in_steady_state() {
         assert_eq!(status, StatusCode::OK);
     }
 
-    timeout(Duration::from_secs(10), async {
+    // Wait for steady state: the drain has caught up (broadcast_watermark
+    // matches MAX(seq) in the outbox) AND the gauge has reached its NaN
+    // sentinel. Polling the gauge directly avoids fixed-sleep flake — every
+    // drain pass swaps min_pending_seq to MAX and emits NaN, so once the
+    // drain has processed all pending rows the gauge MUST settle at NaN.
+    let mut last_gauge = None;
+    let result = timeout(Duration::from_secs(10), async {
         loop {
             tokio::time::sleep(Duration::from_millis(30)).await;
-            if fixture.observed_passes.load(Ordering::Relaxed) > baseline_passes {
+            if fixture.observed_passes.load(Ordering::Relaxed) <= baseline_passes {
+                continue;
+            }
+            let body = common::render_metrics();
+            let gauge = common::parse_unlabeled_gauge(&body, METRIC);
+            last_gauge = gauge;
+            if gauge.map(f64::is_nan).unwrap_or(false) {
                 return;
             }
         }
     })
-    .await
-    .expect("drain did not catch up within 10s");
-
-    // Allow the drain's swap-to-NaN to settle after the last pass.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    .await;
+    assert!(
+        result.is_ok(),
+        "min_pending_seq gauge did not reach NaN steady-state within 10s; \
+         last observed: {last_gauge:?}"
+    );
 
     let body = common::render_metrics();
     let gauge = common::parse_unlabeled_gauge(&body, METRIC)

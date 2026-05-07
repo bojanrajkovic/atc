@@ -59,7 +59,19 @@ async fn metrics_wake_coalesced_does_not_over_count_during_slow_drain() {
     .await
     .expect("listener did not receive all 5 NOTIFYs within 10s");
 
-    let after_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC);
+    let body = common::render_metrics();
+    // Presence check: the family must be registered.
+    // parse_unlabeled_counter returns 0 for both "registered but never
+    // incremented" and "completely missing", so without this check a
+    // regression that drops the describe_counter! call or the increment site
+    // would still pass the delta-bound assertions below.
+    assert!(
+        body.lines()
+            .any(|l| !l.starts_with('#') && l.starts_with(&format!("{METRIC} "))),
+        "{METRIC} must appear in /metrics body (registered + emittable)"
+    );
+
+    let after_count = common::parse_unlabeled_counter(&body, METRIC);
     let delta = after_count - baseline_count;
 
     assert!(

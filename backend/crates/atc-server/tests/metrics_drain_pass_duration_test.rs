@@ -53,9 +53,9 @@ async fn metrics_drain_pass_duration_records_one_observation_per_pass() {
     let after_sum = common::parse_unlabeled_gauge(&after, METRIC_SUM).unwrap_or(0.0);
 
     let count_delta = after_count - baseline_count;
-    assert!(
-        count_delta >= 1,
-        "expected at least one drain-pass duration observation; \
+    assert_eq!(
+        count_delta, 1,
+        "expected exactly one drain-pass duration observation per pass; \
          baseline={baseline_count} after={after_count}"
     );
 

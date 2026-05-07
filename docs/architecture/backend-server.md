@@ -192,6 +192,20 @@ metrics on a separate port keeps the metrics surface out of the application
 ingress and allows Kubernetes `NetworkPolicy` rules to grant scrape access to
 Prometheus without exposing the full API.
 
+### Metric authoring contract
+
+Every metric exposed at `/metrics` MUST ship with documentation in this section covering its interpretation surface — the contextual information an operator needs to read alerts, build dashboards, and decide which aggregator to use. Specifically, every metric documents:
+
+1. **Name** — exact metric family name as scraped.
+2. **Type** — counter / gauge / histogram.
+3. **Labels** — every label name AND its source. Distinguish *emitted* labels (added by the application) from *scrape-injected* labels (e.g., `pod`, `instance`, added by the ServiceMonitor at scrape time).
+4. **Measures** — one sentence stating what the metric value means in operational terms (not implementation terms).
+5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (pod)` or `without (pod)`.
+6. **Aggregation guidance** — recommended cross-replica aggregator (`avg`/`max`/`sum`/`p99`) with one-sentence rationale.
+7. **Example PromQL** — one canonical query that operators can copy-paste into Grafana to see meaningful data.
+
+This contract applies to every metric added to the codebase, not just Postgres-path metrics. Plans that add metrics MUST extend this section with the new metric's seven-element block before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) enforces that backend metric changes must update `backend-server.md`; this contract narrows the requirement from "update the doc" to "update the doc with the seven-element block."
+
 ### axum-prometheus placement
 
 `PrometheusMetricLayer` wraps the main API router (not the metrics router).
@@ -217,20 +231,6 @@ bucket overrides:
   `axum_http_requests_duration_seconds_bucket` and Phase 5
   `atc_pg_outbox_lag_seconds_bucket` /
   `atc_pg_drain_pass_duration_seconds_bucket` series would not appear.
-
-### Metric authoring contract
-
-Every metric exposed at `/metrics` MUST ship with documentation in this section covering its interpretation surface — the contextual information an operator needs to read alerts, build dashboards, and decide which aggregator to use. Specifically, every metric documents:
-
-1. **Name** — exact metric family name as scraped.
-2. **Type** — counter / gauge / histogram.
-3. **Labels** — every label name AND its source. Distinguish *emitted* labels (added by the application) from *scrape-injected* labels (e.g., `pod`, `instance`, added by the ServiceMonitor at scrape time).
-4. **Measures** — one sentence stating what the metric value means in operational terms (not implementation terms).
-5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (pod)` or `without (pod)`.
-6. **Aggregation guidance** — recommended cross-replica aggregator (`avg`/`max`/`sum`/`p99`) with one-sentence rationale.
-7. **Example PromQL** — one canonical query that operators can copy-paste into Grafana to see meaningful data.
-
-This contract applies to every metric added to the codebase, not just Postgres-path metrics. Plans that add metrics MUST extend this section with the new metric's seven-element block before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) enforces that backend metric changes must update `backend-server.md`; this contract narrows the requirement from "update the doc" to "update the doc with the seven-element block."
 
 ### atc_build_info labels
 
@@ -343,7 +343,7 @@ All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is ad
 - **Labels:** none emitted; `pod`, `instance` (scrape-injected)
 - **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Mirrors the per-replica `Arc<AtomicI64>` after each successful drain pass; seeded at startup from `COALESCE(MAX(seq),0)`.
 - **Per-replica vs cluster:** Per-replica — each replica advances its watermark independently.
-- **Aggregation:** Display per-pod (`atc_pg_broadcast_watermark`); for "is the cluster keeping up" use `min by (pod)` (the laggiest replica).
+- **Aggregation:** Display per-pod (`atc_pg_broadcast_watermark`); for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)` (or equivalently `min without (pod, instance)`). Note: `min by (pod) (atc_pg_broadcast_watermark)` would just preserve one series per pod — same as the per-pod display.
 - **Example PromQL:** `atc_pg_broadcast_watermark`
 
 #### `atc_pg_min_pending_seq`
