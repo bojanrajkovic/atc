@@ -200,7 +200,7 @@ Pass criteria for AC11:
 - Each WS-tap logfile shows exactly one `SeqEvent` for the webhook.
 - Both `/readyz` endpoints return 200 throughout the test.
 
-`kubectl logs -l app.kubernetes.io/name=atc -f --prefix` tags each line with the pod name — sufficient for "which replica did what" attribution during inspection. Per-process replica identifiers in tracing/metrics are Phase 5 scope (ADR 0002 "Out of scope").
+`kubectl logs -l app.kubernetes.io/name=atc -f --prefix` tags each line with the pod name — sufficient for "which replica did what" attribution during inspection. Per-process replica identification at the metrics layer is provided by Prometheus's standard scrape-injected target labels (`pod`, `instance`) — the `atc_pg_*` metrics ship unlabeled per-process and dashboards aggregate `by (pod)`. See `docs/architecture/backend-server.md` § Operational metrics for the per-metric scoping rules.
 
 ### Re-running the smoke test against the same cluster
 

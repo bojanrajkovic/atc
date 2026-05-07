@@ -257,7 +257,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "Drain throughput context: outbox rows fetched per second (`atc_pg_drain_rows_total`) and drain passes per second (`atc_pg_drain_passes_total`). Existing Phase 2d/3c counters; included here for interpretation alongside the Phase 5 latency metrics.",
+      "description": "Drain throughput context: outbox rows fetched per second (`atc_pg_drain_rows_total`) and drain passes per second (`atc_pg_drain_passes_total`). Operationally adjacent to the latency panels above — useful for distinguishing 'drain is slow' from 'drain has nothing to do'.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
