@@ -15,7 +15,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
       pull-requests: read
@@ -53,7 +53,7 @@ jobs:
     name: Backend
     needs: changes
     if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     environment: ci
     permissions:
       contents: read
@@ -66,26 +66,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # GitHub-hosted ubuntu-24.04 runners ship with ~7 GB of pre-installed
-      # software (Android SDK, .NET, GHC, Haskell, dotnet, codeql, etc.) that
-      # we don't use. The Rust workspace's coverage-instrumented build alone
-      # produces ~6-9 GB of target/, which combined with the pre-installed
-      # software exceeds the ~14 GB free disk and the linker (cc) fails with
-      # "No space left on device". Reclaiming this space unblocks the
-      # coverage step. See #55 for the broader optimization tracking.
-      - name: Free up runner disk
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false  # keep tool-cache; we use Rust toolchain caching
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false  # slow; enable only if still tight
-          docker-images: true
-          swap-storage: false
-
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y mold cmake pkg-config
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
@@ -172,7 +154,7 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     environment: ci
     permissions:
       contents: read
@@ -257,7 +239,7 @@ jobs:
     name: Helm Lint & Unit
     if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
     needs: changes
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
     steps:
@@ -280,7 +262,7 @@ jobs:
     name: Helm Validate
     if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
     needs: changes
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
     strategy:
@@ -308,7 +290,7 @@ jobs:
   pr-checks:
     name: PR Checks
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
       pull-requests: write
@@ -333,7 +315,7 @@ jobs:
     name: Backend Result
     needs: [changes, backend]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     steps:
       - name: Check results
         env:
@@ -355,7 +337,7 @@ jobs:
     name: Frontend Result
     needs: [changes, frontend]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     steps:
       - name: Check results
         env:
@@ -377,7 +359,7 @@ jobs:
     name: Helm Result
     needs: [changes, helm-lint, helm]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     steps:
       - name: Check results
         env:

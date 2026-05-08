@@ -10,7 +10,7 @@ permissions: {}
 jobs:
   create-release:
     name: Create Release
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: write
     steps:
@@ -32,7 +32,7 @@ jobs:
   build-frontend:
     name: Build Frontend
     needs: create-release
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions: {}
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
@@ -92,13 +92,13 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
+            runner: [self-hosted, linux, amd64]
             rustflags: "-C target-feature=+crt-static"
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             rustflags: "-C target-feature=+crt-static"
           - target: aarch64-apple-darwin
-            runner: macos-15
+            runner: macos-26
             rustflags: ""
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -149,7 +149,7 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: [self-hosted, linux, amd64]
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
@@ -202,7 +202,7 @@ jobs:
   merge-manifest:
     name: Merge Multi-Arch Manifest
     needs: build-container
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
       packages: write
@@ -267,7 +267,7 @@ jobs:
   publish-helm-chart:
     name: Publish Helm Chart
     needs: [create-release, build-container, merge-manifest]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
       packages: write
