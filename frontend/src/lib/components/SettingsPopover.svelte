@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as Popover from '$lib/components/ui/popover'
+  import { Switch } from '$lib/components/ui/switch'
   import * as ToggleGroup from '$lib/components/ui/toggle-group'
-  import { Toggle } from '$lib/components/ui/toggle'
   import { uiStore } from '$lib/stores/ui.svelte'
 
   const themes = [
@@ -73,26 +73,24 @@
       <!-- Mode toggle -->
       <div class="flex items-center justify-between">
         <p class="text-xs font-medium" style="color: var(--text-dim);">Light mode</p>
-        <Toggle
-          pressed={uiStore.mode === 'light'}
-          onPressedChange={(pressed) => {
-            uiStore.mode = pressed ? 'light' : 'dark'
+        <Switch
+          checked={uiStore.mode === 'light'}
+          onCheckedChange={(checked) => {
+            uiStore.mode = checked ? 'light' : 'dark'
           }}
           aria-label="Toggle light mode"
-          size="sm"
         />
       </div>
 
       <!-- Density toggle -->
       <div class="flex items-center justify-between">
         <p class="text-xs font-medium" style="color: var(--text-dim);">Compact</p>
-        <Toggle
-          pressed={uiStore.density === 'compact'}
-          onPressedChange={(pressed) => {
-            uiStore.density = pressed ? 'compact' : 'comfortable'
+        <Switch
+          checked={uiStore.density === 'compact'}
+          onCheckedChange={(checked) => {
+            uiStore.density = checked ? 'compact' : 'comfortable'
           }}
           aria-label="Toggle compact density"
-          size="sm"
         />
       </div>
     </div>

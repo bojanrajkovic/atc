@@ -1,12 +1,19 @@
 import path from 'node:path'
 
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import tailwindcss from '@tailwindcss/vite'
 import { svelteTesting } from '@testing-library/svelte/vite'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [svelte(), svelteTesting()],
+  // Include tailwindcss() so `import '../../app.css'` in a browser test runs
+  // through Tailwind v4's @theme processing and utility-class generation.
+  // Without it, app.css is served raw — :root { --foo: ... } declarations
+  // load as regular CSS, but @theme inline { --color-*: ... } and
+  // @import "tailwindcss" are no-ops, so utility classes (bg-input, h-8,
+  // inline-flex) never apply and computed-style assertions silently fail.
+  plugins: [tailwindcss(), svelte(), svelteTesting()],
   resolve: {
     conditions: ['browser', 'import'],
     alias: {

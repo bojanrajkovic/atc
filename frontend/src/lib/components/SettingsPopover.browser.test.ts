@@ -1,6 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Must import app.css so the @theme inline color bridge (--color-input,
+// --color-primary, etc.) and Tailwind v4 utility generation are live in
+// document.styleSheets — vitest.config.browser.ts wires up @tailwindcss/vite
+// for exactly this reason. Without it, utility classes silently no-op and
+// the computed-style assertions below get false negatives.
+import '../../app.css'
+
 // Mock localStorage since browsers still need this mock in some contexts
 const mockLocalStorage = (() => {
   let store: Record<string, string> = {}
@@ -34,6 +41,20 @@ describe('SettingsPopover (browser mode)', () => {
     uiStore = uiModule.uiStore
     const componentModule = await import('./SettingsPopover.svelte')
     SettingsPopover = componentModule.default
+
+    // vi.resetModules() does not re-evaluate ES modules in vitest's browser
+    // pool — modules are cached at the browser/Vite layer, so the
+    // module-level uiStore singleton persists across tests. Reset its state
+    // explicitly so each test starts from defaults (matches the tests'
+    // existing assumption that, e.g., mode === 'dark' initially).
+    uiStore.theme = 'radar'
+    uiStore.mode = 'dark'
+    uiStore.density = 'comfortable'
+    uiStore.activePoolFilter = null
+    uiStore.selectedRunId = null
+    uiStore.selectedJobId = null
+    uiStore.lastTriggerRunId = null
+    await new Promise((r) => setTimeout(r, 0))
   })
 
   afterEach(() => {
@@ -136,6 +157,64 @@ describe('SettingsPopover (browser mode)', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(uiStore.density).toBe('compact')
+  })
+
+  // Regression checks for issue #31. The previous Toggle primitive was an
+  // empty 28×28 transparent rectangle (no child content + bg-transparent),
+  // functional but invisible to mouse/touch users. The Switch primitive
+  // renders a filled track + thumb child by design.
+  it('mode and density switches render a filled track and a sized thumb', async () => {
+    render(SettingsPopover)
+
+    const button = screen.getByRole('button', { name: /settings/i })
+    await fireEvent.click(button)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const transparent = (color: string) => color === 'rgba(0, 0, 0, 0)' || color === 'transparent'
+
+    for (const label of ['Toggle light mode', 'Toggle compact density']) {
+      const track = screen.getByLabelText(label)
+
+      // role=switch is the load-bearing semantic difference vs the previous
+      // role=button Toggle — assistive tech announces this control as a
+      // switch.
+      expect(track.getAttribute('role')).toBe('switch')
+
+      // Track must have a non-transparent background — the original bug was
+      // bg-transparent + empty content. data-[state=unchecked]:bg-input fills
+      // the track; if the @theme inline bridge ever regresses (as in PR #30)
+      // this assertion catches it.
+      const trackStyle = window.getComputedStyle(track)
+      expect(transparent(trackStyle.backgroundColor)).toBe(false)
+
+      // And the visible thumb child must have non-zero size, so even if some
+      // future regression broke the track color, the thumb would still
+      // signal interactivity.
+      const thumb = track.querySelector('[data-slot="switch-thumb"]') as HTMLElement | null
+      expect(thumb).not.toBeNull()
+      const thumbRect = thumb!.getBoundingClientRect()
+      expect(thumbRect.width).toBeGreaterThan(0)
+      expect(thumbRect.height).toBeGreaterThan(0)
+    }
+  })
+
+  it('flipping a switch toggles aria-checked and data-state', async () => {
+    render(SettingsPopover)
+
+    const button = screen.getByRole('button', { name: /settings/i })
+    await fireEvent.click(button)
+    await new Promise((r) => setTimeout(r, 50))
+
+    const modeSwitch = screen.getByLabelText('Toggle light mode')
+
+    expect(modeSwitch.getAttribute('data-state')).toBe('unchecked')
+    expect(modeSwitch.getAttribute('aria-checked')).toBe('false')
+
+    await fireEvent.click(modeSwitch)
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(modeSwitch.getAttribute('data-state')).toBe('checked')
+    expect(modeSwitch.getAttribute('aria-checked')).toBe('true')
   })
 
   it('reflects current theme as active in toggle group', async () => {

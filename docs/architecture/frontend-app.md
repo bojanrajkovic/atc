@@ -600,6 +600,8 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - Run in headless Chromium (not jsdom) to access Animation API and browser rendering
 - Location: `src/lib/**/*.browser.test.ts`
 - Run with: `pnpm test:browser` (separate Vitest project)
+- **Tailwind in browser tests**: `vitest.config.browser.ts` registers `@tailwindcss/vite` alongside `svelte()` + `svelteTesting()`. The browser config is a standalone Vite project (used by `vitest.config.ts`'s `projects:` array, not extended from `vite.config.ts`), so plugins must be wired explicitly. Without the Tailwind plugin, `import '../../app.css'` serves the file raw — `:root { --foo: ... }` declarations load, but `@theme inline { --color-*: ... }` and `@import "tailwindcss"` are no-ops, so utility classes silently fail to apply and `getComputedStyle` assertions get false negatives. Tests that need real computed styles must import `app.css` explicitly (see `BackdropSuppression.browser.test.ts`, `RunCard.browser.test.ts`, `SettingsPopover.browser.test.ts`).
+- **uiStore singleton across tests**: `vi.resetModules()` does not re-evaluate ES modules in vitest's browser pool (modules are cached at the browser/Vite layer), so the module-level `uiStore` singleton persists across tests. Tests that assert on initial store state must reset state explicitly in `beforeEach` after `import('$lib/stores/ui.svelte')` returns — the singleton's `$state` values otherwise leak from prior tests. See `SettingsPopover.browser.test.ts` for the canonical pattern.
 
 **Integration tests (Vitest + MSW)**
 - Test store interactions and full workflow runs through stores
@@ -667,7 +669,7 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - `frontend/src/lib/components/RunnerPool.svelte` — Pure: single pool indicator with pool name, running/queued counts, capacity bar; `isActiveFilter` prop adds accent border
 - `frontend/src/lib/components/RunnerBar.svelte` — Pure: grid of pool indicators, receives pools[] prop
 - `frontend/src/lib/components/PoolFilterPill.svelte` — Pure: active-filter badge showing label text + clear button; shown when `activePoolFilter` is non-null
-- `frontend/src/lib/components/SettingsPopover.svelte` — Connected: theme selector popover, reads/writes UIStore
+- `frontend/src/lib/components/SettingsPopover.svelte` — Connected: theme selector popover, reads/writes UIStore. The Light mode and Compact rows use the `Switch` primitive (`lib/components/ui/switch/`) rather than `Toggle` — `Toggle` renders as an empty `bg-transparent` rectangle when childless, making it invisible to mouse/touch users (issue #31). Future binary settings in this popover should also route through `Switch`; reach for `Toggle` only when there is an icon child to make the control discoverable on its own.
 
 **Command Palette Components**
 - `frontend/src/lib/components/CommandPalette.svelte` — Connected: reads PaletteStore + RunStore + RunnerStore + UIStore; renders Command.Dialog portaled to body; five sections (Recent/Runs/Jobs/Pools/Commands) + theme submenu
