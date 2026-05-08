@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 
 fn now_millis_for_test() -> i64 {
@@ -91,20 +91,24 @@ fn build_app_with_pg(
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
     let layer = prometheus_layer();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
+        as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: Some(pool),
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -620,20 +624,27 @@ async fn phase_2c_outbox_ac3_4_success_returns_200_accepted() {
 async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
     // Build app inline using the local prometheus_layer() to reuse the OnceLock recorder.
     let layer = prometheus_layer();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -656,7 +667,7 @@ async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
     );
 
     // In-memory store reflects the event — no outbox to check in this mode
-    let snap = app_state.store.snapshot().await;
+    let snap = app_state.state_machine.snapshot().await;
     assert_eq!(snap.runs.len(), 1, "run must be in the in-memory store");
 }
 
@@ -882,7 +893,7 @@ async fn phase_2c_outbox_ac3_3_no_in_memory_drift_in_pg_mode() {
 
     // In-memory store stays empty in PG mode — no drift can occur because the
     // handler doesn't write to it.
-    let snap = app_state.store.snapshot().await;
+    let snap = app_state.state_machine.snapshot().await;
     assert!(
         snap.runs.is_empty(),
         "in-memory store must stay empty in PG mode; runs={:?}",

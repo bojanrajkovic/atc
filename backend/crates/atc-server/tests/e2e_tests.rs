@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::routes;
 use atc_server::state::AppState;
 
@@ -27,10 +27,11 @@ use futures_util::stream::StreamExt;
 /// Start an ephemeral server with full AppState, all routes, and return the server address.
 ///
 /// The server is configured with:
-/// - `Arc<StateStore>` with `SystemClock` and 1-hour TTL
+/// - `Arc<RunStateMachine>` with `SystemClock` and 1-hour TTL
 /// - Broadcast channel with capacity 256
 /// - `Arc<AppState>` with `webhook_secret: None` (HMAC tested separately in Phase 2)
-/// - `seq: Mutex::new(0)`
+/// - `seq: Arc::new(Mutex::new(0))` (shared with `InMemoryStore`)
+/// - `persist: Arc<dyn PersistentStore>` (`InMemoryStore` for in-memory mode)
 /// - OnceLock `PrometheusMetricLayer` with `#[serial_test::serial]`
 /// - Ephemeral `TcpListener::bind("127.0.0.1:0")`
 /// - `tokio::spawn(axum::serve(...))`
@@ -42,20 +43,27 @@ async fn start_test_server() -> SocketAddr {
         .0
         .clone();
 
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
 
     let main_router = routes::api_routes(layer.clone())

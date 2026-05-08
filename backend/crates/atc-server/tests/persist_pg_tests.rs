@@ -10,11 +10,11 @@ mod common;
 use std::time::Duration;
 
 use atc_core::{
-    JobStatus, PersistError, PersistentStore,
+    JobStatus, PersistError,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     types::{JobId, RunId},
 };
-use atc_server::persist::PgStore;
+use atc_server::persist::{PersistentStore, PgStore};
 use chrono::{DateTime, Utc};
 
 fn ts() -> DateTime<Utc> {

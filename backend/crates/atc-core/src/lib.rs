@@ -10,7 +10,7 @@ pub mod event;
 pub mod job;
 pub mod persist;
 pub mod run;
-pub mod store;
+pub mod state_machine;
 pub mod types;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -18,7 +18,7 @@ pub use clock::TestClock;
 pub use clock::{Clock, SystemClock};
 pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
-pub use persist::{PersistError, PersistentStore};
+pub use persist::PersistError;
 pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
-pub use store::{QueryResult, RunnerPoolStats, StateStore, StoreError};
+pub use state_machine::{QueryResult, RunStateMachine, RunnerPoolStats, StateMachineError};
 pub use types::{JobId, LabelSet, RepoKey, RunId};

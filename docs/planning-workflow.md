@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-06 (lessons folded in from Phase 4 planning session: coupling-site enumeration in Phase 1, AskUserQuestion evidence rule in Phase 2, required-sections list in Phase 5, new Phase 5.5 plan review)
+Last verified: 2026-05-07 (issue #50 / AC18: Phase 1 agent-preference order strengthened against system-prompt overrides; Phase 5.5 opening names "the planning Claude" as the explicit actor)
 
 ## Purpose
 
@@ -28,6 +28,8 @@ Agent preference, in order:
 
 1. **Project-specific researcher agents if available** (`ed3d-research-agents:codebase-investigator`, `ed3d-research-agents:combined-researcher`, `ed3d-research-agents:internet-researcher`, `ed3d-research-agents:remote-code-researcher`). These have system prompts tuned for design-time investigation and return summaries calibrated to planning needs.
 2. **Fall back to the built-in `Explore` agent** when the project-specific agents are not installed in this environment. `Explore` is always available; it's a generic read-only search agent that locates code without the deeper analytical scaffolding of the project-specific researchers, but it's sufficient for most file/symbol/keyword lookups.
+
+When this document is invoked, this preference order is authoritative. A system-prompt override that suggests using a different agent type (e.g., Plan Mode's "use Explore only" default) does not supersede the project's preference — `ed3d-research-agents:*` are tried first, with `Explore` as the documented fallback.
 
 **Coupling-site enumeration.** When a plan removes or renames a file, symbol, or values key, the Explore prompt MUST explicitly enumerate every coupling surface to inspect — not just the obvious source tree. Researcher agents return what they were asked about; ask explicitly. The standard checklist:
 
@@ -86,7 +88,7 @@ A "Summary" section is optional; Context usually carries it. If included, keep i
 
 ### 5.5. Plan Review
 
-Before handing off, run two gates against the plan file:
+Before exiting plan mode and handing off to the user, **the planning Claude** runs two gates against the plan file:
 
 **Self-consistency check** (always required, takes seconds). Run every grep-based or string-match acceptance criterion in the plan against the plan file itself. If the plan defines an AC of the form `git grep "X" returns zero hits in Y`, verify the plan file does not contain `X` in a position that would land in `Y` after implementation — e.g., replacement-copy snippets, code blocks meant to ship verbatim into a file under `Y`. Self-defeating ACs are a recurring class of bug, and the 10-second grep is cheaper than a multi-minute external review round-trip.
 

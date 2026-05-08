@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 async fn test_ac5_1_completed_job_within_ttl_retained() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
 
     let run_id = RunId(1700);
     let job_id = JobId(1701);
@@ -52,7 +52,7 @@ async fn test_ac5_1_completed_job_within_ttl_retained() {
 async fn test_ac5_2_completed_job_past_ttl_evicted() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
 
     let run_id = RunId(1800);
     let job_id = JobId(1801);
@@ -115,7 +115,7 @@ async fn test_ac5_2_completed_job_past_ttl_evicted() {
 async fn test_ac5_3_run_with_no_jobs_evicted() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
 
     let run_id = RunId(1900);
     let job_id = JobId(1901);
@@ -163,7 +163,7 @@ async fn test_ac5_3_run_with_no_jobs_evicted() {
 async fn test_ac5_3_run_with_active_job_retained() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
 
     let run_id = RunId(2000);
     let completed_job_id = JobId(2001);
@@ -235,7 +235,7 @@ async fn test_ac5_3_run_with_active_job_retained() {
 async fn test_ac5_4_active_jobs_never_evicted() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
 
     let run_id = RunId(2100);
     let queued_job_id = JobId(2101);
@@ -314,9 +314,9 @@ async fn test_ac5_5_ttl_configurable() {
     let five_min_clock = Arc::new(TestClock::new(start_time));
 
     // Store with 1-hour TTL
-    let store_one_hour = StateStore::new(one_hour_clock.clone(), Duration::from_secs(3600));
+    let store_one_hour = RunStateMachine::new(one_hour_clock.clone(), Duration::from_secs(3600));
     // Store with 5-minute TTL
-    let store_five_min = StateStore::new(five_min_clock.clone(), Duration::from_secs(300));
+    let store_five_min = RunStateMachine::new(five_min_clock.clone(), Duration::from_secs(300));
 
     let run_id_one_hour = RunId(2200);
     let job_id_one_hour = JobId(2201);

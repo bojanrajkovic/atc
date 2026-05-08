@@ -147,7 +147,7 @@ pub fn register_pg_write_counters() {
 /// Register listener and drain task metrics.
 ///
 /// Counters:
-/// - atc_pg_notify_emitted_total{kind} — emitted from webhook handler inside txn
+/// - atc_pg_notify_emitted_total{kind} — emitted from `PgStore::apply_*_event` after commit (ADR 0005)
 /// - atc_pg_notify_received_total — received by listener task
 /// - atc_pg_listener_recv_errors_total — recv() errors (sqlx hides successful reconnects)
 /// - atc_pg_drain_passes_total — drain task wake-ups

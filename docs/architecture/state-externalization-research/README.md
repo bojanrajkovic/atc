@@ -20,7 +20,7 @@ The ADRs are canonical. This document set is preserved for analysis and rejected
 
 **Rollout status: complete as of 2026-05-07.** All five implementation phases shipped: Phase 2a (PR #48 — sqlx pool + migrations), Phase 2b/2c (transactional outbox), Phase 2d (LISTEN/NOTIFY listener), Phase 3a/3b (wire contract alignment, PR #54), Phase 3c (PG-backed read path), Phase 4 (multi-replica enablement, PR #57 closing #7), Phase 5 (operational metrics, PR #63). Out-of-scope follow-ups deferred during the rollout are now tracked as discrete issues:
 
-- [#50](https://github.com/bojanrajkovic/atc/issues/50) — Reconcile `PersistentStore` trait with transactional outbox (post-2c code cleanup)
+- ~~[#50](https://github.com/bojanrajkovic/atc/issues/50) — Reconcile `PersistentStore` trait with transactional outbox (post-2c code cleanup)~~ — **CLOSED** by [ADR 0005](../../architecture-decisions/0005-persistentstore-trait-relocation.md): trait relocated to `atc-server::persist` with `PgStore` + `InMemoryStore` impls; `AppState` carries `Arc<dyn PersistentStore>` for the write path.
 - [#64](https://github.com/bojanrajkovic/atc/issues/64) — Bundle the Grafana dashboard as a Helm ConfigMap
 - [#65](https://github.com/bojanrajkovic/atc/issues/65) — Persist raw GitHub webhook JSON alongside domain-event projection
 - [#66](https://github.com/bojanrajkovic/atc/issues/66) — Backfill seven-element interpretation blocks for legacy `atc_pg_*` counters

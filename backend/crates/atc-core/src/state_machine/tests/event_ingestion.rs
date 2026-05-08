@@ -6,7 +6,7 @@ use super::*;
 async fn test_ac3_1_create_run_from_requested() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(1);
 
     let envelope = make_run_event(run_id, RunEvent::Requested);
@@ -30,7 +30,7 @@ async fn test_ac3_1_create_run_from_requested() {
 async fn test_ac3_1_update_run_to_in_progress() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(2);
 
     // Create with Requested
@@ -50,7 +50,7 @@ async fn test_ac3_1_update_run_to_in_progress() {
 async fn test_ac3_1_complete_run_with_conclusion() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(3);
 
     // Requested
@@ -79,7 +79,7 @@ async fn test_ac3_1_complete_run_with_conclusion() {
 async fn test_ac3_6_idempotent_requested_twice() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(4);
 
     let envelope = make_run_event(run_id, RunEvent::Requested);
@@ -99,7 +99,7 @@ async fn test_ac3_6_idempotent_requested_twice() {
 async fn test_ac3_2_create_job_from_queued() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(100);
     let run_id = RunId(10);
 
@@ -129,7 +129,7 @@ async fn test_ac3_2_create_job_from_queued() {
 async fn test_ac3_2_update_job_to_in_progress() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(101);
     let run_id = RunId(11);
 
@@ -176,7 +176,7 @@ async fn test_ac3_2_update_job_to_in_progress() {
 async fn test_ac3_3_jobs_by_run() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(20);
     let job_id_1 = JobId(201);
     let job_id_2 = JobId(202);
@@ -240,7 +240,7 @@ async fn test_ac3_3_jobs_by_run() {
 async fn test_ac3_3_jobs_by_repo() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(30);
 
     // Create jobs for different repos
@@ -287,7 +287,7 @@ async fn test_ac3_3_jobs_by_repo() {
 async fn test_ac3_4_steps_snapshot_replacement() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(400);
     let run_id = RunId(40);
 
@@ -385,7 +385,7 @@ async fn test_ac3_4_steps_snapshot_replacement() {
 async fn test_ac3_5_first_sight_completed_job() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(500);
     let run_id = RunId(50);
 
@@ -420,7 +420,7 @@ async fn test_ac3_5_first_sight_completed_job() {
 async fn test_ac3_6_idempotent_queued_twice() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(600);
     let run_id = RunId(60);
 

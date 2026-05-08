@@ -6,7 +6,7 @@ use super::*;
 async fn test_ac4_1_query_returns_only_queried_repos() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     // Create a run
     let run_id = RunId(700);
@@ -56,7 +56,7 @@ async fn test_ac4_1_query_returns_only_queried_repos() {
 async fn test_ac4_2_query_returns_owned_snapshots() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     // Create a run and job
     let run_id = RunId(800);
@@ -93,7 +93,7 @@ async fn test_ac4_2_query_returns_owned_snapshots() {
 async fn test_ac4_5_empty_repos_returns_empty_result() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     // Create a run and job
     let run_id = RunId(900);
@@ -125,7 +125,7 @@ async fn test_ac4_5_empty_repos_returns_empty_result() {
 async fn test_ac4_6_multi_repo_query_isolation() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     // Create a run
     let run_id = RunId(1000);
@@ -232,7 +232,7 @@ async fn test_ac4_6_multi_repo_query_isolation() {
 async fn test_ac4_query_includes_parent_runs() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     // Create a run
     let run_id = RunId(1100);

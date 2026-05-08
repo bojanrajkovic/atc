@@ -1,6 +1,6 @@
-//! In-memory state store for domain entities.
+//! In-memory state machine for domain entities.
 //!
-//! The [`StateStore`] ingests domain events, maintains current state
+//! The [`RunStateMachine`] ingests domain events, maintains current state
 //! with secondary indexes, and supports configurable TTL eviction of
 //! completed entries.
 
@@ -21,16 +21,16 @@ use crate::job::{InvalidJobTransition, Job, JobStatus};
 use crate::run::{InvalidRunTransition, RunStatus, WorkflowRun};
 use crate::types::{JobId, LabelSet, RepoKey, RunId};
 
-/// Errors that can occur during state store operations.
+/// Errors that can occur during state machine operations.
 #[derive(Debug)]
-pub enum StoreError {
+pub enum StateMachineError {
     /// A run status transition was invalid.
     InvalidRunTransition(InvalidRunTransition),
     /// A job status transition was invalid.
     InvalidJobTransition(InvalidJobTransition),
 }
 
-impl fmt::Display for StoreError {
+impl fmt::Display for StateMachineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRunTransition(e) => write!(f, "{e}"),
@@ -39,7 +39,7 @@ impl fmt::Display for StoreError {
     }
 }
 
-impl std::error::Error for StoreError {
+impl std::error::Error for StateMachineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidRunTransition(e) => Some(e),
@@ -48,23 +48,23 @@ impl std::error::Error for StoreError {
     }
 }
 
-impl From<InvalidRunTransition> for StoreError {
+impl From<InvalidRunTransition> for StateMachineError {
     fn from(e: InvalidRunTransition) -> Self {
         Self::InvalidRunTransition(e)
     }
 }
 
-impl From<InvalidJobTransition> for StoreError {
+impl From<InvalidJobTransition> for StateMachineError {
     fn from(e: InvalidJobTransition) -> Self {
         Self::InvalidJobTransition(e)
     }
 }
 
-/// In-memory state store for workflow runs and jobs.
+/// In-memory state machine for workflow runs and jobs.
 ///
 /// Thread-safe via `tokio::sync::RwLock`. Wrap in `Arc` for sharing
 /// across async tasks and Axum handlers.
-pub struct StateStore {
+pub struct RunStateMachine {
     state: RwLock<StateData>,
     /// Clock for determining current time during eviction.
     clock: Arc<dyn Clock>,
@@ -121,7 +121,7 @@ pub struct RunnerPoolStats {
     pub total: Option<u32>,
 }
 
-impl StateStore {
+impl RunStateMachine {
     /// Creates a new empty state store.
     #[must_use]
     pub fn new(clock: Arc<dyn Clock>, completed_ttl: Duration) -> Self {
@@ -146,10 +146,13 @@ impl StateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::InvalidRunTransition`] if the event implies
+    /// Returns [`StateMachineError::InvalidRunTransition`] if the event implies
     /// a status transition that the state machine rejects (e.g.,
     /// `Completed` -> `InProgress`).
-    pub async fn apply_run_event(&self, envelope: RunEventEnvelope) -> Result<(), StoreError> {
+    pub async fn apply_run_event(
+        &self,
+        envelope: RunEventEnvelope,
+    ) -> Result<(), StateMachineError> {
         let mut state = self.state.write().await;
 
         let (target_status, conclusion) = match &envelope.action {
@@ -222,9 +225,12 @@ impl StateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::InvalidJobTransition`] if the event implies
+    /// Returns [`StateMachineError::InvalidJobTransition`] if the event implies
     /// a backward status transition on an existing job.
-    pub async fn apply_job_event(&self, envelope: JobEventEnvelope) -> Result<(), StoreError> {
+    pub async fn apply_job_event(
+        &self,
+        envelope: JobEventEnvelope,
+    ) -> Result<(), StateMachineError> {
         let mut state = self.state.write().await;
 
         let (target_status, conclusion, runner, labels, steps) = match envelope.action {
@@ -475,7 +481,7 @@ impl StateStore {
 
     /// Start a background task that periodically evicts expired entries.
     ///
-    /// Must be called on an `Arc<StateStore>`. Returns a
+    /// Must be called on an `Arc<RunStateMachine>`. Returns a
     /// [`JoinHandle`](tokio::task::JoinHandle) — drop or abort it to
     /// stop the eviction loop.
     ///
@@ -498,7 +504,7 @@ impl StateStore {
 }
 
 #[cfg(test)]
-impl StateStore {
+impl RunStateMachine {
     /// Assert all store invariants hold. Panics with a descriptive
     /// message if any invariant is violated.
     pub(crate) async fn assert_invariants(&self) {

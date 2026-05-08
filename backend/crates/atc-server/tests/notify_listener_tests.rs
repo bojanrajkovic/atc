@@ -129,23 +129,29 @@ async fn phase_2d_notify_listener_ac2_no_notify_on_rollback() {
 #[tokio::test]
 #[serial]
 async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
-    use atc_core::{StateStore, SystemClock};
+    use atc_core::{RunStateMachine, SystemClock};
     use atc_server::state::AppState;
 
     let layer = common::PROMETHEUS_INIT
         .get_or_init(common::install_test_recorder)
         .0
         .clone();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None, // in-memory mode
         min_pending_seq: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(i64::MAX)),
         last_drain_pass_at: std::sync::Arc::new(std::sync::atomic::AtomicI64::new({
@@ -155,6 +161,7 @@ async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
                 .unwrap_or(0)
         })),
         broadcast_watermark: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
+        persist,
     });
     let router = atc_server::routes::api_routes(layer)
         .with_state(state.clone())

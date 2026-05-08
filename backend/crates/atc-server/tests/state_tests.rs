@@ -18,20 +18,27 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         .0
         .clone();
 
-    let store = std::sync::Arc::new(atc_core::StateStore::new(
+    let state_machine = std::sync::Arc::new(atc_core::RunStateMachine::new(
         std::sync::Arc::new(atc_core::SystemClock),
         std::time::Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let seq = std::sync::Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = std::sync::Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as std::sync::Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = std::sync::Arc::new(atc_server::state::AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
+        persist,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())

@@ -7,7 +7,7 @@ Last verified: 2026-05-04
 ## Context
 
 ATC's backend currently keeps all live state in process memory. `atc-server`
-holds an `Arc<StateStore>` plus a `Mutex<u64>` seq counter, and the webhook
+holds an `Arc<RunStateMachine>` plus a `Mutex<u64>` seq counter, and the webhook
 handler holds that mutex across store mutation, seq assignment, and broadcast
 to a `tokio::sync::broadcast` channel. `GET /v1/state` holds the same mutex
 across snapshot read and seq read, which is what makes the current cursor /
@@ -15,7 +15,7 @@ snapshot / stream contract atomic.
 
 This works for `replicaCount = 1`. It does not work for `replicaCount > 1`:
 
-- each replica would maintain a disjoint `StateStore`
+- each replica would maintain a disjoint `RunStateMachine`
 - WebSocket subscribers on replica A would never see events ingested by replica B
 - the seq counter would diverge between replicas, breaking the snapshot/stream
   reconciliation protocol
@@ -42,7 +42,7 @@ reflects that supersession.
 
 ### 1. Storage backend: PostgreSQL with current-state tables and a transactional outbox
 
-Live state moves from the in-process `StateStore` to PostgreSQL:
+Live state moves from the in-process `RunStateMachine` to PostgreSQL:
 
 - current-state tables keyed by GitHub identities (`run_id`, `job_id`)
 - an append-only `outbox` (or `events`) table with an ATC-owned monotonic `seq`
@@ -80,7 +80,7 @@ set is parameterized from the existing Rust state machine
 state machine itself stays in `atc-core` as the single source of truth; SQL
 does not encode the transition rules, it consumes them as parameters at call
 time. A `0 rows affected` result is the failure signal, mapped to today's
-`StoreError::InvalidTransition`. First-sight creation uses
+`StateMachineError::InvalidTransition`. First-sight creation uses
 `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE jobs.status IN (predecessors)`
 so the upsert respects the predicate when the row already exists. Idempotent
 same-status replay is handled by including the target status in the
@@ -220,7 +220,7 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
 ## Implementation Status
 
 - **Decision 1** (PostgreSQL as durable state backend, sqlx crate, `sqlx::migrate!` for migrations): implemented in Phase 2a (PR #48). Schema: `runs` and `jobs` tables in `0001_initial_runs_jobs.sql`.
-- **Decision 2** (atomic current-state UPSERT + outbox INSERT in one transaction): implemented in Phase 2c. `migrations/0002_outbox.sql` adds the outbox table; `upsert_*_in_txn` and `insert_outbox_*_in_txn` helpers in `persist.rs` drive the transaction. Webhook handler holds seq mutex across `pool.begin()…tx.commit()` to preserve broadcast order = durable order.
+- **Decision 2** (atomic current-state UPSERT + outbox INSERT in one transaction): implemented in Phase 2c, refined in #50 / ADR 0005. `migrations/0002_outbox.sql` adds the outbox table; `upsert_*_in_txn` and `insert_outbox_*_in_txn` helpers in `atc-server::persist` drive the transaction. After ADR 0005 the webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; `PgStore::apply_*_event` owns its own transaction lifecycle (begin → upsert → outbox INSERT → `pg_notify` → commit) and does not touch the seq mutex. Broadcast order = durable order is preserved by the drain task's commit-order watermark, not by the seq mutex.
 - **Decision 3** (NOTIFY emission after commit; listener connection using session-compatible path): IMPLEMENTED in Phase 2d — see feat/phase-2d-notify-listener branch. `SELECT pg_notify('atc_outbox', seq::text)` emitted inside the webhook transaction before `tx.commit()`. Dedicated `PgListener` listener task; `ATC_DATABASE_LISTENER_URL` config option for session-mode override. Five new metrics wired.
 - **Decision 4** (original pool-stats persistence — superseded by ADR 0004): outbox payload stores `RunEventEnvelope`/`JobEventEnvelope` only (no `pool_stats_after`). ADR 0004 governs pool stats from Phase 3b onward.
 - **Decision 5** (startup watermark and forwarder design): PARTIAL — listener structure, coalescing via `Arc<Notify>`, and watermark init (`COALESCE(MAX(seq), 0)`) implemented in Phase 2d. Drain task fetches `seq > watermark ORDER BY seq` and logs rows (stub). Only `forward_to_ws_clients` step deferred to Phase 3c, when the drain loop gains the actual WS forwarding call.

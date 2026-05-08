@@ -1,12 +1,12 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-05-05 (Phase 3b: `pool_stats()` deleted, `snapshot()` returns `QueryResult` only — pool stats now derived on the frontend)
+Last verified: 2026-05-07 (#50 closed: `PersistentStore` trait removed from this crate and relocated to `atc-server::persist` per ADR 0005; in-memory state machine type renamed to `RunStateMachine` in `state_machine.rs`; `apply_*_event` are now inherent methods on `RunStateMachine`. Phase 3b changes preserved.)
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
 ## Purpose
 
-Core domain types, state store, and business logic for ATC. Source-agnostic — no GitHub-specific dependencies. The `atc-github` crate maps webhook payloads into these domain types. **Phase 2b:** Adds `PersistentStore` trait and `predecessors_of()` methods to enable durable shadow writes via `atc-server::persist::PgStore`.
+Core domain types, state machine, and business logic for ATC. Source-agnostic — no GitHub-specific dependencies. The `atc-github` crate maps webhook payloads into these domain types. `predecessors_of()` methods enable predicated UPSERTs in `atc-server::persist::PgStore`.
 
 ## Modules
 
@@ -16,8 +16,8 @@ Core domain types, state store, and business logic for ATC. Source-agnostic — 
 | `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`, state transitions; `RunStatus::predecessors_of(target)` for predicates (Phase 2b) |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`, state transitions; `JobStatus::predecessors_of(target)` for predicates (Phase 2b) |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |
-| `store` | `StateStore` — in-memory state with event ingestion, queries, `snapshot()` (atomic consistent read returning `QueryResult { runs, jobs }`), TTL eviction; implements `PersistentStore` (Phase 2b). `pool_stats()` was removed in Phase 3b — pool stats are now derived on the frontend (see ADR 0004 / `frontend/src/lib/stores/runners.svelte.ts::computePoolStats`) |
-| `persist` | `PersistentStore` trait with `apply_run_event()` and `apply_job_event()` methods; returns `PersistError` for invalid transitions (Phase 2b) |
+| `state_machine` | `RunStateMachine` — in-memory state with event ingestion, queries, `snapshot()` (atomic consistent read returning `QueryResult { runs, jobs }`), TTL eviction. `apply_run_event()` and `apply_job_event()` are inherent methods (not trait methods — `PersistentStore` was relocated to `atc-server` per ADR 0005). `pool_stats()` was removed in Phase 3b — pool stats are now derived on the frontend (see ADR 0004 / `frontend/src/lib/stores/runners.svelte.ts::computePoolStats`) |
+| `persist` | `PersistError` domain error type with `InvalidTransition` and `Backend(Box<dyn Error>)` variants. The `PersistentStore` trait was removed from this module (relocated to `atc-server::persist` per ADR 0005); `PersistError` remains here as the shared domain error returned by `RunStateMachine` inherent methods and by the atc-server trait impls. |
 | `clock` | `Clock` trait, `SystemClock`, `TestClock` (behind `test-support` feature) |
 
 ## TypeScript Generation
@@ -54,7 +54,7 @@ These rules are enforced by the state machine and verified by 131 tests includin
 - **Index consistency:** Every job appears in exactly one `jobs_by_repo` set and one `jobs_by_run` set. `assert_invariants()` (test-only) verifies this.
 - **Eviction safety:** Only completed jobs past TTL are evicted. Active jobs are never removed regardless of age.
 - **Snapshot read shape (Phase 3b):** `snapshot()` returns `QueryResult { runs, jobs }` only. The previous tuple form `(QueryResult, Vec<RunnerPoolStats>)` and the standalone `pool_stats()` method were removed; pool stats and their lexicographic sort by `labels` are now produced by the frontend (`computePoolStats` in `runners.svelte.ts`).
-- **PersistentStore predicates (Phase 2b):** `RunStatus::predecessors_of(target)` and `JobStatus::predecessors_of(target)` return `&'static [Self]` including the target itself. These are used by `PgStore` to parameterize SQL WHERE clauses for predicated UPSERTs. The predicate includes the target status to enable idempotent replay (same-status reapplication succeeds).
+- **Predecessor predicates:** `RunStatus::predecessors_of(target)` and `JobStatus::predecessors_of(target)` return `&'static [Self]` including the target itself. These are used by `atc-server::persist::PgStore` to parameterize SQL WHERE clauses for predicated UPSERTs. The predicate includes the target status to enable idempotent replay (same-status reapplication succeeds).
 
 ## Testing
 
