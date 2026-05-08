@@ -5,7 +5,7 @@
 ## Context
 
 Today the backend computes runner pool statistics (`RunnerPoolStats`) from the
-in-memory `StateStore` and ships them in two places:
+in-memory `RunStateMachine` and ships them in two places:
 
 - `StateSnapshot.poolStats` on `GET /v1/state`
 - `SeqEvent.poolStatsAfter` on every Job event over `/v1/ws`
@@ -37,7 +37,7 @@ Concretely:
   Backend and frontend ship together in a single binary, so the removals
   happen in lockstep — no dual-shape transition window is required (see
   ADR 0003 Context for the single-binary deployment note).
-- **Backend:** `StateStore::pool_stats()` and the snapshot-time inline
+- **Backend:** `RunStateMachine::pool_stats()` and the snapshot-time inline
   pool stats computation are deleted as part of this change — no dead
   production code remains. If a backend self-test for derivation parity
   is wanted later, it can be reintroduced as a test helper.
@@ -97,7 +97,7 @@ required.
 
 - **Outbox stores domain events only (no `pool_stats_after`)**: enforced in Phase 2c. Outbox `payload` JSONB stores `RunEventEnvelope` / `JobEventEnvelope` — the parsed-webhook domain events. `SeqEvent.pool_stats_after` is never written to the outbox. Verified by `phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event` test.
 - **Frontend derivation of pool stats**: complete in Phase 3b. The pure function `computePoolStats(jobs: Job[]): RunnerPoolStats[]` is exported from `frontend/src/lib/stores/runners.svelte.ts` and replicates the original backend algorithm: dedupe labels via `Set` then sort, use `JSON.stringify(sortedLabels)` as the map key (collision-free given the sorted normalization), skip `Waiting`/`Completed` jobs, count `Queued` and `InProgress` per label set, derive `groupName` from the most recent observed `runner.groupName`, set `isElastic = true` when any observed `runner.groupId === 0n` (bigint-aware), and return the resulting array sorted lexicographically by labels. `RunnerStore` exposes `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))` — no `$state`, no `loadPools`, no `clear`. The flat `runStore.jobs` `$derived.by<Job[]>` view (added in `runs.svelte.ts`) is the single dependency.
-- **Backend deletions**: `StateStore::pool_stats()` removed; the snapshot-time inline pool-stats computation in `StateStore::snapshot()` removed (snapshot now returns `QueryResult { runs, jobs }` only); `StateSnapshot.pool_stats` field removed; `SeqEvent.pool_stats_after` field removed; `tests/sidecar_tests.rs` (~530 lines) deleted; `store/tests/runner_pools.rs` (512 lines) deleted; the dispatcher's `if (seqEvent.poolStatsAfter != null)` block removed; `connection.ts` no longer calls `runnerStore.loadPools(snapshot.poolStats)` on snapshot load; `e2e/lib/ws-mock.ts` `makeJobSeqEvent` no longer emits `poolStatsAfter`.
+- **Backend deletions**: `RunStateMachine::pool_stats()` removed; the snapshot-time inline pool-stats computation in `RunStateMachine::snapshot()` removed (snapshot now returns `QueryResult { runs, jobs }` only); `StateSnapshot.pool_stats` field removed; `SeqEvent.pool_stats_after` field removed; `tests/sidecar_tests.rs` (~530 lines) deleted; `store/tests/runner_pools.rs` (512 lines) deleted; the dispatcher's `if (seqEvent.poolStatsAfter != null)` block removed; `connection.ts` no longer calls `runnerStore.loadPools(snapshot.poolStats)` on snapshot load; `e2e/lib/ws-mock.ts` `makeJobSeqEvent` no longer emits `poolStatsAfter`.
 
 ## Related
 
@@ -106,8 +106,11 @@ required.
   here)
 - ADR 0003 — [`last_seq` cursor and multi-replica operator policy](./0003-state-cursor-contract-and-operator-policy.md)
 - Issue: [#7 — design: externalize live state to support multi-replica deployments](https://github.com/bojanrajkovic/atc/issues/7)
-- Backend derivation today: `backend/crates/atc-core/src/store.rs:439-485` (`pool_stats`),
-  and `backend/crates/atc-core/src/store.rs:391-427` (snapshot-time inline)
-- Frontend consumption today: `frontend/src/lib/stores/runners.svelte.ts:6-8`
-  (`loadPools` wholesale replace), `frontend/src/lib/dispatcher.ts:104-106`
-  (sidecar dispatch), `frontend/src/lib/connection.ts:108` (snapshot-time load)
+- Backend derivation pre-Phase-3b: `RunStateMachine::pool_stats()` and the
+  snapshot-time inline computation lived in `backend/crates/atc-core/src/state_machine.rs`
+  (renamed from `store.rs` in #50). Both were deleted in Phase 3b alongside the
+  `StateSnapshot.pool_stats` and `SeqEvent.pool_stats_after` wire fields.
+- Frontend derivation today: `computePoolStats` in `frontend/src/lib/stores/runners.svelte.ts`,
+  invoked from a `$derived.by(...)` computed over `runStore.jobs`. The previous
+  imperative `loadPools(snapshot.poolStats)` and per-event `if (seqEvent.poolStatsAfter)`
+  dispatch sites are gone.

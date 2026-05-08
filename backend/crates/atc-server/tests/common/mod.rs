@@ -5,8 +5,9 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::listener;
+use atc_server::persist::{InMemoryStore, PgStore};
 use atc_server::state::AppState;
 use axum_prometheus::PrometheusMetricLayer;
 use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
@@ -141,20 +142,27 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 /// Build app with a specific webhook secret
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: Some(secret.to_string()),
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -165,20 +173,27 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 /// Build app with no webhook secret (verification bypassed)
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -300,7 +315,7 @@ async fn build_app_inner(
     use std::time::Instant;
 
     let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
@@ -325,15 +340,19 @@ async fn build_app_inner(
     let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
     #[allow(clippy::cast_precision_loss)]
     ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist =
+        Arc::new(PgStore::new(pool.clone())) as Arc<dyn atc_server::persist::PersistentStore>;
     let state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: Some(pool.clone()),
         min_pending_seq: min_pending_seq.clone(),
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
+        persist,
     });
 
     let router = atc_server::routes::api_routes(layer)

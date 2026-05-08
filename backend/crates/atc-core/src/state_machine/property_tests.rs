@@ -55,7 +55,7 @@ fn make_run_envelope(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
 /// Apply a test action to the store, silently ignoring errors.
 #[allow(clippy::too_many_lines)]
 async fn apply_action(
-    store: &StateStore,
+    store: &RunStateMachine,
     clock: &Arc<crate::clock::TestClock>,
     action: &TestAction,
 ) {
@@ -193,7 +193,7 @@ proptest! {
             .unwrap();
         rt.block_on(async {
             let clock = Arc::new(crate::clock::TestClock::new(Utc::now()));
-            let store = StateStore::new(
+            let store = RunStateMachine::new(
                 clock.clone(),
                 Duration::from_secs(3600),
             );

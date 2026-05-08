@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Mutex, Notify};
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::config;
 use atc_server::db;
 use atc_server::listener;
@@ -126,14 +126,14 @@ async fn main() {
     // PgPool is internally reference-counted; this clone is cheap.
     let pg_pool_for_listener = pg_pool.clone();
 
-    // Create the shared state store with system clock and 1-hour TTL for completed entries.
-    let store = Arc::new(StateStore::new(
+    // Create the shared state machine with system clock and 1-hour TTL for completed entries.
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
 
     // Start the background eviction task. Runs every 60 seconds.
-    let eviction_handle = store.start_eviction_task(Duration::from_secs(60));
+    let eviction_handle = state_machine.start_eviction_task(Duration::from_secs(60));
 
     // Create the broadcast channel for pushing domain events to WebSocket clients.
     // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
@@ -155,15 +155,25 @@ async fn main() {
     // `store(true)` ... `store(false)`.
     let drain_in_flight = Arc::new(AtomicBool::new(false));
 
+    let seq = Arc::new(Mutex::new(0u64));
+    let persist: Arc<dyn atc_server::persist::PersistentStore> = match pg_pool.clone() {
+        Some(pool) => Arc::new(atc_server::persist::PgStore::new(pool)),
+        None => Arc::new(atc_server::persist::InMemoryStore::new(
+            state_machine.clone(),
+            seq.clone(),
+            webhook_tx.clone(),
+        )),
+    };
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx: webhook_tx.clone(),
         webhook_secret: cfg.github.webhook_secret.clone(),
-        seq: Mutex::new(0),
+        seq,
         pg_pool,
         min_pending_seq: min_pending_seq.clone(),
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
+        persist,
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before

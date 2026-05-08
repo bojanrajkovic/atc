@@ -66,6 +66,8 @@ CREATE INDEX outbox_run_idx ON outbox (run_id);
 
 ### D2 — `PersistentStore` trait fate (Drop field, keep struct)
 
+> **Revised by [ADR 0005](../architecture-decisions/0005-persistentstore-trait-relocation.md):** The Phase 2c constraint ("`&self` cannot yield `&mut Transaction`") is moot when the impl owns its transaction internally. Issue #50 is closed: the trait was relocated to `atc-server::persist` with `PgStore` (internal tx lifecycle) and `InMemoryStore` as impls; `AppState` carries `Arc<dyn PersistentStore>` for the write path. The original "test-only seam vs. extend vs. delete" framing below is superseded.
+
 The webhook handler in Phase 2c **owns and drives the transaction**, which means it cannot use `Arc<dyn PersistentStore + Send + Sync>` — `&self` from a trait object cannot yield the `&mut Transaction<'_, Postgres>` that sqlx requires for executor binding inside a transaction.
 
 **Action:**
@@ -483,6 +485,8 @@ This is a single PR — there is no shadow/dual-mode in 2c. The cutover is atomi
 No `predecessors_of` changes required for Phase 2c.
 
 **`PersistentStore` trait carries vestigial weight.** The trait stays compiling and tested through `persist_pg_tests.rs`, but `AppState` no longer holds it and the route handler bypasses it for transaction work. [Issue #50](https://github.com/bojanrajkovic/atc/issues/50) tracks the question: "Is the trait carrying its weight, or should it be removed?" Answer that question in Phase 5 hardening — not now.
+
+> **Resolved by [ADR 0005](../architecture-decisions/0005-persistentstore-trait-relocation.md):** Issue #50 closed. The trait was relocated to `atc-server::persist` with internal-transaction-owning impls (`PgStore`, `InMemoryStore`). `AppState` carries `Arc<dyn PersistentStore>` as the write-path dispatch point. The "test-only seam vs. extend vs. delete" question is settled: extend (with trait carrying its weight as the production dispatch interface).
 
 ---
 

@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 async fn test_ac6_5_out_of_order_job_before_run() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run_id = RunId(1);
     let job_id = JobId(1);
@@ -47,7 +47,7 @@ async fn test_ac6_5_out_of_order_job_before_run() {
 async fn test_ac6_5_out_of_order_completed_before_queued() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run_id = RunId(2);
     let job_id = JobId(2);
@@ -94,7 +94,7 @@ async fn test_ac6_5_out_of_order_completed_before_queued() {
 async fn test_ac6_5_duplicate_queued_events() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run_id = RunId(3);
     let job_id = JobId(3);
@@ -138,7 +138,7 @@ async fn test_ac6_5_duplicate_queued_events() {
 async fn test_ac6_5_duplicate_completed_events() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run_id = RunId(4);
     let job_id = JobId(4);
@@ -177,7 +177,7 @@ async fn test_ac6_5_duplicate_completed_events() {
 async fn test_ac6_5_unknown_run_id_on_job() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run_id = RunId(99); // No run event for this ID
     let job_id = JobId(5);
@@ -218,7 +218,7 @@ async fn test_ac6_5_unknown_run_id_on_job() {
 async fn test_ac6_5_rapid_status_cycling() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run_id = RunId(5);
     let job_id = JobId(6);
@@ -298,7 +298,7 @@ async fn test_ac6_5_rapid_status_cycling() {
 async fn test_ac6_5_interleaved_multi_job() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
 
     let run1_id = RunId(10);
     let run2_id = RunId(11);
@@ -384,7 +384,7 @@ async fn test_ac6_5_interleaved_multi_job() {
 async fn test_ac6_5_eviction_with_mixed_state() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock.clone(), Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
 
     let run_id = RunId(20);
 

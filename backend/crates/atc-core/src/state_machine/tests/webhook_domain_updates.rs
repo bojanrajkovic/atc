@@ -35,10 +35,10 @@ async fn test_ac3_1_waiting_variant_exists() {
 
 #[tokio::test]
 async fn test_ac3_2_create_job_from_waiting() {
-    // AC3.2: StateStore::apply_job_event handles Waiting events, creating jobs in JobStatus::Waiting
+    // AC3.2: RunStateMachine::apply_job_event handles Waiting events, creating jobs in JobStatus::Waiting
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(702);
     let run_id = RunId(71);
 
@@ -74,7 +74,7 @@ async fn test_ac3_3_queued_to_waiting_to_inprogress() {
     // AC3.3: Transition Queued → Waiting → InProgress succeeds
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let job_id = JobId(703);
     let run_id = RunId(72);
     let runner = RunnerInfo {
@@ -137,7 +137,7 @@ async fn test_ac3_3_queued_to_waiting_to_inprogress() {
 #[tokio::test]
 async fn test_ac3_4_in_progress_with_no_runner() {
     let clock = TestClock::new(Utc::now());
-    let store = StateStore::new(Arc::new(clock), Duration::from_secs(3600));
+    let store = RunStateMachine::new(Arc::new(clock), Duration::from_secs(3600));
 
     let run_id = RunId(100);
     let job_id = JobId(1);
@@ -186,7 +186,7 @@ async fn test_ac3_7_workflow_name_preservation_with_or() {
     // and preserved via .or() when a later event arrives with None
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(800);
 
     // Create run with Requested event carrying workflow_name: Some("CI")
@@ -223,7 +223,7 @@ async fn test_ac3_8_workflow_name_preservation_failure_mode() {
     // should preserve "CI", not overwrite with None
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = StateStore::new(clock, Duration::from_secs(3600));
+    let store = RunStateMachine::new(clock, Duration::from_secs(3600));
     let run_id = RunId(801);
 
     // Requested with workflow_name: Some("CI")

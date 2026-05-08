@@ -5,7 +5,7 @@
 //! T2 — Self-consistent snapshot under concurrent commits: REPEATABLE READ
 //!      guarantees entity_count == lastSeq (strong equality, not just >=).
 //! T3 — In-memory fallback: when pg_pool is None, GET /v1/state reads from
-//!      the in-memory StateStore (original behavior unchanged).
+//!      the in-memory RunStateMachine (original behavior unchanged).
 //!
 //! Docker/OrbStack required for T1 and T2.
 
@@ -246,11 +246,11 @@ async fn phase_3c_state_pg_read_t2_snapshot_self_consistent_under_concurrent_wri
 // ─── T3: in-memory fallback when pg_pool is None ────────────────────────────
 
 /// T3: When pg_pool is None (in-memory-only mode), GET /v1/state reads from
-///     the in-memory StateStore, not from PG.
+///     the in-memory RunStateMachine, not from PG.
 ///
 /// Uses `build_app_no_secret()` which wires `pg_pool: None`. Fires one run
 /// webhook. Expects lastSeq=1 and the run in the snapshot — but via the
-/// in-memory path (seq mutex held, StateStore.snapshot() called).
+/// in-memory path (seq mutex held, RunStateMachine.snapshot() called).
 #[tokio::test]
 #[serial]
 async fn phase_3c_state_pg_read_t3_in_memory_fallback() {
@@ -265,10 +265,10 @@ async fn phase_3c_state_pg_read_t3_in_memory_fallback() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    // In-memory mode returns "processed" (not "accepted").
+    // In-memory mode returns "accepted" with a numeric seq.
     assert_eq!(
-        body["status"], "processed",
-        "in-memory mode should return processed"
+        body["status"], "accepted",
+        "in-memory mode should return accepted"
     );
 
     // GET /v1/state should read from in-memory store.

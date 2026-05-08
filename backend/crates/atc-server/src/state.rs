@@ -4,15 +4,17 @@ use std::sync::atomic::AtomicI64;
 use atc_github::WebhookEvent;
 use tokio::sync::{Mutex, broadcast};
 
-use atc_core::StateStore;
+use atc_core::RunStateMachine;
+
+use crate::persist::PersistentStore;
 
 /// Shared application state passed to all Axum handlers via `State<Arc<AppState>>`.
 pub struct AppState {
-    /// In-memory state store for workflow runs and jobs.
+    /// In-memory state machine for workflow runs and jobs.
     ///
     /// Active in in-memory mode (`pg_pool: None`). Dormant in PG mode: the
     /// webhook handler does not write to it and `state_handler` reads from PG.
-    pub store: Arc<StateStore>,
+    pub state_machine: Arc<RunStateMachine>,
     /// Broadcast channel sender for pushing domain events to WebSocket clients.
     ///
     /// In in-memory mode the webhook handler writes directly. In PG mode the
@@ -31,11 +33,26 @@ pub struct AppState {
     ///   ensuring the cursor matches the snapshot content.
     ///
     /// In PG mode this field is unused; the seq comes from the outbox BIGSERIAL.
-    pub seq: Mutex<u64>,
+    ///
+    /// Wrapped in `Arc` so [`crate::persist::InMemoryStore`] can hold a cloned
+    /// reference and share ordering guarantees with `state_handler`.
+    pub seq: Arc<Mutex<u64>>,
+    /// Write-path dispatch for domain events.
+    ///
+    /// Routes each incoming webhook event to the appropriate backend:
+    /// - [`crate::persist::PgStore`] when `pg_pool: Some(_)`.
+    /// - [`crate::persist::InMemoryStore`] when `pg_pool: None`.
+    ///
+    /// The trait object is `Arc<dyn PersistentStore>` so it can be cloned
+    /// cheaply and used across `async` handler closures.
+    pub persist: Arc<dyn PersistentStore>,
     /// Optional PostgreSQL connection pool.
     ///
     /// `Some(pool)` when `ATC_DATABASE_URL` is configured; `None` runs in
-    /// in-memory-only mode. Used by readyz probe and persistence writes.
+    /// in-memory-only mode. Used by `/readyz`, the listener and drain tasks
+    /// at startup (each takes its own clone), and the `/v1/state` REPEATABLE
+    /// READ snapshot reader. Persistence writes do **not** go through this
+    /// field — they dispatch through `persist` (ADR 0005).
     pub pg_pool: Option<sqlx::PgPool>,
     /// Gap-healing backstop for the outbox drain task (Phase 3c).
     ///

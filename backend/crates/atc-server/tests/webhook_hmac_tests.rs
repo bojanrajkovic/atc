@@ -35,7 +35,8 @@ async fn webhook_hmac_valid_signature_returns_200() {
         .await
         .expect("failed to read response body");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
 /// AC1.2: No secret configured + no signature header returns 200 (verification skipped)
@@ -62,7 +63,8 @@ async fn webhook_hmac_no_secret_no_signature_returns_200() {
         .await
         .expect("failed to read response body");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
 /// AC1.3: Invalid signature returns 401

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -46,7 +46,7 @@ async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
         .get_or_init(common::install_test_recorder)
         .0
         .clone();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
@@ -55,15 +55,19 @@ async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
     // Set last_drain_pass_at to 60 seconds ago (well past the 30 s threshold).
     let stale_time = now_millis() - 60_000;
 
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
+        as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: Some(pool),
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
 
     let app = atc_server::routes::api_routes(layer)
@@ -186,7 +190,7 @@ async fn phase_3c_readyz_t8b_no_pg_always_200() {
         .get_or_init(common::install_test_recorder)
         .0
         .clone();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
@@ -195,15 +199,22 @@ async fn phase_3c_readyz_t8b_no_pg_always_200() {
     // Set last_drain_pass_at to a very stale value — should not matter without PG.
     let stale_time = 0i64; // epoch = maximally stale
 
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None, // no PG
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
 
     let app = atc_server::routes::api_routes(layer)

@@ -18,10 +18,10 @@ use common::{
     fixture_workflow_run_requested,
 };
 
-/// AC2.1: workflow_run event parsed and applied to StateStore, returns {"status": "processed"}
+/// AC2.1: workflow_run event parsed and applied to RunStateMachine, returns {"status": "accepted", "seq": <u64>}
 #[tokio::test]
 #[serial_test::serial]
-async fn webhook_ingestion_workflow_run_returns_processed() {
+async fn webhook_ingestion_workflow_run_returns_accepted() {
     let body = fixture_workflow_run_requested();
 
     let (app, _) = build_app_no_secret();
@@ -42,13 +42,14 @@ async fn webhook_ingestion_workflow_run_returns_processed() {
         .await
         .expect("failed to read response body");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
-/// AC2.2: workflow_job event parsed and applied to StateStore, returns {"status": "processed"}
+/// AC2.2: workflow_job event parsed and applied to RunStateMachine, returns {"status": "accepted", "seq": <u64>}
 #[tokio::test]
 #[serial_test::serial]
-async fn webhook_ingestion_workflow_job_returns_processed() {
+async fn webhook_ingestion_workflow_job_returns_accepted() {
     let body = fixture_workflow_job_queued();
 
     let (app, _) = build_app_no_secret();
@@ -69,7 +70,8 @@ async fn webhook_ingestion_workflow_job_returns_processed() {
         .await
         .expect("failed to read response body");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
-    assert_eq!(json["status"], "processed");
+    assert_eq!(json["status"], "accepted");
+    assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
 /// AC2.3: Unknown event type (e.g., push) returns {"status": "skipped"}
@@ -211,12 +213,12 @@ async fn webhook_ingestion_backward_transition_returns_200_no_broadcast() {
 
     assert_eq!(response2.status(), StatusCode::OK);
 
-    // Verify both return "processed"
+    // Verify the backward transition returns "rejected" (not "accepted")
     let body2 = to_bytes(response2.into_body(), usize::MAX)
         .await
         .expect("failed to read response body");
     let json2: serde_json::Value = serde_json::from_slice(&body2).expect("response is valid JSON");
-    assert_eq!(json2["status"], "processed");
+    assert_eq!(json2["status"], "rejected");
 
     // Verify the rejected transition does NOT produce a SeqEvent.
     // A short timeout on recv() should return Err, confirming no broadcast occurred.
@@ -422,21 +424,28 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         .0
         .clone();
 
-    let store = std::sync::Arc::new(atc_core::StateStore::new(
+    let state_machine = std::sync::Arc::new(atc_core::RunStateMachine::new(
         std::sync::Arc::new(atc_core::SystemClock),
         std::time::Duration::from_secs(3600),
     ));
     let (webhook_tx, _rx) = tokio::sync::broadcast::channel(256);
     let mut subscriber = webhook_tx.subscribe();
+    let seq = std::sync::Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = std::sync::Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as std::sync::Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = std::sync::Arc::new(atc_server::state::AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
+        persist,
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
@@ -538,5 +547,94 @@ async fn failed_job_transition_produces_no_broadcast() {
     assert!(
         rx.try_recv().is_err(),
         "expected no broadcast for rejected job backward transition (Queued → Completed), but received an event"
+    );
+}
+
+/// In-memory mode: invalid backward transition returns 200 OK + {"status":"rejected"}.
+///
+/// Verifies that the unified `Arc<dyn PersistentStore>` dispatch path in the route
+/// handler surfaces `PersistError::InvalidTransition` as `{"status":"rejected"}` for
+/// in-memory mode, consistent with the PG mode behavior.
+#[tokio::test]
+#[serial_test::serial]
+async fn in_memory_invalid_transition_returns_rejected() {
+    let (app, state) = build_app_no_secret();
+
+    // Subscribe to broadcasts BEFORE firing any webhooks so we observe every
+    // emission. The contract: a successful Completed apply emits exactly one
+    // SeqEvent; a subsequent rejected InProgress apply emits zero.
+    let mut rx = state.webhook_tx.subscribe();
+
+    // Advance to Completed via the route handler.
+    let body = fixture_workflow_run_completed();
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_run")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+
+    // Drain the broadcast for the successful apply and snapshot seq.
+    let first_event = rx
+        .try_recv()
+        .expect("Completed apply must broadcast exactly one SeqEvent");
+    let seq_after_success = first_event.seq;
+    assert!(
+        rx.try_recv().is_err(),
+        "successful Completed apply must broadcast exactly one event"
+    );
+    let seq_counter_after_success = *state.seq.lock().await;
+    assert_eq!(
+        seq_counter_after_success, seq_after_success,
+        "AppState.seq must equal the broadcast seq after a successful apply"
+    );
+
+    // Backward transition: Completed → InProgress (parity rejection).
+    let body = fixture_workflow_run_in_progress();
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_run")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp2.status(),
+        StatusCode::OK,
+        "invalid transition must return 200, not 4xx"
+    );
+
+    let body_bytes = to_bytes(resp2.into_body(), usize::MAX)
+        .await
+        .expect("failed to read body");
+    let json: serde_json::Value =
+        serde_json::from_slice(&body_bytes).expect("response must be JSON");
+    assert_eq!(
+        json["status"], "rejected",
+        "in-memory invalid transition must return {{\"status\":\"rejected\"}}, got: {json}"
+    );
+
+    // Side-effect contract (AC13b): rejection must not broadcast and must not
+    // bump the seq counter.
+    assert!(
+        rx.try_recv().is_err(),
+        "rejected InProgress must not broadcast a SeqEvent"
+    );
+    let seq_counter_after_reject = *state.seq.lock().await;
+    assert_eq!(
+        seq_counter_after_reject, seq_counter_after_success,
+        "rejected InProgress must not advance AppState.seq"
     );
 }

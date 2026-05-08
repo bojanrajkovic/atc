@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 use axum_prometheus::PrometheusMetricLayer;
 
@@ -37,20 +37,24 @@ fn prometheus_layer() -> PrometheusMetricLayer<'static> {
 
 async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
     let layer = prometheus_layer();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
+        as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: Some(pool),
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     atc_server::routes::api_routes(layer).with_state(app_state)
 }

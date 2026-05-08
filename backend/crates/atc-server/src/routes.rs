@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use atc_core::PersistError;
 use atc_github::{ParseResult, parse_webhook, verify_signature};
 
-use crate::state::{AppState, SeqEvent};
+use crate::state::AppState;
 use crate::ws;
 
 /// `/readyz` 503s if the drain heartbeat is older than this. 30 s is 6× the
@@ -176,7 +176,7 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     } else {
         // In-memory path: unchanged from pre-3c.
         let seq_guard = state.seq.lock().await;
-        let result = state.store.snapshot().await;
+        let result = state.state_machine.snapshot().await;
         let last_seq = *seq_guard;
         drop(seq_guard);
 
@@ -217,16 +217,15 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
 /// Handle incoming GitHub webhook payloads.
 ///
 /// Verifies HMAC signature (when configured) and parses the payload into a
-/// domain event. Then:
+/// domain event. Dispatches to `AppState.persist` (either `PgStore` or
+/// `InMemoryStore`) for storage and returns a unified response:
 ///
-/// - **PG mode (`pg_pool: Some`)**: opens a transaction, UPSERTs the run/job,
-///   INSERTs the outbox row, emits `pg_notify`, commits, and returns
-///   `{"status":"accepted","seq":<i64>}`. The drain task picks up the row and
-///   broadcasts `SeqEvent` — the handler does NOT touch the in-memory store
-///   or `webhook_tx`.
-/// - **In-memory mode (`pg_pool: None`)**: holds the seq mutex across apply +
-///   broadcast and returns `{"status":"processed"}`. Unchanged from
-///   Phase 3a/3b.
+/// - **Success**: `{"status":"accepted","seq":<u64>}` — event applied, seq allocated.
+/// - **Invalid transition**: `{"status":"rejected"}` — backward/parity rejection.
+/// - **Backend error**: 503 + `{"status":"error"}` — transient storage failure.
+///
+/// Metric counters (`atc_pg_write_failures_total`, `atc_pg_notify_emitted_total`)
+/// are emitted by the `PersistentStore` impl (not here).
 #[tracing::instrument(skip(state, body))]
 async fn webhook_handler(
     State(state): State<Arc<AppState>>,
@@ -286,163 +285,37 @@ async fn webhook_handler(
     // 4. Handle parse result
     match result {
         ParseResult::Parsed(boxed_event) => {
-            // Unbox once so we can match by reference and move into SeqEvent at the end.
             let event = *boxed_event;
 
-            match &state.pg_pool {
-                Some(pool) => {
-                    // ── PG mode: write-only handler (Phase 3c) ───────────
-                    // No seq mutex, no in-memory apply, no broadcast — the
-                    // drain task is the sole writer to webhook_tx in PG mode.
-                    // The handler's job is to commit the outbox row; the
-                    // BIGSERIAL seq comes from PG, the listener gets a NOTIFY
-                    // on commit, and the drain task picks the row up and
-                    // broadcasts.
-                    let mut tx = match pool.begin().await {
-                        Ok(tx) => tx,
-                        Err(e) => {
-                            metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                                .increment(1);
-                            tracing::error!(error = %e, "pg begin failed");
-                            return (
-                                StatusCode::SERVICE_UNAVAILABLE,
-                                Json(
-                                    serde_json::json!({"status": "error", "message": "database unavailable"}),
-                                ),
-                            );
-                        }
-                    };
-
-                    let mut notify_kind: Option<&'static str> = None;
-                    let mut allocated_seq: Option<i64> = None;
-                    let txn_result: Result<(), PersistError> = async {
-                        match &event {
-                            atc_github::WebhookEvent::Run(env) => {
-                                crate::persist::upsert_run_in_txn(&mut tx, env).await?;
-                                let seq =
-                                    crate::persist::insert_outbox_run_in_txn(&mut tx, env).await?;
-                                crate::persist::notify_outbox_seq_in_txn(&mut tx, seq).await?;
-                                notify_kind = Some("run");
-                                allocated_seq = Some(seq);
-                            }
-                            atc_github::WebhookEvent::Job(env) => {
-                                crate::persist::upsert_job_in_txn(&mut tx, env).await?;
-                                let seq =
-                                    crate::persist::insert_outbox_job_in_txn(&mut tx, env).await?;
-                                crate::persist::notify_outbox_seq_in_txn(&mut tx, seq).await?;
-                                notify_kind = Some("job");
-                                allocated_seq = Some(seq);
-                            }
-                        }
-                        Ok(())
-                    }
-                    .await;
-
-                    match txn_result {
-                        Ok(()) => {
-                            if let Err(e) = tx.commit().await {
-                                metrics::counter!(
-                                    "atc_pg_write_failures_total",
-                                    "kind" => "transient"
-                                )
-                                .increment(1);
-                                tracing::error!(error = %e, "pg commit failed");
-                                return (
-                                    StatusCode::SERVICE_UNAVAILABLE,
-                                    Json(
-                                        serde_json::json!({"status": "error", "message": "database commit failed"}),
-                                    ),
-                                );
-                            }
-                            if let Some(kind) = notify_kind {
-                                metrics::counter!("atc_pg_notify_emitted_total", "kind" => kind)
-                                    .increment(1);
-                            }
-                            tracing::info!(
-                                event_type,
-                                seq = ?allocated_seq,
-                                "event accepted (pg outbox; drain will broadcast)",
-                            );
-                            (
-                                StatusCode::OK,
-                                Json(serde_json::json!({
-                                    "status": "accepted",
-                                    "seq": allocated_seq,
-                                })),
-                            )
-                        }
-                        Err(PersistError::InvalidTransition) => {
-                            // tx drops here → auto-rollback. No outbox row written.
-                            metrics::counter!(
-                                "atc_pg_write_failures_total",
-                                "kind" => "parity"
-                            )
-                            .increment(1);
-                            tracing::warn!(
-                                "pg parity rejection: transition invalid under predicate"
-                            );
-                            (
-                                StatusCode::OK,
-                                Json(serde_json::json!({"status": "rejected"})),
-                            )
-                        }
-                        Err(PersistError::Backend(e)) => {
-                            metrics::counter!(
-                                "atc_pg_write_failures_total",
-                                "kind" => "transient"
-                            )
-                            .increment(1);
-                            tracing::error!(error = %e, "pg backend failure mid-txn");
-                            (
-                                StatusCode::SERVICE_UNAVAILABLE,
-                                Json(
-                                    serde_json::json!({"status": "error", "message": "database error"}),
-                                ),
-                            )
-                        }
-                    }
+            let persist_result = match &event {
+                atc_github::WebhookEvent::Run(env) => {
+                    state.persist.apply_run_event(env.clone()).await
                 }
-                None => {
-                    // ── In-memory-only path ───────────────────────────────
-                    // Unchanged: seq mutex held across mutation + broadcast so
-                    // WS event order matches commit order and /v1/state cursor
-                    // matches snapshot content.
-                    let mut seq_guard = state.seq.lock().await;
-                    let should_broadcast = match &event {
-                        atc_github::WebhookEvent::Run(envelope) => {
-                            match state.store.apply_run_event(envelope.clone()).await {
-                                Ok(_) => true,
-                                Err(e) => {
-                                    tracing::warn!(error = %e, "store run transition warning");
-                                    false
-                                }
-                            }
-                        }
-                        atc_github::WebhookEvent::Job(envelope) => {
-                            match state.store.apply_job_event(envelope.clone()).await {
-                                Ok(_) => true,
-                                Err(e) => {
-                                    tracing::warn!(error = %e, "store job transition warning");
-                                    false
-                                }
-                            }
-                        }
-                    };
+                atc_github::WebhookEvent::Job(env) => {
+                    state.persist.apply_job_event(env.clone()).await
+                }
+            };
 
-                    if should_broadcast {
-                        *seq_guard += 1;
-                        let seq = *seq_guard;
-                        let seq_event = SeqEvent { seq, event };
-                        let _ = state.webhook_tx.send(seq_event);
-                        tracing::info!(event_type, seq, "event processed");
-                    } else {
-                        tracing::info!(event_type, "event accepted (transition already applied)");
-                    }
-
-                    drop(seq_guard);
+            match persist_result {
+                Ok(seq) => {
+                    tracing::info!(event_type, seq, "event accepted");
                     (
                         StatusCode::OK,
-                        Json(serde_json::json!({"status": "processed"})),
+                        Json(serde_json::json!({"status": "accepted", "seq": seq})),
+                    )
+                }
+                Err(PersistError::InvalidTransition) => {
+                    tracing::warn!("transition invalid; rejecting");
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({"status": "rejected"})),
+                    )
+                }
+                Err(PersistError::Backend(e)) => {
+                    tracing::error!(error = %e, "persistence write failed");
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(serde_json::json!({"status": "error"})),
                     )
                 }
             }

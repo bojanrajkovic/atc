@@ -235,7 +235,7 @@ In scope:
 - ~~Decide outbox retention duration and eviction strategy; implement the chosen approach~~ — **TRACKED at #67** (`chore(server): design outbox retention / eviction strategy`). Per ADR 0003 Decision 4, outbox retention is decided separately from current-state TTL; #67 captures the open design questions.
 - ~~Optionally: persist raw GitHub webhook JSON alongside domain events for audit/debug~~ — **TRACKED at #65** (`feat(server): persist raw GitHub webhook JSON alongside domain-event projection`). Per ADR 0002 "Out of scope"; #65 captures the open questions on storage location, retention parity, and privacy.
 
-ADR refs: various ADR Out of scope sections. **All Phase 5 items now resolved as of 2026-05-07** — metrics shipped (PR #63), in-memory mode closed as dev-only doc note, three remaining items issue-tracked (#65, #67) plus chart-track follow-up (#64).
+ADR refs: various ADR Out of scope sections. **All Phase 5 items now resolved as of 2026-05-07** — metrics shipped (PR #63), in-memory mode closed as dev-only doc note, three remaining items issue-tracked (#65, #67) plus chart-track follow-up (#64). **#50 closed** — `PersistentStore` trait relocated to `atc-server::persist` per [ADR 0005](../../architecture-decisions/0005-persistentstore-trait-relocation.md).
 
 ## Implementation Checklist
 

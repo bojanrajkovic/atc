@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 
@@ -34,20 +34,27 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         .0
         .clone();
 
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(broadcast_capacity);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
 
     let main_router = routes::api_routes(layer.clone())

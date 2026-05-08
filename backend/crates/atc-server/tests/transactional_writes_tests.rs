@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{StateStore, SystemClock};
+use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -76,6 +76,20 @@ fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
     0
 }
 
+/// Parse `atc_pg_notify_emitted_total{kind="<kind>"}` from the Prometheus text.
+fn parse_notify_counter(metrics_body: &str, kind: &str) -> u64 {
+    let needle = format!("kind=\"{kind}\"");
+    for line in metrics_body.lines() {
+        if line.starts_with("atc_pg_notify_emitted_total")
+            && line.contains(&needle)
+            && let Some(value_str) = line.split_whitespace().last()
+        {
+            return value_str.parse::<u64>().unwrap_or(0);
+        }
+    }
+    0
+}
+
 /// Build a full router with a real PG pool mounted.
 ///
 /// Returns (router, app_state, broadcast_receiver, pool).
@@ -88,20 +102,24 @@ pub fn build_app_with_pg(
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
     let layer = prometheus_layer();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
+        as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: Some(pool),
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -452,7 +470,7 @@ async fn transient_metric_increments_on_db_outage() {
     );
 
     // In-memory store must NOT have the run (transaction never committed)
-    let snap = state.store.snapshot().await;
+    let snap = state.state_machine.snapshot().await;
     assert!(
         snap.runs.is_empty(),
         "in-memory store must be empty: transaction never committed"
@@ -516,20 +534,27 @@ async fn pg_write_failure_counters_are_registered() {
 async fn in_memory_mode_behavioral_invariance() {
     // Build app inline — avoid common::build_app_no_secret which uses a different OnceLock.
     let layer = prometheus_layer();
-    let store = Arc::new(StateStore::new(
+    let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        store,
+        state_machine,
         webhook_tx,
         webhook_secret: None,
-        seq: tokio::sync::Mutex::new(0),
+        seq,
         pg_pool: None,
         min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -547,6 +572,143 @@ async fn in_memory_mode_behavioral_invariance() {
     assert_eq!(response.status(), StatusCode::OK);
 
     // In-memory snapshot should reflect the event
-    let snap = app_state.store.snapshot().await;
+    let snap = app_state.state_machine.snapshot().await;
     assert_eq!(snap.runs.len(), 1, "run should be in-memory");
+}
+
+// ---------------------------------------------------------------------------
+// PG mode: invalid transition returns 200 + {"status":"rejected"}
+// ---------------------------------------------------------------------------
+
+/// PG mode: backward state transition returns 200 OK + {"status":"rejected"}.
+///
+/// Sends Requested, then manually advances PG to Completed, then sends
+/// InProgress — PG rejects the predicated UPSERT (Completed is not a
+/// predecessor of InProgress) and the handler returns {"status":"rejected"}.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_invalid_transition_returns_rejected() {
+    let (pool, _c, _) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+
+    // Establish a Queued run.
+    let body = common::fixture_workflow_run_requested();
+    let (status, _) = post_webhook_full(app.clone(), "workflow_run", &body).await;
+    assert_eq!(status, StatusCode::OK, "Requested should succeed");
+
+    let outbox_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        outbox_before, 1,
+        "successful Requested must write exactly one outbox row"
+    );
+
+    // Advance PG directly to Completed, bypassing the handler.
+    sqlx::query!("UPDATE runs SET status = 'Completed' WHERE status = 'Queued'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Send InProgress: predicate fails (Completed not a predecessor of InProgress).
+    let body = common::fixture_workflow_run_in_progress();
+    let (status, json) = post_webhook_full(app.clone(), "workflow_run", &body).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "invalid transition must return 200, not 4xx"
+    );
+    assert_eq!(
+        json["status"], "rejected",
+        "invalid transition response must be {{\"status\":\"rejected\"}}, got: {json}"
+    );
+
+    // Side-effect contract (AC13b): the rejected event must NOT have written an
+    // outbox row — `tx` is dropped without commit when the predicate fails, so
+    // both the upsert AND the outbox INSERT are rolled back atomically.
+    let outbox_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        outbox_after, outbox_before,
+        "rejected InProgress must not write an outbox row (transaction rolled back)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AC13d: Metrics emitted from PgStore (not routes.rs)
+// ---------------------------------------------------------------------------
+
+/// AC13d: `atc_pg_write_failures_total{kind="parity"}` and
+///        `atc_pg_notify_emitted_total{kind="run"}` are incremented by
+///        `PgStore::apply_run_event`, not the route handler.
+///
+/// Fires one valid run event (verifies notify counter increments) and then
+/// forces a parity rejection (verifies parity counter increments). This test
+/// ensures metrics survive the move from routes.rs into PgStore.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
+    let (pool, _c, _) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+
+    // Capture baseline.
+    atc_server::metrics::register_pg_write_counters();
+    let before = render_metrics().await;
+    let baseline_notify_run = parse_notify_counter(&before, "run");
+    let baseline_parity = parse_counter_value(&before, "parity");
+
+    // Successful run event — should increment atc_pg_notify_emitted_total{kind="run"}.
+    let (status, json) = post_webhook_full(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_requested(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "run Requested should succeed");
+    assert_eq!(
+        json["status"], "accepted",
+        "successful write returns accepted"
+    );
+    assert!(json["seq"].is_number(), "accepted response includes seq");
+
+    let after_success = render_metrics().await;
+    assert_eq!(
+        parse_notify_counter(&after_success, "run"),
+        baseline_notify_run + 1,
+        "atc_pg_notify_emitted_total{{kind=run}} must increment after successful run commit; \
+         metrics:\n{after_success}"
+    );
+
+    // Force parity rejection: manually advance PG to Completed, then send InProgress.
+    sqlx::query!("UPDATE runs SET status = 'Completed' WHERE status = 'Queued'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (status, json) = post_webhook_full(
+        app.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_in_progress(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "parity rejection returns 200");
+    assert_eq!(json["status"], "rejected", "parity rejection body");
+
+    let after_parity = render_metrics().await;
+    assert_eq!(
+        parse_counter_value(&after_parity, "parity"),
+        baseline_parity + 1,
+        "atc_pg_write_failures_total{{kind=parity}} must increment after parity rejection; \
+         metrics:\n{after_parity}"
+    );
+
+    // Notify counter must NOT have changed for the rejected write.
+    assert_eq!(
+        parse_notify_counter(&after_parity, "run"),
+        baseline_notify_run + 1,
+        "atc_pg_notify_emitted_total{{kind=run}} must not increment for a rejected write"
+    );
 }
