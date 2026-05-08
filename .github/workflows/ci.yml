@@ -171,14 +171,16 @@ jobs:
           persist-credentials: false
 
       # Node 25's prebuilt binary dynamically links libatomic.so.1; the
-      # actions-runner base image doesn't include it. Playwright's chromium
-      # also needs a handful of GUI/audio libs. The un-suffixed package
-      # names listed here resolve on both Ubuntu 22.04 (actions-runner's
-      # likely base) and 24.04 (via the t64 transition's Provides:
-      # relationship from libfoo to libfoot64). `playwright install
-      # --with-deps` would resolve these via apt, but only when sudo is
-      # wired through cleanly — pre-installing here surfaces a missing-lib
-      # failure on this step instead of mid-test.
+      # actions-runner base image (Ubuntu 24.04, minimal) doesn't include
+      # it. Playwright's chromium also needs a handful of GUI/audio libs.
+      # We use the *-t64 package names directly (Ubuntu 24.04's t64
+      # transition makes those the real installable packages; the
+      # un-suffixed names are virtuals provided by the t64 packages, but
+      # `apt-get install` doesn't auto-resolve a virtual when the
+      # provider is the only candidate). `playwright install --with-deps`
+      # would resolve these via apt, but only when sudo is wired through
+      # cleanly — pre-installing here surfaces a missing-lib failure on
+      # this step instead of mid-test.
       - name: Install system libraries
         run: |
           sudo apt-get update
@@ -187,10 +189,10 @@ jobs:
             libnss3 \
             libxkbcommon0 \
             libgbm1 \
-            libasound2 \
-            libcups2 \
-            libatk1.0-0 \
-            libatk-bridge2.0-0 \
+            libasound2t64 \
+            libcups2t64 \
+            libatk1.0-0t64 \
+            libatk-bridge2.0-0t64 \
             libdrm2
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
