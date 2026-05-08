@@ -50,9 +50,13 @@ rules:
   - apiGroups: ["actions.github.com"]
     resources: ["autoscalingrunnersets"]
     verbs: ["get", "patch"]
+  # The script's `kubectl apply -f -` is an upsert: create on first run,
+  # update on subsequent runs (e.g. if a prior run was interrupted before
+  # the explicit delete and left the DaemonSet behind). Need patch/update
+  # in addition to create/get/delete/watch.
   - apiGroups: ["apps"]
     resources: ["daemonsets"]
-    verbs: ["create", "get", "delete", "watch"]
+    verbs: ["create", "get", "patch", "update", "delete", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

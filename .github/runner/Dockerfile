@@ -47,12 +47,14 @@ RUN apt-get update \
 # binary itself is fetched per-workflow via `playwright install
 # chromium`; only the OS deps are baked here.
 #
-# Uses the runner image's bundled Node 24 (no separate Node install
-# needed; nothing to clean up). The PATH override is scoped to the RUN
-# layer; runtime PATH for jobs is unaffected.
-ENV PATH="/home/runner/externals/node24/bin:${PATH}"
+# Uses the runner image's bundled Node 24 via an inline PATH override on
+# the RUN command — NOT an `ENV PATH=...` directive — so the override is
+# scoped to this build step only. Persisting Node 24 on PATH at image
+# runtime would shadow the version that workflow jobs install via
+# setup-node/mise, causing version-drift surprises.
 RUN apt-get update \
-    && npx --yes playwright@${PLAYWRIGHT_VERSION} install-deps chromium \
+    && PATH="/home/runner/externals/node24/bin:${PATH}" \
+       npx --yes playwright@${PLAYWRIGHT_VERSION} install-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 USER runner
