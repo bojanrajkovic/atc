@@ -50,14 +50,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # Node 25's prebuilt binary needs libatomic.so.1 — actions-runner base
-      # doesn't include it. Frontend build doesn't need playwright libs (no
-      # E2E in this job), just enough for `node` to load.
-      - name: Install Node runtime libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libatomic1
-
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
           install: false
@@ -128,20 +120,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Install musl + cross toolchain
-        if: contains(matrix.target, 'linux-musl')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            pkg-config \
-            perl \
-            musl-tools
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
-          fi
 
       # rust-embed (in atc-server) reads ../../../frontend/dist at compile time
       # in release mode. Pull the artifact built once by build-frontend so the

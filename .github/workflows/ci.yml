@@ -66,16 +66,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            pkg-config \
-            perl \
-            mold
-
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
           install: false
@@ -170,48 +160,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # Node 25's prebuilt binary dynamically links libatomic.so.1; the
-      # actions-runner base image (Ubuntu 24.04, minimal) doesn't include
-      # it. Playwright's chromium needs a longer list of runtime libs +
-      # fonts — taken verbatim from
-      # `playwright-core/lib/server/registry/nativeDeps.js` for
-      # `ubuntu24.04-x64.chromium` (libs) and `.tools` (fonts).
-      # `playwright install --with-deps` would resolve these via apt at
-      # runtime, but pre-installing here lets us pin the dep set
-      # explicitly and surfaces a missing-lib failure on this step rather
-      # than mid-test. Once these prove out, the same set should be
-      # baked into the runner image — the workflow becomes the spec.
-      - name: Install system libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libatomic1 \
-            libasound2t64 \
-            libatk-bridge2.0-0t64 \
-            libatk1.0-0t64 \
-            libatspi2.0-0t64 \
-            libcairo2 \
-            libcups2t64 \
-            libdbus-1-3 \
-            libdrm2 \
-            libgbm1 \
-            libglib2.0-0t64 \
-            libnspr4 \
-            libnss3 \
-            libpango-1.0-0 \
-            libx11-6 \
-            libxcb1 \
-            libxcomposite1 \
-            libxdamage1 \
-            libxext6 \
-            libxfixes3 \
-            libxkbcommon0 \
-            libxrandr2 \
-            libfontconfig1 \
-            libfreetype6 \
-            fonts-liberation \
-            fonts-noto-color-emoji
-
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
           install: false
@@ -254,7 +202,7 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: frontend
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install chromium
 
       - name: Run unit tests with coverage
         working-directory: frontend
