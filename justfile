@@ -103,10 +103,11 @@ check:
 
 # Run all tests (parallel). Requires Docker or OrbStack — backend uses testcontainers for ephemeral PostgreSQL.
 # macOS/OrbStack: export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
+# Backend uses cargo-nextest (per backend/.config/nextest.toml) for cross-binary parallelism.
 test:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	cd backend && cargo test --workspace &
+	cd backend && cargo nextest run --workspace &
 	pid1=$!
 	(cd frontend && pnpm exec vitest run) &
 	pid2=$!

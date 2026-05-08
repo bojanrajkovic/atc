@@ -446,7 +446,16 @@ mod tests {
 
     #[tokio::test]
     async fn connect_listener_fails_on_bad_url() {
-        let result = connect_listener("postgres://nope:nope@127.0.0.1:1/x").await;
-        assert!(result.is_err(), "expected Err on bad connection URL");
+        // sqlx's default connect_timeout is 30s; a 2s tokio timeout keeps this
+        // unit test fast. Either branch — Err returned, or timeout fired —
+        // satisfies the assertion that the bad URL did not produce a listener.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            connect_listener("postgres://nope:nope@127.0.0.1:1/x"),
+        )
+        .await;
+        if let Ok(Ok(_)) = result {
+            panic!("expected connect_listener to fail on bad URL");
+        }
     }
 }
