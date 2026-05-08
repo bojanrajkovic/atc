@@ -75,6 +75,7 @@ Two points matter before evaluating alternatives:
 - [frontend-impact.md](./frontend-impact.md) — current frontend cursor assumptions, impact of contract changes, `poolStatsAfter` sensitivity, optional client hardening
 - [overlap-and-forwarding.md](./overlap-and-forwarding.md) — overlap delivery failure modes, replica drain semantics, wake-up coalescing, leader-election tradeoffs
 - [rollout-and-implementation.md](./rollout-and-implementation.md) — phased rollout and `must / should / optional` implementation checklist
+- [additional-backends.md](./additional-backends.md) — forward-looking research on alternative state backends (CockroachDB, NATS JetStream, DynamoDB, FoundationDB, EventStoreDB) and composed multi-store shapes; not a roadmap, a reference for the day a Postgres switch is contemplated
 
 ## Recommended Direction
 

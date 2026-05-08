@@ -237,6 +237,8 @@ In scope:
 
 ADR refs: various ADR Out of scope sections. **All Phase 5 items now resolved as of 2026-05-07** — metrics shipped (PR #63), in-memory mode closed as dev-only doc note, three remaining items issue-tracked (#65, #67) plus chart-track follow-up (#64).
 
+Looking forward, [additional-backends.md](./additional-backends.md) collects research on alternative state backends — single-store (CockroachDB, NATS JetStream, DynamoDB, FoundationDB) and composed multi-store shapes — for the day a Postgres switch is contemplated. The doc is a forward-looking reference, not a roadmap item; the recommendation remains to stay on Postgres until a specific operational signal is observed (sustained outbox lag, listener-backlog accumulation, multi-region requirement).
+
 ## Implementation Checklist
 
 A cross-reference for the ADRs. The canonical decisions are in the ADRs themselves; this checklist is a quick map from "what must / should / should not happen" to "which sub-phase and which ADR."
