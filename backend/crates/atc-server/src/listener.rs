@@ -405,7 +405,7 @@ async fn drain_pass(
                 // per broadcast row. The metric over-reports by the writer's
                 // transaction duration because `inserted_at DEFAULT now()`
                 // evaluates `transaction_timestamp()` (transaction start),
-                // not commit. See `backend-server.md` § Operational metrics.
+                // not commit. See `metrics.md` § Operational metrics.
                 #[allow(clippy::cast_precision_loss)]
                 let lag = (chrono::Utc::now() - row.inserted_at)
                     .num_microseconds()

@@ -28,7 +28,7 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "p99 of `atc_pg_outbox_lag_seconds` per pod. Event age at broadcast, not pure drain lag — see backend-server.md § Operational metrics for the writer-transaction caveat.",
+      "description": "p99 of `atc_pg_outbox_lag_seconds` per pod. Event age at broadcast, not pure drain lag — see metrics.md § Operational metrics for the writer-transaction caveat.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # doc-mapping.sh — Maps source file paths to their canonical architecture docs.
 #
-# Used by three layers of the documentation enforcement chain:
-# 1. Editor-time: Claude Code PostToolUse hook
-# 2. Commit-time: Claude Code hook advisory
-# 3. Pre-push: check-docs-lefthook.sh blocking gate
+# Used by the doc-staleness enforcement chain:
+#   - Pre-push: check-docs-lefthook.sh blocking gate
+#   - (Future) editor-time / commit-time advisories from Claude Code hooks
 #
-# Usage: source this file, then call get_doc_for_file <path>
+# Usage: source this file, then call get_docs_for_file <path>
 #
-# Returns the architecture doc path on stdout, or empty string if no mapping.
+# Returns one or more architecture doc paths on stdout (one per line), or
+# empty output if no mapping. Files that legitimately span two architecture
+# docs (e.g., a module that owns a contract documented in one place AND emits
+# metrics documented in another) MUST list both — the gate dedupes the union
+# across changed files and demands every listed doc was also touched.
 
-get_doc_for_file() {
+get_docs_for_file() {
     local file="$1"
 
     case "$file" in
@@ -22,11 +25,26 @@ get_doc_for_file() {
             echo "docs/architecture/backend-server.md"
             return
             ;;
-        backend/crates/atc-server/src/*)
-            echo "docs/architecture/backend-server.md"
+        backend/crates/atc-server/src/metrics.rs)
+            # Pure metrics-surface module: registration, recorder install,
+            # bucket overrides. Owned by metrics.md.
+            echo "docs/architecture/metrics.md"
             return
             ;;
         backend/crates/atc-server/build.rs)
+            # build.rs feeds VERGEN_* env vars consumed only by atc_build_info.
+            echo "docs/architecture/metrics.md"
+            return
+            ;;
+        backend/crates/atc-server/src/persist.rs|backend/crates/atc-server/src/listener.rs)
+            # Straddlers: PersistentStore trait / drain pipeline contracts live
+            # in backend-server.md; metric emissions documented in metrics.md.
+            # Both docs must be updated when either file changes.
+            echo "docs/architecture/backend-server.md"
+            echo "docs/architecture/metrics.md"
+            return
+            ;;
+        backend/crates/atc-server/src/*)
             echo "docs/architecture/backend-server.md"
             return
             ;;
@@ -61,5 +79,4 @@ get_doc_for_file() {
     esac
 
     # No mapping found
-    echo ""
 }
