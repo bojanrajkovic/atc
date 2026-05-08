@@ -7,6 +7,15 @@ on:
 
 permissions: {}
 
+# Serialize Release pipelines targeting the same tag. Different tags run in
+# parallel (separate groups). cancel-in-progress: false because aborting a
+# release midway leaves orphaned partial state — e.g. binaries published to
+# the GitHub Release but the container image never pushed, or the Helm
+# chart published against a tag whose binaries failed to build.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   create-release:
     name: Create Release
