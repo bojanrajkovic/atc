@@ -22,11 +22,16 @@ get_doc_for_file() {
             echo "docs/architecture/backend-server.md"
             return
             ;;
-        backend/crates/atc-server/src/*)
-            echo "docs/architecture/backend-server.md"
+        backend/crates/atc-server/src/metrics.rs|backend/crates/atc-server/src/persist.rs|backend/crates/atc-server/src/listener.rs)
+            echo "docs/architecture/metrics.md"
             return
             ;;
         backend/crates/atc-server/build.rs)
+            # build.rs feeds VERGEN_* env vars consumed by atc_build_info labels
+            echo "docs/architecture/metrics.md"
+            return
+            ;;
+        backend/crates/atc-server/src/*)
             echo "docs/architecture/backend-server.md"
             return
             ;;
