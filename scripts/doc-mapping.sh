@@ -42,7 +42,7 @@ get_doc_for_file() {
             echo "docs/architecture/release-pipeline.md"
             return
             ;;
-        Dockerfile|.dockerignore)
+        Dockerfile|Dockerfile.release|.dockerignore|Dockerfile.release.dockerignore)
             echo "docs/architecture/release-pipeline.md"
             return
             ;;
