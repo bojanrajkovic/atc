@@ -312,9 +312,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # install: false + explicit `mise install helm` — this job only needs
+      # helm; full `mise install` would drag in Rust/Node/cargo-tools.
+      # cache: false because publish-helm-chart runs once per release tag and
+      # the saved cache wouldn't help downstream.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
+          install: false
           cache: false
+
+      - name: Install helm via mise
+        run: mise install helm
 
       - name: Read chart version
         id: chart-version

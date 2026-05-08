@@ -247,7 +247,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # mise install: false + explicit `mise install helm` so this job doesn't
+      # drag in Rust/Node/cargo-tools it never uses. With `install: true` the
+      # action runs `mise install` which compiles the cargo: tools from
+      # source — minutes of overhead for a job that only needs `helm`.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+
+      - name: Install helm via mise
+        run: mise install helm
 
       - name: Install helm-unittest plugin
         run: helm plugin install --verify=false https://github.com/helm-unittest/helm-unittest --version 0.8.2
@@ -279,7 +288,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # mise install: false + explicit subset so the helm matrix doesn't drag
+      # in Rust/Node/cargo-tools it never uses. See the helm-lint job above
+      # for the rationale.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+
+      - name: Install helm + kubeconform via mise
+        run: mise install helm kubeconform
 
       - name: Render and validate
         env:
