@@ -1,0 +1,81 @@
+name: Build Runner Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/runner/Dockerfile
+      - .github/workflows/runner-image.yml
+      - frontend/package.json
+  schedule:
+    # Weekly rebuild — picks up Ubuntu 24.04 base image security patches
+    # and any Playwright dep additions for the same pinned version.
+    # Monday 06:00 UTC, two hours before the K8s image-updater CronJob
+    # rolls the ARC scale set.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: runner-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/atc-runner
+
+jobs:
+  build:
+    name: Build & Push
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # The Dockerfile takes PLAYWRIGHT_VERSION as a build arg so the
+      # image's chromium dep set always matches what the project's tests
+      # will need. Source of truth is frontend/package.json.
+      - name: Extract Playwright version from frontend/package.json
+        id: pw
+        run: |
+          set -euo pipefail
+          PW=$(jq -r '.devDependencies["@playwright/test"]' frontend/package.json | sed -E 's/^[\^~]//')
+          if [ -z "${PW}" ] || [ "${PW}" = "null" ]; then
+            echo "::error::Could not extract @playwright/test version from frontend/package.json"
+            exit 1
+          fi
+          echo "Playwright version: ${PW}"
+          echo "version=${PW}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .github/runner
+          file: .github/runner/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            PLAYWRIGHT_VERSION=${{ steps.pw.outputs.version }}
+          cache-from: type=gha,scope=atc-runner
+          cache-to: type=gha,mode=max,scope=atc-runner

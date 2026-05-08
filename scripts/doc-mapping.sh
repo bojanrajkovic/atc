@@ -54,7 +54,7 @@ get_doc_for_file() {
             echo "docs/architecture/deployment.md"
             return
             ;;
-        .github/workflows/*)
+        .github/workflows/*|.github/runner/*|.github/runner/k8s/*|.github/actionlint.yaml)
             echo "docs/architecture/ci-pipeline.md"
             return
             ;;
