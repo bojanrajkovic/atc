@@ -7,6 +7,11 @@ on:
       - .github/runner/Dockerfile
       - .github/workflows/runner-image.yml
       - frontend/package.json
+  pull_request:
+    paths:
+      - .github/runner/Dockerfile
+      - .github/workflows/runner-image.yml
+      - frontend/package.json
   schedule:
     # Weekly rebuild — picks up Ubuntu 24.04 base image security patches
     # and any Playwright dep additions for the same pinned version.
@@ -65,8 +70,14 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
+            # Always — uniquely identifies the image by source commit
             type=sha
-            type=raw,value=latest
+            # PR builds get a stable tag (:pr-<num>) you can pin ARC to
+            # for testing without touching the production :latest tag
+            type=ref,event=pr
+            # Only update :latest from the default branch (push to main,
+            # schedule, manual dispatch). PR pushes do NOT clobber it.
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
 
       - uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
