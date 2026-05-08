@@ -62,11 +62,11 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
-**Decision:** Per-platform GitHub Actions cache scopes
+**Decision:** Per-platform GitHub Actions cache scopes — applies to `build-binaries` only
 
 **Alternatives considered:** Global cache; no caching; cache per job type
 
-**Rationale:** GitHub Actions assigns cache writes per platform/runner type. Explicitly scoping caches per platform (linux-x86_64, linux-aarch64, macos) prevents cache misses from cross-platform differences and maximizes hit rates. Rust's target-specific build artifacts are inherently platform-sensitive.
+**Rationale:** GitHub Actions assigns cache writes per platform/runner type. Explicitly scoping caches per platform (linux-x86_64, linux-aarch64, macos) prevents cache misses from cross-platform differences and maximizes hit rates. Rust's target-specific build artifacts are inherently platform-sensitive. Note: `build-container` no longer participates in this scheme — since adopting `Dockerfile.release` (binary-handoff pattern, see Decision below), the container build is a single `COPY` with no compile work to cache.
 
 ---
 
@@ -82,7 +82,7 @@ Both workflows integrate with the conventional commits framework to provide full
 
 **Alternatives considered:** Build the frontend inline in each binary matrix job; ship a stub `frontend/dist` (as `ci.yml` does); restructure rust-embed to be optional
 
-**Rationale:** `atc-server` embeds `frontend/dist` at compile time via `rust-embed` (see `backend/crates/atc-server/src/assets.rs`), so any release build from a clean checkout fails or ships an empty SPA. Rather than building the frontend three times in the binary matrix (one per target triple), `release.yml` has a dedicated `build-frontend` job that runs once on `ubuntu-24.04`, uploads `frontend/dist` as a workflow artifact, and is added as a `needs:` of `build-binaries`. Each matrix job downloads the artifact into `frontend/dist/` before invoking `cargo build`. The `build-container` job is unaffected — its Dockerfile has its own frontend stage that builds from source.
+**Rationale:** `atc-server` embeds `frontend/dist` at compile time via `rust-embed` (see `backend/crates/atc-server/src/assets.rs`), so any release build from a clean checkout fails or ships an empty SPA. Rather than building the frontend three times in the binary matrix (one per target triple), `release.yml` has a dedicated `build-frontend` job that runs once, uploads `frontend/dist` as a workflow artifact, and is added as a `needs:` of `build-binaries`. Each matrix job downloads the artifact into `frontend/dist/` before invoking `cargo build`. `build-container` does not need this dance separately — see the `Dockerfile.release` decision below: the cross-compiled binary already has the frontend embedded, and the container is just `FROM distroless + COPY binary`.
 
 ---
 
@@ -129,14 +129,29 @@ Both workflows integrate with the conventional commits framework to provide full
 
 **Rationale:** The `publish-helm-chart` job added to `release.yml` packages the chart with `helm package`, pushes to ghcr.io OCI with `helm push`, and generates a Sigstore build-provenance attestation via `actions/attest-build-provenance`. The job is gated on `needs: [create-release, build-container, merge-manifest]`, ensuring a chart artifact is never published unless the corresponding container image succeeded. Publishing is tag-triggered (matching the rest of `release.yml`) rather than on every push to main, which guarantees chart versions correspond to tagged application releases. The rejected alternative of `helm/chart-releaser-action` publishes to a GitHub Pages branch and maintains a classic HTTP chart index — this is valid and may be added in a future issue, but it requires additional workflow and branch setup. OCI publishing is sufficient for Phase 6 and integrates cleanly with the existing ghcr.io registry used for container images. The chart tarball is attested via Sigstore, providing SLSA provenance records verifiable by consumers.
 
+---
+
+**Decision:** arm64 Linux artifacts are cross-compiled on the amd64 self-hosted runner; container builds embed pre-built binaries via `Dockerfile.release`
+
+**Alternatives considered:** Native arm64 runner (`ubuntu-24.04-arm`) for both binary and container builds; QEMU emulation in `docker buildx` for arm64 container builds; pay for `aarch64-unknown-linux-musl` minutes on GitHub-hosted runners; build the entire image inside the existing multi-stage `Dockerfile` (with cargo, frontend, and target/) on each platform
+
+**Rationale:** Once Linux jobs moved off GitHub-hosted runners (see ci-pipeline.md), the homelab ARC scale set only serves amd64. Two pieces of the release pipeline still produced arm64 artifacts: the `aarch64-unknown-linux-musl` binary in `build-binaries`, and the `linux/arm64` image in `build-container`. Both moved to the amd64 self-hosted pool via complementary techniques:
+
+- **Binary side (`build-binaries`):** the `aarch64-unknown-linux-musl` matrix entry switched runners from `ubuntu-24.04-arm` to `[self-hosted, linux, amd64]`. The matrix's `Install musl + cross toolchain` step conditionally installs `gcc-aarch64-linux-gnu` (which provides `aarch64-linux-gnu-gcc`) on top of the always-installed `musl-tools`. `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc` is set as a job-level env (cargo only consults it when building that target, so setting it unconditionally is harmless for other matrix entries). `taiki-e/upload-rust-binary-action` already adds the rustup target via its `--target` flag. Result: native code-gen, no QEMU, ~5 minutes added to one matrix job vs. a previous full second matrix runner.
+- **Container side (`build-container`):** the previous design built the full multi-stage `Dockerfile` from source on each matrix runner (one cargo-chef cook + frontend pnpm build per platform). A new `Dockerfile.release` is a four-line image (`FROM gcr.io/distroless/cc-debian13:nonroot` + `COPY atc-server` + `USER` + `ENTRYPOINT`) that consumes a pre-built binary from the build context. `build-binaries` now uploads each `linux-musl` binary as a 1-day-retention workflow artifact (~12–15 MB per arch, `compression-level: 0` since the binary doesn't compress and zip overhead is wasted time). `build-container` adds `needs: build-binaries`, downloads the matching `binary-${target}` artifact, and runs `docker buildx build --platform linux/{amd64,arm64} -f Dockerfile.release`. Because the only operation in `Dockerfile.release` is `COPY` (no `RUN`), buildx never executes foreign-arch code; cross-arch images come from the multi-arch distroless base manifest plus the pre-cross-compiled binary. Both matrix entries run on `[self-hosted, linux, amd64]`. The cargo-chef multi-stage compile happens once per release in `build-binaries` (rather than three times across the matrix), saving ~5–10 minutes per release.
+
+The regular `Dockerfile` is unchanged and remains the canonical entry point for `docker build .` in local development — it builds the frontend, cargo-chef-cooks deps, compiles the binary, and copies it into distroless. `Dockerfile.release` is release-pipeline-only and assumes the binary is already in the build context. `Dockerfile.release.dockerignore` (a Docker-23.0+ convention for per-Dockerfile ignore-lists) excludes everything except the `atc-server` binary, both for security (no source leakage into the image) and build-context speed.
+
 ## Boundaries
 
 **Owns:**
 
 - `.github/workflows/release-please.yml` — Automated version bumping and tagging
 - `.github/workflows/release.yml` — Artifact build and publication
-- `Dockerfile` — Multi-stage container build with dependency caching and distroless runtime
-- `.dockerignore` — Docker build context filter (excludes large/irrelevant files)
+- `Dockerfile` — Multi-stage container build with dependency caching and distroless runtime; canonical for local `docker build .`
+- `Dockerfile.release` — Thin image for the release pipeline; consumes a pre-built binary from the build context (see arm64 cross-compile decision above)
+- `.dockerignore` — Docker build context filter for `Dockerfile` (excludes large/irrelevant files)
+- `Dockerfile.release.dockerignore` — Per-Dockerfile ignore-list for `Dockerfile.release`; allowlists only `atc-server` (Docker 23.0+ convention)
 - `release-please-config.json` — release-please manifest (version sync, changelog paths, bump rules)
 - `.release-please-manifest.json` — Version tracker for release-please
 
@@ -161,7 +176,9 @@ Both workflows integrate with the conventional commits framework to provide full
 
 - `.github/workflows/release-please.yml` — Automated release PR creation with Conventional Commits bump detection
 - `.github/workflows/release.yml` — Tag-triggered artifact build (binaries, Docker image) and publication
-- `Dockerfile` — Multi-stage Rust build with cargo-chef caching; distroless runtime
-- `.dockerignore` — Build context filter (excludes docs, git, CI configs, test files)
+- `Dockerfile` — Multi-stage Rust build with cargo-chef caching; distroless runtime; canonical for local `docker build .`
+- `Dockerfile.release` — Thin image used by `build-container` in `release.yml`; assumes a pre-built `atc-server` binary in the build context (see arm64 cross-compile + binary-handoff Decision in this doc)
+- `.dockerignore` — Build context filter for `Dockerfile` (excludes docs, git, CI configs, test files)
+- `Dockerfile.release.dockerignore` — Per-Dockerfile ignore-list for `Dockerfile.release`; allowlists only `atc-server` (Docker 23.0+ convention)
 - `release-please-config.json` — Configures release-please plugins, version sync, and CHANGELOG generation
 - `.release-please-manifest.json` — Tracks current versions for all packages

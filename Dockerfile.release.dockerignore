@@ -1,0 +1,7 @@
+# Build context for Dockerfile.release contains exactly one file:
+# the pre-built atc-server binary downloaded from the build-binaries
+# artifact. Everything else (source, frontend, .git, etc.) is excluded
+# both for security (no source leakage into the image) and for build
+# speed (smaller context = faster transfer to the builder).
+*
+!atc-server

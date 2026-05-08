@@ -103,10 +103,11 @@ check:
 
 # Run all tests (parallel). Requires Docker or OrbStack — backend uses testcontainers for ephemeral PostgreSQL.
 # macOS/OrbStack: export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
+# Backend uses cargo-nextest (per backend/.config/nextest.toml) for cross-binary parallelism.
 test:
 	#!/usr/bin/env bash
 	set -euo pipefail
-	cd backend && cargo test --workspace &
+	cd backend && cargo nextest run --workspace &
 	pid1=$!
 	(cd frontend && pnpm exec vitest run) &
 	pid2=$!
@@ -118,6 +119,17 @@ test:
 # Run Playwright E2E tests against the frontend dev server.
 test-e2e:
 	cd frontend && pnpm exec playwright test
+
+# Tear down the persistent `atc-test-pg` container that the backend test
+# suite leaves behind. Backend tests use testcontainers' reuse pattern
+# (one container shared across all tests via per-test databases) which
+# trades container-boot overhead for a long-lived container; over many
+# `cargo test` invocations the container's stale `test_*` databases
+# accumulate (~10 MB each). Run this recipe after wrapping up a heavy
+# session, or anytime you want a clean slate. Safe to run if no
+# container exists.
+cleanup-test-pg:
+	docker rm -f atc-test-pg 2>/dev/null || true
 
 # Run performance verification: Tier 1 (vitest deterministic coalescing gate) +
 # Tier 2 (Playwright frame-budget trace artifact). The Tier 1 test is also included

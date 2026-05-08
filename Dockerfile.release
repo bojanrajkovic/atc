@@ -1,0 +1,20 @@
+# Dockerfile.release — used by the release pipeline (.github/workflows/release.yml).
+#
+# Embeds a pre-built atc-server binary into a distroless runtime image. The
+# binary is produced upstream by the build-binaries matrix job (which cross-
+# compiles aarch64-unknown-linux-musl on the amd64 self-hosted runner) and
+# downloaded into the build context by build-container before this Dockerfile
+# is invoked.
+#
+# For LOCAL builds and ad-hoc `docker build .`, use the regular Dockerfile —
+# it does the full multi-stage build from source. This file assumes a
+# pre-built binary is already present at build context root and will fail
+# without it.
+#
+# See docs/architecture/release-pipeline.md for the full pattern.
+FROM gcr.io/distroless/cc-debian13:nonroot
+COPY atc-server /atc-server
+USER 65532:65532
+EXPOSE 8080
+EXPOSE 9090
+ENTRYPOINT ["/atc-server"]
