@@ -23,52 +23,56 @@
 #          -f visibility=public
 #
 #   2. Apply this manifest:
-#        kubectl --context homelab apply -f .github/runner/k8s/image-updater.yaml
+#        kubectl apply -f .github/runner/k8s/image-updater.yaml
 #
-#   3. Update the ARC AutoscalingRunnerSet to use
-#      ghcr.io/<owner>/atc-runner:latest as the runner container image.
+#   3. Update the ARC AutoscalingRunnerSet `gha-arc-atc` (in the
+#      `gha-arc-personal` namespace) to use `ghcr.io/bojanrajkovic/
+#      atc-runner:latest` as the runner container image. The first run of
+#      this CronJob will then resolve :latest to a digest and patch the
+#      AutoscalingRunnerSet to use the immutable digest reference.
 #
-# Adapt NAMESPACE and RESOURCE below to match your ARC scale set's
-# namespace and name (defaults match the conventional gha-arc-atc setup).
+# Resource names are prefixed `atc-` so this manifest can co-exist with
+# similar updaters for other repos sharing the same namespace (e.g. a
+# future `nacha-image-updater` for gha-arc-nacha-visualizer).
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: ci-image-updater
-  namespace: gha-arc-atc
+  name: atc-image-updater
+  namespace: gha-arc-personal
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: ci-image-updater
-  namespace: gha-arc-atc
+  name: atc-image-updater
+  namespace: gha-arc-personal
 rules:
   - apiGroups: ["actions.github.com"]
     resources: ["autoscalingrunnersets"]
     verbs: ["get", "patch"]
   - apiGroups: ["apps"]
     resources: ["daemonsets"]
-    verbs: ["create", "get", "delete"]
+    verbs: ["create", "get", "delete", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: ci-image-updater
-  namespace: gha-arc-atc
+  name: atc-image-updater
+  namespace: gha-arc-personal
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: ci-image-updater
+  name: atc-image-updater
 subjects:
   - kind: ServiceAccount
-    name: ci-image-updater
-    namespace: gha-arc-atc
+    name: atc-image-updater
+    namespace: gha-arc-personal
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: ci-image-updater
-  namespace: gha-arc-atc
+  name: atc-image-updater
+  namespace: gha-arc-personal
 spec:
   schedule: "0 8 * * 1" # Monday 08:00 UTC
   concurrencyPolicy: Forbid
@@ -89,10 +93,9 @@ spec:
                 - name: IMAGE
                   value: ghcr.io/bojanrajkovic/atc-runner
                 - name: RESOURCE
-                  # Adjust to your AutoscalingRunnerSet's actual name.
-                  value: autoscalingrunnersets/atc-homelab-linux
+                  value: autoscalingrunnersets/gha-arc-atc
                 - name: NAMESPACE
-                  value: gha-arc-atc
+                  value: gha-arc-personal
               command: ["/bin/bash", "-euo", "pipefail", "-c"]
               args:
                 - |
