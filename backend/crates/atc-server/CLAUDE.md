@@ -65,7 +65,9 @@ cargo clippy -p atc-server -- -D warnings
 cargo test -p atc-server --test e2e_tests  # 3 full-stack e2e tests
 ```
 
-**Docker required:** The PG-backed tier (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`, `notify_listener_tests`, `phase_3c_*`) uses testcontainers to boot ephemeral PostgreSQL instances. `cargo test -p atc-server` (and `just test`) require Docker or OrbStack to be running.
+**Docker required:** The PG-backed tier (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`, `notify_listener_tests`, `phase_3c_*`) uses testcontainers to boot a single shared PostgreSQL container — `tests/common/start_pg()` uses `ReuseDirective::Always` to reuse a container named `atc-test-pg` across all tests, with each test creating its own ephemeral database (`test_<pid>_<nanos>_<counter>`). Cuts test wall clock by ~10× vs per-test containers (~17s for 319 tests vs ~3 min). `cargo test -p atc-server` (and `just test`) require Docker or OrbStack to be running.
+
+**Cleanup:** the `atc-test-pg` container persists after `cargo test` ends. Run `just cleanup-test-pg` after a heavy session to reclaim the container + its accumulated `test_*` databases. Safe to skip — the container is small (~150 MB) and gets recreated on the next test run.
 
 macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` before running tests.
 

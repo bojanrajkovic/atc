@@ -120,6 +120,17 @@ test:
 test-e2e:
 	cd frontend && pnpm exec playwright test
 
+# Tear down the persistent `atc-test-pg` container that the backend test
+# suite leaves behind. Backend tests use testcontainers' reuse pattern
+# (one container shared across all tests via per-test databases) which
+# trades container-boot overhead for a long-lived container; over many
+# `cargo test` invocations the container's stale `test_*` databases
+# accumulate (~10 MB each). Run this recipe after wrapping up a heavy
+# session, or anytime you want a clean slate. Safe to run if no
+# container exists.
+cleanup-test-pg:
+	docker rm -f atc-test-pg 2>/dev/null || true
+
 # Run performance verification: Tier 1 (vitest deterministic coalescing gate) +
 # Tier 2 (Playwright frame-budget trace artifact). The Tier 1 test is also included
 # in `just test`; this recipe runs both tiers together for local perf work.

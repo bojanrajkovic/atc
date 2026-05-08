@@ -235,25 +235,103 @@ pub fn fixture_workflow_job_completed() -> Vec<u8> {
 // Ephemeral PG container helpers
 // ---------------------------------------------------------------------------
 
-/// Boot a fresh ephemeral Postgres container and return pool + guard + URL.
+/// Boot (or reuse) a Postgres container and return pool + guard + URL.
 ///
-/// The container lives until the guard (impl Drop) is dropped. The URL is
-/// needed by tests that open additional connections (e.g., PgListener).
+/// The container is shared across nextest test processes via testcontainers'
+/// `ReuseDirective::Always` (named `atc-test-pg`). Each test gets its own
+/// freshly-created database within the shared container — `CREATE DATABASE
+/// test_<nanos>_<counter>` — so tests stay isolated despite the shared
+/// container. Migrations run on each per-test DB.
+///
+/// The container persists after `cargo nextest run` finishes; clean up with
+/// `docker rm -f atc-test-pg` (or wait for OrbStack/Docker GC). Per-test
+/// databases accumulate inside the container but are tiny; if they pile up
+/// beyond comfort, drop the container.
 pub async fn start_pg() -> (sqlx::PgPool, impl Drop, String) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
     use testcontainers::ImageExt;
+    use testcontainers::ReuseDirective;
     use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::postgres::Postgres;
 
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("failed to start postgres container");
+    static DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Retry on container-creation race: testcontainers' reuse logic
+    // (inspect-then-create) is not atomic, so concurrent test processes
+    // can both pass the inspect, then one wins `docker create` while the
+    // others get a 409 Conflict. On retry, the existence check passes
+    // and we attach to the now-created container.
+    let mut container_delay_ms: u64 = 50;
+    let container = loop {
+        match Postgres::default()
+            .with_tag("17-alpine")
+            .with_container_name("atc-test-pg")
+            .with_reuse(ReuseDirective::Always)
+            .start()
+            .await
+        {
+            Ok(c) => break c,
+            Err(e) if container_delay_ms < 4_000 => {
+                tokio::time::sleep(Duration::from_millis(container_delay_ms)).await;
+                container_delay_ms *= 2;
+                eprintln!(
+                    "[start_pg] container start retry after {container_delay_ms}ms (last error: {e})"
+                );
+            }
+            Err(e) => panic!("failed to start postgres container after retries: {e}"),
+        }
+    };
     let port = container
         .get_host_port_ipv4(5432)
         .await
         .expect("failed to get port");
-    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+
+    // Open a single admin connection (NOT a pool — pools default to 10
+    // connections, and N parallel tests × 10 connections each blows past
+    // Postgres' default max_connections=100) just long enough to issue
+    // `CREATE DATABASE`, then drop it. The test's own pool (returned
+    // below) connects to the new DB.
+    //
+    // Retries: with `ReuseDirective::Always`, the *first* test process
+    // that reaches the container creation race wins; concurrent siblings
+    // see the container exists but Postgres inside may still be
+    // starting up. The retry loop with exponential backoff absorbs
+    // "Connection reset by peer" and "database system is starting up"
+    // errors during that startup window (typically <1s).
+    use sqlx::Connection;
+    let admin_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let counter = DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+    // PID guarantees uniqueness across nextest's parallel test processes
+    // even when two processes happen to call this fn at the same nanosecond
+    // with the same process-local counter value.
+    let pid = std::process::id();
+    let db_name = format!("test_{pid}_{nanos}_{counter}");
+    let mut delay_ms: u64 = 50;
+    let admin_conn = loop {
+        match sqlx::PgConnection::connect(&admin_url).await {
+            Ok(conn) => break conn,
+            Err(e) if delay_ms < 4_000 => {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                delay_ms *= 2;
+                eprintln!("[start_pg] admin connect retry after {delay_ms}ms (last error: {e})");
+            }
+            Err(e) => panic!("admin connect failed after retries: {e}"),
+        }
+    };
+    {
+        let mut admin_conn = admin_conn;
+        sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
+            .execute(&mut admin_conn)
+            .await
+            .expect("CREATE DATABASE failed");
+    }
+
+    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/{db_name}");
     let pool = atc_server::db::init_pool(&db_url)
         .await
         .expect("init_pool failed");
