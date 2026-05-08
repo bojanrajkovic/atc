@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
+import { expect, test } from './lib/fixtures'
 import { makeJobSeqEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /** Standard page setup: inject WS mock, stub /v1/state, navigate, wait for connected. */

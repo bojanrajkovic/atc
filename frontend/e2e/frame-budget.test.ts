@@ -39,10 +39,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-import { expect, test } from '@playwright/test'
-
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
+import { expect, test } from './lib/fixtures'
 import { bigintReplacer, makeRunEvent, sendWSBatch, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 const _dirname = path.dirname(fileURLToPath(import.meta.url))

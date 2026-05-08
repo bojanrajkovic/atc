@@ -7,12 +7,17 @@ export default defineConfig({
     // blocks are ignored by v8 in projects mode.
     coverage: {
       provider: 'v8',
+      // Emit raw v8 (`json`) alongside lcov so the cross-modality merge
+      // step (`scripts/merge-coverage.mjs`) can consume Vitest's native v8
+      // output instead of round-tripping through lcov. The `lcov` reporter
+      // stays for direct local inspection of the Vitest-only result.
+      reporter: ['json', 'lcov'],
+      reportsDirectory: 'coverage/vitest',
       // `*.svelte` is in the include so Tailwind-instrumented components
       // (RunCard, RunDetailPanel, KanbanBoard, etc.) are reported. v8's
       // include filter is "ONLY report files matching this glob"; without
       // `.svelte`, every Svelte component is dropped from the lcov.info
-      // entirely. With `.svelte`, components without unit tests appear at
-      // 0% — which is why CommandPalette is explicitly excluded below.
+      // entirely.
       include: ['src/lib/**/*.svelte', 'src/lib/**/*.svelte.ts', 'src/lib/**/*.ts'],
       exclude: [
         'src/lib/types/**',
@@ -28,18 +33,6 @@ export default defineConfig({
         // factories are mock-data builders for tests.
         'src/lib/components/test-utils/**',
         'src/lib/test-utils/**',
-        // CommandPalette is verified comprehensively through Playwright E2E
-        // (e2e/palette.test.ts: AC1.1–AC1.13 plus the Recent / submenu /
-        // value-collision regressions). A vitest unit test would need a
-        // full Bits UI Command.Dialog mount with a real cmdk Command.Root
-        // context — practically infeasible without the test-utils wrappers
-        // we already use for the leaf items, and even then the derived
-        // sections, keydown handler, and tick()-await sequencing are
-        // dialog-mounted behaviour. Until Playwright coverage is merged
-        // into the lcov pipeline, this file would otherwise sink the
-        // project ratio with a phantom 0% — none of its branches are
-        // genuinely uncovered.
-        'src/lib/components/CommandPalette.svelte',
       ],
     },
   },

@@ -204,20 +204,36 @@ jobs:
         working-directory: frontend
         run: pnpm exec playwright install chromium
 
-      - name: Run unit tests with coverage
+      - name: Run Vitest with coverage
         working-directory: frontend
-        run: pnpm exec vitest run --coverage --coverage.reporter=lcov
+        # Vitest's reporters are configured at the workspace level
+        # (vitest.config.ts) — `--coverage` enables collection; the config-set
+        # `reportsDirectory: 'coverage/vitest'` and `reporter: ['json', 'lcov']`
+        # determine the output. The `--coverage.reporter=lcov` override the
+        # previous step used would suppress the json reporter we now need
+        # (raw v8 coverage available for local Monocart-style merges).
+        run: pnpm exec vitest run --coverage
 
-      - name: Run E2E tests
+      - name: Run Playwright with coverage
         working-directory: frontend
+        # `@bgotink/playwright-coverage` reporter (configured in
+        # `playwright.config.ts`) emits istanbul lcov to `coverage/e2e/lcov.info`
+        # alongside the default list reporter. Tests must import from
+        # `e2e/lib/fixtures.ts` for the V8 capture hook to fire.
         run: pnpm exec playwright test
 
       - name: Upload coverage to Codecov
         if: github.repository == 'bojanrajkovic/atc'
         uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5.5.3
+        # Two lcov files uploaded in one action call. Codecov merges them
+        # server-side by `SF:` path — files exercised by both Vitest and
+        # Playwright report a union of covered lines. Files exercised only
+        # by E2E (e.g., `CommandPalette.svelte`) appear at their E2E ratio
+        # rather than the phantom 0% they would have shown when excluded
+        # from Vitest's collection alone.
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: frontend/coverage/lcov.info
+          files: frontend/coverage/vitest/lcov.info,frontend/coverage/e2e/lcov.info
           flags: frontend
           fail_ci_if_error: true
 
@@ -227,7 +243,8 @@ jobs:
         with:
           name: test-results-frontend
           path: |
-            frontend/coverage/lcov.info
+            frontend/coverage/vitest/lcov.info
+            frontend/coverage/e2e/lcov.info
             frontend/test-results/frame-budget-trace.json
           retention-days: 7
           if-no-files-found: ignore

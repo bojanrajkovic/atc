@@ -20,6 +20,7 @@
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {
+    "@bgotink/playwright-coverage": "^0.3.2",
     "@biomejs/biome": "catalog:",
     "@internationalized/date": "catalog:",
     "@lucide/svelte": "catalog:",
