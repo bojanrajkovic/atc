@@ -67,7 +67,14 @@ jobs:
           persist-credentials: false
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y mold cmake pkg-config
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            pkg-config \
+            perl \
+            mold
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
@@ -162,6 +169,29 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      # Node 25's prebuilt binary dynamically links libatomic.so.1; the
+      # actions-runner base image doesn't include it. Playwright's chromium
+      # also needs a handful of GUI/audio libs. The un-suffixed package
+      # names listed here resolve on both Ubuntu 22.04 (actions-runner's
+      # likely base) and 24.04 (via the t64 transition's Provides:
+      # relationship from libfoo to libfoot64). `playwright install
+      # --with-deps` would resolve these via apt, but only when sudo is
+      # wired through cleanly — pre-installing here surfaces a missing-lib
+      # failure on this step instead of mid-test.
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libatomic1 \
+            libnss3 \
+            libxkbcommon0 \
+            libgbm1 \
+            libasound2 \
+            libcups2 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libdrm2
 
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
