@@ -36,7 +36,7 @@ pre-push:
   commands:
     cargo-test:
       root: "backend/"
-      run: mise exec -- cargo test --workspace
+      run: mise exec -- cargo nextest run --workspace
     vitest:
       root: "frontend/"
       run: mise exec -- pnpm exec vitest run
