@@ -32,12 +32,14 @@ if [ -z "$CHANGED_FILES" ]; then
     exit 0
 fi
 
-# Collect unique docs that need updating (one per line, deduplicated)
+# Collect unique docs that need updating (one per line, deduplicated).
+# get_docs_for_file may echo multiple lines for files that legitimately span
+# two architecture docs — we add every line to the set.
 docs_needed=""
 while IFS= read -r file; do
-    doc=$(get_doc_for_file "$file")
-    if [ -n "$doc" ]; then
-        docs_needed=$(printf '%s\n%s' "$docs_needed" "$doc" | sort -u)
+    docs=$(get_docs_for_file "$file")
+    if [ -n "$docs" ]; then
+        docs_needed=$(printf '%s\n%s' "$docs_needed" "$docs" | sort -u)
     fi
 done <<< "$CHANGED_FILES"
 
