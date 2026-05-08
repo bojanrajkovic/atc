@@ -84,7 +84,7 @@ spec:
       activeDeadlineSeconds: 300
       template:
         spec:
-          serviceAccountName: ci-image-updater
+          serviceAccountName: atc-image-updater
           restartPolicy: Never
           containers:
             - name: updater
