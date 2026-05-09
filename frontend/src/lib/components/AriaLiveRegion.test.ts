@@ -28,32 +28,32 @@ describe('AriaLiveRegion component', () => {
     return el
   }
 
-  it('AC6.1 — renders a single div with role="status"', () => {
+  it('renders a single div with role="status"', () => {
     const el = getDiv()
     expect(el.getAttribute('role')).toBe('status')
   })
 
-  it('AC6.1 — aria-live="polite"', () => {
+  it('aria-live="polite"', () => {
     const el = getDiv()
     expect(el.getAttribute('aria-live')).toBe('polite')
   })
 
-  it('AC6.1 — aria-atomic="true"', () => {
+  it('aria-atomic="true"', () => {
     const el = getDiv()
     expect(el.getAttribute('aria-atomic')).toBe('true')
   })
 
-  it('AC6.1 — initial aria-busy="false" (explicit string, not bare attribute)', () => {
+  it('initial aria-busy="false" (explicit string, not bare attribute)', () => {
     const el = getDiv()
     expect(el.getAttribute('aria-busy')).toBe('false')
   })
 
-  it('AC6.1 — aria-label="Workflow run updates"', () => {
+  it('aria-label="Workflow run updates"', () => {
     const el = getDiv()
     expect(el.getAttribute('aria-label')).toBe('Workflow run updates')
   })
 
-  it('AC6.1 — has sr-only class', () => {
+  it('has sr-only class', () => {
     const el = getDiv()
     expect(el.classList.contains('sr-only')).toBe(true)
   })

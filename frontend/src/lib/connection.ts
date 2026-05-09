@@ -108,7 +108,7 @@ export class ConnectionManager {
 
       // Step 6: Flush buffered events, discarding stale ones
       // Detach any prior setOnFlush callback so buffered-replay events do not
-      // produce announcements (AC6.7: reconnect silence during buffered drain).
+      // produce announcements during reconnect drain.
       eventDispatcher.setOnFlush(null)
       for (const buffered of this.preConnectBuffer) {
         if (buffered.seq > this.snapshotLastSeq) {
@@ -118,7 +118,7 @@ export class ConnectionManager {
       this.preConnectBuffer = []
       eventDispatcher.flush()
       // Step 6b: Wire the live-region callback AFTER the buffered drain so only
-      // subsequent live events produce announcements (AC6.7 deferred wiring).
+      // subsequent live events produce announcements.
       eventDispatcher.setOnFlush((events) => liveRegion.observeFlush(events))
       this.connected = true
 
@@ -143,7 +143,7 @@ export class ConnectionManager {
     this.connected = false
     this.ws = null
     // Detach the live-region callback on disconnect so the next reconnect cycle
-    // (snapshot + buffered-drain) runs silently until re-wired (AC6.7).
+    // (snapshot + buffered-drain) runs silently until re-wired.
     eventDispatcher.setOnFlush(null)
     // Also cancel any in-flight burst — observeFlush may have opened a burst
     // whose 200ms debounce timer has not yet fired; without this, closeBurst()

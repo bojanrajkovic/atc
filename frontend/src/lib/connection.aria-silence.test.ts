@@ -1,5 +1,5 @@
 /**
- * AC6.7 — ARIA live-region silence during snapshot replay and buffered-event drain.
+ * ARIA live-region silence during snapshot replay and buffered-event drain.
  *
  * The ConnectionManager must NOT invoke liveRegion.observeFlush during the
  * snapshot-load + buffered-drain phase on connect or reconnect. The flush
@@ -76,7 +76,7 @@ function yieldToEventLoop(ms = 20): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-describe('AC6.7: ARIA live-region silence during snapshot replay and buffered drain', () => {
+describe('ARIA live-region silence during snapshot replay and buffered drain', () => {
   const baseUrl = 'http://localhost:3000'
   const server = setupConnectionTestServer()
 
@@ -222,7 +222,7 @@ describe('AC6.7: ARIA live-region silence during snapshot replay and buffered dr
   })
 
   // -------------------------------------------------------------------------
-  // AC6.7+ — Codex P2: cancel pending live-region burst on disconnect/reconnect.
+  // Codex P2: cancel pending live-region burst on disconnect/reconnect.
   //
   // Without this, a 200ms burst-debounce timer scheduled by observeFlush right
   // before the WS dropped (or right before reconnect() nulled ws.onclose) would

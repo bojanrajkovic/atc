@@ -40,7 +40,7 @@ test.describe('Command palette', () => {
     }
   })
 
-  test('AC1.1 opens via paletteStore.open() and focuses input', async ({ page }) => {
+  test('opens via paletteStore.open() and focuses input', async ({ page }) => {
     // Seed some data so sections appear
     const run = makeRunEvent(1, {
       runId: 1,
@@ -75,7 +75,6 @@ test.describe('Command palette', () => {
     // Check DOM
     await expect(page.getByRole('dialog')).toBeVisible()
 
-    // AC1.1: Verify input is focused
     const input = page.locator('input[role="combobox"]')
     await expect(input).toBeFocused()
 
@@ -85,7 +84,7 @@ test.describe('Command palette', () => {
     expect(headings).toContain('Commands')
   })
 
-  test('AC1.3 sections render in fixed source order: Recent → Runs → Jobs → Runner Pools → Commands', async ({
+  test('sections render in fixed source order: Recent → Runs → Jobs → Runner Pools → Commands', async ({
     page,
   }) => {
     // Extra settle time to ensure all stores are ready
@@ -94,7 +93,7 @@ test.describe('Command palette', () => {
     // Seed a run via WS (required before recordRunVisit so recentRunIds is populated)
     const run = makeRunEvent(1, {
       runId: 1,
-      displayTitle: 'AC1.3 Test Run',
+      displayTitle: 'Test Run (sections order test)',
       createdAt: new Date().toISOString(),
       runStartedAt: null,
       updatedAt: new Date().toISOString(),
@@ -152,7 +151,7 @@ test.describe('Command palette', () => {
     expect(headings).toEqual(['Recent', 'Runs', 'Jobs', 'Runner Pools', 'Commands'])
   })
 
-  test('AC1.2 filter behavior: typing into searchbox via keyboard updates paletteQuery', async ({
+  test('filter behavior: typing into searchbox via keyboard updates paletteQuery', async ({
     page,
   }) => {
     // Seed some runs to have visible results
@@ -195,7 +194,7 @@ test.describe('Command palette', () => {
     await expect(dialog.getByText('fix: bug fix')).not.toBeVisible()
   })
 
-  test('AC1.4 selecting a run sets selectedRunId and records the visit', async ({ page }) => {
+  test('selecting a run sets selectedRunId and records the visit', async ({ page }) => {
     // Extra settle time before tests that use sendWS to ensure page is fully ready
     await page.waitForTimeout(500)
 
@@ -273,7 +272,7 @@ test.describe('Command palette', () => {
     expect(await page.evaluate(() => window.__stores!.uiStore!.lastTriggerRunId)).toBe(2n)
   })
 
-  test('AC1.5 selecting a job sets selectedRunId and selectedJobId', async ({ page }) => {
+  test('selecting a job sets selectedRunId and selectedJobId', async ({ page }) => {
     // Seed a run with a job via store mutation
     const run = makeRunEvent(1, {
       runId: 1,
@@ -344,7 +343,7 @@ test.describe('Command palette', () => {
     expect(scrolled).toContain('job-100')
   })
 
-  test('AC1.6 selecting a pool sets activePoolFilter and closes palette', async ({ page }) => {
+  test('selecting a pool sets activePoolFilter and closes palette', async ({ page }) => {
     // Seed a runner pool via an InProgress job
     await page.evaluate(() => {
       window.__stores!.runStore!.jobsByRun.set(998n, [
@@ -375,7 +374,7 @@ test.describe('Command palette', () => {
     expect(paletteOpen).toBe(false)
   })
 
-  test('AC1.7 clicking Switch theme… sets subMenu=theme and slides to theme options', async ({
+  test('clicking Switch theme… sets subMenu=theme and slides to theme options', async ({
     page,
   }) => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
@@ -396,13 +395,12 @@ test.describe('Command palette', () => {
     await expect(page.getByRole('option', { name: /Pink/ })).toBeVisible()
   })
 
-  test('AC1.8 selecting a theme via click sets uiStore.theme, clears subMenu, closes palette', async ({
+  test('selecting a theme via click sets uiStore.theme, clears subMenu, closes palette', async ({
     page,
   }) => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
     await expect(page.getByRole('dialog')).toBeVisible()
 
-    // Enter the theme submenu via real click (same path as AC1.7)
     await page.getByRole('option', { name: /Switch theme/ }).click()
 
     // Verify we're in the submenu before clicking a theme
@@ -421,9 +419,7 @@ test.describe('Command palette', () => {
     expect(paletteOpen).toBe(false)
   })
 
-  test('AC1.9 pressing Escape inside submenu returns to top-level without closing', async ({
-    page,
-  }) => {
+  test('pressing Escape inside submenu returns to top-level without closing', async ({ page }) => {
     await page.evaluate(() => window.__stores!.paletteStore!.open())
     await page.evaluate(() => window.__stores!.paletteStore!.enterSubmenu('theme'))
 
@@ -548,7 +544,7 @@ test.describe('Command palette', () => {
     expect(await page.evaluate(() => window.__stores!.paletteStore!.subMenu)).toBeNull()
   })
 
-  test('AC1.10 empty state shows curly-quoted query when no items match', async ({ page }) => {
+  test('empty state shows curly-quoted query when no items match', async ({ page }) => {
     // Open palette and set query via store directly
     await page.evaluate(() => {
       window.__stores!.paletteStore!.open()
@@ -560,7 +556,7 @@ test.describe('Command palette', () => {
     await expect(page.getByText('Nothing in flight matching “xyz123nonexistent”.')).toBeVisible()
   })
 
-  test('AC1.11 pool rows show three states (browse / query-active / focused) via CSS', async ({
+  test('pool rows show three states (browse / query-active / focused) via CSS', async ({
     page,
   }) => {
     // Seed THREE pools via InProgress/Queued jobs. Bits UI Command auto-selects the first
@@ -661,7 +657,7 @@ test.describe('Command palette', () => {
     expect(computedStyle).toBe('nowrap')
   })
 
-  test('AC1.12 Clear pool filter command absent when activePoolFilter null', async ({ page }) => {
+  test('Clear pool filter command absent when activePoolFilter null', async ({ page }) => {
     // Palette open without activePoolFilter set
     await page.evaluate(() => {
       window.__stores!.uiStore!.activePoolFilter = null
@@ -683,15 +679,15 @@ test.describe('Command palette', () => {
     await expect(clearPoolCommand).toBeVisible()
   })
 
-  test('AC1.13 Close detail panel command absent when selectedRunId null', async ({ page }) => {
+  test('Close detail panel command absent when selectedRunId null', async ({ page }) => {
     // Seed run 1 in the store so that setting selectedRunId = 1n does not
-    // trigger the RunDetailPanel's AC2.9 fallback (which clears selectedRunId
-    // when the id references a run not in the store).
+    // trigger the missing-run fallback (which clears selectedRunId when the id
+    // references a run not in the store).
     await sendWS(
       page,
       makeRunEvent(1, {
         runId: 1,
-        displayTitle: 'AC1.13 test run',
+        displayTitle: 'Close panel command test run',
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),

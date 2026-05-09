@@ -93,7 +93,6 @@
         queued: pool.queued,
         total: pool.total,
         isElastic: pool.isElastic,
-        // AC5.2: matching pool indicator highlights when active filter is set.
         // Computed here (where original pool.labels is in scope) so RunnerBar
         // stays pure — no uiStore read in the leaf-grid component.
         isActiveFilter: activeFilter !== null && poolKey(pool.labels) === activeFilter,

@@ -159,7 +159,7 @@ test.describe('Keyboard shortcut chords', () => {
   })
 })
 
-test.describe('fe-foundation.AC1.1: Dark mode default and OKLCH chroma', () => {
+test.describe('Dark mode default and OKLCH chroma', () => {
   test('dark mode is default with no data-mode attribute', async ({ page }) => {
     await page.goto('/')
 
@@ -190,7 +190,7 @@ test.describe('fe-foundation.AC1.1: Dark mode default and OKLCH chroma', () => {
   })
 })
 
-test.describe('fe-foundation.AC1.4: Status colors constant across themes', () => {
+test.describe('Status colors constant across themes', () => {
   const themes = [
     { name: 'warm', hue: '70' },
     { name: 'radar', hue: '155' },
@@ -261,11 +261,7 @@ test.describe('fe-foundation.AC1.4: Status colors constant across themes', () =>
   }
 })
 
-// AC1.5 (shadcn components render with ATC token colors) is not testable yet —
-// components are installed but not rendered in the scaffold UI. Add E2E coverage
-// when components are integrated into real views.
-
-test.describe('fe-foundation.AC1.6: prefers-reduced-motion disables animations', () => {
+test.describe('prefers-reduced-motion disables animations', () => {
   test('animation-duration is 0s on InProgress card halo under reduced motion', async ({
     page,
   }) => {
@@ -363,7 +359,7 @@ test.describe('fe-foundation.AC1.6: prefers-reduced-motion disables animations',
   })
 })
 
-test.describe('fe-foundation.AC1.7: Theme and mode independence', () => {
+test.describe('Theme and mode independence', () => {
   test('theme and mode can be changed independently', async ({ page }) => {
     await page.goto('/')
 

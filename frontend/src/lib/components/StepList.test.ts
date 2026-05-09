@@ -10,7 +10,7 @@ describe('StepList', () => {
     { name: 'Post cleanup', statusKey: 'Cancelled' as const, durationText: '0:01' },
   ]
 
-  it('interactivity.AC2.1 renders multiple StepItem children in source order inside the ol', () => {
+  it('renders multiple StepItem children in source order inside the ol', () => {
     const { container } = render(StepListWrapper, { props: { steps: threeSteps } })
 
     const ol = container.querySelector('ol')
@@ -24,7 +24,7 @@ describe('StepList', () => {
     expect(items[2]!.querySelector('.name')!.textContent).toBe('Post cleanup')
   })
 
-  it('interactivity.AC2.1 container is an ol element (semantic ordered list)', () => {
+  it('container is an ol element (semantic ordered list)', () => {
     const { container } = render(StepListWrapper, {
       props: {
         steps: [{ name: 'Only step', statusKey: 'Success' as const, durationText: '0:05' }],

@@ -42,8 +42,7 @@ async function setupPage(page: import('@playwright/test').Page) {
  *   run 2 → InProgress (middle column)
  *   run 3 → Completed/Success (right column)
  *
- * Distinct displayTitle values per run so AC4.5 aria-label assertions are
- * unambiguous.
+ * Distinct displayTitle values per run so aria-label assertions are unambiguous.
  */
 async function seedThreeRuns(page: import('@playwright/test').Page) {
   await sendWS(
@@ -89,10 +88,7 @@ test.describe('RunCard interactivity', () => {
     await seedThreeRuns(page)
   })
 
-  // -----------------------------------------------------------------------
-  // AC4.2 — Click opens RunDetailPanel
-  // -----------------------------------------------------------------------
-  test('interactivity.AC4.2 click on activator button opens RunDetailPanel', async ({ page }) => {
+  test('interactivity — click on activator button opens RunDetailPanel', async ({ page }) => {
     const card = page.locator('.run-card').first()
     await card.locator('.run-card-activate').click()
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
@@ -100,10 +96,7 @@ test.describe('RunCard interactivity', () => {
     expect(selectedRunId).not.toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC4.3 — Enter on focused button opens RunDetailPanel
-  // -----------------------------------------------------------------------
-  test('interactivity.AC4.3 Enter on focused activator button opens RunDetailPanel', async ({
+  test('interactivity — Enter on focused activator button opens RunDetailPanel', async ({
     page,
   }) => {
     const card = page.locator('.run-card').first()
@@ -112,10 +105,7 @@ test.describe('RunCard interactivity', () => {
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
   })
 
-  // -----------------------------------------------------------------------
-  // AC4.4 — Space on focused button opens RunDetailPanel
-  // -----------------------------------------------------------------------
-  test('interactivity.AC4.4 Space on focused activator button opens RunDetailPanel', async ({
+  test('interactivity — Space on focused activator button opens RunDetailPanel', async ({
     page,
   }) => {
     const card = page.locator('.run-card').first()
@@ -124,16 +114,7 @@ test.describe('RunCard interactivity', () => {
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
   })
 
-  // -----------------------------------------------------------------------
-  // AC4.5 — Roving tabindex: exactly one card has tabindex=0; Tab from
-  //   outside the kanban lands on that card; a second Tab exits the kanban.
-  //
-  // Updated for kanban-keyboard-nav.AC1.2 + AC1.6 — roving tabindex means
-  // exactly one card has tabindex=0; Tab moves OUT of the kanban after the
-  // focused card (single tab stop). The old assertion that Tab cycles through
-  // all three card buttons is superseded by the new roving-tabindex contract.
-  // -----------------------------------------------------------------------
-  test('interactivity.AC4.5 Tab from outside kanban lands on the single tabindex=0 card, second Tab exits', async ({
+  test('interactivity — Tab from outside kanban lands on the single tabindex=0 card, second Tab exits', async ({
     page,
   }) => {
     // Start focus at the Settings button (TopBar, outside the kanban) so Tab
@@ -152,18 +133,17 @@ test.describe('RunCard interactivity', () => {
     }
     expect(landedOnCard, 'Tab from TopBar should reach a run-card-activate button').toBe(true)
 
-    // AC1.1 priority: Queued > InProgress > Completed — the focused card is the
-    // first card of the Queued column.
+    // Priority: Queued > InProgress > Completed — the focused card is the first of the Queued column.
     const landedLabel = await page.evaluate(
       () => document.activeElement?.getAttribute('aria-label') ?? '',
     )
     expect(landedLabel).toBe('CI — queued, Queued, test-repo·main')
 
-    // AC1.6: exactly one card has tabindex=0 at this point.
+    // Exactly one card has tabindex=0 at this point.
     const tabzeroCount = await page.locator('.run-card-activate[tabindex="0"]').count()
     expect(tabzeroCount).toBe(1)
 
-    // AC1.2: a second Tab moves focus OUT of the kanban (no second .run-card-activate).
+    // A second Tab moves focus OUT of the kanban (no second .run-card-activate).
     await page.keyboard.press('Tab')
     const stillOnCard = await page.evaluate(
       () => document.activeElement?.classList.contains('run-card-activate') ?? false,
@@ -174,14 +154,7 @@ test.describe('RunCard interactivity', () => {
     ).toBe(false)
   })
 
-  // -----------------------------------------------------------------------
-  // AC4.6 — Clicks on title text (child element) bubble through the
-  //          transparent overlay button to activate the card.
-  //          The overlay button (.run-card-activate) covers the card with
-  //          z-index:1; clicking any child element must hit the button since
-  //          it is the topmost element at those coordinates.
-  // -----------------------------------------------------------------------
-  test('interactivity.AC4.6 click on title text bubbles through transparent overlay to inner button', async ({
+  test('interactivity — click on title text bubbles through transparent overlay to inner button', async ({
     page,
   }) => {
     const card = page.locator('.run-card').first()
@@ -204,10 +177,7 @@ test.describe('RunCard interactivity', () => {
     expect(selectedRunId).not.toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC3.1 — Hover for 250 ms shows popover anchored to the right of the card
-  // -----------------------------------------------------------------------
-  test('interactivity.AC3.1 hover 250ms shows popover anchored to the right of the card', async ({
+  test('interactivity — hover 250ms shows popover anchored to the right of the card', async ({
     page,
   }) => {
     // Use the first card (Queued column, left side) — plenty of viewport to
@@ -227,13 +197,7 @@ test.describe('RunCard interactivity', () => {
     expect(popoverBox!.x).toBeGreaterThanOrEqual(cardBox!.x + cardBox!.width - 10)
   })
 
-  // -----------------------------------------------------------------------
-  // AC3.1 (auto-flip) — Rightmost-column card triggers Floating UI auto-flip
-  //   so the popover appears to the LEFT of the card.
-  // -----------------------------------------------------------------------
-  test('interactivity.AC3.1 popover auto-flips left for card in rightmost column', async ({
-    page,
-  }) => {
+  test('interactivity — popover auto-flips left for card in rightmost column', async ({ page }) => {
     // The Completed column is rightmost; its card has displayTitle "CI — done"
     const completedSection = page.locator('section').filter({
       has: page.locator('[id="kanban-col-completed"]'),
@@ -252,10 +216,7 @@ test.describe('RunCard interactivity', () => {
     expect(popoverBox!.x + popoverBox!.width).toBeLessThanOrEqual(cardBox!.x + 10)
   })
 
-  // -----------------------------------------------------------------------
-  // AC3.2 — Mouse-leave immediately clears the popover
-  // -----------------------------------------------------------------------
-  test('interactivity.AC3.2 mouse-leave dismisses popover immediately', async ({ page }) => {
+  test('interactivity — mouse-leave dismisses popover immediately', async ({ page }) => {
     const card = page.locator('.run-card').first()
     await card.hover()
     await page.waitForTimeout(300)
@@ -267,10 +228,7 @@ test.describe('RunCard interactivity', () => {
     await expect(page.locator('.hover-peek-popover')).toBeHidden({ timeout: 2_000 })
   })
 
-  // -----------------------------------------------------------------------
-  // AC3.3 — Click on hovered card opens panel and dismisses popover
-  // -----------------------------------------------------------------------
-  test('interactivity.AC3.3 click on hovered card opens panel and dismisses popover', async ({
+  test('interactivity — click on hovered card opens panel and dismisses popover', async ({
     page,
   }) => {
     const card = page.locator('.run-card').first()

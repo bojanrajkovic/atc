@@ -8,7 +8,7 @@ import {
   WS_MOCK_INIT_SCRIPT,
 } from './lib/ws-mock'
 
-test.describe('ARIA live region (AC6)', () => {
+test.describe('ARIA live region', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(WS_MOCK_INIT_SCRIPT)
 
@@ -28,10 +28,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(page.locator('[aria-label="Workflow run updates"]')).toBeAttached()
   })
 
-  /**
-   * AC6.1 — The live region element mounts with the correct static attributes.
-   */
-  test('AC6.1 — live region mounts with correct ARIA attributes', async ({ page }) => {
+  test('live region mounts with correct ARIA attributes', async ({ page }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
 
     await expect(region).toHaveAttribute('aria-live', 'polite')
@@ -41,11 +38,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveClass(/sr-only/)
   })
 
-  /**
-   * AC6.2 — A single Queued transition (≤3) produces a per-run message
-   * with the "queued" verb, and aria-busy stays "false".
-   */
-  test('AC6.2 — single Queued event produces per-run message', async ({ page }) => {
+  test('single Queued event produces per-run message', async ({ page }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
 
     await sendWS(
@@ -66,10 +59,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveAttribute('aria-busy', 'false')
   })
 
-  /**
-   * AC6.2 — A Completed event (≤3) produces the conclusion-specific verb.
-   */
-  test('AC6.2 — single Completed event produces conclusion verb "succeeded"', async ({ page }) => {
+  test('single Completed event produces conclusion verb "succeeded"', async ({ page }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
 
     // First queue a run so it exists in the store
@@ -101,10 +91,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveAttribute('aria-busy', 'false')
   })
 
-  /**
-   * AC6.2 — Multiple transitions in the same flush (≤3) are joined by ". "
-   */
-  test('AC6.2 — two transitions below threshold joined by period-space', async ({ page }) => {
+  test('two transitions below threshold joined by period-space', async ({ page }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
 
     // Both events dispatched and flushed together via sendWSBatch (≤3 events)
@@ -133,14 +120,10 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveAttribute('aria-busy', 'false')
   })
 
-  /**
-   * AC6.4 — When branch is null, the "on {branch}" segment is elided.
-   * makeRunEvent always uses branch='main' — we need to override it.
-   */
-  test('AC6.4 — null branch elides "on {branch}" segment', async ({ page }) => {
+  test('null branch elides "on {branch}" segment', async ({ page }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
 
-    // Inject a run event with branch: null by using page.evaluate
+    // makeRunEvent always uses branch='main' — inject a run event with branch: null via page.evaluate
     await page.evaluate(() => {
       // biome-ignore lint/suspicious/noExplicitAny: dev-mode global bridge intentionally untyped
       const dispatcher = (window as any).eventDispatcher
@@ -174,11 +157,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveText('Run Null branch run for test-org/test-repo (push) queued')
   })
 
-  /**
-   * AC6.3 — More than 3 transitions in a flush: aria-busy flips to "true"
-   * and eventually resolves to a summary message with aria-busy="false".
-   */
-  test('AC6.3 — burst (>3 transitions) sets aria-busy="true" then resolves to summary', async ({
+  test('burst (>3 transitions) sets aria-busy="true" then resolves to summary', async ({
     page,
   }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
@@ -227,11 +206,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveText(/4 runs queued/)
   })
 
-  /**
-   * AC6.3 (multi-flush) — A 2-transition flush during an open burst window
-   * contributes to the accumulated counts (even though 2 ≤ 3).
-   */
-  test('AC6.3 — multi-flush burst: subsequent flush within debounce window adds to counts', async ({
+  test('multi-flush burst: subsequent flush within debounce window adds to counts', async ({
     page,
   }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
@@ -293,10 +268,7 @@ test.describe('ARIA live region (AC6)', () => {
     await expect(region).toHaveText(/5 runs queued/)
   })
 
-  /**
-   * AC6.3 — Summary elides absent conclusions (e.g., if no failures, no "0 failed").
-   */
-  test('AC6.3 — summary elides absent conclusion counts', async ({ page }) => {
+  test('summary elides absent conclusion counts', async ({ page }) => {
     const region = page.locator('[aria-label="Workflow run updates"]')
 
     // 4 Queued events → burst → summary should NOT mention "failed", "cancelled", etc.

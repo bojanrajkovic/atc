@@ -1,7 +1,7 @@
 //! Integration tests for PgStore persistence against a live PostgreSQL container.
 //!
-//! Covers AC2 (run-event durable write), AC3 (job-event durable write including
-//! job-before-run), and AC4 (field-merge parity with in-memory store).
+//! Covers run-event durable write, job-event durable write including
+//! job-before-run, and field-merge parity with in-memory store.
 //!
 //! Requires Docker (or OrbStack) to be running.
 
@@ -154,10 +154,10 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
 }
 
 // ---------------------------------------------------------------------------
-// AC2 — Run-event durable writes
+// Run-event durable writes
 // ---------------------------------------------------------------------------
 
-/// AC2: Unknown run_id, Requested event → 1 row in `runs` with Queued status.
+/// Unknown run_id, Requested event → 1 row in `runs` with Queued status.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_first_sight_creates_row() {
@@ -178,7 +178,7 @@ async fn pg_run_first_sight_creates_row() {
     assert_eq!(row.workflow_name.as_deref(), Some("CI"));
 }
 
-/// AC2: Queued → InProgress is valid; status updates, sticky COALESCE preserved.
+/// Queued → InProgress is valid; status updates, sticky COALESCE preserved.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_valid_transition_updates_row() {
@@ -202,7 +202,7 @@ async fn pg_run_valid_transition_updates_row() {
     assert!(row.run_started_at.is_some(), "run_started_at should be set");
 }
 
-/// AC2: Completed → InProgress is invalid; PG returns Err(InvalidTransition) and row unchanged.
+/// Completed → InProgress is invalid; PG returns Err(InvalidTransition) and row unchanged.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_invalid_transition_returns_err() {
@@ -229,7 +229,7 @@ async fn pg_run_invalid_transition_returns_err() {
     assert_eq!(row.status, "Completed");
 }
 
-/// AC2: Queued → Queued is idempotent (same-status replay → Ok).
+/// Queued → Queued is idempotent (same-status replay → Ok).
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_idempotent_same_status_replay() {
@@ -251,10 +251,10 @@ async fn pg_run_idempotent_same_status_replay() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3 — Job-event durable writes including job-before-run
+// Job-event durable writes including job-before-run
 // ---------------------------------------------------------------------------
 
-/// AC3: Job arrives after run → creates job row, no spurious stub.
+/// Job arrives after run → creates job row, no spurious stub.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_first_sight_creates_row_with_existing_run() {
@@ -283,7 +283,7 @@ async fn pg_job_first_sight_creates_row_with_existing_run() {
     assert_eq!(run_count, 1, "should be exactly one run row");
 }
 
-/// AC3: Valid job transition Queued → InProgress.
+/// Valid job transition Queued → InProgress.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_valid_transition_updates_row() {
@@ -305,7 +305,7 @@ async fn pg_job_valid_transition_updates_row() {
     assert_eq!(row.runner_name.as_deref(), Some("runner-1"));
 }
 
-/// AC3: Invalid transition Completed → InProgress → Err(InvalidTransition).
+/// Invalid transition Completed → InProgress → Err(InvalidTransition).
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_invalid_transition_returns_err() {
@@ -337,7 +337,7 @@ async fn pg_job_invalid_transition_returns_err() {
     assert_eq!(row.status, "Completed");
 }
 
-/// AC3: Same-status replay is idempotent.
+/// Same-status replay is idempotent.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_idempotent_same_status_replay() {
@@ -354,7 +354,7 @@ async fn pg_job_idempotent_same_status_replay() {
     );
 }
 
-/// AC3 asymmetry: Queued → Completed is invalid for jobs (unlike runs).
+/// Queued → Completed is invalid for jobs (unlike runs).
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_queued_to_completed_rejected() {
@@ -385,7 +385,7 @@ async fn pg_job_queued_to_completed_rejected() {
     );
 }
 
-/// AC3: Job arrives before its run → stub run row created, job FK satisfied.
+/// Job arrives before its run → stub run row created, job FK satisfied.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_before_run_creates_stub_run() {
@@ -414,7 +414,7 @@ async fn pg_job_before_run_creates_stub_run() {
     assert_eq!(job_row.status, "Queued");
 }
 
-/// AC3: Real run event after job-before-run reconciles the stub.
+/// Real run event after job-before-run reconciles the stub.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_real_run_event_reconciles_stub() {
@@ -461,7 +461,7 @@ async fn pg_real_run_event_reconciles_stub() {
     assert_eq!(job_row.run_id, 9002i64);
 }
 
-/// AC3: Two job events for same unknown run → exactly one stub run row.
+/// Two job events for same unknown run → exactly one stub run row.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_two_jobs_same_unknown_run_share_stub() {
@@ -479,10 +479,10 @@ async fn pg_two_jobs_same_unknown_run_share_stub() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4 — Field-merge parity with in-memory store (sticky COALESCE)
+// Field-merge parity with in-memory store (sticky COALESCE)
 // ---------------------------------------------------------------------------
 
-/// AC4: workflow_name set on first event, omitted on second → preserved.
+/// workflow_name set on first event, omitted on second → preserved.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_coalesce_preserves_workflow_name() {
@@ -507,7 +507,7 @@ async fn pg_run_coalesce_preserves_workflow_name() {
     );
 }
 
-/// AC4: runner_* fields set on InProgress, preserved through second InProgress with same runner.
+/// runner_* fields set on InProgress, preserved through second InProgress with same runner.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_runner() {
@@ -556,7 +556,7 @@ async fn pg_job_coalesce_preserves_runner() {
     );
 }
 
-/// AC4: When a new event carries a runner with null group fields, those fields are cleared —
+/// When a new event carries a runner with null group fields, those fields are cleared —
 /// they are NOT preserved from the previous event (runner is replaced as a unit, not merged).
 #[tokio::test]
 #[serial_test::serial]
@@ -622,7 +622,7 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
     );
 }
 
-/// AC4: name, run_id, created_at are identity fields — never overwritten by job updates.
+/// name, run_id, created_at are identity fields — never overwritten by job updates.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_name_run_id_created_at() {

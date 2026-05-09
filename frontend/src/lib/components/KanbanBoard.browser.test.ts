@@ -61,7 +61,6 @@ describe('KanbanBoard (browser mode)', () => {
     mockLocalStorage.clear()
   })
 
-  // AC7.1: Hydration placeholder when not connected
   it('renders hydration placeholder when connection status is not connected', async () => {
     const { default: KanbanBoard } = await import('./test-utils/KanbanBoard.test-harness.svelte')
     render(KanbanBoard)
@@ -74,7 +73,6 @@ describe('KanbanBoard (browser mode)', () => {
     expect(() => screen.getByText(/Watching for runs/i)).toThrow()
   })
 
-  // AC7.2: Empty state when connected with zero runs
   it('renders empty state when connected but no runs', async () => {
     const { default: KanbanBoard } = await import('./test-utils/KanbanBoard.test-harness.svelte')
     render(KanbanBoard)
@@ -95,7 +93,6 @@ describe('KanbanBoard (browser mode)', () => {
     expect(() => screen.getByRole('heading', { name: /COMPLETED/i })).toThrow()
   })
 
-  // AC7.3: Populated state with three column headings
   it('renders three-column kanban grid when connected with runs', async () => {
     const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
@@ -202,7 +199,6 @@ describe('KanbanBoard (browser mode)', () => {
     expect(() => screen.getByText(/Connecting/i)).toThrow()
   })
 
-  // AC7.4: Card distribution across columns
   it('distributes cards to correct columns based on run status', async () => {
     const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
@@ -311,7 +307,6 @@ describe('KanbanBoard (browser mode)', () => {
     expect(completedCard).toBeTruthy()
   })
 
-  // AC7.5: Column counts reflect run counts
   it('displays correct count badges for each column', async () => {
     const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 
@@ -419,7 +414,6 @@ describe('KanbanBoard (browser mode)', () => {
     expect(completedCountSpan?.textContent).toBe('3')
   })
 
-  // AC7.6: Snapshot reload stability
   it('preserves DOM identity and ordering across snapshot reload', async () => {
     const KanbanBoard = (await import('./test-utils/KanbanBoard.test-harness.svelte')).default
 

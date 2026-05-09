@@ -11,8 +11,7 @@ describe('ConnectionStore', () => {
     vi.useRealTimers()
   })
 
-  // AC3.7: isStale detection based on time elapsed since last event
-  describe('AC3.7: Staleness detection', () => {
+  describe('Staleness detection', () => {
     it('should not be stale when disconnected even with old lastEventAt', () => {
       const now = Date.now()
       vi.setSystemTime(now)

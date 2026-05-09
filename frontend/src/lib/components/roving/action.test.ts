@@ -278,7 +278,7 @@ describe('keydown', () => {
     mockCompleted = [createMockRun({ id: 300n, status: 'Completed' })]
   })
 
-  it('calls setFocus and calls preventDefault when ArrowDown resolves to a different card (AC2.7)', () => {
+  it('calls setFocus and calls preventDefault when ArrowDown resolves to a different card', () => {
     // Two-card queued column so ArrowDown has a real target
     mockQueued = [
       createMockRun({ id: 100n, status: 'Queued' }),
@@ -296,11 +296,11 @@ describe('keydown', () => {
     const ev = new KeyboardEvent('keydown', { key: 'ArrowDown', cancelable: true, bubbles: true })
     kanban.dispatchEvent(ev)
 
-    expect(ev.defaultPrevented).toBe(true) // AC2.7
+    expect(ev.defaultPrevented).toBe(true)
     expect(ctx.setFocus).toHaveBeenCalledWith(101n)
   })
 
-  it('calls preventDefault but NOT setFocus when ArrowDown is a no-op (last row of column) (AC2.7)', () => {
+  it('calls preventDefault but NOT setFocus when ArrowDown is a no-op (last row of column)', () => {
     // Only one card in queued — ArrowDown is a no-op
     mockQueued = [createMockRun({ id: 100n, status: 'Queued' })]
     mockInProgress = []
@@ -318,7 +318,7 @@ describe('keydown', () => {
     expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
-  it('returns immediately without preventDefault when metaKey is true (AC4.1)', () => {
+  it('returns immediately without preventDefault when metaKey is true', () => {
     roving(kanban, ctx)
 
     const ev = new KeyboardEvent('keydown', {
@@ -333,7 +333,7 @@ describe('keydown', () => {
     expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
-  it('returns immediately without preventDefault when ctrlKey is true (AC4.1)', () => {
+  it('returns immediately without preventDefault when ctrlKey is true', () => {
     roving(kanban, ctx)
 
     const ev = new KeyboardEvent('keydown', {
@@ -348,7 +348,7 @@ describe('keydown', () => {
     expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
-  it('returns immediately without preventDefault when altKey is true (AC4.1)', () => {
+  it('returns immediately without preventDefault when altKey is true', () => {
     roving(kanban, ctx)
 
     const ev = new KeyboardEvent('keydown', {
@@ -363,7 +363,7 @@ describe('keydown', () => {
     expect(ctx.setFocus).not.toHaveBeenCalled()
   })
 
-  it('returns immediately without preventDefault when shiftKey is true (AC4.1)', () => {
+  it('returns immediately without preventDefault when shiftKey is true', () => {
     roving(kanban, ctx)
 
     const ev = new KeyboardEvent('keydown', {

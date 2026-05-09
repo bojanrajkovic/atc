@@ -105,7 +105,7 @@ export function roving(node: HTMLElement, ctx: RovingFocusContext): { destroy():
     const resolved = resolveTarget(ctx.currentFocusRunId, key, columns)
 
     // Always preventDefault for claimed keys — suppresses browser-default
-    // scrolling even on no-op edges (AC2.7).
+    // scrolling even on no-op edges.
     event.preventDefault()
 
     // Only update focus if the resolved target is non-null AND differs from

@@ -37,28 +37,24 @@ describe('uiStore.nowMs', () => {
 
   afterEach(() => {
     uiStore.destroy()
-    // AC2.5: Verify no leaked timers survive the test (check before switching to real timers)
     expect(vi.getTimerCount()).toBe(0)
     vi.useRealTimers()
     mockLocalStorage.clear()
   })
 
-  // AC2.1: uiStore.nowMs is a public number field backed by $state(Date.now())
-  it('AC2.1: should initialize nowMs as epoch milliseconds', () => {
+  it('should initialize nowMs as epoch milliseconds', () => {
     expect(typeof uiStore.nowMs).toBe('number')
     const expectedTime = new Date('2026-04-17T10:00:00Z').getTime()
     expect(uiStore.nowMs).toBe(expectedTime)
   })
 
-  // AC2.2: Advancing the clock by 1050ms causes nowMs to update
-  it('AC2.2: should update nowMs after setInterval fires', () => {
+  it('should update nowMs after setInterval fires', () => {
     const t0 = uiStore.nowMs
     vi.advanceTimersByTime(1050)
     expect(uiStore.nowMs).toBeGreaterThanOrEqual(t0 + 1000)
   })
 
-  // AC2.3: destroy() clears the interval; subsequent advances do NOT update
-  it('AC2.3: should stop updating nowMs after destroy()', () => {
+  it('should stop updating nowMs after destroy()', () => {
     // First, advance to observe a tick
     vi.advanceTimersByTime(1050)
     const afterFirstTick = uiStore.nowMs
@@ -73,8 +69,7 @@ describe('uiStore.nowMs', () => {
     expect(uiStore.nowMs).toBe(afterDestroy)
   })
 
-  // AC2.4: Re-constructing UIStore after destroy() restarts the interval
-  it('AC2.4: should restart interval cleanly after reconstruction', async () => {
+  it('should restart interval cleanly after reconstruction', async () => {
     // Advance once on the original instance
     vi.advanceTimersByTime(1050)
     const originalTick = uiStore.nowMs
@@ -98,9 +93,7 @@ describe('uiStore.nowMs', () => {
     expect(uiStore.nowMs).toBeGreaterThan(newInstanceInitial)
   })
 
-  // AC2.5: All tests run under fake timers; no real setInterval leaks
-  // (verification happens in afterEach via vi.getTimerCount() === 0)
-  it('AC2.5: should run all tests under fake timers', () => {
+  it('should run all tests under fake timers', () => {
     expect(vi.isFakeTimers()).toBe(true)
   })
 })

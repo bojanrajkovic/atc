@@ -5,16 +5,14 @@ import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 /**
  * E2E integration verification for kanban 2D keyboard navigation.
  *
- * Tests: AC2 (2D arrow navigation), AC3 (edge/asymmetric-column), AC4
- * (modifier-key delegation), AC5 (suspension via natural focus scoping).
+ * Covers: 2D arrow navigation, edge/asymmetric-column behavior, modifier-key
+ * delegation, suspension via natural focus scoping, card-stable transitions,
+ * and lost-trigger restoration.
  *
- * AC1.* (Tab-in entry, tabindex invariants) is covered in run-card-interactivity.test.ts.
- * AC6.* / AC7.* are out of scope for this suite.
+ * Tab-in entry and tabindex invariants are covered in run-card-interactivity.test.ts.
+ * All scenarios use focusFirstCard() for deterministic focus entry.
  *
- * All scenarios use focusFirstCard() for deterministic focus entry, EXCEPT
- * AC1.2-style tests which are out of scope for this suite.
- *
- * @see docs/design-plans/2026-05-01-kanban-keyboard-nav.md §AC2-AC5
+ * @see docs/design-plans/2026-05-01-kanban-keyboard-nav.md
  */
 
 // ---------------------------------------------------------------------------
@@ -30,8 +28,8 @@ const cmdOrCtrl = process.platform === 'darwin' ? 'Meta' : 'Control'
 /**
  * Standard page setup: inject WS mock (replaces /v1/ws WebSocket), disable
  * hover-media-query so HoverPeekPopover never opens during keyboard tests
- * (open popover suppresses RunCard's auto-focus $effect via !popoverOpen guard
- * — commit cc45224), stub /v1/state, navigate, wait for connected.
+ * (open popover suppresses RunCard's auto-focus $effect via !popoverOpen guard),
+ * stub /v1/state, navigate, wait for connected.
  */
 async function setupPage(page: Page): Promise<void> {
   await page.addInitScript(WS_MOCK_INIT_SCRIPT)
@@ -216,7 +214,7 @@ async function seedCompleted(
 
 /**
  * Focus the first .run-card-activate button directly, bypassing Tab-order
- * brittleness. All scenarios except AC1.2 (Tab-into-kanban entry, covered in
+ * brittleness. All scenarios except Tab-into-kanban entry (covered in
  * run-card-interactivity.test.ts) use this helper.
  *
  * Waits for focus to land before returning so that downstream focusedRunId()
@@ -232,15 +230,15 @@ async function focusFirstCard(page: Page): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: 2D arrow navigation
+// 2D arrow navigation
 // ---------------------------------------------------------------------------
 
-test.describe('AC2: 2D arrow navigation', () => {
+test.describe('2D arrow navigation', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('kanban-keyboard-nav.AC2.1 ArrowDown moves focus to next card in same column', async ({
+  test('kanban-keyboard-nav — ArrowDown moves focus to next card in same column', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -255,7 +253,7 @@ test.describe('AC2: 2D arrow navigation', () => {
     expect(await focusedRunId(page)).toBe('3')
   })
 
-  test('kanban-keyboard-nav.AC2.2 ArrowUp moves focus to previous card in same column', async ({
+  test('kanban-keyboard-nav — ArrowUp moves focus to previous card in same column', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -274,7 +272,7 @@ test.describe('AC2: 2D arrow navigation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC2.3 ArrowRight moves focus to corresponding row in next non-empty column', async ({
+  test('kanban-keyboard-nav — ArrowRight moves focus to corresponding row in next non-empty column', async ({
     page,
   }) => {
     // 3 queued + 2 in-progress + 1 completed
@@ -292,7 +290,7 @@ test.describe('AC2: 2D arrow navigation', () => {
     expect(await focusedRunId(page)).toBe('101')
   })
 
-  test('kanban-keyboard-nav.AC2.4 ArrowLeft moves focus to corresponding row in previous non-empty column', async ({
+  test('kanban-keyboard-nav — ArrowLeft moves focus to corresponding row in previous non-empty column', async ({
     page,
   }) => {
     // 3 queued + 2 in-progress
@@ -313,7 +311,7 @@ test.describe('AC2: 2D arrow navigation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC2.5 Home moves focus to the first card in the current column', async ({
+  test('kanban-keyboard-nav — Home moves focus to the first card in the current column', async ({
     page,
   }) => {
     await seedQueued(page, 5)
@@ -330,7 +328,7 @@ test.describe('AC2: 2D arrow navigation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC2.6 End moves focus to the last card in the current column', async ({
+  test('kanban-keyboard-nav — End moves focus to the last card in the current column', async ({
     page,
   }) => {
     await seedQueued(page, 5)
@@ -343,7 +341,7 @@ test.describe('AC2: 2D arrow navigation', () => {
     expect(await focusedRunId(page)).toBe('5')
   })
 
-  test('kanban-keyboard-nav.AC2.7 ArrowDown calls event.preventDefault() — page does not scroll', async ({
+  test('kanban-keyboard-nav — ArrowDown calls event.preventDefault() — page does not scroll', async ({
     page,
   }) => {
     // Seed 5 queued cards. We verify preventDefault via event observation,
@@ -390,15 +388,15 @@ test.describe('AC2: 2D arrow navigation', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC3: Edge and asymmetric-column behavior
+// Edge and asymmetric-column behavior
 // ---------------------------------------------------------------------------
 
-test.describe('AC3: Edge and asymmetric-column behavior', () => {
+test.describe('Edge and asymmetric-column behavior', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('kanban-keyboard-nav.AC3.1 ArrowDown at last card is a no-op', async ({ page }) => {
+  test('kanban-keyboard-nav — ArrowDown at last card is a no-op', async ({ page }) => {
     await seedQueued(page, 3)
     await focusFirstCard(page)
 
@@ -412,7 +410,7 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('3')
   })
 
-  test('kanban-keyboard-nav.AC3.2 ArrowUp at first card is a no-op', async ({ page }) => {
+  test('kanban-keyboard-nav — ArrowUp at first card is a no-op', async ({ page }) => {
     await seedQueued(page, 3)
     await focusFirstCard(page)
 
@@ -423,7 +421,7 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC3.3 ArrowRight in rightmost non-empty column is a no-op', async ({
+  test('kanban-keyboard-nav — ArrowRight in rightmost non-empty column is a no-op', async ({
     page,
   }) => {
     // Seed only 1 queued run (queued is leftmost; but with only queued seeded
@@ -437,7 +435,7 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC3.4 ArrowLeft in leftmost non-empty column is a no-op', async ({
+  test('kanban-keyboard-nav — ArrowLeft in leftmost non-empty column is a no-op', async ({
     page,
   }) => {
     await seedQueued(page, 1)
@@ -449,7 +447,7 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC3.5 ArrowRight skips empty inProgress column and lands in completed', async ({
+  test('kanban-keyboard-nav — ArrowRight skips empty inProgress column and lands in completed', async ({
     page,
   }) => {
     // 2 queued + 0 inProgress + 1 completed
@@ -465,7 +463,7 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('201')
   })
 
-  test('kanban-keyboard-nav.AC3.6 ArrowLeft skips empty inProgress column symmetrically', async ({
+  test('kanban-keyboard-nav — ArrowLeft skips empty inProgress column symmetrically', async ({
     page,
   }) => {
     // 2 queued + 0 inProgress + 1 completed
@@ -486,7 +484,7 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC3.7 asymmetric clamp: focus in row 5 of 10-card queued, ArrowRight to 3-card inProgress clamps to last row', async ({
+  test('kanban-keyboard-nav — asymmetric clamp: ArrowRight from row 5 of 10-card queued to 3-card inProgress clamps to last row', async ({
     page,
   }) => {
     // 10 queued (runIds 1-10) + 3 inProgress (runIds 101, 102, 103)
@@ -509,11 +507,11 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
     expect(await focusedRunId(page)).toBe('103')
   })
 
-  test('kanban-keyboard-nav.AC3.8 ArrowRight skips multiple empty columns to find furthest non-empty', async ({
+  test('kanban-keyboard-nav — ArrowRight skips multiple empty columns to find furthest non-empty', async ({
     page,
   }) => {
     // Only queued (leftmost) + completed (rightmost) — inProgress is empty.
-    // Same fixture as AC3.5, just asserting the skip works over the empty stretch.
+    // Same fixture as the empty-column-skip test, asserting the skip works over a wider empty stretch.
     await seedQueued(page, 1)
     await seedCompleted(page, 2, 300, 10)
     await expect(page.locator('.run-card')).toHaveCount(3, { timeout: 5_000 })
@@ -528,17 +526,15 @@ test.describe('AC3: Edge and asymmetric-column behavior', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC4: Modifier-key delegation
+// Modifier-key delegation
 // ---------------------------------------------------------------------------
 
-test.describe('AC4: Modifier-key delegation', () => {
+test.describe('Modifier-key delegation', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('kanban-keyboard-nav.AC4.1 Cmd+K opens command palette while card focused', async ({
-    page,
-  }) => {
+  test('kanban-keyboard-nav — Cmd+K opens command palette while card focused', async ({ page }) => {
     await seedQueued(page, 1)
     await focusFirstCard(page)
     expect(await focusedRunId(page)).toBe('1')
@@ -551,7 +547,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     await expect(page.locator('input[role="combobox"]')).toBeFocused()
   })
 
-  test('kanban-keyboard-nav.AC4.2 Cmd+D toggles dark mode while card focused and does not move kanban focus', async ({
+  test('kanban-keyboard-nav — Cmd+D toggles dark mode while card focused and does not move kanban focus', async ({
     page,
   }) => {
     await seedQueued(page, 2)
@@ -576,7 +572,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(stillOnCard).toBe(true)
   })
 
-  test('kanban-keyboard-nav.AC4.3 Cmd+\\ toggles compact density while card focused', async ({
+  test('kanban-keyboard-nav — Cmd+\\ toggles compact density while card focused', async ({
     page,
   }) => {
     await seedQueued(page, 1)
@@ -598,7 +594,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(stillOnCard).toBe(true)
   })
 
-  test('kanban-keyboard-nav.AC4.4 Cmd+ArrowDown returns early — kanban does not move focus', async ({
+  test('kanban-keyboard-nav — Cmd+ArrowDown returns early — kanban does not move focus', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -613,7 +609,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC4.4 (Cmd+ArrowUp variant) returns early — kanban does not move focus', async ({
+  test('kanban-keyboard-nav — Cmd+ArrowUp returns early — kanban does not move focus', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -629,7 +625,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(await focusedRunId(page)).toBe('2')
   })
 
-  test('kanban-keyboard-nav.AC4.5 Shift+ArrowDown returns early — kanban does not move focus', async ({
+  test('kanban-keyboard-nav — Shift+ArrowDown returns early — kanban does not move focus', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -642,7 +638,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC4.6 Alt+ArrowDown returns early — kanban does not move focus', async ({
+  test('kanban-keyboard-nav — Alt+ArrowDown returns early — kanban does not move focus', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -655,7 +651,7 @@ test.describe('AC4: Modifier-key delegation', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC4.7 bare ArrowDown is claimed by kanban and does not open palette', async ({
+  test('kanban-keyboard-nav — bare ArrowDown is claimed by kanban and does not open palette', async ({
     page,
   }) => {
     await seedQueued(page, 2)
@@ -675,15 +671,15 @@ test.describe('AC4: Modifier-key delegation', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC5: Suspension via natural focus scoping
+// Suspension via natural focus scoping
 // ---------------------------------------------------------------------------
 
-test.describe('AC5: Suspension via natural focus scoping', () => {
+test.describe('Suspension via natural focus scoping', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('kanban-keyboard-nav.AC5.1 palette open: ArrowDown does not move kanban focus; Esc returns to card', async ({
+  test('kanban-keyboard-nav — palette open: ArrowDown does not move kanban focus; Esc returns to card', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -725,7 +721,7 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC5.2 panel open: ArrowDown does not move kanban focus', async ({
+  test('kanban-keyboard-nav — panel open: ArrowDown does not move kanban focus', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -749,7 +745,7 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
     )
     expect(panelStillOpen).toBe(true)
 
-    // Stronger assertions (Task 4a): verify focus is still inside the dialog and
+    // Stronger assertions: verify focus is still inside the dialog and
     // the kanban's roving tabindex state has not advanced.
 
     // 1. document.activeElement is inside the dialog
@@ -772,7 +768,7 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
     expect(tabindex0RunId).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC5.3 both palette and panel stacked: ArrowDown affects neither', async ({
+  test('kanban-keyboard-nav — both palette and panel stacked: ArrowDown affects neither', async ({
     page,
   }) => {
     await seedQueued(page, 3)
@@ -797,7 +793,7 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
     expect(await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)).not.toBeNull()
   })
 
-  test('kanban-keyboard-nav.AC5.4 after panel closes, ArrowDown resumes kanban navigation', async ({
+  test('kanban-keyboard-nav — after panel closes, ArrowDown resumes kanban navigation', async ({
     page,
   }) => {
     await seedQueued(page, 2)
@@ -828,15 +824,15 @@ test.describe('AC5: Suspension via natural focus scoping', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC6 + AC7: Card-stable transitions, lost-trigger restoration
+// Card-stable transitions and lost-trigger restoration
 // ---------------------------------------------------------------------------
 
-test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
+test.describe('Card-stable transitions and lost-trigger restoration', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('kanban-keyboard-nav.AC6.5 burst events with held ArrowDown — card-stable across reorder', async ({
+  test('kanban-keyboard-nav — burst events with held ArrowDown: card-stable across reorder', async ({
     page,
   }) => {
     // Seed 5 queued runs with EXACT UTC timestamps per the deterministic plan scenario.
@@ -888,7 +884,7 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
     expect(await focusedRunId(page)).toBe('3')
   })
 
-  test('kanban-keyboard-nav.AC7.3 eviction during keyboard nav restores focus to initial card', async ({
+  test('kanban-keyboard-nav — eviction during keyboard nav restores focus to initial card', async ({
     page,
   }) => {
     // Seed 3 queued runs. Navigate to queued-2.
@@ -900,9 +896,8 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
     expect(await focusedRunId(page)).toBe('2')
 
     // Evict queued-2 via SvelteMap reactive delete. The eviction $effect in
-    // RovingFocusProvider detects locate(focusedRunId, columns) === null and
-    // calls restoreFocusToInitial() → focuses the first card of the first
-    // non-empty column (queued-1, id=1).
+    // RovingFocusProvider detects the missing run and calls
+    // restoreFocusToInitial() → focuses the first card of the first non-empty column.
     await page.evaluate((id: string) => {
       window.__stores!.runStore!.runs.delete(BigInt(id))
     }, '2')
@@ -919,7 +914,7 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
     expect(await focusedRunId(page)).toBe('1')
   })
 
-  test('kanban-keyboard-nav.AC7.2 panel close with evicted trigger card — focus lands on initial card, NOT body', async ({
+  test('kanban-keyboard-nav — panel close with evicted trigger card: focus lands on initial card, not body', async ({
     page,
   }) => {
     // Seed 3 queued runs. Focus queued-1.
@@ -933,25 +928,24 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
 
     // Evict queued-1 (the trigger card) by deleting its run from the store.
-    // The AC2.9 $effect fires: selectedRunId (1n) references a missing run
-    // → sets selectedRunId = null. Path A: because lastTriggerRunId === evictedId,
-    // the $effect also calls ctx.restoreFocusToInitial() directly — bypassing the
-    // Bits UI onCloseAutoFocus path (which would not fire because {#if run}
+    // The eviction $effect fires: selectedRunId (1n) references a missing run
+    // → sets selectedRunId = null. Because lastTriggerRunId === evictedId,
+    // the $effect also calls ctx.restoreFocusToInitial() directly — bypassing
+    // the Bits UI onCloseAutoFocus path (which would not fire because {#if run}
     // collapses the dialog content, removing the close button from the DOM before
     // FocusScope can see focus inside the scope at close time).
     await page.evaluate(() => {
       window.__stores!.runStore!.runs.delete(1n)
     })
 
-    // Wait for selectedRunId to clear (panel fully closed by AC2.9 $effect).
+    // Wait for selectedRunId to clear (panel fully closed by the eviction $effect).
     await page.waitForFunction(() => window.__stores!.uiStore!.selectedRunId === null, {
       timeout: 3_000,
     })
 
-    // Wait for focus to land on a run-card-activate (restored via Path A in the
-    // AC2.9 $effect). Use a generous timeout because restoreFocusToInitial() calls
-    // tick() before querying the DOM, and the Sheet exit animation may still be
-    // running.
+    // Wait for focus to land on a run-card-activate (restored via the eviction $effect).
+    // Use a generous timeout because restoreFocusToInitial() calls tick() before
+    // querying the DOM, and the Sheet exit animation may still be running.
     await page.waitForFunction(
       () => document.activeElement?.classList.contains('run-card-activate'),
       { timeout: 5_000 },
@@ -968,10 +962,10 @@ test.describe('AC6 + AC7 — card-stable + lost-trigger restoration', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC2.x: Pool-filter arrow nav
+// Pool-filter arrow nav
 // ---------------------------------------------------------------------------
 
-test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
+test.describe('kanban-keyboard-nav — pool-filter', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
@@ -1048,7 +1042,7 @@ test.describe('kanban-keyboard-nav.AC2.x pool-filter', () => {
     })
   }
 
-  test('kanban-keyboard-nav.AC2.x pool-filter: ArrowDown skips hidden cards, stays within visible set', async ({
+  test('kanban-keyboard-nav — pool-filter: ArrowDown skips hidden cards, stays within visible set', async ({
     page,
   }) => {
     await seedWithPools(page)

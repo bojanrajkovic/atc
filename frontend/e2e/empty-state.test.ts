@@ -3,22 +3,15 @@ import { expect, test } from './lib/fixtures'
 import { bigintReplacer, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /**
- * E2E tests for EmptyState component.
- *
- * AC1.1: EmptyState renders with default caption when connected + 0 runs.
- * AC1.4: Connecting… placeholder shown before connected; EmptyState NOT shown.
+ * E2E tests for EmptyState component. Covers the connecting placeholder and
+ * the empty-state caption lifecycle when connected with zero runs.
  */
 test.describe('EmptyState', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(WS_MOCK_INIT_SCRIPT)
   })
 
-  /**
-   * AC1.4: While still connecting, the hydration placeholder appears — NOT EmptyState.
-   */
-  test('AC1.4 — shows Connecting… placeholder before connection, not EmptyState', async ({
-    page,
-  }) => {
+  test('shows Connecting… placeholder before connection, not EmptyState', async ({ page }) => {
     let stateRoute: Parameters<Parameters<typeof page.route>[1]>[0] | null = null
 
     // Delay /v1/state so we can observe the connecting placeholder
@@ -43,18 +36,13 @@ test.describe('EmptyState', () => {
       ),
     })
 
-    // AC1.1: EmptyState caption now shows
+    // EmptyState caption now shows
     await expect(page.getByText('Watching for runs.')).toBeVisible()
     // Connecting placeholder gone
     await expect(page.getByText(/Connecting/)).not.toBeVisible()
   })
 
-  /**
-   * AC1.1: EmptyState renders when connected with zero runs.
-   */
-  test('AC1.1 — EmptyState shows "Watching for runs." when connected with 0 runs', async ({
-    page,
-  }) => {
+  test('EmptyState shows "Watching for runs." when connected with 0 runs', async ({ page }) => {
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',

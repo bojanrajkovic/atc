@@ -8,7 +8,7 @@ use common::{
     build_app_no_secret, build_app_with_secret, compute_signature, fixture_workflow_run_requested,
 };
 
-/// AC1.1: Valid signature with matching secret returns 200
+/// Valid signature with matching secret returns 200
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_hmac_valid_signature_returns_200() {
@@ -39,7 +39,7 @@ async fn webhook_hmac_valid_signature_returns_200() {
     assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
-/// AC1.2: No secret configured + no signature header returns 200 (verification skipped)
+/// No secret configured + no signature header returns 200 (verification skipped)
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_hmac_no_secret_no_signature_returns_200() {
@@ -67,7 +67,7 @@ async fn webhook_hmac_no_secret_no_signature_returns_200() {
     assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
-/// AC1.3: Invalid signature returns 401
+/// Invalid signature returns 401
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_hmac_invalid_signature_returns_401() {
@@ -99,7 +99,7 @@ async fn webhook_hmac_invalid_signature_returns_401() {
     assert_eq!(json["error"], "invalid signature");
 }
 
-/// AC1.4: Missing signature header when secret configured returns 401
+/// Missing signature header when secret configured returns 401
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_hmac_missing_signature_header_returns_401() {
@@ -127,7 +127,7 @@ async fn webhook_hmac_missing_signature_header_returns_401() {
     assert_eq!(json["error"], "missing X-Hub-Signature-256 header");
 }
 
-/// AC1.5: SHA-1 signature rejected with 401
+/// SHA-1 signature rejected with 401
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_hmac_sha1_signature_rejected_returns_401() {

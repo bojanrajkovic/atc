@@ -118,9 +118,7 @@ test.describe('run-cards', () => {
     await page.addInitScript(WS_MOCK_INIT_SCRIPT)
   })
 
-  test('AC14.1: renders cards with correct --status-color and glyph for every status', async ({
-    page,
-  }) => {
+  test('renders cards with correct --status-color and glyph for every status', async ({ page }) => {
     await page.clock.install({ time: new Date('2026-04-17T10:00:00Z').getTime() })
 
     await page.route('**/v1/state', async (route) => {
@@ -144,16 +142,14 @@ test.describe('run-cards', () => {
       expect(style).toContain(expectedColor)
     }
 
-    // Visual regression capture (rule 9). Reviewer compares this PNG against
-    // docs/ideation/playground.html to confirm card tokens, accent bar, halo
-    // gating, and default comfortable-density layout match the prototype.
+    // Visual regression capture.
     await page.screenshot({
       path: 'e2e/screenshots/run-cards-populated.png',
       fullPage: true,
     })
   })
 
-  test('AC14.2: Queued → InProgress transition sets data-status="InProgress"', async ({ page }) => {
+  test('Queued → InProgress transition sets data-status="InProgress"', async ({ page }) => {
     await page.clock.install({ time: new Date('2026-04-17T10:00:00Z').getTime() })
 
     await page.route('**/v1/state', async (route) => {
@@ -215,7 +211,7 @@ test.describe('run-cards', () => {
     await expect(inProgressCard).toHaveAttribute('data-status', 'InProgress')
   })
 
-  test('AC14.3: density toggle hides/restores secondary card content', async ({ page }) => {
+  test('density toggle hides/restores secondary card content', async ({ page }) => {
     await page.clock.install({ time: new Date('2026-04-17T10:00:00Z').getTime() })
 
     await page.route('**/v1/state', async (route) => {
@@ -295,9 +291,7 @@ test.describe('run-cards', () => {
     await expect(runner).toBeVisible()
   })
 
-  test('AC14.4: InProgress card duration updates after page.clock.fastForward(1000)', async ({
-    page,
-  }) => {
+  test('InProgress card duration updates after page.clock.fastForward(1000)', async ({ page }) => {
     const start = new Date('2026-04-17T10:00:00Z').getTime()
     await page.clock.install({ time: start })
 

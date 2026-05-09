@@ -18,7 +18,7 @@ use common::{
     fixture_workflow_run_requested,
 };
 
-/// AC2.1: workflow_run event parsed and applied to RunStateMachine, returns {"status": "accepted", "seq": <u64>}
+/// workflow_run event parsed and applied to RunStateMachine, returns {"status": "accepted", "seq": <u64>}
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_workflow_run_returns_accepted() {
@@ -46,7 +46,7 @@ async fn webhook_ingestion_workflow_run_returns_accepted() {
     assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
-/// AC2.2: workflow_job event parsed and applied to RunStateMachine, returns {"status": "accepted", "seq": <u64>}
+/// workflow_job event parsed and applied to RunStateMachine, returns {"status": "accepted", "seq": <u64>}
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_workflow_job_returns_accepted() {
@@ -74,7 +74,7 @@ async fn webhook_ingestion_workflow_job_returns_accepted() {
     assert!(json["seq"].is_number(), "response must include numeric seq");
 }
 
-/// AC2.3: Unknown event type (e.g., push) returns {"status": "skipped"}
+/// Unknown event type (e.g., push) returns {"status": "skipped"}
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_unknown_event_returns_skipped() {
@@ -101,7 +101,7 @@ async fn webhook_ingestion_unknown_event_returns_skipped() {
     assert_eq!(json["status"], "skipped");
 }
 
-/// AC2.4: Missing X-GitHub-Event header returns 400
+/// Missing X-GitHub-Event header returns 400
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_missing_event_header_returns_400() {
@@ -132,7 +132,7 @@ async fn webhook_ingestion_missing_event_header_returns_400() {
     );
 }
 
-/// AC2.5: Malformed JSON body returns 422
+/// Malformed JSON body returns 422
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_malformed_json_returns_422() {
@@ -159,7 +159,7 @@ async fn webhook_ingestion_malformed_json_returns_422() {
     assert!(json["error"].as_str().is_some());
 }
 
-/// AC2.6: Backward state transition (completed run receiving in_progress)
+/// Backward state transition (completed run receiving in_progress)
 /// returns 200 for both (second is warning, not broadcast), logs warning
 #[tokio::test]
 #[serial_test::serial]
@@ -229,7 +229,7 @@ async fn webhook_ingestion_backward_transition_returns_200_no_broadcast() {
     );
 }
 
-/// AC2.7: Processed event is broadcast as SeqEvent with seq value
+/// Processed event is broadcast as SeqEvent with seq value
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_broadcast_single_event_with_seq() {
@@ -344,7 +344,7 @@ async fn webhook_concurrent_requests_produce_ordered_seq() {
     assert!(ev2.seq > ev1.seq, "seq must be strictly increasing");
 }
 
-/// AC2.8: Consecutive events have strictly increasing seq values (1, 2, ... — pre-increment, seq=0 is cold-start sentinel)
+/// Consecutive events have strictly increasing seq values (1, 2, ... — pre-increment, seq=0 is cold-start sentinel)
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
@@ -476,7 +476,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     );
 }
 
-/// AC1.5: A Job event that returns a store transition error results in no broadcast.
+/// A Job event that returns a store transition error results in no broadcast.
 ///
 /// Drive a job to Queued via POST webhook, then attempt an invalid backward transition
 /// (Queued → Completed, which is invalid for jobs: predecessors_of(Completed) = [InProgress, Completed]).
@@ -626,7 +626,7 @@ async fn in_memory_invalid_transition_returns_rejected() {
         "in-memory invalid transition must return {{\"status\":\"rejected\"}}, got: {json}"
     );
 
-    // Side-effect contract (AC13b): rejection must not broadcast and must not
+    // Side-effect contract: rejection must not broadcast and must not
     // bump the seq counter.
     assert!(
         rx.try_recv().is_err(),

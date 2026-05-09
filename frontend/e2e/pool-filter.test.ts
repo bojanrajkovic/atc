@@ -5,10 +5,9 @@ import { makeJobSeqEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './li
  * Pool filter integration E2E.
  *
  * Verifies the wiring from `uiStore.activePoolFilter` through KanbanBoard,
- * KanbanColumn, RunnerBar/RunnerPool, and PoolFilterPill. Where the palette
- * UI is involved (AC5.1, AC5.4) we drive it; for the rest we set the filter
- * key directly via the dev bridge to keep these tests focused on the
- * integration (palette behavior is covered separately).
+ * KanbanColumn, RunnerBar/RunnerPool, and PoolFilterPill. Where the palette UI
+ * is involved we drive it; for the rest we set the filter key directly via the
+ * dev bridge to keep these tests focused on the integration.
  *
  * The PoolKey brand is `labels.sort().join('|')` — we cast through `as any`
  * in test setup blocks only (per project guidance: localized to test code).
@@ -120,7 +119,7 @@ test.describe('Pool filter integration', () => {
     await expect(page.locator('.run-card[data-run-id="3"]')).toBeVisible()
   })
 
-  test('AC5.1 setting active pool filter hides non-matching runs across all columns', async ({
+  test('setting active pool filter hides non-matching runs across all columns', async ({
     page,
   }) => {
     const linuxKey = brandKey(LINUX_LABELS)
@@ -133,7 +132,7 @@ test.describe('Pool filter integration', () => {
     await expect(page.locator('.run-card[data-run-id="3"]')).toBeHidden()
   })
 
-  test('AC5.2 matching TopBar RunnerPool gets is-active-filter class; others do not', async ({
+  test('matching TopBar RunnerPool gets is-active-filter class; others do not', async ({
     page,
   }) => {
     const linuxKey = brandKey(LINUX_LABELS)
@@ -148,7 +147,7 @@ test.describe('Pool filter integration', () => {
     await expect(other).not.toHaveClass(/is-active-filter/)
   })
 
-  test('AC5.3 PoolFilterPill renders with sorted labels and clear button clears the filter', async ({
+  test('PoolFilterPill renders with sorted labels and clear button clears the filter', async ({
     page,
   }) => {
     const linuxKey = brandKey(LINUX_LABELS)
@@ -168,7 +167,7 @@ test.describe('Pool filter integration', () => {
     await expect(pill).toBeHidden()
   })
 
-  test('AC5.4 "Clear pool filter" command in palette clears the filter', async ({ page }) => {
+  test('"Clear pool filter" command in palette clears the filter', async ({ page }) => {
     const linuxKey = brandKey(LINUX_LABELS)
     await page.evaluate((key) => {
       // biome-ignore lint/suspicious/noExplicitAny: bypass PoolKey brand for test setter
@@ -186,7 +185,7 @@ test.describe('Pool filter integration', () => {
     await expect(page.locator('.pool-filter-pill')).toBeHidden()
   })
 
-  test('AC5.5 with no filter, no pill renders, no TopBar pool highlights, all runs visible', async ({
+  test('with no filter, no pill renders, no TopBar pool highlights, all runs visible', async ({
     page,
   }) => {
     // beforeEach left activePoolFilter null (no setter called).
@@ -196,9 +195,7 @@ test.describe('Pool filter integration', () => {
     await expect(page.locator('.run-card[data-run-id="3"]')).toBeVisible()
   })
 
-  test('AC5.6 filter that matches no jobs renders empty columns; pill still shows', async ({
-    page,
-  }) => {
+  test('filter that matches no jobs renders empty columns; pill still shows', async ({ page }) => {
     const noMatchKey = brandKey(['nonexistent-label'])
     await page.evaluate((key) => {
       // biome-ignore lint/suspicious/noExplicitAny: bypass PoolKey brand for test setter

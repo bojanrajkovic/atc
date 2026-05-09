@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import ProgressBar from './ProgressBar.svelte'
 
 describe('ProgressBar', () => {
-  describe('run-cards.AC8.1: renders with correct ARIA attributes and scaleX transform', () => {
+  describe('renders with correct ARIA attributes and scaleX transform', () => {
     it('renders progressbar with correct aria-valuenow, aria-valuemin, aria-valuemax', () => {
       render(ProgressBar, { props: { completed: 3, total: 5 } })
       const progressbar = screen.getByRole('progressbar')
@@ -25,14 +25,14 @@ describe('ProgressBar', () => {
     })
   })
 
-  describe('run-cards.AC8.2: renders correct label', () => {
+  describe('renders correct label', () => {
     it('renders label "Jobs 3 of 5" for completed/total values', () => {
       render(ProgressBar, { props: { completed: 3, total: 5 } })
       expect(screen.getByText('Jobs 3 of 5')).toBeTruthy()
     })
   })
 
-  describe('run-cards.AC8.3: handles empty state without crash', () => {
+  describe('handles empty state without crash', () => {
     it('renders without crashing when total === 0', () => {
       render(ProgressBar, { props: { completed: 0, total: 0 } })
       const progressbar = screen.getByRole('progressbar', {})
@@ -57,7 +57,7 @@ describe('ProgressBar', () => {
     })
   })
 
-  describe('run-cards.AC8.4: clamps fill to prevent overflow', () => {
+  describe('clamps fill to prevent overflow', () => {
     it('renders scaleX(1) when completed === total', () => {
       const { container } = render(ProgressBar, { props: { completed: 5, total: 5 } })
       const fill = container.querySelector('.progress-fill')
@@ -71,7 +71,7 @@ describe('ProgressBar', () => {
     })
   })
 
-  describe('run-cards.AC8.5: boundary values render correctly', () => {
+  describe('boundary values render correctly', () => {
     it('renders scaleX(0) when completed is 0 of 10', () => {
       const { container } = render(ProgressBar, { props: { completed: 0, total: 10 } })
       const fill = container.querySelector('.progress-fill')

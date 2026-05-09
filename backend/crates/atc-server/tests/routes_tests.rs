@@ -139,7 +139,7 @@ async fn readyz_returns_ok() {
 #[serial_test::serial]
 async fn health_returns_404() {
     // Test that the full app (with fallback) returns 404 for /health, not SPA index.html.
-    // This verifies AC3.3: unknown API paths return 404 at the app level.
+    // Verifies unknown API paths return 404 at the app level.
     let app = build_full_app();
     let response = app
         .oneshot(

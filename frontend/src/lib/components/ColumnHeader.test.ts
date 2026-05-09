@@ -18,7 +18,7 @@ describe('ColumnHeader', () => {
     expect(heading.textContent).toContain('QUEUED')
   })
 
-  it('renders count badge as plain text (AC2.1)', () => {
+  it('renders count badge as plain text', () => {
     render(ColumnHeader, {
       props: {
         label: 'queued',
@@ -31,7 +31,7 @@ describe('ColumnHeader', () => {
     expect(countBadge).toBeTruthy()
   })
 
-  it('does not use role="status" for count badge (AC2.1)', () => {
+  it('does not use role="status" for count badge', () => {
     render(ColumnHeader, {
       props: {
         label: 'queued',
@@ -44,7 +44,7 @@ describe('ColumnHeader', () => {
     expect(statusElements).toHaveLength(0)
   })
 
-  it('renders zero count badge when count is 0 (AC2.2)', () => {
+  it('renders zero count badge when count is 0', () => {
     render(ColumnHeader, {
       props: {
         label: 'completed',

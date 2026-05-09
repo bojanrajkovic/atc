@@ -17,7 +17,7 @@ use tokio::time::timeout;
 
 const METRIC: &str = "atc_pg_broadcast_watermark";
 
-/// AC7 — After three webhooks have been processed and drained, the
+/// After three webhooks have been processed and drained, the
 /// `atc_pg_broadcast_watermark` gauge equals `MAX(seq)` from the outbox.
 #[tokio::test]
 #[serial]
@@ -74,7 +74,7 @@ async fn metrics_broadcast_watermark_tracks_max_outbox_seq() {
     fixture.shutdown.cancel();
 }
 
-/// AC7b — In a fresh fixture before any webhook is POSTed, the
+/// In a fresh fixture before any webhook is POSTed, the
 /// `atc_pg_broadcast_watermark` gauge equals 0 (the seed value mirrored
 /// after the COALESCE(MAX(seq),0) initialization in main.rs / the test
 /// fixture builder).

@@ -88,10 +88,7 @@ test.describe('Sheet + Command stacking', () => {
     await seedAndOpenPanelViaClick(page)
   })
 
-  // -----------------------------------------------------------------------
-  // AC6.1 + AC6.6 — Cmd+K opens palette on top of panel; second Cmd+K closes it
-  // -----------------------------------------------------------------------
-  test('interactivity.AC6.1 + AC6.6 Cmd+K opens palette on top of panel; second Cmd+K closes it', async ({
+  test('interactivity — Cmd+K opens palette on top of panel; second Cmd+K closes it', async ({
     page,
   }) => {
     await page.keyboard.press(`${cmdOrCtrl}+k`)
@@ -114,10 +111,7 @@ test.describe('Sheet + Command stacking', () => {
     expect(await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)).not.toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC6.5 — Only one backdrop overlay visible when both dialogs are open
-  // -----------------------------------------------------------------------
-  test('interactivity.AC6.5 only one backdrop overlay is visible when both dialogs are open', async ({
+  test('interactivity — only one backdrop overlay is visible when both dialogs are open', async ({
     page,
   }) => {
     await page.keyboard.press(`${cmdOrCtrl}+k`)
@@ -137,19 +131,13 @@ test.describe('Sheet + Command stacking', () => {
     expect(displays[1]).toBe('none')
   })
 
-  // -----------------------------------------------------------------------
-  // AC6.2 + AC6.3 — Esc unwinds palette first, then panel; focus restoration order
-  //
-  // Uses the click-activated panel (beforeEach) so uiStore.lastTriggerRunId is
-  // set and the panel's onCloseAutoFocus can restore focus to the RunCard button.
-  // -----------------------------------------------------------------------
-  test('interactivity.AC6.2 + AC6.3 Esc unwinds palette first then panel; focus restoration order', async ({
+  test('interactivity — Esc unwinds palette first then panel; focus restoration order', async ({
     page,
   }) => {
     await page.keyboard.press(`${cmdOrCtrl}+k`)
     await expect(page.locator('[data-slot="command-input"]')).toBeVisible()
 
-    // First Esc: closes palette only (AC6.2)
+    // First Esc: closes palette only
     await page.keyboard.press('Escape')
 
     expect(await page.evaluate(() => window.__stores!.paletteStore!.paletteOpen)).toBe(false)
@@ -160,7 +148,7 @@ test.describe('Sheet + Command stacking', () => {
       'Close detail panel',
     )
 
-    // Second Esc: closes the panel (AC6.3)
+    // Second Esc: closes the panel
     await page.keyboard.press('Escape')
 
     expect(await page.evaluate(() => window.__stores!.uiStore!.selectedRunId)).toBeNull()
@@ -172,10 +160,7 @@ test.describe('Sheet + Command stacking', () => {
     ).toBe(true)
   })
 
-  // AC6.4: click outside palette content closes the palette only; panel defers.
-  // See docs/architecture/frontend-app.md "Sheet + Command Dialog Stacking" for
-  // how bits-ui's dismissable-layer treats clicks inside vs. outside content refs.
-  test('interactivity.AC6.4 click outside palette closes palette while panel stays open', async ({
+  test('interactivity — click outside palette closes palette while panel stays open', async ({
     page,
   }) => {
     await page.keyboard.press(`${cmdOrCtrl}+k`)

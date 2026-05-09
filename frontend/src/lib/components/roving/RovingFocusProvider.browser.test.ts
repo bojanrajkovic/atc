@@ -410,10 +410,10 @@ describe('RovingFocusProvider.browser.test — pool-filter arrow nav', () => {
 })
 
 // ---------------------------------------------------------------------------
-// AC7.4: panel-close-evicted and keyboard-nav-eviction paths land on same node
+// Dual-path restoration: panel-close-evicted and keyboard-nav-eviction
 // ---------------------------------------------------------------------------
 
-describe('RovingFocusProvider.browser.test — AC7.4 dual-path restoration', () => {
+describe('RovingFocusProvider.browser.test — dual-path restoration', () => {
   afterEach(() => {
     runStore.clear()
     uiStore.activePoolFilter = null
@@ -423,7 +423,7 @@ describe('RovingFocusProvider.browser.test — AC7.4 dual-path restoration', () 
     }
   })
 
-  it('AC7.4: panel-close-evicted path and keyboard-nav-eviction path land on the same DOM node', async () => {
+  it('panel-close-evicted path and keyboard-nav-eviction path land on the same DOM node', async () => {
     // Seed runs 1n, 2n, 3n as Queued (ascending createdAt so 1n = initialFocusRunId).
     // Run 2n will be evicted in both paths; the restoration target is run 1n.
     for (const [id, ts] of [

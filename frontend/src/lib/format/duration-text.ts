@@ -10,7 +10,7 @@ import { formatDuration, parseIso } from './duration'
  *
  * The 'static' branch (Completed without ActionRequired) is independent of
  * nowMs; RunCard's $derived wraps this function so that static runs do not
- * subscribe to the wall-clock tick (see AC12.7).
+ * subscribe to the wall-clock tick.
  */
 export function computeDurationText(
   run: Pick<WorkflowRun, 'status' | 'conclusion' | 'runStartedAt' | 'createdAt' | 'updatedAt'>,

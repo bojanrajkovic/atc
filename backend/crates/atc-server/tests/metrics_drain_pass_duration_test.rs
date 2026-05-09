@@ -18,8 +18,7 @@ use tokio::time::timeout;
 const METRIC_COUNT: &str = "atc_pg_drain_pass_duration_seconds_count";
 const METRIC_SUM: &str = "atc_pg_drain_pass_duration_seconds_sum";
 
-/// AC3 — A NOTIFY-driven drain pass adds one observation, with a positive
-/// duration value.
+/// A NOTIFY-driven drain pass adds one observation, with a positive duration value.
 #[tokio::test]
 #[serial]
 async fn metrics_drain_pass_duration_records_one_observation_per_pass() {
@@ -68,7 +67,7 @@ async fn metrics_drain_pass_duration_records_one_observation_per_pass() {
     fixture.shutdown.cancel();
 }
 
-/// AC3b — Heartbeat-only wakes do NOT execute a drain pass and therefore
+/// Heartbeat-only wakes do NOT execute a drain pass and therefore
 /// do NOT add observations to the duration histogram.
 ///
 /// `HEARTBEAT_TICK = 5s`. We wait `2 * HEARTBEAT_TICK` after fixture init

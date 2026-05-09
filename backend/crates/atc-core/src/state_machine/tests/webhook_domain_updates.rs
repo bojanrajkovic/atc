@@ -1,4 +1,4 @@
-// Tests for gh-webhooks.AC3: domain model updates required by webhook parsing.
+// Tests for domain model updates required by webhook parsing.
 // Covers JobEvent::Waiting, optional InProgress runner, and workflow field .or() preservation.
 
 use super::*;
@@ -6,8 +6,7 @@ use super::*;
 // ===== Waiting Event Tests =====
 
 #[tokio::test]
-async fn test_ac3_1_waiting_variant_exists() {
-    // AC3.1: JobEvent::Waiting variant exists and carries labels and steps
+async fn test_waiting_variant_exists() {
     let step = Step {
         number: 1,
         name: "Checkout".to_string(),
@@ -34,8 +33,7 @@ async fn test_ac3_1_waiting_variant_exists() {
 }
 
 #[tokio::test]
-async fn test_ac3_2_create_job_from_waiting() {
-    // AC3.2: RunStateMachine::apply_job_event handles Waiting events, creating jobs in JobStatus::Waiting
+async fn test_create_job_from_waiting() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -70,8 +68,7 @@ async fn test_ac3_2_create_job_from_waiting() {
 }
 
 #[tokio::test]
-async fn test_ac3_3_queued_to_waiting_to_inprogress() {
-    // AC3.3: Transition Queued → Waiting → InProgress succeeds
+async fn test_queued_to_waiting_to_inprogress() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -135,7 +132,7 @@ async fn test_ac3_3_queued_to_waiting_to_inprogress() {
 }
 
 #[tokio::test]
-async fn test_ac3_4_in_progress_with_no_runner() {
+async fn test_in_progress_with_no_runner() {
     let clock = TestClock::new(Utc::now());
     let store = RunStateMachine::new(Arc::new(clock), Duration::from_secs(3600));
 
@@ -181,9 +178,7 @@ async fn test_ac3_4_in_progress_with_no_runner() {
 // ===== Workflow Field Preservation Tests =====
 
 #[tokio::test]
-async fn test_ac3_7_workflow_name_preservation_with_or() {
-    // AC3.7: RunEventEnvelope.workflow_name and workflow_path are Option<String>
-    // and preserved via .or() when a later event arrives with None
+async fn test_workflow_name_preservation_with_or() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -218,9 +213,7 @@ async fn test_ac3_7_workflow_name_preservation_with_or() {
 }
 
 #[tokio::test]
-async fn test_ac3_8_workflow_name_preservation_failure_mode() {
-    // AC3.8: Specific failure test - requested with Some("CI") then in_progress with None
-    // should preserve "CI", not overwrite with None
+async fn test_workflow_name_preservation_failure_mode() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));

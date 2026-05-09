@@ -8,11 +8,7 @@ test.describe('Kanban board', () => {
     await page.addInitScript(WS_MOCK_INIT_SCRIPT)
   })
 
-  /**
-   * AC8.1: Full lifecycle verification
-   * Hydration placeholder → empty state → populated board (via WS event)
-   */
-  test('AC8.1: hydration → empty → populated board lifecycle', async ({ page }) => {
+  test('hydration → empty → populated board lifecycle', async ({ page }) => {
     let stateRoute: Route | null = null
 
     // Delay /v1/state fulfillment to observe hydration placeholder
@@ -60,11 +56,7 @@ test.describe('Kanban board', () => {
     await expect(queuedSection.locator('article[data-run-id="1001"]')).toBeVisible()
   })
 
-  /**
-   * AC8.2: Card movement through lifecycle via WS events
-   * Queued → InProgress → Completed within a single page session
-   */
-  test('AC8.2: card moves between columns as run status changes', async ({ page }) => {
+  test('card moves between columns as run status changes', async ({ page }) => {
     // Start with one run in Queued via initial snapshot
     await page.route('**/v1/state', (route) => {
       route.fulfill({
@@ -153,11 +145,7 @@ test.describe('Kanban board', () => {
     await page.screenshot({ path: 'e2e/screenshots/kanban-populated.png', fullPage: true })
   })
 
-  /**
-   * AC8.3: Reduced motion variant
-   * Same lifecycle as AC8.2 with prefers-reduced-motion, zero console errors
-   */
-  test('AC8.3: reduced motion variant completes lifecycle without errors', async ({ page }) => {
+  test('reduced motion variant completes lifecycle without errors', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
 
     const consoleErrors: string[] = []

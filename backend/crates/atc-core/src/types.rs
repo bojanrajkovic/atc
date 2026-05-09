@@ -112,18 +112,11 @@ impl<S: Into<String>> FromIterator<S> for LabelSet {
 mod tests {
     use super::*;
 
-    // ============================================================================
-    // AC1.2: RunId and JobId newtypes prevent accidental cross-use
-    // ============================================================================
-
     #[test]
     fn test_run_id_distinct_from_job_id() {
-        // AC1.2: RunId and JobId are different types and not interchangeable
         let run_id = RunId(42);
         let job_id = JobId(42);
 
-        // Verify they have different types by checking they're not equal
-        // (this wouldn't compile if we tried to mix them)
         let _: RunId = run_id;
         let _: JobId = job_id;
 
@@ -133,21 +126,18 @@ mod tests {
 
     #[test]
     fn test_run_id_self_equality() {
-        // AC1.2: RunId equals itself
         let run_id = RunId(42);
         assert_eq!(run_id, RunId(42));
     }
 
     #[test]
     fn test_job_id_self_equality() {
-        // AC1.2: JobId equals itself
         let job_id = JobId(42);
         assert_eq!(job_id, JobId(42));
     }
 
     #[test]
     fn test_run_id_hashable() {
-        // AC1.2: RunId can be used in collections requiring Hash
         use std::collections::HashSet;
         let mut set = HashSet::new();
         let run_id = RunId(42);
@@ -157,7 +147,6 @@ mod tests {
 
     #[test]
     fn test_job_id_hashable() {
-        // AC1.2: JobId can be used in collections requiring Hash
         use std::collections::HashSet;
         let mut set = HashSet::new();
         let job_id = JobId(42);
@@ -177,13 +166,8 @@ mod tests {
         assert_eq!(format!("{job_id}"), "42");
     }
 
-    // ============================================================================
-    // AC1.3: LabelSet normalizes and deduplicates labels
-    // ============================================================================
-
     #[test]
     fn test_label_set_equality_regardless_of_order() {
-        // AC1.3: ["linux", "self-hosted"] equals ["self-hosted", "linux"]
         let set1 = LabelSet::new(["linux", "self-hosted"]);
         let set2 = LabelSet::new(["self-hosted", "linux"]);
         assert_eq!(set1, set2, "Label sets should be equal regardless of order");
@@ -191,14 +175,12 @@ mod tests {
 
     #[test]
     fn test_label_set_deduplication() {
-        // AC1.3: ["a", "a", "b"] should deduplicate to len() == 2
         let set = LabelSet::new(["a", "a", "b"]);
         assert_eq!(set.len(), 2, "Duplicate labels should be deduplicated");
     }
 
     #[test]
     fn test_label_set_empty() {
-        // AC1.3: Empty label set
         let set = LabelSet::new(Vec::<String>::new());
         assert!(
             set.is_empty(),
@@ -217,7 +199,6 @@ mod tests {
 
     #[test]
     fn test_label_set_from_iter() {
-        // AC1.3: Verify FromIterator implementation
         let labels = vec!["linux", "self-hosted"];
         let set: LabelSet = labels.into_iter().collect();
         assert_eq!(set.len(), 2);
@@ -236,7 +217,6 @@ mod tests {
 
     #[test]
     fn label_set_orders_lexicographically() {
-        // AC1.7: LabelSet implements Ord for canonical sorting
         let set1 = LabelSet::new(["self-hosted", "linux"]);
         let set2 = LabelSet::new(["self-hosted", "x86_64"]);
         let set3 = LabelSet::new(["ubuntu-latest"]);
@@ -265,10 +245,6 @@ mod tests {
         );
     }
 
-    // ============================================================================
-    // AC1.4: All domain types serialize/deserialize correctly (JSON round-trip)
-    // ============================================================================
-
     #[test]
     fn test_run_id_serde() {
         let run_id = RunId(42);
@@ -295,7 +271,6 @@ mod tests {
 
     #[test]
     fn test_repo_key_serde_camel_case() {
-        // AC1.4: Verify camelCase serialization
         let repo_key = RepoKey::new("myorg", "myrepo");
         let json = serde_json::to_string(&repo_key).expect("serialize");
         assert!(json.contains("\"org\""), "Should serialize org field");

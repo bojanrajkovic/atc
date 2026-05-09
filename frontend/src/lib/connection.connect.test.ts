@@ -42,7 +42,7 @@ describe('ConnectionManager', () => {
     server.close()
   })
 
-  describe('fe-foundation.AC4.1: Success — Connect sequence', () => {
+  describe('Success — Connect sequence', () => {
     it('opens WebSocket, fetches state snapshot, loads stores, and transitions to connected', async () => {
       const manager = new ConnectionManager(baseUrl)
 

@@ -14,7 +14,7 @@ function mockMatchMedia(reducedMotion: boolean) {
 }
 
 describe('kanban-transitions module', () => {
-  describe('kanban-board.AC5.1: Animation module exports the expected contract', () => {
+  describe('Animation module exports the expected contract', () => {
     it('exports send, receive, and duration constants', async () => {
       // Clear module cache to test fresh import
       vi.resetModules()
@@ -51,7 +51,7 @@ describe('kanban-transitions module', () => {
     })
   })
 
-  describe('kanban-board.AC5.2: Crossfade fallback returns a TransitionConfig', () => {
+  describe('Crossfade fallback returns a TransitionConfig', () => {
     it('send without matching receive uses fallback with intro=false (fade)', async () => {
       // Clear module cache
       vi.resetModules()
@@ -105,8 +105,8 @@ describe('kanban-transitions module', () => {
     })
   })
 
-  describe('kanban-board.AC6: Animations respect prefers-reduced-motion', () => {
-    describe('AC6.1 & AC6.2: Durations are zero when reduced motion is true', () => {
+  describe('Animations respect prefers-reduced-motion', () => {
+    describe('Durations are zero when reduced motion is true', () => {
       it('sets all durations to 0 when prefersReducedMotion.current is true', async () => {
         // Clear module cache
         vi.resetModules()
@@ -126,7 +126,7 @@ describe('kanban-transitions module', () => {
       })
     })
 
-    describe('AC6.1: Durations are non-zero when reduced motion is false', () => {
+    describe('Durations are non-zero when reduced motion is false', () => {
       it('sets durations to their defined values when prefersReducedMotion.current is false', async () => {
         // Clear module cache
         vi.resetModules()

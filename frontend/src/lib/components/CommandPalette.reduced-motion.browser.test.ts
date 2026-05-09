@@ -16,7 +16,6 @@
  * calls element.animate() and getAnimations() returns a non-empty array with a
  * 200ms effect. This directly exercises the gate — removing it breaks the OFF test.
  *
- * AC covered: frontend-1-0-polish.AC3.1, AC3.2
  */
 
 import { cleanup, render } from '@testing-library/svelte'
@@ -113,20 +112,20 @@ describe('CommandPalette reduced-motion gate', () => {
     cleanup()
   })
 
-  it('AC3.1: prefersReducedMotion.current is true (mock bound before import)', () => {
+  it('prefersReducedMotion.current is true (mock bound before import)', () => {
     // Baseline assertion: if the mock didn't take effect, this would return false
     // and every DOM-level assertion below would be untestable.
     expect(prefersReducedMotion.current).toBe(true)
   })
 
-  it('AC3.2: CommandPalette renders without errors under reduced-motion mock', async () => {
+  it('CommandPalette renders without errors under reduced-motion mock', async () => {
     // Smoke test: CommandPalette should mount without throwing even with the
     // mocked svelte/motion module. The palette dialog is hidden by default.
     expect(() => render(CommandPalette)).not.toThrow()
     await tick()
   })
 
-  it('AC3.1 (reduced ON): theme submenu slide has no active Web Animation when duration is 0', async () => {
+  it('(reduced ON): theme submenu slide has no active Web Animation when duration is 0', async () => {
     // With reduced motion ON, submenuDuration = 0. Svelte's transition runtime
     // short-circuits when duration=0 and skips element.animate() entirely.
     // getAnimations() must return [] — confirming the gate set the duration to 0.
@@ -141,7 +140,7 @@ describe('CommandPalette reduced-motion gate', () => {
     expect(animations).toHaveLength(0)
   })
 
-  it('AC3.1 (reduced OFF): theme submenu slide has an active 200ms Web Animation when duration is 200', async () => {
+  it('(reduced OFF): theme submenu slide has an active 200ms Web Animation when duration is 200', async () => {
     // With reduced motion OFF, submenuDuration = 200. Svelte calls
     // element.animate(keyframes, { duration: 200 }) and the animation is
     // active immediately after the intro starts.

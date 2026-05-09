@@ -11,8 +11,7 @@ describe('RunStore', () => {
     runStore.clear()
   })
 
-  // AC3.3: applyJobEvent groups jobs by run ID
-  describe('AC3.3: Group jobs by run ID', () => {
+  describe('Group jobs by run ID', () => {
     it('should create a job for an unknown run ID', () => {
       const runId = 10n
       const jobId = 100n

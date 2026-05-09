@@ -153,8 +153,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // ===== Fixture deserialization tests (AC5.1, AC5.2, AC5.3, AC5.4) =====
-
     #[test]
     fn test_workflow_run_requested_fixture() {
         let json = include_str!("../../tests/fixtures/workflow_run_requested.json");
@@ -228,11 +226,8 @@ mod tests {
         assert_eq!(payload.workflow_job.status, "waiting");
     }
 
-    // ===== Field handling tests (AC1.1, AC1.2, AC1.3, AC1.5) =====
-
     #[test]
     fn test_workflow_run_all_fields_populated() {
-        // AC1.1: All mapped fields should be populated in requested action
         let json = include_str!("../../tests/fixtures/workflow_run_requested.json");
         let payload: WorkflowRunWebhook = serde_json::from_str(json).expect("Should deserialize");
 
@@ -247,7 +242,6 @@ mod tests {
 
     #[test]
     fn test_null_head_commit() {
-        // AC1.2: workflow_run with null head_commit should deserialize with None
         let json_str = json!({
             "action": "requested",
             "workflow_run": {
@@ -279,7 +273,6 @@ mod tests {
 
     #[test]
     fn test_null_workflow() {
-        // AC1.3: workflow_run with null workflow should deserialize with None
         let json_str = json!({
             "action": "in_progress",
             "workflow_run": {
@@ -311,8 +304,7 @@ mod tests {
 
     #[test]
     fn test_workflow_job_null_runner_fields() {
-        // AC1.5: workflow_job with null runner_id/runner_name should deserialize with None
-        // (queued jobs don't have runners assigned yet)
+        // queued jobs don't have runners assigned yet
         let json = include_str!("../../tests/fixtures/workflow_job_queued.json");
         let payload: WorkflowJobWebhook = serde_json::from_str(json).expect("Should deserialize");
 
@@ -320,11 +312,8 @@ mod tests {
         assert!(payload.workflow_job.runner_name.is_none());
     }
 
-    // ===== Forward compatibility test (AC1.6) =====
-
     #[test]
     fn test_unknown_fields_ignored() {
-        // AC1.6: Unknown fields should be ignored for forward compatibility
         let json_str = json!({
             "action": "requested",
             "unknown_future_field": 42,

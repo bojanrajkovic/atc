@@ -438,8 +438,6 @@ async fn parity_metric_increments_when_pg_rejects() {
 ///
 /// On transient PG failure the handler returns 503 and does NOT apply the
 /// event to the in-memory store.
-///
-/// Satisfies AC3.2
 #[tokio::test]
 #[serial_test::serial]
 async fn transient_metric_increments_on_db_outage() {
@@ -624,7 +622,7 @@ async fn pg_invalid_transition_returns_rejected() {
         "invalid transition response must be {{\"status\":\"rejected\"}}, got: {json}"
     );
 
-    // Side-effect contract (AC13b): the rejected event must NOT have written an
+    // Side-effect contract: the rejected event must NOT have written an
     // outbox row — `tx` is dropped without commit when the predicate fails, so
     // both the upsert AND the outbox INSERT are rolled back atomically.
     let outbox_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox")
@@ -638,12 +636,12 @@ async fn pg_invalid_transition_returns_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// AC13d: Metrics emitted from PgStore (not routes.rs)
+// Metrics emitted from PgStore (not routes.rs)
 // ---------------------------------------------------------------------------
 
-/// AC13d: `atc_pg_write_failures_total{kind="parity"}` and
-///        `atc_pg_notify_emitted_total{kind="run"}` are incremented by
-///        `PgStore::apply_run_event`, not the route handler.
+/// `atc_pg_write_failures_total{kind="parity"}` and
+/// `atc_pg_notify_emitted_total{kind="run"}` are incremented by
+/// `PgStore::apply_run_event`, not the route handler.
 ///
 /// Fires one valid run event (verifies notify counter increments) and then
 /// forces a parity rejection (verifies parity counter increments). This test

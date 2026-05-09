@@ -1,4 +1,4 @@
-//! End-to-end integration tests covering AC5 and AC6.3.
+//! End-to-end integration tests.
 //!
 //! These tests use an ephemeral server with real HTTP clients (reqwest) and WebSocket clients
 //! (tokio-tungstenite). Each test starts a complete server with all endpoints, sends webhook POSTs,
@@ -81,13 +81,13 @@ async fn start_test_server() -> SocketAddr {
 }
 
 // ============================================================================
-// Task 2: Webhook → REST state e2e test (AC5.1)
+// Webhook → REST state e2e test
 // ============================================================================
 
-/// AC5.1: POST webhook → GET /v1/state reflects the ingested event and returns matching seq
+/// POST webhook → GET /v1/state reflects the ingested event and returns matching seq
 #[tokio::test]
 #[serial_test::serial]
-async fn ac5_1_webhook_to_rest_state() {
+async fn webhook_to_rest_state() {
     let addr = start_test_server().await;
 
     let client = reqwest::Client::new();
@@ -161,13 +161,13 @@ async fn ac5_1_webhook_to_rest_state() {
 }
 
 // ============================================================================
-// Task 3: Webhook → WebSocket e2e test (AC5.2)
+// Webhook → WebSocket e2e test
 // ============================================================================
 
-/// AC5.2: POST webhook → WS client receives SeqEvent with matching domain event
+/// POST webhook → WS client receives SeqEvent with matching domain event
 #[tokio::test]
 #[serial_test::serial]
-async fn ac5_2_webhook_to_websocket() {
+async fn webhook_to_websocket() {
     let addr = start_test_server().await;
 
     let client = reqwest::Client::new();
@@ -220,13 +220,13 @@ async fn ac5_2_webhook_to_websocket() {
 }
 
 // ============================================================================
-// Task 4: Multi-event sequence e2e test (AC5.3, AC6.3)
+// Multi-event sequence e2e test
 // ============================================================================
 
-/// AC5.3, AC6.3: Multi-event sequence produces increasing seq values
+/// Multi-event sequence produces increasing seq values
 #[tokio::test]
 #[serial_test::serial]
-async fn ac5_3_multi_event_sequence() {
+async fn multi_event_sequence() {
     let addr = start_test_server().await;
 
     let client = reqwest::Client::new();

@@ -163,12 +163,12 @@ All animations in the codebase and their reduced-motion gate status:
 
 | File:line | Type | Trigger | Gate status | Test coverage |
 |---|---|---|---|---|
-| `app.css:100-112` | CSS keyframes (`pulse-border`) | InProgress card halo | GATED (`animation: none !important` in `@media (prefers-reduced-motion: reduce)`) | `e2e/theme.test.ts` (AC1.6: computed `animation-duration: 0s` on InProgress card) |
-| `lib/animations/kanban-transitions.ts:14-31` | Crossfade send/receive | Cross-column card move | GATED (`prefersReducedMotion.current` zeroes all durations at module load) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_MOVE === 0`) |
-| `lib/animations/kanban-transitions.ts:20-23` | Fly fallback | New card arrival | GATED (same `prefersReducedMotion.current` check, `DURATION_ARRIVE`) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_ARRIVE === 0`) |
-| `lib/animations/kanban-transitions.ts:27-29` | Fade fallback | Card removal | GATED (same check, `DURATION_REMOVE`) | `KanbanColumn.browser.test.ts` (AC6.3: asserts `DURATION_REMOVE === 0`) |
-| `KanbanColumn.svelte:49` | `animate:flip` | Within-column reorder | GATED (uses `DURATION_MOVE` from kanban-transitions) | `KanbanColumn.browser.test.ts` (AC6.4: reorder completes instantly) |
-| `CommandPalette.svelte:218` | `transition:slide\|local` | Theme submenu open/close | GATED (`$derived(prefersReducedMotion.current ? 0 : 200)` as `submenuDuration`; reactive so OS change takes effect without reload) | `CommandPalette.reduced-motion.browser.test.ts` (AC3.1); `e2e/theme.test.ts` (submenu-without-delay assertion) |
+| `app.css:100-112` | CSS keyframes (`pulse-border`) | InProgress card halo | GATED (`animation: none !important` in `@media (prefers-reduced-motion: reduce)`) | `e2e/theme.test.ts` (computed `animation-duration: 0s` on InProgress card) |
+| `lib/animations/kanban-transitions.ts:14-31` | Crossfade send/receive | Cross-column card move | GATED (`prefersReducedMotion.current` zeroes all durations at module load) | `KanbanColumn.browser.test.ts` (asserts `DURATION_MOVE === 0`) |
+| `lib/animations/kanban-transitions.ts:20-23` | Fly fallback | New card arrival | GATED (same `prefersReducedMotion.current` check, `DURATION_ARRIVE`) | `KanbanColumn.browser.test.ts` (asserts `DURATION_ARRIVE === 0`) |
+| `lib/animations/kanban-transitions.ts:27-29` | Fade fallback | Card removal | GATED (same check, `DURATION_REMOVE`) | `KanbanColumn.browser.test.ts` (asserts `DURATION_REMOVE === 0`) |
+| `KanbanColumn.svelte:49` | `animate:flip` | Within-column reorder | GATED (uses `DURATION_MOVE` from kanban-transitions) | `KanbanColumn.browser.test.ts` (reorder completes instantly) |
+| `CommandPalette.svelte:218` | `transition:slide\|local` | Theme submenu open/close | GATED (`$derived(prefersReducedMotion.current ? 0 : 200)` as `submenuDuration`; reactive so OS change takes effect without reload) | `CommandPalette.reduced-motion.browser.test.ts`; `e2e/theme.test.ts` (submenu-without-delay assertion) |
 
 **Gate pattern for Svelte components:** Use `$derived(prefersReducedMotion.current ? 0 : duration)` (reactive) inside a component, not a module-top const (which captures once). `kanban-transitions.ts` uses module-top const because it is a module-level singleton that does not update reactively — this is intentional and tested via file-scope `vi.mock('svelte/motion', ...)` which binds before the module is first imported.
 
@@ -280,10 +280,10 @@ Accessibility target formalised in `.impeccable.md`: **WCAG AA (≥ 4.5:1) gates
 `RunCard` uses a three-file test split driven by what each environment can observe:
 
 1. **`RunCard.test.ts`** (jsdom, static imports, real timers) — composition, status-color mapping, data-status PascalCase, five-leaf presence, `RunCardProps` type shape.
-2. **`RunCard.duration.test.ts`** (jsdom, static imports + direct `uiStore.nowMs` assignment) — AC12.7 reactivity proof: spy on `computeDurationText`, assert zero re-invocations when nowMs changes on a static-Completed card; contrast test on an InProgress card confirms the spy mechanism itself works.
+2. **`RunCard.duration.test.ts`** (jsdom, static imports + direct `uiStore.nowMs` assignment) — reactivity proof: spy on `computeDurationText`, assert zero re-invocations when nowMs changes on a static-Completed card; contrast test on an InProgress card confirms the spy mechanism itself works.
 3. **`RunCard.browser.test.ts`** (Vitest browser project, Playwright chromium) — computed-style assertions: `::before` accent width/position/color, `animation-name: pulse-border` gating, keyframe inspection via `CSSKeyframesRule`, `--halo-color` dark-vs-light divergence, density-attribute `display: none` flipping, DOM identity preservation across density toggle.
 
-AC12.1–AC12.6 are covered by `frontend/src/lib/format/duration-text.test.ts` as input→output tests on the pure function. Extracting the formula eliminated the need for `vi.resetModules()` + fake-timer + dynamic-import choreography (which would break `@testing-library/svelte`'s shared Svelte runtime).
+Duration formula edge cases are covered by `frontend/src/lib/format/duration-text.test.ts` as input→output tests on the pure function. Extracting the formula eliminated the need for `vi.resetModules()` + fake-timer + dynamic-import choreography (which would break `@testing-library/svelte`'s shared Svelte runtime).
 
 Playwright E2E coverage lives in `frontend/e2e/run-cards.test.ts` — four scenarios using `page.clock.install` / `page.clock.fastForward` for deterministic wall-clock control, driven by the shared WS-mock harness in `frontend/e2e/lib/ws-mock.ts`.
 
@@ -357,7 +357,7 @@ This mechanism is what actually enables sibling palette + panel stacking:
 
 bits-ui's dismissable-layer fires `onInteractOutside` when the click target is outside the dialog's own content ref (checked via `isOrContainsTarget`), regardless of overlay z-order or CSS stacking context. With the palette as the topmost close-layer in the global stack and the panel set to `defer-otherwise-close`, any click whose target is outside the palette's content ref — including the panel's modal scrim, the visible kanban behind both dialogs, or any other DOM region not inside the palette's content box — fires the palette's `onInteractOutside` and closes the palette only.
 
-The one case that does NOT close the palette: a click directly on the panel content box itself. bits-ui's `isOrContainsTarget` check sees that target as "inside the panel's content ref"; the palette's `onInteractOutside` does not fire for that click. This distinction is why AC6.4's E2E test clicks the QUEUED column (far-left kanban, outside both content boxes) rather than inside the panel slide-over: the QUEUED region is outside both content refs and reliably triggers the observable behavior — palette closes, panel stays open via `defer-otherwise-close`. See `frontend/e2e/stacking.test.ts` AC6.4 test for the verified interaction path.
+The one case that does NOT close the palette: a click directly on the panel content box itself. bits-ui's `isOrContainsTarget` check sees that target as "inside the panel's content ref"; the palette's `onInteractOutside` does not fire for that click. This distinction is why the stacking E2E test clicks the QUEUED column (far-left kanban, outside both content boxes) rather than inside the panel slide-over: the QUEUED region is outside both content refs and reliably triggers the observable behavior — palette closes, panel stays open via `defer-otherwise-close`. See `frontend/e2e/stacking.test.ts` for the verified interaction path.
 
 ### Backdrop suppression
 
@@ -398,7 +398,7 @@ The kanban grid implements 2D arrow-key navigation via roving tabindex without a
 1. **Eviction during keyboard nav** — the provider's `$effect` watches `focusedRunId` against `locate()`; if `locate` returns null the focused run was evicted. The effect is gated on `kanbanHasFocus`: when the kanban owns focus, `restoreFocusToInitial()` fires; when the kanban does not own focus (user has Tab'd to TopBar, opened the palette, or opened the panel), the effect resets `focusedRunId = null` *without* calling `.focus()`, preventing a background TTL/store eviction from yanking focus away from the user's current target.
 2. **Panel close with evicted source** — `RunDetailPanel.onCloseAutoFocus` calls it when the trigger-card querySelector returns null. (This replaces the previous bug where the optional-chained `?.focus()` silently no-opped, leaving focus on `<body>`.)
 
-Both paths land focus on the same DOM node under identical preconditions (AC7.4).
+Both paths land focus on the same DOM node under identical preconditions.
 
 **Why context, not a sixth store:** Roving state is component-scoped (dies with the kanban) and doesn't need to survive any persistence boundary. Folding into UIStore would mix preference-state with transient-state; a sixth store would fight the README's "5 stores is the ceiling" principle without empirical justification. Svelte context is the textbook fit: component-tree-scoped state, propagates by composition, dies with the provider.
 
@@ -551,7 +551,7 @@ Invariants:
 - `flush()` cancels any pending RAF before draining. Calling `dispatch(); flush()` produces exactly one callback invocation, not two (no phantom RAF callback).
 - `setOnFlush(null)` detaches the callback. Idempotent: calling `setOnFlush` twice replaces the prior callback.
 
-### Snapshot-bypass and reconnect-silence policy (AC6.7)
+### Snapshot-bypass and reconnect-silence policy
 
 Snapshots loaded by `ConnectionManager` go directly into stores via `runStore.loadSnapshot()` and entirely bypass the dispatcher. This never generates announcements.
 

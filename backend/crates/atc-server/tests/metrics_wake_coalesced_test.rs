@@ -24,15 +24,14 @@ async fn fire_run_webhook(fixture: &common::AppFixture) -> StatusCode {
     status
 }
 
-/// AC4 — Five webhooks fired into a 200ms slow-drain window may coalesce up
-/// to five NOTIFYs while `drain_in_flight=true`. The counter must never
-/// over-count.
+/// Five webhooks fired into a 200ms slow-drain window may coalesce up to five
+/// NOTIFYs while `drain_in_flight=true`. The counter must never over-count.
 ///
-/// The lower bound is intentionally 0 — without deterministic
-/// synchronization between the listener task and the drain task scheduling,
-/// no specific NOTIFY is guaranteed to observe `drain_in_flight=true`. The
-/// AC enforces "the counter exists, increments correctly, never
-/// over-counts" and pairs with AC5 to detect a stuck-true bug.
+/// The lower bound is intentionally 0 — without deterministic synchronization
+/// between the listener task and the drain task scheduling, no specific NOTIFY
+/// is guaranteed to observe `drain_in_flight=true`. This test enforces "the
+/// counter exists, increments correctly, never over-counts" and pairs with the
+/// idle-drain test to detect a stuck-true bug.
 #[tokio::test]
 #[serial]
 async fn metrics_wake_coalesced_does_not_over_count_during_slow_drain() {
@@ -83,8 +82,8 @@ async fn metrics_wake_coalesced_does_not_over_count_during_slow_drain() {
     fixture.shutdown.cancel();
 }
 
-/// AC5 — Three webhooks fired with full drain completion between each (no
-/// in-flight pass overlap) must not increment the coalesce counter.
+/// Three webhooks fired with full drain completion between each (no in-flight
+/// pass overlap) must not increment the coalesce counter.
 ///
 /// Each webhook waits for `observed_passes` to advance before the next is
 /// posted, guaranteeing the listener never observes `drain_in_flight=true`.

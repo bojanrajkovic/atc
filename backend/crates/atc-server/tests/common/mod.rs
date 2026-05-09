@@ -373,7 +373,7 @@ pub async fn build_app_with_pg_and_listener(pool: sqlx::PgPool, db_url: String) 
 /// Passing a `drain_delay` makes each drain pass sleep for that duration before
 /// querying the outbox, ensuring that NOTIFYs fired during an in-flight pass
 /// arrive while the drain is still sleeping. This forces coalescing to be
-/// observable in AC7.
+/// observable in the coalescing test.
 pub async fn build_app_with_pg_and_slow_drain(
     pool: sqlx::PgPool,
     db_url: String,

@@ -11,7 +11,7 @@ import {
 } from './status-key'
 
 describe('format/status-key', () => {
-  describe('run-cards.AC6A.1: Queued status returns Queued key', () => {
+  describe('Queued status returns Queued key', () => {
     it('returns Queued when status is Queued and conclusion is null', () => {
       const result = resolveStatusKey({ status: 'Queued', conclusion: null })
       expect(result).toBe('Queued')
@@ -23,7 +23,7 @@ describe('format/status-key', () => {
     })
   })
 
-  describe('run-cards.AC6A.2: InProgress status returns InProgress key', () => {
+  describe('InProgress status returns InProgress key', () => {
     it('returns InProgress when status is InProgress and conclusion is null', () => {
       const result = resolveStatusKey({ status: 'InProgress', conclusion: null })
       expect(result).toBe('InProgress')
@@ -35,7 +35,7 @@ describe('format/status-key', () => {
     })
   })
 
-  describe('run-cards.AC6A.3: Completed status with conclusion resolves to conclusion key', () => {
+  describe('Completed status with conclusion resolves to conclusion key', () => {
     it('returns Success when status is Completed and conclusion is Success', () => {
       const result = resolveStatusKey({ status: 'Completed', conclusion: 'Success' })
       expect(result).toBe('Success')
@@ -82,7 +82,7 @@ describe('format/status-key', () => {
     })
   })
 
-  describe('run-cards.AC6A.4: Bare-Completed fallback returns Cancelled', () => {
+  describe('Bare-Completed fallback returns Cancelled', () => {
     it('returns Cancelled when status is Completed and conclusion is null', () => {
       const result = resolveStatusKey({ status: 'Completed', conclusion: null })
       // Bare-Completed fallback (see docs/design-plans/2026-04-17-run-cards.md, "StatusKey normalization at the boundary")
@@ -90,7 +90,7 @@ describe('format/status-key', () => {
     })
   })
 
-  describe('run-cards.AC6A.5: Pure function with no side effects', () => {
+  describe('Pure function with no side effects', () => {
     it('returns identical output when called twice with same input', () => {
       const input: Pick<WorkflowRun, 'status' | 'conclusion'> = {
         status: 'Completed',

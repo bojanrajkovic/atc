@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { formatDuration } from './duration'
 
 describe('format/duration', () => {
-  describe('AC4.1: static spec with 1-second diff', () => {
+  describe('static spec with 1-second diff', () => {
     it('returns 0:01 for 1-second diff', () => {
       const result = formatDuration({ kind: 'static', startMs: 0, endMs: 1000 })
       expect(result).toBe('0:01')
@@ -24,7 +24,7 @@ describe('format/duration', () => {
     })
   })
 
-  describe('AC4.2: live spec with 61-second diff', () => {
+  describe('live spec with 61-second diff', () => {
     it('returns 1:01 for live spec with 61-second diff', () => {
       const result = formatDuration({ kind: 'live', startMs: 0, nowMs: 61000 })
       expect(result).toBe('1:01')
@@ -39,7 +39,7 @@ describe('format/duration', () => {
     })
   })
 
-  describe('AC4.3: switchover at 3600000 ms (1 hour)', () => {
+  describe('switchover at 3600000 ms (1 hour)', () => {
     it('returns 59:59 for 3599999 ms (last MM:SS output)', () => {
       const result = formatDuration({ kind: 'static', startMs: 0, endMs: 3599999 })
       expect(result).toBe('59:59')
@@ -61,7 +61,7 @@ describe('format/duration', () => {
     })
   })
 
-  describe('AC4.4: negative diff edge case', () => {
+  describe('negative diff edge case', () => {
     it('returns 0:00 for static spec with endMs < startMs', () => {
       const result = formatDuration({ kind: 'static', startMs: 1000, endMs: 0 })
       expect(result).toBe('0:00')
@@ -79,7 +79,7 @@ describe('format/duration', () => {
     })
   })
 
-  describe('AC4.5: character-count stability within format zones', () => {
+  describe('character-count stability within format zones', () => {
     describe('MM:SS one-digit-minute sub-range', () => {
       it('0:00 and 9:59 have equal length (both 4 characters)', () => {
         const min = formatDuration({ kind: 'static', startMs: 0, endMs: 0 })

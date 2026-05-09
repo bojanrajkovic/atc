@@ -4,7 +4,7 @@
 //! atomic when it holds a real registered seq, and that it returns to its
 //! `f64::NAN` sentinel after the drain swap captures the floor.
 //!
-//! AC8 (success) deliberately removes the drain task from the runtime
+//! This test deliberately removes the drain task from the runtime
 //! (`drain_handle.abort()`) so the listener's `fetch_min` mirror is not
 //! racing the drain's swap-to-NaN. This trades the microseconds-fragile
 //! "scrape during gap-healing" approach for a deterministic
@@ -24,10 +24,10 @@ use tokio::time::timeout;
 const METRIC: &str = "atc_pg_min_pending_seq";
 const WATERMARK_METRIC: &str = "atc_pg_broadcast_watermark";
 
-/// AC8 — Drive the broadcast watermark forward, then abort the drain task
-/// so its swap-to-NaN can't fire. A subsequent `pg_notify` for an earlier
-/// seq drives the listener's `fetch_min` mirror, leaving the gauge at a
-/// finite numeric value below `broadcast_watermark`.
+/// Drive the broadcast watermark forward, then abort the drain task so its
+/// swap-to-NaN can't fire. A subsequent `pg_notify` for an earlier seq drives
+/// the listener's `fetch_min` mirror, leaving the gauge at a finite numeric
+/// value below `broadcast_watermark`.
 #[tokio::test]
 #[serial]
 async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
@@ -126,10 +126,9 @@ async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
     fixture.shutdown.cancel();
 }
 
-/// AC8b — In a steady-state fixture (no in-flight gap-healing), the gauge
-/// is `NaN`: the drain swap-to-NaN runs at the start of every pass, and
-/// after the listener has caught up there is no pending fetch_min to
-/// mirror.
+/// In a steady-state fixture (no in-flight gap-healing), the gauge is `NaN`:
+/// the drain swap-to-NaN runs at the start of every pass, and after the listener
+/// has caught up there is no pending fetch_min to mirror.
 #[tokio::test]
 #[serial]
 async fn metrics_min_pending_seq_is_nan_in_steady_state() {

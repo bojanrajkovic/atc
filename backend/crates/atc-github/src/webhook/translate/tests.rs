@@ -85,11 +85,10 @@ fn make_workflow_job_webhook(
     }
 }
 
-// ===== Run event translation tests (AC2.1–AC2.4, AC2.11) =====
+// ===== Run event translation tests =====
 
 #[test]
 fn test_translate_run_requested() {
-    // AC2.1: Translate a `workflow_run` webhook with `action: "requested"`
     let webhook = make_workflow_run_webhook("requested", None);
     let result = translate_run(webhook).expect("should translate");
 
@@ -107,7 +106,6 @@ fn test_translate_run_requested() {
 
 #[test]
 fn test_translate_run_in_progress() {
-    // AC2.2: Translate with `action: "in_progress"`
     let webhook = make_workflow_run_webhook("in_progress", None);
     let result = translate_run(webhook).expect("should translate");
 
@@ -116,7 +114,6 @@ fn test_translate_run_in_progress() {
 
 #[test]
 fn test_translate_run_completed_success() {
-    // AC2.3: Translate with `action: "completed"` and `conclusion: Some("success")`
     let webhook = make_workflow_run_webhook("completed", Some("success"));
     let result = translate_run(webhook).expect("should translate");
 
@@ -130,7 +127,6 @@ fn test_translate_run_completed_success() {
 
 #[test]
 fn test_translate_run_all_conclusions() {
-    // AC2.4: Test all 9 RunConclusion variants
     let conclusions = vec![
         ("success", RunConclusion::Success),
         ("failure", RunConclusion::Failure),
@@ -158,7 +154,6 @@ fn test_translate_run_all_conclusions() {
 
 #[test]
 fn test_translate_run_with_null_workflow() {
-    // AC2.11: Test with `workflow: None` and verify fields are `None`
     let mut webhook = make_workflow_run_webhook("requested", None);
     webhook.workflow = None;
     let result = translate_run(webhook).expect("should translate");
@@ -167,11 +162,10 @@ fn test_translate_run_with_null_workflow() {
     assert_eq!(result.workflow_path, None);
 }
 
-// ===== Job event translation tests (AC2.5–AC2.10) =====
+// ===== Job event translation tests =====
 
 #[test]
 fn test_translate_job_queued() {
-    // AC2.5: Translate `workflow_job` with `action: "queued"`
     let webhook = make_workflow_job_webhook("queued", None, false);
     let result = translate_job(webhook).expect("should translate");
 
@@ -186,7 +180,6 @@ fn test_translate_job_queued() {
 
 #[test]
 fn test_translate_job_waiting() {
-    // AC2.6: Translate with `action: "waiting"`
     let webhook = make_workflow_job_webhook("waiting", None, false);
     let result = translate_job(webhook).expect("should translate");
 
@@ -201,7 +194,6 @@ fn test_translate_job_waiting() {
 
 #[test]
 fn test_translate_job_in_progress_with_runner() {
-    // AC2.7: Translate with runner fields populated
     let webhook = make_workflow_job_webhook("in_progress", None, true);
     let result = translate_job(webhook).expect("should translate");
 
@@ -224,7 +216,6 @@ fn test_translate_job_in_progress_with_runner() {
 
 #[test]
 fn test_translate_job_in_progress_no_runner() {
-    // AC2.8: Translate with all runner fields `None`
     let webhook = make_workflow_job_webhook("in_progress", None, false);
     let result = translate_job(webhook).expect("should translate");
 
@@ -238,7 +229,6 @@ fn test_translate_job_in_progress_no_runner() {
 
 #[test]
 fn test_translate_job_completed() {
-    // AC2.9: Translate with `action: "completed"` with optional runner, labels, and steps
     let webhook = make_workflow_job_webhook("completed", Some("success"), true);
     let result = translate_job(webhook).expect("should translate");
 
@@ -260,7 +250,6 @@ fn test_translate_job_completed() {
 
 #[test]
 fn test_translate_job_with_steps() {
-    // AC2.10: Create a webhook with steps and verify status/conclusion translation
     let steps = vec![
         StepData {
             number: 1,
@@ -322,11 +311,10 @@ fn test_translate_job_with_steps() {
     }
 }
 
-// ===== Error cases (AC2.12–AC2.15) =====
+// ===== Error cases =====
 
 #[test]
 fn test_unknown_action_workflow_run() {
-    // AC2.12: Translate with `action: "unknown_action"`
     let webhook = make_workflow_run_webhook("unknown_action", None);
     let err = translate_run(webhook).expect_err("should error");
 
@@ -341,7 +329,6 @@ fn test_unknown_action_workflow_run() {
 
 #[test]
 fn test_unknown_action_workflow_job() {
-    // AC2.12: Repeat for workflow_job
     let webhook = make_workflow_job_webhook("unknown_action", None, false);
     let err = translate_job(webhook).expect_err("should error");
 
@@ -356,7 +343,6 @@ fn test_unknown_action_workflow_job() {
 
 #[test]
 fn test_missing_conclusion_workflow_run() {
-    // AC2.13: Translate a `completed` workflow_run with `conclusion: None`
     let webhook = make_workflow_run_webhook("completed", None);
     let err = translate_run(webhook).expect_err("should error");
 
@@ -371,7 +357,6 @@ fn test_missing_conclusion_workflow_run() {
 
 #[test]
 fn test_missing_conclusion_workflow_job() {
-    // AC2.13: Repeat for workflow_job
     let webhook = make_workflow_job_webhook("completed", None, false);
     let err = translate_job(webhook).expect_err("should error");
 
@@ -386,7 +371,6 @@ fn test_missing_conclusion_workflow_job() {
 
 #[test]
 fn test_unknown_conclusion_workflow_run() {
-    // AC2.14: Translate with `conclusion: Some("bogus")`
     let webhook = make_workflow_run_webhook("completed", Some("bogus"));
     let err = translate_run(webhook).expect_err("should error");
 
@@ -401,7 +385,6 @@ fn test_unknown_conclusion_workflow_run() {
 
 #[test]
 fn test_unknown_conclusion_workflow_job() {
-    // AC2.14: Repeat for workflow_job
     let webhook = make_workflow_job_webhook("completed", Some("bogus"), false);
     let err = translate_job(webhook).expect_err("should error");
 
@@ -416,7 +399,6 @@ fn test_unknown_conclusion_workflow_job() {
 
 #[test]
 fn test_unknown_step_status() {
-    // AC2.15: Create a webhook with a step that has `status: "bogus"`
     let steps = vec![StepData {
         number: 1,
         name: "Setup".to_string(),
@@ -467,7 +449,6 @@ fn test_unknown_step_status() {
 
 #[test]
 fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
-    // AC1.8: Normalize empty runner_group_name to None
     let workflow_job = WorkflowJobData {
         id: 987_654,
         run_id: 123_456,

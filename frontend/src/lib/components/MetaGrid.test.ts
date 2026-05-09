@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import MetaGridWrapper from './test-utils/MetaGridWrapper.svelte'
 
 describe('MetaGrid', () => {
-  it('interactivity.AC2.1 renders all three MetaCell children in source order', () => {
+  it('renders all three MetaCell children in source order', () => {
     render(MetaGridWrapper, {
       props: {
         cells: [
@@ -24,7 +24,7 @@ describe('MetaGrid', () => {
     expect(labels[2]!.textContent).toBe('Runner')
   })
 
-  it('interactivity.AC2.1 renders with dl semantics', () => {
+  it('renders with dl semantics', () => {
     const { container } = render(MetaGridWrapper, {
       props: {
         cells: [{ label: 'Commit', value: 'abc1234' }],

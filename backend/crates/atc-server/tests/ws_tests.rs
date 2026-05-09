@@ -1,7 +1,7 @@
-//! WebSocket integration tests covering AC3.1-AC3.5.
+//! WebSocket integration tests.
 //!
 //! Each test starts an ephemeral server and uses tokio_tungstenite to connect as a client.
-//! For AC3.5 (lag handling), we send events directly via state.webhook_tx.send() to avoid
+//! For lag handling tests, we send events directly via state.webhook_tx.send() to avoid
 //! timing races and more easily control event volume.
 
 mod common;
@@ -71,10 +71,10 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     (main_addr, app_state)
 }
 
-/// AC3.1: GET /v1/ws upgrades to WebSocket connection
+/// GET /v1/ws upgrades to WebSocket connection
 #[tokio::test]
 #[serial_test::serial]
-async fn ac3_1_ws_upgrade_succeeds() {
+async fn ws_upgrade_succeeds() {
     let (server_addr, _) = test_setup(256).await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
@@ -91,10 +91,10 @@ async fn ac3_1_ws_upgrade_succeeds() {
     // keep the socket alive and receive frames. Here we just verify the upgrade succeeded.
 }
 
-/// AC3.2: Connected client receives SeqEvent after webhook ingestion
+/// Connected client receives SeqEvent after webhook ingestion
 #[tokio::test]
 #[serial_test::serial]
-async fn ac3_2_ws_receives_webhook_event() {
+async fn ws_receives_webhook_event() {
     let (server_addr, _) = test_setup(256).await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
@@ -142,10 +142,10 @@ async fn ac3_2_ws_receives_webhook_event() {
     }
 }
 
-/// AC3.3: Multiple connected clients each receive the same SeqEvent
+/// Multiple connected clients each receive the same SeqEvent
 #[tokio::test]
 #[serial_test::serial]
-async fn ac3_3_multiple_clients_receive_same_event() {
+async fn multiple_clients_receive_same_event() {
     let (server_addr, _state) = test_setup(256).await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
@@ -209,10 +209,10 @@ async fn ac3_3_multiple_clients_receive_same_event() {
     assert_eq!(seq_event1.seq, 1, "First event seq should be 1");
 }
 
-/// AC3.4: Client disconnect does not crash server or affect other clients
+/// Client disconnect does not crash server or affect other clients
 #[tokio::test]
 #[serial_test::serial]
-async fn ac3_4_disconnect_does_not_crash_server() {
+async fn disconnect_does_not_crash_server() {
     let (server_addr, _state) = test_setup(256).await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
@@ -275,13 +275,14 @@ async fn ac3_4_disconnect_does_not_crash_server() {
 // returns it) or inject events via the webhook HTTP endpoint and accept that
 // the handler task consumes them before the WS handler can lag.
 // Deferred because (a) the 2 lines are not load-bearing for the coverage
-// threshold and (b) `ac3_5` below already exercises the capacity-2 setup and
-// its assertions would need revisiting once lag-driven close is deterministic.
+// threshold and (b) `lagging_client_continues_receiving` below already exercises
+// the capacity-2 setup and its assertions would need revisiting once lag-driven
+// close is deterministic.
 
-/// AC3.5: Lagging client receives warning log, continues receiving (not disconnected)
+/// Lagging client receives warning log, continues receiving (not disconnected)
 #[tokio::test]
 #[serial_test::serial]
-async fn ac3_5_lagging_client_continues_receiving() {
+async fn lagging_client_continues_receiving() {
     // Use a small broadcast capacity to make lag easy to trigger
     let (server_addr, _) = test_setup(2).await;
 

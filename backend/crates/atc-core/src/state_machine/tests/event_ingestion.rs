@@ -1,9 +1,9 @@
-//! AC3: State store event ingestion tests.
+//! State store event ingestion tests.
 
 use super::*;
 
 #[tokio::test]
-async fn test_ac3_1_create_run_from_requested() {
+async fn test_create_run_from_requested() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -27,7 +27,7 @@ async fn test_ac3_1_create_run_from_requested() {
 }
 
 #[tokio::test]
-async fn test_ac3_1_update_run_to_in_progress() {
+async fn test_update_run_to_in_progress() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -47,7 +47,7 @@ async fn test_ac3_1_update_run_to_in_progress() {
 }
 
 #[tokio::test]
-async fn test_ac3_1_complete_run_with_conclusion() {
+async fn test_complete_run_with_conclusion() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -76,7 +76,7 @@ async fn test_ac3_1_complete_run_with_conclusion() {
 }
 
 #[tokio::test]
-async fn test_ac3_6_idempotent_requested_twice() {
+async fn test_idempotent_requested_twice() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -96,7 +96,7 @@ async fn test_ac3_6_idempotent_requested_twice() {
 // ===== Job Event Tests =====
 
 #[tokio::test]
-async fn test_ac3_2_create_job_from_queued() {
+async fn test_create_job_from_queued() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -126,7 +126,7 @@ async fn test_ac3_2_create_job_from_queued() {
 }
 
 #[tokio::test]
-async fn test_ac3_2_update_job_to_in_progress() {
+async fn test_update_job_to_in_progress() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -173,7 +173,7 @@ async fn test_ac3_2_update_job_to_in_progress() {
 }
 
 #[tokio::test]
-async fn test_ac3_3_jobs_by_run() {
+async fn test_jobs_by_run() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -237,7 +237,7 @@ async fn test_ac3_3_jobs_by_run() {
 }
 
 #[tokio::test]
-async fn test_ac3_3_jobs_by_repo() {
+async fn test_jobs_by_repo() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -284,7 +284,7 @@ async fn test_ac3_3_jobs_by_repo() {
 }
 
 #[tokio::test]
-async fn test_ac3_4_steps_snapshot_replacement() {
+async fn test_steps_snapshot_replacement() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -382,7 +382,7 @@ async fn test_ac3_4_steps_snapshot_replacement() {
 }
 
 #[tokio::test]
-async fn test_ac3_5_first_sight_completed_job() {
+async fn test_first_sight_completed_job() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -417,7 +417,7 @@ async fn test_ac3_5_first_sight_completed_job() {
 }
 
 #[tokio::test]
-async fn test_ac3_6_idempotent_queued_twice() {
+async fn test_idempotent_queued_twice() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));

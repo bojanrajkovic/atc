@@ -4,10 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockJob } from '$lib/test-utils/factories'
 import JobBlock from './JobBlock.svelte'
 
-// ---------------------------------------------------------------------------
-// interactivity.AC2.7 — JobBlock scrollIntoView under requestAnimationFrame
-// ---------------------------------------------------------------------------
-
 describe('JobBlock (browser mode)', () => {
   beforeEach(() => {
     vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
@@ -17,7 +13,7 @@ describe('JobBlock (browser mode)', () => {
     vi.restoreAllMocks()
   })
 
-  it('interactivity.AC2.7 calls scrollIntoView({ block: start, behavior: smooth }) under RAF when selectedJobId matches', async () => {
+  it('calls scrollIntoView({ block: start, behavior: smooth }) under RAF when selectedJobId matches', async () => {
     const job = createMockJob({ id: 99n, status: 'InProgress' })
     const consumeCallback = vi.fn()
 

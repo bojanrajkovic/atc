@@ -6,12 +6,11 @@ import PanelActions from './PanelActions.svelte'
 describe('PanelActions', () => {
   const htmlUrl = 'https://github.com/owner/repo/actions/runs/12345'
 
-  // AC5.2: close button and go-to-run link have visible :focus-visible outline rules.
   // jsdom does not compute :focus-visible styles (the heuristic is browser-level);
   // computed-style verification lives in e2e/focus-rings.test.ts. Here we assert
   // both interactive elements are standard HTML elements with no inline outline
   // suppression, so the CSS rules can take effect in a real browser.
-  it('AC5.2: close button is a focusable button with no inline outline suppression', () => {
+  it('close button is a focusable button with no inline outline suppression', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 
     const button = screen.getByRole('button', { name: 'Close detail panel' })
@@ -20,7 +19,7 @@ describe('PanelActions', () => {
     expect(button.style.outlineStyle).not.toBe('none')
   })
 
-  it('AC5.2: go-to-run link is a focusable anchor with no inline outline suppression', () => {
+  it('go-to-run link is a focusable anchor with no inline outline suppression', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 
     const link = screen.getByRole('link', { name: 'Go to run' })
@@ -29,28 +28,28 @@ describe('PanelActions', () => {
     expect(link.style.outlineStyle).not.toBe('none')
   })
 
-  it('interactivity.AC2.2 renders the Go-to-run anchor with the correct href', () => {
+  it('renders the Go-to-run anchor with the correct href', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 
     const link = screen.getByRole('link', { name: 'Go to run' })
     expect(link.getAttribute('href')).toBe(htmlUrl)
   })
 
-  it('interactivity.AC2.2 sets target="_blank" on the Go-to-run anchor', () => {
+  it('sets target="_blank" on the Go-to-run anchor', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 
     const link = screen.getByRole('link', { name: 'Go to run' })
     expect(link.getAttribute('target')).toBe('_blank')
   })
 
-  it('interactivity.AC2.2 sets rel="noopener noreferrer" on the Go-to-run anchor', () => {
+  it('sets rel="noopener noreferrer" on the Go-to-run anchor', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 
     const link = screen.getByRole('link', { name: 'Go to run' })
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
   })
 
-  it('interactivity.AC2.2 anchor accessible name is "Go to run"', () => {
+  it('anchor accessible name is "Go to run"', () => {
     render(PanelActions, { props: { htmlUrl, onClose: () => {} } })
 
     // getByRole('link', { name: '...' }) would throw if accessible name did not match.

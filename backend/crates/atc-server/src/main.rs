@@ -260,7 +260,7 @@ async fn main() {
         .fallback(assets::fallback_handler());
 
     // Bind metrics listener first so a port-conflict failure is detected before
-    // the main listener opens (AC2.5: bind failure exits non-zero cleanly).
+    // the main listener opens.
     let metrics_listener = tokio::net::TcpListener::bind(cfg.metrics_addr)
         .await
         .unwrap_or_else(|e| {

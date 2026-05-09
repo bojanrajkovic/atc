@@ -5,7 +5,7 @@ import { computeDurationText, computeJobDurationText } from './duration-text'
 const T0 = new Date('2026-04-17T10:00:00Z').getTime()
 
 describe('computeDurationText', () => {
-  it('AC12.1: Queued run returns "waiting MM:SS" relative to nowMs', () => {
+  it('Queued run returns "waiting MM:SS" relative to nowMs', () => {
     const run = createMockRun({
       status: 'Queued',
       createdAt: '2026-04-17T09:59:00Z',
@@ -14,7 +14,7 @@ describe('computeDurationText', () => {
     expect(computeDurationText(run, T0 + 1000)).toBe('waiting 1:01')
   })
 
-  it('AC12.2: InProgress run returns elapsed MM:SS relative to nowMs', () => {
+  it('InProgress run returns elapsed MM:SS relative to nowMs', () => {
     const run = createMockRun({
       status: 'InProgress',
       runStartedAt: '2026-04-17T09:58:00Z',
@@ -23,7 +23,7 @@ describe('computeDurationText', () => {
     expect(computeDurationText(run, T0 + 1000)).toBe('2:01')
   })
 
-  it('AC12.3: Completed+ActionRequired returns "awaiting action MM:SS" relative to nowMs', () => {
+  it('Completed+ActionRequired returns "awaiting action MM:SS" relative to nowMs', () => {
     const run = createMockRun({
       status: 'Completed',
       conclusion: 'ActionRequired',
@@ -33,7 +33,7 @@ describe('computeDurationText', () => {
     expect(computeDurationText(run, T0 + 1000)).toBe('awaiting action 0:31')
   })
 
-  it('AC12.4: Completed+Success returns static MM:SS that ignores nowMs', () => {
+  it('Completed+Success returns static MM:SS that ignores nowMs', () => {
     const run = createMockRun({
       status: 'Completed',
       conclusion: 'Success',
@@ -46,7 +46,7 @@ describe('computeDurationText', () => {
     expect(computeDurationText(run, 0)).toBe('2:14')
   })
 
-  it('AC12.5: InProgress with null runStartedAt falls back to createdAt', () => {
+  it('InProgress with null runStartedAt falls back to createdAt', () => {
     const run = createMockRun({
       status: 'InProgress',
       runStartedAt: null,
@@ -55,7 +55,7 @@ describe('computeDurationText', () => {
     expect(computeDurationText(run, T0)).toBe('1:00')
   })
 
-  it('AC12.6: Completed+Success with null runStartedAt returns em dash', () => {
+  it('Completed+Success with null runStartedAt returns em dash', () => {
     const run = createMockRun({
       status: 'Completed',
       conclusion: 'Success',

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import JobMeta from './JobMeta.svelte'
 
 describe('JobMeta', () => {
-  describe('run-cards.AC7.1: renders repo and branch with middle-dot separator', () => {
+  describe('renders repo and branch with middle-dot separator', () => {
     it('renders repo and branch with visible separator', () => {
       const { container } = render(JobMeta, {
         props: { repo: 'my-org/api', branch: 'main' },
@@ -15,7 +15,7 @@ describe('JobMeta', () => {
     })
   })
 
-  describe('run-cards.AC7.2: null branch renders repo only without separator', () => {
+  describe('null branch renders repo only without separator', () => {
     it('renders only repo when branch is null', () => {
       const { container } = render(JobMeta, {
         props: { repo: 'my-org/api', branch: null },
@@ -35,7 +35,7 @@ describe('JobMeta', () => {
     })
   })
 
-  describe('run-cards.AC7.3: long text uses text-overflow: ellipsis + white-space: nowrap + overflow: hidden', () => {
+  describe('long text uses text-overflow: ellipsis + white-space: nowrap + overflow: hidden', () => {
     it('includes truncate class for overflow handling', () => {
       const { container } = render(JobMeta, {
         props: { repo: 'my-org/api', branch: 'main' },
