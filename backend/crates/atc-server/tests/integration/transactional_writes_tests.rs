@@ -23,7 +23,6 @@ use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
-use std::sync::OnceLock;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
@@ -35,31 +34,22 @@ fn now_millis_for_test() -> i64 {
         .unwrap_or(0)
 }
 
-// Guard: PrometheusMetricLayer::pair() installed once per binary.
-// All tests in this file must be #[serial_test::serial].
-static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, axum::Router)> = OnceLock::new();
-
-fn prometheus_init() -> &'static (PrometheusMetricLayer<'static>, axum::Router) {
-    PROMETHEUS_INIT.get_or_init(atc_server::metrics::build)
-}
-
+/// Acquire the shared per-binary `PrometheusMetricLayer`, installing the test
+/// recorder via `common::PROMETHEUS_INIT` if it isn't already initialised.
+/// All integration modules share one process-global recorder; this routes
+/// through the same `OnceLock` as the rest so a second installer never
+/// attempts `set_global_recorder`.
 fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    prometheus_init().0.clone()
+    common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0
+        .clone()
 }
 
-/// GET /metrics from the side-port router and return the body as a String.
-async fn render_metrics() -> String {
-    let metrics_router = prometheus_init().1.clone();
-    let req = Request::builder()
-        .method("GET")
-        .uri("/metrics")
-        .body(Body::empty())
-        .unwrap();
-    let resp = metrics_router.oneshot(req).await.unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    String::from_utf8(bytes.to_vec()).unwrap()
+/// Render the current Prometheus exposition text via the shared handle.
+fn render_metrics() -> String {
+    common::PROMETHEUS_INIT.get_or_init(common::install_test_recorder);
+    common::render_metrics()
 }
 
 /// Parse `atc_pg_write_failures_total{kind="<kind>"}` from the Prometheus
@@ -375,7 +365,7 @@ async fn parity_metric_increments_when_pg_rejects() {
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
     // Read the baseline counter value before this test runs.
-    let before = render_metrics().await;
+    let before = render_metrics();
     let baseline_parity = parse_counter_value(&before, "parity");
 
     // 1. Insert run through normal flow (Queued)
@@ -425,7 +415,7 @@ async fn parity_metric_increments_when_pg_rejects() {
     );
 
     // Parity counter must have incremented by exactly 1
-    let after = render_metrics().await;
+    let after = render_metrics();
     let after_parity = parse_counter_value(&after, "parity");
     assert_eq!(
         after_parity,
@@ -449,7 +439,7 @@ async fn transient_metric_increments_on_db_outage() {
     let (app, state, _rx) = build_app_with_pg(pool.clone());
 
     // Read the baseline counter value before this test runs.
-    let before = render_metrics().await;
+    let before = render_metrics();
     let baseline_transient = parse_counter_value(&before, "transient");
 
     // Close the pool BEFORE firing any webhook (simulate outage from the start).
@@ -479,7 +469,7 @@ async fn transient_metric_increments_on_db_outage() {
     );
 
     // Transient counter must have incremented by exactly 1
-    let after = render_metrics().await;
+    let after = render_metrics();
     let after_transient = parse_counter_value(&after, "transient");
     assert_eq!(
         after_transient,
@@ -519,7 +509,7 @@ async fn pg_write_failure_counters_are_registered() {
     .await;
 
     // The counter must appear in /metrics now that it has been incremented.
-    let metrics_body = render_metrics().await;
+    let metrics_body = render_metrics();
     assert!(
         metrics_body.contains("atc_pg_write_failures_total"),
         "counter must appear in /metrics output after parity failure; got:\n{metrics_body}"
@@ -660,7 +650,7 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
 
     // Capture baseline.
     atc_server::metrics::register_pg_write_counters();
-    let before = render_metrics().await;
+    let before = render_metrics();
     let baseline_notify_run = parse_notify_counter(&before, "run");
     let baseline_parity = parse_counter_value(&before, "parity");
 
@@ -678,7 +668,7 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
     );
     assert!(json["seq"].is_number(), "accepted response includes seq");
 
-    let after_success = render_metrics().await;
+    let after_success = render_metrics();
     assert_eq!(
         parse_notify_counter(&after_success, "run"),
         baseline_notify_run + 1,
@@ -701,7 +691,7 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
     assert_eq!(status, StatusCode::OK, "parity rejection returns 200");
     assert_eq!(json["status"], "rejected", "parity rejection body");
 
-    let after_parity = render_metrics().await;
+    let after_parity = render_metrics();
     assert_eq!(
         parse_counter_value(&after_parity, "parity"),
         baseline_parity + 1,
