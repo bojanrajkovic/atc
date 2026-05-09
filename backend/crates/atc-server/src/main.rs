@@ -132,9 +132,6 @@ async fn main() {
         Duration::from_secs(3600),
     ));
 
-    // Start the background eviction task. Runs every 60 seconds.
-    let eviction_handle = state_machine.start_eviction_task(Duration::from_secs(60));
-
     // Create the broadcast channel for pushing domain events to WebSocket clients.
     // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
     // and should re-fetch via GET /v1/state.
@@ -190,6 +187,11 @@ async fn main() {
     // Create a shared cancellation token for both servers and background tasks.
     // Must be created before the listener init so we can pass shutdown.clone() to the tasks.
     let shutdown = CancellationToken::new();
+
+    // Start the background eviction task. Runs every 60 seconds.
+    let eviction_handle = app_state
+        .state_machine
+        .start_eviction_task(Duration::from_secs(60), shutdown.clone());
 
     // If a PG pool is configured, initialize the listener and drain background tasks.
     let (listener_handle, drain_handle) = if let Some(pool) = pg_pool_for_listener {
