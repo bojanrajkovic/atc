@@ -83,6 +83,6 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 
 ## Files
 
-- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building); includes `helm` job with 2×5 kubeconform matrix and `helm-result` gate. Frontend artifact upload includes `coverage/lcov.info` and `test-results/frame-budget-trace.json` (the Tier 2 informational frame-budget trace produced by `e2e/frame-budget.test.ts`).
+- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building); includes `helm` job with 2×5 kubeconform matrix and `helm-result` gate. Frontend artifact upload includes `coverage/vitest/lcov.info`, `coverage/e2e/lcov.info`, and `test-results/frame-budget-trace.json` (the Tier 2 informational frame-budget trace produced by `e2e/frame-budget.test.ts`). Codecov receives both lcov files in a single upload and merges them server-side by `SF:` path — see `docs/architecture/frontend-app.md` § Coverage Pipeline for the merge contract.
 - `.github/workflows/zizmor.yml` — Workflow security linter
 - `scripts/doc-mapping.sh` — Maps workflow file changes to this architecture doc

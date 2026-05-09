@@ -616,9 +616,21 @@ Testing is split into four tiers: unit (Vitest jsdom), browser-mode (Vitest Play
 - Run in headless Chromium with dev server auto-start
 - Playwright starts `pnpm dev` automatically, reuses existing server in local mode
 - `fullyParallel: true` so tests inside a single file are spread across workers, not just files
-- `workers: process.env.CI ? '75%' : undefined` — Playwright's CI default is `workers: 1`, which would silently neutralise `fullyParallel`; setting an explicit fraction in CI restores parallelism while leaving headroom for the shared Vite dev server
+- `workers: process.env.CI ? 2 : undefined` — Playwright's CI default is `workers: 1`, which would silently neutralise `fullyParallel`; pinning to 2 in CI restores parallelism while leaving headroom for the shared Vite dev server. 3 workers tripped a global-stub race in `run-detail-panel.test.ts` (a `window.__scrollIntoViewCalled` global clobbered by a sibling worker), so 2 is the empirically-safe ceiling.
 - Location: `e2e/*.test.ts`
 - Run with: `pnpm test:e2e` or `playwright test`
+
+### Coverage Pipeline
+
+Coverage is collected from all three modalities and merged server-side by Codecov:
+
+- **Vitest unit + browser** — `@vitest/coverage-v8` collects across both projects in a single `vitest run --coverage` invocation; output lands at `frontend/coverage/vitest/lcov.info` (and `coverage-final.json` for raw v8). Coverage config lives at the workspace level in `vitest.config.ts` — per-project `coverage` blocks are ignored.
+- **Playwright E2E** — `@bgotink/playwright-coverage` reporter captures V8 via Chromium's CDP `Profiler.startPreciseCoverage` per `Page` and writes istanbul-format lcov to `frontend/coverage/e2e/lcov.info`. Tests must import `test`/`expect` from `e2e/lib/fixtures.ts` (not `@playwright/test`) for the capture hook to fire.
+- **Merge** — CI uploads both lcov files to Codecov in a single `codecov/codecov-action` invocation (`files: ...vitest/lcov.info,...e2e/lcov.info`); Codecov merges them server-side by `SF:` path. Files exercised by both modalities report a union of covered lines; files exercised only by E2E (e.g., `CommandPalette.svelte`, where Bits UI Command.Dialog mounting is brittle in jsdom) appear at their E2E ratio rather than as phantom 0%.
+
+**Path normalization gotcha.** Vite + svelte's served sourcemaps reduce the `sources` field to a basename (`CommandPalette.svelte`) rather than a project-relative path (`src/lib/components/CommandPalette.svelte`). Without intervention, the e2e lcov's `SF:` lines wouldn't match Vitest's. `playwright.config.ts` builds a basename → absolute-path index by walking `src/` once at config-load time and uses `rewritePath` to remap entries before istanbul writes the lcov. Unique component basenames (enforced by the project's "one component per file" naming) keep the lookup unambiguous; if a future commit introduces a basename collision, the lookup picks the first match and coverage attribution becomes non-deterministic — fix the collision rather than enriching the index.
+
+`@bgotink/playwright-coverage`'s `exclude` option only matches against the basename-only relativePath (see `node_modules/@bgotink/playwright-coverage/lib/data.js`), so glob patterns like `src/lib/components/ui/**` don't apply. The exclude list in `playwright.config.ts` is therefore empty; vendored shadcn-svelte components and other paths under `src/` get included in the e2e lcov when E2E tests reach them — which is fine, because Codecov's view aggregates across modalities and Vitest still excludes them from its own report. Non-source basenames (Vite chunks, pre-bundled deps, runtime modules) remain in the e2e lcov as `SF:chunk-….js?v=…` lines but Codecov drops paths it can't match against the repo.
 
 ## Files
 

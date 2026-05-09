@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-05-08 (#66 closed: nine legacy `atc_pg_*` counters now carry seven-element interpretation blocks and § Metrics hoisted from `backend-server.md` to `docs/architecture/metrics.md`; state-externalization rollout follow-ups now down to #64, #65, #67; #50 closed — PersistentStore trait relocated to atc-server, ADR 0005)
+Last verified: 2026-05-08 (#42 closed: frontend coverage now merges Vitest + Playwright E2E into a single Codecov report; #66 closed: nine legacy `atc_pg_*` counters now carry seven-element interpretation blocks and § Metrics hoisted from `backend-server.md` to `docs/architecture/metrics.md`; state-externalization rollout follow-ups now down to #64, #65, #67; #50 closed — PersistentStore trait relocated to atc-server, ADR 0005)
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 

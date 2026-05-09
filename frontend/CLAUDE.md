@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-05-05 (Phase 3a/3b: snapshot cursor renamed to `lastSeq`, buffer filter inverted to `seq > lastSeq`, runner pools `$derived.by(() => computePoolStats(runStore.jobs))` — no `loadPools`, no `SeqEvent.poolStatsAfter` sidecar)
+Last verified: 2026-05-08 (#42 closed: Playwright E2E coverage now merges into the Codecov frontend report via `@bgotink/playwright-coverage`; Vitest output relocated to `coverage/vitest/lcov.info`, e2e output at `coverage/e2e/lcov.info`, both uploaded together; `CommandPalette.svelte` exclusion removed from `vitest.config.ts`)
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -17,10 +17,11 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `src/main.ts` | Vite entry point; exports stores to `window.__stores` bridge for E2E test harness |
 | `src/vite-env.d.ts` | Window type augmentation for `__stores` bridge (runStore, connectionStore, runnerStore, uiStore, paletteStore, poolKey) |
 | `vite.config.ts` | Build config with Tailwind v4 and Svelte plugins |
-| `vitest.config.ts` | Vitest workspace config (delegates to unit and browser projects) |
+| `vitest.config.ts` | Vitest workspace config (delegates to unit and browser projects); workspace-level coverage block writes to `coverage/vitest/` with v8 reporters `['json', 'lcov']` |
 | `vitest.config.unit.ts` | Vitest unit project (jsdom, `*.test.ts`) |
 | `vitest.config.browser.ts` | Vitest browser project (Playwright chromium, `*.browser.test.ts`) |
-| `playwright.config.ts` | Playwright E2E test configuration with webServer auto-start |
+| `playwright.config.ts` | Playwright E2E test configuration with webServer auto-start; registers `@bgotink/playwright-coverage` reporter that writes V8 coverage to `coverage/e2e/lcov.info` and uses a basename-resolution `rewritePath` to align `SF:` paths with Vitest output |
+| `e2e/lib/fixtures.ts` | Re-exports `test`/`expect` from `@bgotink/playwright-coverage` so the V8 capture hook fires; all e2e tests import from here, not `@playwright/test` |
 | `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts`, `palette.svelte.ts` |
 | `src/lib/stores/runners.svelte.ts` | RunnerStore — `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))` (Phase 3b). Module also exports `computePoolStats(jobs: Job[]): RunnerPoolStats[]` as a pure function (skip Waiting/Completed; group by sorted `JSON.stringify(labels)`; bigint-aware `groupId === 0n` for `isElastic`). No `loadPools`, no `clear` |
 | `src/lib/stores/runs.svelte.ts` | RunStore — adds `jobs: $derived.by<Job[]>` flat view across `jobsByRun.values()` (Phase 3b) used as the single dependency for `runnerStore.pools` |

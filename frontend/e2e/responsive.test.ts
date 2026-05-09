@@ -1,6 +1,7 @@
-import { expect, type Page, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
 import type { WorkflowRun } from '../src/lib/types/generated/WorkflowRun'
+import { expect, test } from './lib/fixtures'
 import { bigintReplacer, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /**

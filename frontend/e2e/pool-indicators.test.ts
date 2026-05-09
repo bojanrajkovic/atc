@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test'
 import type { JobEventEnvelope } from '../src/lib/types/generated/JobEventEnvelope'
+import { expect, test } from './lib/fixtures'
 import { makeJobSeqEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 test.describe('Pool indicators update live', () => {

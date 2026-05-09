@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './lib/fixtures'
 
 test.describe('App shell', () => {
   test('renders TopBar with logo and settings', async ({ page }) => {
