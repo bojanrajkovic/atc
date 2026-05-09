@@ -53,20 +53,36 @@ pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: 
 /// Log an unexpected early exit of a spawned axum serve task. Used by the
 /// trigger select arm: if a serve resolves before any signal, we log and
 /// fire `shutdown.cancel()` so the rest of the orchestration proceeds.
-fn log_early_serve_exit(serve: &'static str, res: Result<io::Result<()>, JoinError>) {
+///
+/// Returns `true` if the exit represents a real failure (the task ended with
+/// an error or panicked), `false` if it ended cleanly. Caller uses the value
+/// to decide whether to propagate a non-zero exit code. A clean exit before
+/// any signal is unusual but not a fault — it's most often the harmless
+/// "serve task races signal handler" case during SIGTERM where graceful
+/// shutdown completes before our `select!` polls the cancel arm.
+fn log_early_serve_exit(serve: &'static str, res: Result<io::Result<()>, JoinError>) -> bool {
     match res {
-        Ok(Ok(())) => tracing::warn!(
-            serve,
-            "serve exited cleanly before shutdown signal; triggering shutdown"
-        ),
-        Ok(Err(e)) => tracing::error!(
-            serve, error = %e,
-            "serve exited with error before shutdown signal; triggering shutdown"
-        ),
-        Err(e) => tracing::error!(
-            serve, error = %e,
-            "serve task panicked or was cancelled before shutdown signal; triggering shutdown"
-        ),
+        Ok(Ok(())) => {
+            tracing::warn!(
+                serve,
+                "serve exited cleanly before shutdown signal; triggering shutdown"
+            );
+            false
+        }
+        Ok(Err(e)) => {
+            tracing::error!(
+                serve, error = %e,
+                "serve exited with error before shutdown signal; triggering shutdown"
+            );
+            true
+        }
+        Err(e) => {
+            tracing::error!(
+                serve, error = %e,
+                "serve task panicked or was cancelled before shutdown signal; triggering shutdown"
+            );
+            true
+        }
     }
 }
 
@@ -139,21 +155,26 @@ pub async fn run_shutdown_orchestration(
     let mut metrics_serve_task = Some(metrics_serve_task);
     let mut serve_failure = false;
 
+    // `biased;` prefers `shutdown.cancelled()` over the serve-task arms when
+    // multiple are ready, so a SIGTERM-driven shutdown that races serve-task
+    // resolution is consistently classified as a normal shutdown rather than
+    // an early serve exit. Even with biased ordering, if a serve arm wins the
+    // select, `log_early_serve_exit` returns `false` for clean Ok(Ok(()))
+    // exits (no false-positive failure exits).
     tokio::select! {
+        biased;
         () = shutdown.cancelled() => {
             // Normal path: signal handler fired shutdown.cancel().
         }
         res = main_serve_task.as_mut().expect("just constructed as Some") => {
-            log_early_serve_exit("main", res);
+            serve_failure = log_early_serve_exit("main", res);
             main_serve_task = None;
             shutdown.cancel();
-            serve_failure = true;
         }
         res = metrics_serve_task.as_mut().expect("just constructed as Some") => {
-            log_early_serve_exit("metrics", res);
+            serve_failure = log_early_serve_exit("metrics", res);
             metrics_serve_task = None;
             shutdown.cancel();
-            serve_failure = true;
         }
     }
 
@@ -283,6 +304,52 @@ mod tests {
         assert!(
             serve_failure,
             "orchestration must return true (serve_failure) so main exits with non-zero status"
+        );
+    }
+
+    /// A serve task that exits cleanly with `Ok(())` before any signal must
+    /// NOT mark `serve_failure = true`. This is the SIGTERM-race case where
+    /// `axum::serve(...).with_graceful_shutdown(...)` resolves cleanly the
+    /// instant the signal handler cancels the shutdown token; the trigger
+    /// select might pick the serve arm before the cancel arm, but the exit
+    /// is not a failure.
+    #[tokio::test]
+    async fn clean_serve_exit_before_signal_does_not_mark_failure() {
+        let shutdown = CancellationToken::new();
+        let ws_tracker = TaskTracker::new();
+
+        // Main serve completes cleanly with Ok(()) immediately.
+        let main_serve_task: JoinHandle<io::Result<()>> = tokio::spawn(async { Ok(()) });
+        // Metrics serve hangs forever — bounded by SHUTDOWN_TIMEOUT_SERVES.
+        let metrics_serve_task: JoinHandle<io::Result<()>> =
+            tokio::spawn(async { std::future::pending::<io::Result<()>>().await });
+
+        let eviction_handle: JoinHandle<()> = tokio::spawn(async {});
+        let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(15),
+            run_shutdown_orchestration(
+                shutdown.clone(),
+                ws_tracker,
+                main_serve_task,
+                metrics_serve_task,
+                None,
+                None,
+                eviction_handle,
+                metrics_handle,
+            ),
+        )
+        .await;
+
+        let serve_failure = result.expect("orchestration must not hang");
+        assert!(
+            !serve_failure,
+            "clean Ok(()) serve exit before signal must NOT mark serve_failure"
+        );
+        assert!(
+            shutdown.is_cancelled(),
+            "orchestration still cancels shutdown to drain remaining tasks"
         );
     }
 
