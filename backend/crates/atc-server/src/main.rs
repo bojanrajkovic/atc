@@ -182,11 +182,13 @@ async fn main() {
     metrics::register_build_info();
     metrics::register_pg_write_counters();
     metrics::register_listener_metrics();
-    metrics::spawn_process_collector();
 
     // Create a shared cancellation token for both servers and background tasks.
     // Must be created before the listener init so we can pass shutdown.clone() to the tasks.
     let shutdown = CancellationToken::new();
+
+    // Spawn the process metrics collector. Returns a handle for cooperative shutdown in Phase 4.
+    let _metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 
     // Start the background eviction task. Runs every 60 seconds.
     let eviction_handle = app_state

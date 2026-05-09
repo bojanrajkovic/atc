@@ -28,8 +28,9 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     // Step 2: Register build info with real VERGEN_* labels from build.rs
     atc_server::metrics::register_build_info();
 
-    // Step 3: Spawn process collector task
-    atc_server::metrics::spawn_process_collector();
+    // Step 3: Spawn process collector task (token is dropped after test; task exits at next tick)
+    let _collector_handle =
+        atc_server::metrics::spawn_process_collector(tokio_util::sync::CancellationToken::new());
 
     // Step 4: Create app state
     let state_machine = Arc::new(RunStateMachine::new(

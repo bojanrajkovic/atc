@@ -5,6 +5,8 @@ use axum::{Router, routing::get};
 use axum_prometheus::PrometheusMetricLayer;
 use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use axum_prometheus::utils::SECONDS_DURATION_BUCKETS;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// Prometheus text exposition format Content-Type.
 ///
@@ -224,15 +226,51 @@ pub fn register_listener_metrics() {
 /// Describe process metrics and spawn a background collector that ticks every
 /// 10 seconds.
 ///
+/// Returns a [`JoinHandle`] that resolves when the task exits cooperatively
+/// after `cancel` is cancelled. The task exits between ticks, not mid-collect:
+/// `Collector::collect()` is a synchronous function that calls OS syscalls or
+/// reads from `/proc` (on Linux), so it blocks the tokio worker for its
+/// duration. Cancellation is checked only at the `ticker.tick().await` point;
+/// the cancel arm fires at the next tick boundary after `cancel` is signalled.
+/// This is acceptable: a single collect call typically completes in
+/// microseconds, so shutdown latency attributable to mid-collect blocking is
+/// negligible in practice.
+///
 /// Must be called after `build()` (which installs the global recorder).
-pub fn spawn_process_collector() {
+pub fn spawn_process_collector(cancel: CancellationToken) -> JoinHandle<()> {
     let collector = metrics_process::Collector::default();
     collector.describe();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut ticker = tokio::time::interval(Duration::from_secs(10));
         loop {
-            interval.tick().await;
-            collector.collect();
+            tokio::select! {
+                () = cancel.cancelled() => break,
+                _ = ticker.tick() => collector.collect(),
+            }
         }
-    });
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::time::timeout;
+    use tokio_util::sync::CancellationToken;
+
+    use super::spawn_process_collector;
+
+    #[tokio::test]
+    async fn process_collector_exits_cooperatively_on_cancel() {
+        let cancel = CancellationToken::new();
+        let handle = spawn_process_collector(cancel.clone());
+
+        cancel.cancel();
+
+        let result = timeout(Duration::from_millis(200), handle).await;
+        assert!(
+            result.is_ok(),
+            "process collector task did not exit within 200 ms after cancellation"
+        );
+    }
 }
