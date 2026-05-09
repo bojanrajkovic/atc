@@ -85,6 +85,29 @@ pub fn ensure_recorder_installed() {
     PROMETHEUS_INIT.get_or_init(install_test_recorder);
 }
 
+/// Build a metrics-side-port `axum::Router` that exposes `/metrics` against
+/// the shared test [`PrometheusHandle`]. Mirrors `atc_server::metrics::build()`'s
+/// router construction without re-attempting the global recorder install
+/// (which `install_test_recorder` already did via `PROMETHEUS_INIT`). Tests
+/// that need the metrics router should call this helper instead of
+/// `metrics::build()` directly to avoid `SetRecorderError` panics now that
+/// all integration tests share a single binary.
+pub fn build_metrics_router() -> axum::Router {
+    let handle = PROMETHEUS_INIT.get_or_init(install_test_recorder).1.clone();
+    axum::Router::new().route(
+        "/metrics",
+        axum::routing::get(move || async move {
+            (
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )],
+                handle.render(),
+            )
+        }),
+    )
+}
+
 /// Locate an unlabeled metric line in a Prometheus exposition body and return
 /// the value as a string slice.
 ///
