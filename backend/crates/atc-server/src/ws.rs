@@ -24,35 +24,44 @@ pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let rx = state.webhook_tx.subscribe();
-    let ws_close = state.ws_close.clone();
+    let shutdown = state.shutdown.clone();
     ws.on_upgrade(move |socket| {
         state
             .ws_tracker
-            .track_future(handle_socket(socket, rx, ws_close))
+            .track_future(handle_socket(socket, rx, shutdown))
     })
 }
 
 /// Per-connection task: forward broadcast events as JSON text frames.
 ///
-/// Uses `tokio::select! { biased; … }` to prioritise arms top-down:
-/// 1. `rx.recv()` — drain any buffered broadcast events first.
-/// 2. `socket.recv()` — detect client-initiated close or errors promptly.
-/// 3. `ws_close.cancelled()` — send `Close(1001 "going away")` on shutdown.
+/// On `shutdown.cancelled()`, emits `Close(1001 "going away")` and returns.
+/// Catch-up after reconnect is the frontend's responsibility via `/v1/state`
+/// on a healthy replica (see `docs/architecture/backend-server.md` §
+/// "Supervision and Shutdown").
 ///
-/// The biased order ensures buffered events are delivered to the client
-/// before the cancellation arm fires, preserving the event stream up to the
-/// shutdown signal. The close send is best-effort (`let _ = ...`): if the
-/// client has already disconnected, the attempt silently fails.
+/// `tokio::select! { biased; … }` evaluates arms top-down with
+/// `shutdown.cancelled()` first so the cancel signal is preferred over any
+/// concurrently-ready arm, keeping shutdown predictable for tests and
+/// operators. `main` keeps an `Arc<AppState>` alive through orchestration, so
+/// the broadcast channel stays open through the cancel-fire window — the
+/// `RecvError::Closed` arm is only reached in genuinely abnormal scenarios.
 async fn handle_socket(
     mut socket: WebSocket,
     mut rx: broadcast::Receiver<SeqEvent>,
-    ws_close: CancellationToken,
+    shutdown: CancellationToken,
 ) {
     tracing::info!("WebSocket client connected");
 
     let reason = loop {
         tokio::select! {
             biased;
+            () = shutdown.cancelled() => {
+                let _ = socket.send(Message::Close(Some(CloseFrame {
+                    code: 1001,
+                    reason: "going away".into(),
+                }))).await;
+                break "shutdown";
+            }
             result = rx.recv() => {
                 match result {
                     Ok(seq_event) => {
@@ -71,13 +80,9 @@ async fn handle_socket(
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // The subscriber missed `n` events because the
                         // bounded broadcast channel (capacity 256) advanced
-                        // past their cursor. Continuing on the same receiver
-                        // would deliver subsequent events but leave the gap
-                        // permanently filled in the client's view. Close the
-                        // socket instead — the frontend's reconnect handler
-                        // will fetch /v1/state, which returns a fresh
-                        // snapshot keyed by `broadcast_watermark` and
-                        // re-establishes the seq cursor.
+                        // past their cursor. Close the socket — the frontend's
+                        // reconnect handler will fetch /v1/state and
+                        // re-establish the seq cursor from the snapshot.
                         tracing::warn!(
                             missed = n,
                             "WebSocket client lagging; closing to force re-snapshot",
@@ -99,13 +104,6 @@ async fn handle_socket(
                         break "read error";
                     }
                 }
-            }
-            () = ws_close.cancelled() => {
-                let _ = socket.send(Message::Close(Some(CloseFrame {
-                    code: 1001,
-                    reason: "going away".into(),
-                }))).await;
-                break "shutdown";
             }
         }
     };

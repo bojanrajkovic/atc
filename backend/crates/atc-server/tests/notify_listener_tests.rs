@@ -163,7 +163,7 @@ async fn no_notify_in_memory_mode() {
         })),
         broadcast_watermark: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
     let router = atc_server::routes::api_routes(layer)

@@ -57,7 +57,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
 
@@ -347,8 +347,8 @@ async fn idle_client_receives_close_on_cancel() {
     // Give the handler time to subscribe and enter the select loop before we cancel.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Cancel the phase-2 WS-close token.
-    state.ws_close.cancel();
+    // Fire the shutdown token; WS handler should send Close(1001) and exit.
+    state.shutdown.cancel();
 
     // The handler should send Close(1001) promptly. Assert within 200 ms.
     let frame = tokio::time::timeout(Duration::from_millis(200), async {
@@ -370,94 +370,5 @@ async fn idle_client_receives_close_on_cancel() {
         1001,
         "close code should be 1001 (Going Away), got {:?}",
         close.code
-    );
-}
-
-/// Buffered broadcast events are delivered to the WS client BEFORE the Close
-/// frame when the broadcast sender is held alive past cancellation.
-///
-/// This verifies the `biased;` ordering in the select loop: the `rx.recv()`
-/// arm (first) wins over `ws_close.cancelled()` (last) while events are
-/// buffered, so the client sees all N text events before the Close(1001).
-///
-/// The broadcast sender is kept alive for the duration of the test so
-/// `RecvError::Closed` cannot preempt the cancel arm — only the `biased`
-/// ordering determines which arm fires first.
-#[tokio::test]
-#[serial_test::serial]
-async fn buffered_events_delivered_before_close() {
-    const EVENT_COUNT: usize = 5;
-
-    let (server_addr, state) = test_setup(256).await;
-
-    let ws_url = format!("ws://{}/v1/ws", server_addr);
-    let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
-        .await
-        .expect("WebSocket connection failed");
-
-    // Wait for the handler to subscribe to the broadcast channel.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Parse a valid WebhookEvent from a fixture so we can build real SeqEvents.
-    let fixture = common::fixture_workflow_run_requested();
-    let parsed = atc_github::parse_webhook("workflow_run", &fixture).expect("fixture parse failed");
-    let event = match parsed {
-        atc_github::ParseResult::Parsed(boxed) => *boxed,
-        other => panic!("unexpected parse result: {:?}", other),
-    };
-
-    // Send EVENT_COUNT events into the broadcast channel WITHOUT the WS client
-    // reading them. They sit in the channel's ring buffer.
-    for i in 0..EVENT_COUNT {
-        state
-            .webhook_tx
-            .send(SeqEvent {
-                seq: (i as u64) + 1,
-                event: event.clone(),
-            })
-            .expect("send should succeed with a live subscriber");
-    }
-
-    // Now cancel. Both rx.recv() and ws_close.cancelled() will be Ready on
-    // the handler's next select iteration. biased; ensures rx.recv() wins
-    // until the buffer is drained, then the cancel arm fires.
-    state.ws_close.cancel();
-
-    // Collect all frames until we see the Close frame.
-    let mut text_count = 0usize;
-    let mut saw_close = false;
-    let result = tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            match socket.next().await {
-                Some(Ok(Message::Text(_))) => {
-                    text_count += 1;
-                }
-                Some(Ok(Message::Close(frame))) => {
-                    saw_close = true;
-                    return frame;
-                }
-                Some(Ok(_)) => {}
-                Some(Err(e)) => panic!("WebSocket error: {e}"),
-                None => panic!("connection dropped before Close frame"),
-            }
-        }
-    })
-    .await
-    .expect("timed out waiting for Close frame");
-
-    assert!(
-        saw_close,
-        "should have received a Close frame after the buffered events"
-    );
-    assert_eq!(
-        text_count, EVENT_COUNT,
-        "all {EVENT_COUNT} buffered events should be delivered before the Close frame, got {text_count}"
-    );
-
-    let close = result.expect("Close frame should carry a CloseFrame payload");
-    assert_eq!(
-        u16::from(close.code),
-        1001,
-        "close code should be 1001 (Going Away)"
     );
 }

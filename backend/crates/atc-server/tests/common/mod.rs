@@ -164,7 +164,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer.clone())
@@ -197,7 +197,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer.clone())
@@ -436,7 +436,7 @@ async fn build_app_inner(
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
 

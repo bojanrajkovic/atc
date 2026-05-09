@@ -66,8 +66,6 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         Duration::from_secs(3600),
     ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    // Keepalive clone: see run_shutdown_orchestration for why this is required.
-    let webhook_tx_keepalive = webhook_tx.clone();
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
     let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
     let broadcast_watermark = Arc::new(AtomicI64::new(0));
@@ -86,7 +84,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
     let persist =
         Arc::new(PgStore::new(pool.clone())) as Arc<dyn atc_server::persist::PersistentStore>;
 
-    let ws_close = CancellationToken::new();
+    let shutdown = CancellationToken::new();
     let ws_tracker = TaskTracker::new();
 
     let state = Arc::new(AppState {
@@ -99,11 +97,10 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         last_drain_pass_at,
         broadcast_watermark: broadcast_watermark.clone(),
         persist,
-        ws_close: ws_close.clone(),
+        shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
     });
 
-    let shutdown = CancellationToken::new();
     let eviction_handle = state
         .state_machine
         .start_eviction_task(Duration::from_secs(60), shutdown.clone());
@@ -137,8 +134,11 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         None,
     );
 
+    // Mirror main.rs: clone the Arc into the router so `state` itself stays
+    // in this scope, keeping AppState's webhook_tx clone alive through
+    // shutdown orchestration.
     let app = routes::api_routes(layer)
-        .with_state(state)
+        .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
     // Bind to an ephemeral port so tests don't conflict.
@@ -165,12 +165,9 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
     let main_serve_task = tokio::spawn(main_serve.into_future());
     let metrics_serve_task = tokio::spawn(metrics_serve.into_future());
 
-    let shutdown_clone = shutdown.clone();
     let orchestration_handle = tokio::spawn(run_shutdown_orchestration(
-        shutdown_clone,
-        ws_close,
+        shutdown.clone(),
         ws_tracker,
-        webhook_tx_keepalive,
         main_serve_task,
         metrics_serve_task,
         Some(drain_handle),

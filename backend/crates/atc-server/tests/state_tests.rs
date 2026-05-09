@@ -42,7 +42,7 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
 

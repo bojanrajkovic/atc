@@ -1,22 +1,25 @@
-//! Graceful shutdown orchestration for ATC's two-phase cooperative shutdown.
+//! Cooperative shutdown orchestration.
 //!
-//! Phase 1: `shutdown` token cancels axum serves, listener, drain, eviction,
-//! and process-metrics tasks. The drain handle is awaited (bounded) to ensure
-//! the current outbox pass finishes before proceeding to phase 2.
+//! On trigger (signal handler OR an unexpected serve-task exit), the single
+//! `shutdown` token cancels every supervised surface — axum × 2
+//! (`with_graceful_shutdown`), listener, drain, eviction, process metrics
+//! collector, and every WS handler. The orchestration then waits for tracked
+//! WS handlers to flush `Close(1001 "going away")` frames, joins the spawned
+//! serve tasks, and joins the remaining background-task handles, each within
+//! a bounded timeout.
 //!
-//! Phase 2: `ws_close` token fires, causing WS handlers to send
-//! `Close(1001 "going away")`. The TaskTracker drains (bounded). Then the
-//! spawned serve tasks and remaining background handles are joined.
+//! Catch-up after a client reconnects is handled by `/v1/state` snapshot on a
+//! healthy replica (see `docs/architecture/backend-server.md`); the dying
+//! replica is not responsible for re-broadcasting unprocessed outbox rows, so
+//! shutdown does not need to wait for the drain task to finish before closing
+//! WS handlers.
 
 use std::io;
 use std::time::Duration;
 
-use tokio::sync::broadcast;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-
-use crate::state::SeqEvent;
 
 /// Per-task timeout budgets. Aggregate worst-case shutdown: ~13 seconds.
 /// K8s `terminationGracePeriodSeconds` defaults to 30; well within budget.
@@ -47,37 +50,63 @@ pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: 
     }
 }
 
-/// Orchestrates the two-phase cooperative shutdown sequence.
+/// Log an unexpected early exit of a spawned axum serve task. Used by the
+/// trigger select arm: if a serve resolves before any signal, we log and
+/// fire `shutdown.cancel()` so the rest of the orchestration proceeds.
+fn log_early_serve_exit(serve: &'static str, res: Result<io::Result<()>, JoinError>) {
+    match res {
+        Ok(Ok(())) => tracing::warn!(
+            serve,
+            "serve exited cleanly before shutdown signal; triggering shutdown"
+        ),
+        Ok(Err(e)) => tracing::error!(
+            serve, error = %e,
+            "serve exited with error before shutdown signal; triggering shutdown"
+        ),
+        Err(e) => tracing::error!(
+            serve, error = %e,
+            "serve task panicked or was cancelled before shutdown signal; triggering shutdown"
+        ),
+    }
+}
+
+/// Await a serve task that may or may not still be running. `None` means the
+/// serve already resolved in the trigger select; `Some` is awaited and any
+/// error is logged.
+async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io::Result<()>>>) {
+    if let Some(handle) = handle {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!(serve, error = %e, "serve ended with error"),
+            Err(e) => tracing::error!(serve, error = %e, "serve task ended with error"),
+        }
+    }
+}
+
+/// Orchestrates the cooperative shutdown sequence.
 ///
-/// **Phase 1** (begins on either of two triggers):
+/// **Trigger** (begins on either of two events):
 /// - The signal handler cancels `shutdown` (SIGTERM / SIGINT path), OR
 /// - One of the spawned serve tasks exits unexpectedly before any signal
 ///   arrives (e.g., an accept-loop failure). In that case we cancel
-///   `shutdown` ourselves so the remaining listener / drain / eviction /
-///   metrics tasks shut down cooperatively rather than getting orphaned.
+///   `shutdown` ourselves so the remaining tasks shut down cooperatively
+///   rather than getting orphaned.
 ///
-/// Once phase 1 is triggered:
-/// - The drain handle is awaited (bounded by `SHUTDOWN_TIMEOUT_DRAIN`) to let
-///   the current outbox pass finish before WS handlers close.
+/// Once `shutdown` is cancelled, every supervised surface — axum × 2,
+/// listener, drain, eviction, process metrics collector, and every WS
+/// handler — observes the same token and exits at its own next opportunity.
+/// The orchestration:
 ///
-/// **Phase 2:**
-/// - `ws_close.cancel()` fires, causing WS handlers to send `Close(1001)`.
-/// - `ws_tracker.wait()` (bounded) drains the in-flight WS task count.
-/// - Spawned serve tasks are joined (bounded).
-/// - Remaining background handles are joined (bounded).
+/// 1. Wait for the trigger.
+/// 2. Wait for tracked WS handlers to drain (bounded by `SHUTDOWN_TIMEOUT_WS`).
+/// 3. Join the spawned serve tasks (bounded by `SHUTDOWN_TIMEOUT_SERVES`).
+/// 4. Join drain / listener / eviction / metrics handles (each bounded).
 ///
 /// # Parameters
-/// - `shutdown`: The phase-1 token. Awaited here so the caller can run this
-///   as a spawned task or directly in main.
-/// - `ws_close`: The phase-2 token. Cancelled by this function after drain.
+/// - `shutdown`: The shared cancellation token. Awaited here for the trigger;
+///   cloned into AppState and into every background-task spawn site by the caller.
 /// - `ws_tracker`: TaskTracker wrapping WS handler futures; `close()` +
 ///   `wait()` called by this function.
-/// - `webhook_tx_keepalive`: A broadcast sender clone held alive through step 5.
-///   When the axum serve future completes (at step 2), it drops `AppState` and
-///   its embedded `webhook_tx` sender. If the drain task's sender is also dropped
-///   at step 3, the broadcast channel closes and WS handlers exit via
-///   `RecvError::Closed` before `ws_close.cancel()` can fire at step 4. Keeping
-///   one sender alive through step 5 prevents premature channel closure.
 /// - `main_serve_task`: Spawned `JoinHandle<io::Result<()>>` from main axum serve.
 /// - `metrics_serve_task`: Spawned `JoinHandle<io::Result<()>>` from metrics serve.
 /// - `drain_handle`: `Some` in PG mode; `None` in in-memory mode.
@@ -87,9 +116,7 @@ pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_shutdown_orchestration(
     shutdown: CancellationToken,
-    ws_close: CancellationToken,
     ws_tracker: TaskTracker,
-    webhook_tx_keepalive: broadcast::Sender<SeqEvent>,
     main_serve_task: JoinHandle<io::Result<()>>,
     metrics_serve_task: JoinHandle<io::Result<()>>,
     drain_handle: Option<JoinHandle<()>>,
@@ -97,12 +124,9 @@ pub async fn run_shutdown_orchestration(
     eviction_handle: JoinHandle<()>,
     metrics_handle: JoinHandle<()>,
 ) {
-    // Step 2: Wait for the phase-1 shutdown signal, OR for either spawned
-    // serve task to exit unexpectedly (which would mean the HTTP service is
-    // already down). Without this select, the function would hang on
-    // `shutdown.cancelled()` indefinitely if a serve task failed early and no
-    // signal ever arrived. Wrap each serve in `Option` so step 6 doesn't
-    // double-await whichever one already resolved here.
+    // Step 1: Wait for the shutdown trigger — signal handler OR an early
+    // serve-task exit. Wrap each serve in `Option` so step 3 doesn't
+    // double-await whichever one (if any) already resolved here.
     let mut main_serve_task = Some(main_serve_task);
     let mut metrics_serve_task = Some(metrics_serve_task);
 
@@ -111,113 +135,54 @@ pub async fn run_shutdown_orchestration(
             // Normal path: signal handler fired shutdown.cancel().
         }
         res = main_serve_task.as_mut().expect("just constructed as Some") => {
-            match res {
-                Ok(Ok(())) => tracing::warn!(
-                    "main serve exited cleanly before shutdown signal; triggering shutdown"
-                ),
-                Ok(Err(e)) => tracing::error!(
-                    error = %e,
-                    "main serve exited with error before shutdown signal; triggering shutdown"
-                ),
-                Err(e) => tracing::error!(
-                    error = %e,
-                    "main serve task panicked or was cancelled before shutdown signal; triggering shutdown"
-                ),
-            }
+            log_early_serve_exit("main", res);
             main_serve_task = None;
             shutdown.cancel();
         }
         res = metrics_serve_task.as_mut().expect("just constructed as Some") => {
-            match res {
-                Ok(Ok(())) => tracing::warn!(
-                    "metrics serve exited cleanly before shutdown signal; triggering shutdown"
-                ),
-                Ok(Err(e)) => tracing::error!(
-                    error = %e,
-                    "metrics serve exited with error before shutdown signal; triggering shutdown"
-                ),
-                Err(e) => tracing::error!(
-                    error = %e,
-                    "metrics serve task panicked or was cancelled before shutdown signal; triggering shutdown"
-                ),
-            }
+            log_early_serve_exit("metrics", res);
             metrics_serve_task = None;
             shutdown.cancel();
         }
     }
 
-    // Step 3: Await the drain handle (PG mode only). The drain exits
-    // cooperatively after its current pass finishes. We bound the wait to
-    // SHUTDOWN_TIMEOUT_DRAIN; if it exceeds that, we abort and continue.
-    if let Some(handle) = drain_handle {
-        let abort = handle.abort_handle();
-        match tokio::time::timeout(SHUTDOWN_TIMEOUT_DRAIN, handle).await {
-            Ok(Ok(())) => tracing::info!("drain task exited cleanly"),
-            Ok(Err(e)) => tracing::error!(error = %e, "drain task ended with error"),
-            Err(_elapsed) => {
-                tracing::error!(
-                    task = "drain",
-                    "shutdown timeout exceeded; aborting (best-effort)"
-                );
-                abort.abort();
-            }
-        }
-    }
-
-    // Step 4: Fire phase 2 — WS handlers send Close(1001 "going away").
-    ws_close.cancel();
-
-    // Step 5: Wait for tracked WS tasks to drain. Drop the keepalive sender
-    // only after wait() returns — this ensures the broadcast channel stays open
-    // long enough for WS handlers to receive ws_close.cancel() rather than
-    // exiting via RecvError::Closed (which produces a TCP reset, not Close(1001)).
+    // Step 2: Wait for tracked WS handler tasks to flush Close(1001) frames
+    // and exit. Bounded so a stalled client can't delay shutdown indefinitely;
+    // anything still tracked when the timeout fires is reaped by runtime drop.
     ws_tracker.close();
-    match tokio::time::timeout(SHUTDOWN_TIMEOUT_WS, ws_tracker.wait()).await {
-        Ok(()) => tracing::info!("ws tracker drained cleanly"),
-        Err(_elapsed) => tracing::error!(
+    if tokio::time::timeout(SHUTDOWN_TIMEOUT_WS, ws_tracker.wait())
+        .await
+        .is_err()
+    {
+        tracing::error!(
             task = "ws_tracker",
             "shutdown timeout exceeded; runtime drop will kill remaining handlers"
-        ),
+        );
     }
-    // Explicitly drop the keepalive here (after ws_tracker.wait()) to document
-    // the intent. Without this, it would be dropped at function end (step 7),
-    // which is also fine, but explicit is clearer.
-    drop(webhook_tx_keepalive);
 
-    // Step 6: Wait for the spawned serve tasks to complete. Whichever serve
-    // already resolved in step 2 is `None`; the other (or both, on the normal
-    // signal-driven path) is `Some` and should already be resolving (its
-    // graceful_shutdown future fired when shutdown was cancelled). We bound
-    // the wait with SHUTDOWN_TIMEOUT_SERVES in case a connection stalled.
-    let main_pending = main_serve_task.take();
-    let metrics_pending = metrics_serve_task.take();
+    // Step 3: Join the spawned serve tasks. Whichever already resolved at
+    // step 1 is None and skipped. The other(s) should already be resolving
+    // since shutdown was cancelled. Bounded by SHUTDOWN_TIMEOUT_SERVES.
     let serves_future = async {
-        let main_res = match main_pending {
-            Some(h) => Some(h.await),
-            None => None,
-        };
-        let metrics_res = match metrics_pending {
-            Some(h) => Some(h.await),
-            None => None,
-        };
-        (main_res, metrics_res)
+        tokio::join!(
+            await_optional_serve("main", main_serve_task.take()),
+            await_optional_serve("metrics", metrics_serve_task.take()),
+        );
     };
-    match tokio::time::timeout(SHUTDOWN_TIMEOUT_SERVES, serves_future).await {
-        Ok((main_res, metrics_res)) => {
-            if let Some(Ok(Err(e))) = main_res {
-                tracing::error!(error = %e, "main serve ended with error");
-            }
-            if let Some(Ok(Err(e))) = metrics_res {
-                tracing::error!(error = %e, "metrics serve ended with error");
-            }
-        }
-        Err(_elapsed) => {
-            tracing::error!("axum serves did not resolve within timeout; runtime drop will reap");
-        }
+    if tokio::time::timeout(SHUTDOWN_TIMEOUT_SERVES, serves_future)
+        .await
+        .is_err()
+    {
+        tracing::error!("axum serves did not resolve within timeout; runtime drop will reap");
     }
 
-    // Step 7: Join remaining background-task handles.
-    // Listener is None in in-memory mode.
+    // Step 4: Join the remaining background-task handles. The drain task
+    // observes the same `shutdown` token and exits between passes, so it
+    // typically completes after step 1 fires. Listener / eviction / metrics
+    // are simple ticker loops that exit at their next cancel poll.
+    if let Some(handle) = drain_handle {
+        join_with_timeout(handle, SHUTDOWN_TIMEOUT_DRAIN, "drain").await;
+    }
     if let Some(handle) = listener_handle {
         join_with_timeout(handle, SHUTDOWN_TIMEOUT_LISTENER, "listener").await;
     }
@@ -262,9 +227,7 @@ mod tests {
     #[tokio::test]
     async fn serve_failure_without_signal_triggers_shutdown() {
         let shutdown = CancellationToken::new();
-        let ws_close = CancellationToken::new();
         let ws_tracker = TaskTracker::new();
-        let (webhook_tx, _rx) = broadcast::channel::<SeqEvent>(16);
 
         // Main serve fails immediately with an io::Error (simulating an
         // accept-loop failure shortly after startup).
@@ -287,9 +250,7 @@ mod tests {
             Duration::from_secs(15),
             run_shutdown_orchestration(
                 shutdown.clone(),
-                ws_close,
                 ws_tracker,
-                webhook_tx,
                 main_serve_task,
                 metrics_serve_task,
                 None,

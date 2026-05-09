@@ -72,7 +72,7 @@ async fn stale_heartbeat_returns_503() {
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
 
@@ -221,7 +221,7 @@ async fn no_pg_always_200() {
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
 

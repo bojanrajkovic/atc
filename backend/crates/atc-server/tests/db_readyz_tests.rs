@@ -57,7 +57,7 @@ async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
-        ws_close: CancellationToken::new(),
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
     atc_server::routes::api_routes(layer).with_state(app_state)

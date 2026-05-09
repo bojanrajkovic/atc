@@ -164,19 +164,14 @@ async fn main() {
             webhook_tx.clone(),
         )),
     };
-    // Keep a clone of the sender alive through shutdown orchestration. The
-    // axum serve future drops AppState (and its embedded sender) when it
-    // resolves at step 2. The drain task's sender is dropped at step 3. Without
-    // an extra keepalive, the broadcast channel closes before ws_close.cancel()
-    // fires at step 4, causing WS handlers to exit via RecvError::Closed (TCP
-    // reset) rather than the intended Close(1001). Passed to
-    // run_shutdown_orchestration and dropped after ws_tracker.wait() at step 5.
-    let webhook_tx_keepalive = webhook_tx.clone();
-
-    // Construct the phase-2 WS-close token and TaskTracker before AppState so
-    // they can be retained by main for the shutdown orchestration after app_state
-    // is moved into the router via with_state.
-    let ws_close = CancellationToken::new();
+    // Single shared cancellation token observed by all supervised surfaces:
+    // axum × 2 (with_graceful_shutdown), listener, drain, eviction, process
+    // metrics collector, and every WS handler. Construct before AppState so the
+    // token can be cloned into both the router (via app_state) and into each
+    // background-task spawn site below. WS handlers treat RecvError::Closed as
+    // a graceful shutdown signal (sending Close(1001) on either path), so no
+    // separate keepalive is needed to cover the broadcast-channel race.
+    let shutdown = CancellationToken::new();
     let ws_tracker = TaskTracker::new();
     let app_state = Arc::new(AppState {
         state_machine,
@@ -188,7 +183,7 @@ async fn main() {
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
         persist,
-        ws_close: ws_close.clone(),
+        shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
     });
 
@@ -201,10 +196,6 @@ async fn main() {
     metrics::register_build_info();
     metrics::register_pg_write_counters();
     metrics::register_listener_metrics();
-
-    // Create a shared cancellation token for both servers and background tasks.
-    // Must be created before the listener init so we can pass shutdown.clone() to the tasks.
-    let shutdown = CancellationToken::new();
 
     // Spawn the process metrics collector with a cooperative shutdown handle.
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
@@ -278,8 +269,14 @@ async fn main() {
         (None, None)
     };
 
+    // Clone the Arc into the router so `app_state` itself stays in this scope
+    // for the lifetime of `main`. With `app_state` still held here, AppState's
+    // embedded `webhook_tx` clone keeps the broadcast channel open through
+    // shutdown orchestration — WS handlers see `shutdown.cancelled()` and send
+    // Close(1001) rather than racing against a `RecvError::Closed` from a
+    // prematurely-dropped AppState.
     let app = routes::api_routes(prometheus_layer)
-        .with_state(app_state)
+        .with_state(app_state.clone())
         .fallback(assets::fallback_handler());
 
     // Bind metrics listener first so a port-conflict failure is detected before
@@ -317,13 +314,13 @@ async fn main() {
     let main_serve_task = tokio::spawn(main_serve.into_future());
     let metrics_serve_task = tokio::spawn(metrics_serve.into_future());
 
-    // Two-phase cooperative shutdown orchestration. Awaits the shutdown signal,
-    // drains the PG outbox pass, fires WS close, and joins all handles.
+    // Cooperative shutdown orchestration. Awaits the trigger (signal handler
+    // or unexpected serve-task exit), waits for tracked WS handlers to flush
+    // Close(1001) frames, then joins serve tasks and remaining background
+    // handles within bounded timeouts.
     run_shutdown_orchestration(
         shutdown,
-        ws_close,
         ws_tracker,
-        webhook_tx_keepalive,
         main_serve_task,
         metrics_serve_task,
         drain_handle,
