@@ -317,8 +317,10 @@ async fn main() {
     // Cooperative shutdown orchestration. Awaits the trigger (signal handler
     // or unexpected serve-task exit), waits for tracked WS handlers to flush
     // Close(1001) frames, then joins serve tasks and remaining background
-    // handles within bounded timeouts.
-    run_shutdown_orchestration(
+    // handles within bounded timeouts. Returns `true` if the trigger was an
+    // early serve-task failure — propagate to a non-zero process exit so K8s
+    // / systemd restart the pod and alert.
+    let serve_failure = run_shutdown_orchestration(
         shutdown,
         ws_tracker,
         main_serve_task,
@@ -329,4 +331,8 @@ async fn main() {
         metrics_handle,
     )
     .await;
+
+    if serve_failure {
+        process::exit(1);
+    }
 }

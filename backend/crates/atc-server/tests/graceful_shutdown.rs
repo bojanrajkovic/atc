@@ -52,7 +52,7 @@ fn now_millis() -> i64 {
 struct FullServerFixture {
     main_addr: SocketAddr,
     shutdown: CancellationToken,
-    orchestration_handle: JoinHandle<()>,
+    orchestration_handle: JoinHandle<bool>,
 }
 
 async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixture {
@@ -237,8 +237,13 @@ async fn idle_ws_client_receives_close_within_budget() {
         + SHUTDOWN_TIMEOUT_METRICS
         + Duration::from_secs(2); // slop for test harness overhead
 
-    timeout(aggregate_budget, fixture.orchestration_handle)
+    let serve_failure = timeout(aggregate_budget, fixture.orchestration_handle)
         .await
         .expect("orchestration did not complete within aggregate shutdown budget")
         .expect("orchestration task should not panic");
+
+    assert!(
+        !serve_failure,
+        "signal-driven shutdown must report serve_failure=false"
+    );
 }

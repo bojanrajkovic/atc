@@ -102,6 +102,14 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// 3. Join the spawned serve tasks (bounded by `SHUTDOWN_TIMEOUT_SERVES`).
 /// 4. Join drain / listener / eviction / metrics handles (each bounded).
 ///
+/// # Returns
+/// `true` if shutdown was triggered by an early serve-task exit (i.e., the
+/// HTTP service went down before any signal arrived). The caller should map
+/// this to a non-zero process exit code so failure-oriented supervisors
+/// (Kubernetes, systemd) restart the pod and alert.
+///
+/// `false` on the normal signal-driven path.
+///
 /// # Parameters
 /// - `shutdown`: The shared cancellation token. Awaited here for the trigger;
 ///   cloned into AppState and into every background-task spawn site by the caller.
@@ -123,12 +131,13 @@ pub async fn run_shutdown_orchestration(
     listener_handle: Option<JoinHandle<()>>,
     eviction_handle: JoinHandle<()>,
     metrics_handle: JoinHandle<()>,
-) {
+) -> bool {
     // Step 1: Wait for the shutdown trigger — signal handler OR an early
     // serve-task exit. Wrap each serve in `Option` so step 3 doesn't
     // double-await whichever one (if any) already resolved here.
     let mut main_serve_task = Some(main_serve_task);
     let mut metrics_serve_task = Some(metrics_serve_task);
+    let mut serve_failure = false;
 
     tokio::select! {
         () = shutdown.cancelled() => {
@@ -138,11 +147,13 @@ pub async fn run_shutdown_orchestration(
             log_early_serve_exit("main", res);
             main_serve_task = None;
             shutdown.cancel();
+            serve_failure = true;
         }
         res = metrics_serve_task.as_mut().expect("just constructed as Some") => {
             log_early_serve_exit("metrics", res);
             metrics_serve_task = None;
             shutdown.cancel();
+            serve_failure = true;
         }
     }
 
@@ -188,6 +199,8 @@ pub async fn run_shutdown_orchestration(
     }
     join_with_timeout(eviction_handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
     join_with_timeout(metrics_handle, SHUTDOWN_TIMEOUT_METRICS, "metrics").await;
+
+    serve_failure
 }
 
 #[cfg(test)]
@@ -261,13 +274,15 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_ok(),
-            "orchestration must not hang when a serve task fails before any signal"
-        );
+        let serve_failure =
+            result.expect("orchestration must not hang when a serve task fails before any signal");
         assert!(
             shutdown.is_cancelled(),
             "orchestration must call shutdown.cancel() when a serve task fails early"
+        );
+        assert!(
+            serve_failure,
+            "orchestration must return true (serve_failure) so main exits with non-zero status"
         );
     }
 
