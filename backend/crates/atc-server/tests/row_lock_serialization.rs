@@ -1,12 +1,12 @@
 //! Integration tests: row-lock serialization for same-entity concurrent commits.
 //!
-//! T11 — Two concurrent webhooks for the SAME run entity are serialized by PG row
-//!        locking. Both use `workflow_run.requested` (idempotent same-status replay),
-//!        so both must succeed (status="accepted") and both must produce outbox rows.
-//!        The drain broadcasts both in strictly increasing seq order. No rescan/dedup
-//!        activity occurs because both commits complete before the watermark falls
-//!        below either seq — `atc_pg_drain_duplicate_skipped_total` stays at baseline.
-//!        The in-memory state store's seq counter must NOT be incremented (PG mode).
+//! Two concurrent webhooks for the SAME run entity are serialized by PG row
+//! locking. Both use `workflow_run.requested` (idempotent same-status replay),
+//! so both must succeed (status="accepted") and both must produce outbox rows.
+//! The drain broadcasts both in strictly increasing seq order. No rescan/dedup
+//! activity occurs because both commits complete before the watermark falls
+//! below either seq — `atc_pg_drain_duplicate_skipped_total` stays at baseline.
+//! The in-memory state store's seq counter must NOT be incremented (PG mode).
 //!
 //! Docker/OrbStack required.
 
@@ -41,8 +41,8 @@ fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
     0
 }
 
-/// T11: Two concurrent `workflow_run.requested` webhooks for the SAME run_id are
-///      serialized by PG row-level locking.
+/// Two concurrent `workflow_run.requested` webhooks for the SAME run_id are
+/// serialized by PG row-level locking.
 ///
 /// Both use the `requested` action which targets status=Queued. predecessors_of(Queued)
 /// includes Queued itself, so the second committer performs an idempotent same-status
@@ -55,7 +55,7 @@ fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
 /// §D3 of the design plan holds: same-entity serialization prevents gap-healing rescans.
 #[tokio::test]
 #[serial]
-async fn t11_concurrent_same_entity_commits_in_seq_order() {
+async fn concurrent_same_entity_commits_in_seq_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
     let mut rx = fixture.state.webhook_tx.subscribe();
@@ -157,11 +157,11 @@ async fn t11_concurrent_same_entity_commits_in_seq_order() {
     fixture.shutdown.cancel();
 }
 
-/// T11b: The outbox contains exactly one row per accepted commit — no phantom
-///       rows from failed or concurrent duplicate commits.
+/// The outbox contains exactly one row per accepted commit — no phantom rows
+/// from failed or concurrent duplicate commits.
 #[tokio::test]
 #[serial]
-async fn t11b_outbox_row_count_matches_accepted_commits() {
+async fn outbox_row_count_matches_accepted_commits() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 

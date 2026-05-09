@@ -1,13 +1,15 @@
 //! Integration tests: /readyz drain heartbeat.
 //!
-//! T8 — Stale heartbeat returns 503: when `last_drain_pass_at` is older than
-//!      30 seconds (READYZ_HEARTBEAT_STALENESS_MS), /readyz returns 503 with
-//!      `{"status":"drain_stale"}`.
-//! T9 — Fresh heartbeat returns 200: when the drain task is running and
-//!      last_drain_pass_at is recent, /readyz returns 200 with `{"status":"ok"}`.
+//! Covers the drain-staleness gate on /readyz: when `last_drain_pass_at` is
+//! older than 30 seconds (`READYZ_HEARTBEAT_STALENESS_MS`), /readyz returns 503
+//! with `{"status":"drain_stale"}`; when the drain is running and the
+//! heartbeat is recent, /readyz returns 200 with `{"status":"ok"}`. Also
+//! covers the no-PG fallback (always 200) and a real drain stall via task
+//! abort.
 //!
-//! T8 does NOT require Docker — it manipulates the atomic directly.
-//! T9 requires Docker for the real PG pool (needed for the DB check to pass).
+//! Stale-heartbeat tests do NOT require Docker — they manipulate the atomic
+//! directly. Fresh-heartbeat tests require Docker for the real PG pool
+//! (needed for the DB check to pass).
 
 mod common;
 
@@ -29,9 +31,9 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-// ─── T8: stale heartbeat → 503 ──────────────────────────────────────────────
+// ─── stale heartbeat → 503 ────────────────────────────────────────────────
 
-/// T8: When pg_pool is Some and last_drain_pass_at is older than 30 seconds,
+/// When pg_pool is Some and last_drain_pass_at is older than 30 seconds,
 ///     GET /readyz returns 503 with `{"status":"drain_stale"}`.
 ///
 /// Uses a testcontainers PG instance (so the DB check passes), but sets
@@ -39,7 +41,7 @@ fn now_millis() -> i64 {
 /// drain task running.
 #[tokio::test]
 #[serial]
-async fn t8_stale_heartbeat_returns_503() {
+async fn stale_heartbeat_returns_503() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
     let layer = common::PROMETHEUS_INIT
@@ -97,25 +99,25 @@ async fn t8_stale_heartbeat_returns_503() {
     );
 }
 
-/// T8c: A real drain stall — aborting the drain task — drives /readyz to 503.
+/// A real drain stall — aborting the drain task — drives /readyz to 503.
 ///
-/// T8 above sets `last_drain_pass_at` to a stale value via the atomic. Codex
-/// flagged this as a unit-style check that proves the handler reads the
-/// atomic correctly but doesn't prove the heartbeat actually goes stale when
-/// the drain stops. This test does the latter: it boots a full fixture
-/// (drain task running, heartbeat fresh), then aborts the drain handle. With
-/// the drain task gone, the heartbeat will never refresh again. We then
-/// stash a stale timestamp into `last_drain_pass_at` and confirm `/readyz`
-/// returns 503 — proving the handler's staleness check engages when the
-/// drain is genuinely dead, not just artificially poked.
+/// The unit-style stale-heartbeat test sets `last_drain_pass_at` to a stale
+/// value via the atomic and proves the handler reads it correctly, but
+/// doesn't prove the heartbeat actually goes stale when the drain stops.
+/// This test does the latter: it boots a full fixture (drain task running,
+/// heartbeat fresh), then aborts the drain handle. With the drain task gone,
+/// the heartbeat will never refresh again. We then stash a stale timestamp
+/// into `last_drain_pass_at` and confirm `/readyz` returns 503 — proving the
+/// handler's staleness check engages when the drain is genuinely dead, not
+/// just artificially poked.
 ///
 /// We don't wait 31 s of wall-clock time (would slow the suite); we abort
-/// the drain AND set the atomic stale. Either alone is what each
-/// independent failure mode looks like; together they emulate "the drain
-/// stopped 31 s ago".
+/// the drain AND set the atomic stale. Either alone is what each independent
+/// failure mode looks like; together they emulate "the drain stopped 31 s
+/// ago".
 #[tokio::test]
 #[serial]
-async fn t8c_drain_abort_drives_503() {
+async fn drain_abort_drives_503() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -181,11 +183,11 @@ async fn t8c_drain_abort_drives_503() {
     fixture.shutdown.cancel();
 }
 
-/// T8b: When pg_pool is None, /readyz always returns 200 regardless of
+/// When pg_pool is None, /readyz always returns 200 regardless of
 ///      last_drain_pass_at (the drain heartbeat check only applies in PG mode).
 #[tokio::test]
 #[serial]
-async fn t8b_no_pg_always_200() {
+async fn no_pg_always_200() {
     let layer = common::PROMETHEUS_INIT
         .get_or_init(common::install_test_recorder)
         .0
@@ -241,16 +243,16 @@ async fn t8b_no_pg_always_200() {
     assert_eq!(json["status"], "ok");
 }
 
-// ─── T9: fresh heartbeat → 200 ──────────────────────────────────────────────
+// ─── fresh heartbeat → 200 ────────────────────────────────────────────────
 
-/// T9: When the drain task is running and healthy, GET /readyz returns 200.
+/// When the drain task is running and healthy, GET /readyz returns 200.
 ///
 /// Uses `build_app_with_pg_and_listener` which starts a real drain task.
 /// After the fixture initializes (drain_started fires), the heartbeat should
 /// be fresh. Assert /readyz returns 200.
 #[tokio::test]
 #[serial]
-async fn t9_fresh_heartbeat_returns_200() {
+async fn fresh_heartbeat_returns_200() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -286,13 +288,13 @@ async fn t9_fresh_heartbeat_returns_200() {
     fixture.shutdown.cancel();
 }
 
-/// T9b: The drain heartbeat ticks even during quiet periods (no events).
+/// The drain heartbeat ticks even during quiet periods (no events).
 ///
 /// Sleeps past the 5 s HEARTBEAT_TICK and asserts the heartbeat has been
 /// refreshed — proving the tick fires even when no NOTIFY arrives.
 #[tokio::test]
 #[serial]
-async fn t9b_heartbeat_ticks_during_quiet_period() {
+async fn heartbeat_ticks_during_quiet_period() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
