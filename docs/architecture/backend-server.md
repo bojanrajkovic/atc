@@ -396,7 +396,12 @@ Two `CancellationToken`s are constructed in `main.rs` before `AppState`:
 
 The two-token design ensures WS handlers see the drain task finish broadcasting before they themselves close. A single shared token would cause the WS handler's cancel arm to fire simultaneously with the drain exiting — truncating the event stream before all buffered events reach clients.
 
-**Phase 1** (fires at SIGTERM):
+**Phase 1** (fires on either of two triggers):
+
+- **Signal-driven (normal path):** SIGTERM / SIGINT → signal handler → `shutdown.cancel()`.
+- **Self-healing on serve failure:** if either spawned axum `serve` task exits unexpectedly before any signal arrives (e.g., an accept-loop failure), `run_shutdown_orchestration` observes that exit via `tokio::select!`, logs an `error!` naming the affected serve, and calls `shutdown.cancel()` itself so the remaining tasks shut down cooperatively rather than getting orphaned by a half-up process.
+
+In both cases, once `shutdown` is cancelled:
 
 ```
 shutdown.cancel()

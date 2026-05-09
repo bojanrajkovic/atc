@@ -49,10 +49,14 @@ pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: 
 
 /// Orchestrates the two-phase cooperative shutdown sequence.
 ///
-/// **Phase 1** (already in progress when this is called — `shutdown` was
-/// cancelled by the signal handler before spawning serves):
-/// - `shutdown.cancelled()` resolves, signalling that axum serves, listener,
-///   drain, eviction, and metrics are all shutting down.
+/// **Phase 1** (begins on either of two triggers):
+/// - The signal handler cancels `shutdown` (SIGTERM / SIGINT path), OR
+/// - One of the spawned serve tasks exits unexpectedly before any signal
+///   arrives (e.g., an accept-loop failure). In that case we cancel
+///   `shutdown` ourselves so the remaining listener / drain / eviction /
+///   metrics tasks shut down cooperatively rather than getting orphaned.
+///
+/// Once phase 1 is triggered:
 /// - The drain handle is awaited (bounded by `SHUTDOWN_TIMEOUT_DRAIN`) to let
 ///   the current outbox pass finish before WS handlers close.
 ///
@@ -93,9 +97,54 @@ pub async fn run_shutdown_orchestration(
     eviction_handle: JoinHandle<()>,
     metrics_handle: JoinHandle<()>,
 ) {
-    // Step 2: Wait for the phase-1 shutdown signal (signal handler already
-    // called shutdown.cancel() before this, or a test calls it directly).
-    shutdown.cancelled().await;
+    // Step 2: Wait for the phase-1 shutdown signal, OR for either spawned
+    // serve task to exit unexpectedly (which would mean the HTTP service is
+    // already down). Without this select, the function would hang on
+    // `shutdown.cancelled()` indefinitely if a serve task failed early and no
+    // signal ever arrived. Wrap each serve in `Option` so step 6 doesn't
+    // double-await whichever one already resolved here.
+    let mut main_serve_task = Some(main_serve_task);
+    let mut metrics_serve_task = Some(metrics_serve_task);
+
+    tokio::select! {
+        () = shutdown.cancelled() => {
+            // Normal path: signal handler fired shutdown.cancel().
+        }
+        res = main_serve_task.as_mut().expect("just constructed as Some") => {
+            match res {
+                Ok(Ok(())) => tracing::warn!(
+                    "main serve exited cleanly before shutdown signal; triggering shutdown"
+                ),
+                Ok(Err(e)) => tracing::error!(
+                    error = %e,
+                    "main serve exited with error before shutdown signal; triggering shutdown"
+                ),
+                Err(e) => tracing::error!(
+                    error = %e,
+                    "main serve task panicked or was cancelled before shutdown signal; triggering shutdown"
+                ),
+            }
+            main_serve_task = None;
+            shutdown.cancel();
+        }
+        res = metrics_serve_task.as_mut().expect("just constructed as Some") => {
+            match res {
+                Ok(Ok(())) => tracing::warn!(
+                    "metrics serve exited cleanly before shutdown signal; triggering shutdown"
+                ),
+                Ok(Err(e)) => tracing::error!(
+                    error = %e,
+                    "metrics serve exited with error before shutdown signal; triggering shutdown"
+                ),
+                Err(e) => tracing::error!(
+                    error = %e,
+                    "metrics serve task panicked or was cancelled before shutdown signal; triggering shutdown"
+                ),
+            }
+            metrics_serve_task = None;
+            shutdown.cancel();
+        }
+    }
 
     // Step 3: Await the drain handle (PG mode only). The drain exits
     // cooperatively after its current pass finishes. We bound the wait to
@@ -135,16 +184,30 @@ pub async fn run_shutdown_orchestration(
     // which is also fine, but explicit is clearer.
     drop(webhook_tx_keepalive);
 
-    // Step 6: Wait for the spawned serve tasks to complete. Both should
-    // already be resolved (their graceful_shutdown futures resolved at step 2);
-    // this is a backstop await in case a connection stalled.
-    let serves_join = async { tokio::join!(main_serve_task, metrics_serve_task) };
-    match tokio::time::timeout(SHUTDOWN_TIMEOUT_SERVES, serves_join).await {
+    // Step 6: Wait for the spawned serve tasks to complete. Whichever serve
+    // already resolved in step 2 is `None`; the other (or both, on the normal
+    // signal-driven path) is `Some` and should already be resolving (its
+    // graceful_shutdown future fired when shutdown was cancelled). We bound
+    // the wait with SHUTDOWN_TIMEOUT_SERVES in case a connection stalled.
+    let main_pending = main_serve_task.take();
+    let metrics_pending = metrics_serve_task.take();
+    let serves_future = async {
+        let main_res = match main_pending {
+            Some(h) => Some(h.await),
+            None => None,
+        };
+        let metrics_res = match metrics_pending {
+            Some(h) => Some(h.await),
+            None => None,
+        };
+        (main_res, metrics_res)
+    };
+    match tokio::time::timeout(SHUTDOWN_TIMEOUT_SERVES, serves_future).await {
         Ok((main_res, metrics_res)) => {
-            if let Ok(Err(e)) = main_res {
+            if let Some(Ok(Err(e))) = main_res {
                 tracing::error!(error = %e, "main serve ended with error");
             }
-            if let Ok(Err(e)) = metrics_res {
+            if let Some(Ok(Err(e))) = metrics_res {
                 tracing::error!(error = %e, "metrics serve ended with error");
             }
         }
@@ -190,6 +253,61 @@ mod tests {
         // If we reach here, the function returned — abort was called and we
         // didn't deadlock. The task itself may still be running briefly
         // (abort is asynchronous), but the orchestration function proceeded.
+    }
+
+    /// If a spawned serve task exits unexpectedly before any signal arrives,
+    /// the orchestration must trigger `shutdown.cancel()` itself rather than
+    /// hanging on the bare `shutdown.cancelled()` await — otherwise the
+    /// process sits indefinitely while the HTTP service is already down.
+    #[tokio::test]
+    async fn serve_failure_without_signal_triggers_shutdown() {
+        let shutdown = CancellationToken::new();
+        let ws_close = CancellationToken::new();
+        let ws_tracker = TaskTracker::new();
+        let (webhook_tx, _rx) = broadcast::channel::<SeqEvent>(16);
+
+        // Main serve fails immediately with an io::Error (simulating an
+        // accept-loop failure shortly after startup).
+        let main_serve_task: JoinHandle<io::Result<()>> =
+            tokio::spawn(async { Err(io::Error::other("simulated accept-loop failure")) });
+
+        // Metrics serve hangs forever — the SHUTDOWN_TIMEOUT_SERVES backstop
+        // catches it; this verifies we don't deadlock waiting for it.
+        let metrics_serve_task: JoinHandle<io::Result<()>> =
+            tokio::spawn(async { std::future::pending::<io::Result<()>>().await });
+
+        // Stub eviction/metrics handles that exit immediately.
+        let eviction_handle: JoinHandle<()> = tokio::spawn(async {});
+        let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
+
+        // Bound the whole orchestration with a generous test timeout. The
+        // expected wall time is dominated by SHUTDOWN_TIMEOUT_SERVES (3 s)
+        // plus a little overhead.
+        let result = tokio::time::timeout(
+            Duration::from_secs(15),
+            run_shutdown_orchestration(
+                shutdown.clone(),
+                ws_close,
+                ws_tracker,
+                webhook_tx,
+                main_serve_task,
+                metrics_serve_task,
+                None,
+                None,
+                eviction_handle,
+                metrics_handle,
+            ),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "orchestration must not hang when a serve task fails before any signal"
+        );
+        assert!(
+            shutdown.is_cancelled(),
+            "orchestration must call shutdown.cancel() when a serve task fails early"
+        );
     }
 
     /// A normally-completing handle resolves cleanly within its timeout.
