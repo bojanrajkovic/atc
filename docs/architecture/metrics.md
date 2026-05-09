@@ -1,6 +1,6 @@
 # Metrics — `/metrics` endpoint surface
 
-Last verified: 2026-05-08 (#61 sweep: confirmed zero phase nomenclature in this doc and re-verified per-metric prose against `metrics.rs`, `listener.rs`, and `persist.rs` after their description-string and comment cleanup.)
+Last verified: 2026-05-09
 
 ## Purpose
 
@@ -47,7 +47,9 @@ This contract applies to every metric added to the codebase, not just Postgres-p
 
 ## Process collector
 
-`spawn_process_collector()` starts a detached tokio task that calls `metrics_process::Collector::default().collect()` every 10 seconds. It uses the same global recorder installed by axum-prometheus. Emitted families include `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`, `process_start_time_seconds`, and `process_threads`.
+`spawn_process_collector(cancel: CancellationToken) -> JoinHandle<()>` starts a supervised tokio task that calls `metrics_process::Collector::default().collect()` every 10 seconds and returns a `JoinHandle<()>` to the caller. It uses the same global recorder installed by axum-prometheus. Emitted families include `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`, `process_start_time_seconds`, and `process_threads`.
+
+The task exits cooperatively when `cancel` is cancelled. Because `Collector::collect()` is a synchronous function (reads from `/proc` on Linux or equivalent OS APIs), the cancel arm fires between ticks rather than mid-collect. A single collect call typically completes in microseconds, so shutdown latency attributable to this behavior is negligible. `main.rs` passes the phase-1 `shutdown` token and joins the handle during graceful shutdown.
 
 ## Operational metrics
 
