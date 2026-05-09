@@ -25,6 +25,15 @@ const PROMETHEUS_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8"
 /// alerting, not finer bucket resolution.
 const DRAIN_STARTUP_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
 
+/// Custom histogram buckets for `atc_pg_drain_shutdown_remaining_rows`.
+///
+/// Anchored on `DRAIN_BATCH_SIZE = 500` (one drain pass) so the bucket boundary
+/// at 500 separates "single in-flight pass left undone" from the "assumption
+/// violated" regime above it. Below 100 the buckets are tight because the
+/// expected steady state is 0–10 rows; above 1000 each step is 5×.
+const DRAIN_SHUTDOWN_REMAINING_BUCKETS: &[f64] =
+    &[0.0, 1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0];
+
 /// Install the global Prometheus recorder with custom histogram buckets and
 /// spawn the per-thread upkeep loop.
 ///
@@ -34,6 +43,12 @@ const DRAIN_STARTUP_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.
 ///
 /// - `Matcher::Full("atc_pg_drain_startup_seconds")` — custom buckets covering
 ///   typical 50ms–10s startup latency (see [`DRAIN_STARTUP_BUCKETS`]).
+/// - `Matcher::Full("atc_pg_drain_shutdown_remaining_rows")` — custom buckets
+///   anchored on the drain batch size (see
+///   [`DRAIN_SHUTDOWN_REMAINING_BUCKETS`]). Required because the metric's name
+///   does not end in `_seconds`, so the suffix matcher would not catch it and
+///   `metrics-exporter-prometheus` would emit it as a Summary (no `_bucket`
+///   lines).
 /// - `Matcher::Suffix("_seconds")` — `SECONDS_DURATION_BUCKETS` (the standard
 ///   axum-prometheus HTTP duration distribution). Without this fallback,
 ///   `metrics-exporter-prometheus` 0.18 emits unmatched histograms as Summary
@@ -42,9 +57,9 @@ const DRAIN_STARTUP_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.
 ///   `atc_pg_outbox_lag_seconds_bucket` / `atc_pg_drain_pass_duration_seconds_bucket`
 ///   assertions.
 ///
-/// Matchers sort with `Full` before `Suffix`, so the startup-specific override
-/// wins for that one metric while every other `_seconds` histogram falls
-/// through to the standard distribution.
+/// Matchers sort with `Full` before `Suffix`, so per-metric overrides win
+/// while every other `_seconds` histogram falls through to the standard
+/// distribution.
 fn install_recorder() -> PrometheusHandle {
     let handle = PrometheusBuilder::new()
         .set_buckets_for_metric(
@@ -52,6 +67,11 @@ fn install_recorder() -> PrometheusHandle {
             DRAIN_STARTUP_BUCKETS,
         )
         .expect("valid drain-startup bucket spec")
+        .set_buckets_for_metric(
+            Matcher::Full("atc_pg_drain_shutdown_remaining_rows".to_string()),
+            DRAIN_SHUTDOWN_REMAINING_BUCKETS,
+        )
+        .expect("valid drain-shutdown-remaining bucket spec")
         .set_buckets_for_metric(
             Matcher::Suffix("_seconds".to_string()),
             SECONDS_DURATION_BUCKETS,
@@ -162,6 +182,7 @@ pub fn register_pg_write_counters() {
 /// - atc_pg_outbox_lag_seconds — wall time between outbox row insert and broadcast (one per row)
 /// - atc_pg_drain_pass_duration_seconds — wall time for one drain pass (including pagination)
 /// - atc_pg_drain_startup_seconds — wall time from watermark init through first drain pass exit
+/// - atc_pg_drain_shutdown_remaining_rows — outbox rows past this replica's watermark at drain task exit
 ///
 /// Gauges:
 /// - atc_pg_broadcast_watermark — highest outbox seq broadcast by this replica
@@ -212,6 +233,10 @@ pub fn register_listener_metrics() {
     metrics::describe_histogram!(
         "atc_pg_drain_startup_seconds",
         "Startup readiness latency: wall time from watermark init through first drain pass exit (one observation per process)"
+    );
+    metrics::describe_histogram!(
+        "atc_pg_drain_shutdown_remaining_rows",
+        "Outbox rows with seq above this replica's drain watermark at drain task exit (one observation per process; absent when the shutdown count query failed)"
     );
     metrics::describe_gauge!(
         "atc_pg_broadcast_watermark",

@@ -29,6 +29,7 @@ This contract applies to every metric added to the codebase, not just Postgres-p
 `metrics::build()` installs the global `metrics` recorder explicitly via `PrometheusBuilder::install_recorder()` and spawns the 5-second `run_upkeep()` loop manually (axum-prometheus's `pair()` would do this internally, but the explicit install lets us register custom histogram buckets first). `PrometheusMetricLayer::new()` does not install a recorder; it records to the global one we installed. The build path registers two bucket overrides:
 
 - `Matcher::Full("atc_pg_drain_startup_seconds")` — custom buckets `[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]` covering typical 50ms–10s startup latency.
+- `Matcher::Full("atc_pg_drain_shutdown_remaining_rows")` — custom buckets `[0, 1, 10, 50, 100, 500, 1000, 5000, 10000]` anchored on `DRAIN_BATCH_SIZE = 500` so the bucket boundary at 500 separates "single in-flight pass left undone" from the "assumption violated" regime above it. Required because the metric's name does not end in `_seconds`, so the suffix matcher would not catch it.
 - `Matcher::Suffix("_seconds")` — `axum_prometheus::utils::SECONDS_DURATION_BUCKETS`, the standard `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` distribution. Without this fallback, `metrics-exporter-prometheus` 0.18 emits unmatched histograms as Summary (no `_bucket` lines) and the `axum_http_requests_duration_seconds_bucket`, `atc_pg_outbox_lag_seconds_bucket`, and `atc_pg_drain_pass_duration_seconds_bucket` series would not appear.
 
 ## atc_build_info labels
@@ -55,7 +56,7 @@ The task exits cooperatively when `cancel` is cancelled. Because `Collector::col
 
 All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added by the monitoring stack at scrape time as standard target labels (`pod`, `instance`) — the exact attachment mechanism depends on the deployment (Prometheus Operator ServiceMonitor, plain Prometheus with `kubernetes_sd_configs`, VictoriaMetrics, etc.); the metrics themselves are agnostic. Cross-replica aggregation in alerts and dashboards uses `avg by (pod)`, `max by (pod)`, etc.
 
-The blocks below are listed in roughly the order an event traverses the pipeline: webhook write → outbox row → NOTIFY emission → listener receipt → drain pass → broadcast → snapshot cursor.
+The blocks below are listed in roughly the order an event traverses the pipeline: webhook write → outbox row → NOTIFY emission → listener receipt → drain pass → broadcast → snapshot cursor → drain shutdown.
 
 ### `atc_pg_write_failures_total`
 
@@ -186,6 +187,16 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Per-replica vs cluster:** Per-replica.
 - **Aggregation:** `max by (pod)` over a window covering recent deploys (1h) — the slowest replica's startup is the operational signal.
 - **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_startup_seconds_bucket[1h])) by (le, pod))`
+
+### `atc_pg_drain_shutdown_remaining_rows`
+
+- **Name:** `atc_pg_drain_shutdown_remaining_rows`
+- **Type:** histogram (custom buckets `[0, 1, 10, 50, 100, 500, 1000, 5000, 10000]`)
+- **Labels:** none emitted; `pod`, `instance` (scrape-injected)
+- **Measures:** Outbox rows whose `seq` is greater than this replica's drain watermark at drain task exit time. One observation per process lifetime, recorded after the drain loop exits on `cancel.cancelled()` and before the spawned task returns. Validates the cooperative-shutdown design (#60, #80): the drain task does NOT attempt to flush the outbox before exit — it completes the in-flight pass (if any) and stops, on the assumption that the unscanned tail rarely exceeds one drain pass (`DRAIN_BATCH_SIZE = 500`). The bucket boundary at 500 separates "single in-flight pass left undone" from the "assumption violated" regime; sustained observations above 500 should prompt either a drain-pass tuning review or a longer `terminationGracePeriodSeconds`. **Observation timing nuance:** the count is taken at drain task exit, not at signal arrival; the webhook handler keeps writing outbox rows until axum's graceful shutdown drains in-flight requests, so rows committed during that window are included. Operators reading this metric are seeing "what was unscanned when the drain task gave up," not "how far behind the drain was when SIGTERM arrived." When the post-shutdown count query fails or exceeds its 1-second timeout, the observation is skipped (logged as a warning) rather than recorded as zero, so `_count` only advances on successful observations.
+- **Per-replica vs cluster:** Per-replica — each replica's drain task records its own observation against its own watermark.
+- **Aggregation:** `histogram_quantile(0.99, ...)` `by (pod)` over a multi-deploy window (e.g. 24h) — the slowest replica's tail at shutdown is the actionable signal. `max by (pod) (rate(atc_pg_drain_shutdown_remaining_rows_count[24h]))` confirms each replica is recording observations across rollouts (a flat zero on a pod that recently restarted indicates the count query failed at shutdown — see warnings in the application log).
+- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_shutdown_remaining_rows_bucket[24h])) by (le, pod))`
 
 ### `atc_pg_broadcast_watermark`
 
