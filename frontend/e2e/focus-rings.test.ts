@@ -1,7 +1,5 @@
 /**
- * focus-rings.test.ts — E2E Tab-cycle assertion.
- *
- * AC covered: frontend-1-0-polish.AC5.3
+ * focus-rings.test.ts — E2E Tab-cycle assertions for keyboard focus indicators.
  *
  * Verifies that every interactive surface in the dashboard has a visible focus
  * indicator (outline-width >= 2px OR box-shadow !== 'none') when focused via
@@ -78,14 +76,12 @@ function hasVisibleIndicator(indicator: { outlineWidth: string; boxShadow: strin
   return hasOutline || hasShadow
 }
 
-test.describe('frontend-1-0-polish.AC5.3: Focus rings — command palette items', () => {
+test.describe('Focus rings — command palette items', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('AC5.3: command-item has visible focus indicator when navigated via keyboard', async ({
-    page,
-  }) => {
+  test('command-item has visible focus indicator when navigated via keyboard', async ({ page }) => {
     // Seed a run so commands section has items
     await sendWS(
       page,
@@ -121,12 +117,12 @@ test.describe('frontend-1-0-polish.AC5.3: Focus rings — command palette items'
   })
 })
 
-test.describe('frontend-1-0-polish.AC5.3: Focus rings — PoolFilterPill clear button', () => {
+test.describe('Focus rings — PoolFilterPill clear button', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('AC5.3: PoolFilterPill clear button has visible focus indicator', async ({ page }) => {
+  test('PoolFilterPill clear button has visible focus indicator', async ({ page }) => {
     // Seed a run so there are items to filter
     await sendWS(
       page,
@@ -173,12 +169,12 @@ test.describe('frontend-1-0-polish.AC5.3: Focus rings — PoolFilterPill clear b
   })
 })
 
-test.describe('frontend-1-0-polish.AC5.3: Focus rings — PanelActions', () => {
+test.describe('Focus rings — PanelActions', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('AC5.3: PanelActions close button has visible focus indicator', async ({ page }) => {
+  test('PanelActions close button has visible focus indicator', async ({ page }) => {
     // Seed a run and open the panel
     await sendWS(
       page,
@@ -213,7 +209,7 @@ test.describe('frontend-1-0-polish.AC5.3: Focus rings — PanelActions', () => {
     expect(outlinePx).toBeGreaterThanOrEqual(2)
   })
 
-  test('AC5.3: PanelActions Go-to-run link has visible focus indicator', async ({ page }) => {
+  test('PanelActions Go-to-run link has visible focus indicator', async ({ page }) => {
     // Seed a run and open the panel
     await sendWS(
       page,
@@ -249,14 +245,12 @@ test.describe('frontend-1-0-polish.AC5.3: Focus rings — PanelActions', () => {
   })
 })
 
-test.describe('frontend-1-0-polish.AC5.3: Focus rings — RunCard activate button', () => {
+test.describe('Focus rings — RunCard activate button', () => {
   test.beforeEach(async ({ page }) => {
     await setupPage(page)
   })
 
-  test('AC5.3: RunCard .run-card-activate has visible focus indicator (pre-existing)', async ({
-    page,
-  }) => {
+  test('RunCard .run-card-activate has visible focus indicator', async ({ page }) => {
     // Seed a queued run
     await sendWS(
       page,

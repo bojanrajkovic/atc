@@ -34,11 +34,11 @@ async fn fire_job_webhook(fixture: &common::AppFixture) -> StatusCode {
     status
 }
 
-// ─── AC1: NOTIFY fires on commit ────────────────────────────────────────────
+// ─── NOTIFY fires on commit ────────────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac1_notify_fires_on_commit() {
+async fn notify_fires_on_commit() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // Subscribe an out-of-band listener BEFORE firing webhooks.
@@ -65,11 +65,11 @@ async fn ac1_notify_fires_on_commit() {
     fixture.shutdown.cancel();
 }
 
-// ─── AC2: NOTIFY does NOT fire on rollback ──────────────────────────────────
+// ─── NOTIFY does NOT fire on rollback ──────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac2_no_notify_on_rollback() {
+async fn no_notify_on_rollback() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // Subscribe the out-of-band listener before any webhook so all NOTIFYs are visible.
@@ -123,11 +123,11 @@ async fn ac2_no_notify_on_rollback() {
     fixture.shutdown.cancel();
 }
 
-// ─── AC3: no NOTIFY when pg_pool is None ────────────────────────────────────
+// ─── no NOTIFY when pg_pool is None ────────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac3_no_notify_in_memory_mode() {
+async fn no_notify_in_memory_mode() {
     use atc_core::{RunStateMachine, SystemClock};
     use atc_server::state::AppState;
 
@@ -179,11 +179,11 @@ async fn ac3_no_notify_in_memory_mode() {
     );
 }
 
-// ─── AC4: listener task receives all N notifications ────────────────────────
+// ─── listener task receives all N notifications ────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac4_listener_receives_all_notifications() {
+async fn listener_receives_all_notifications() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -213,11 +213,11 @@ async fn ac4_listener_receives_all_notifications() {
     fixture.shutdown.cancel();
 }
 
-// ─── AC5: listener task observes shutdown ───────────────────────────────────
+// ─── listener task observes shutdown ───────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac5_listener_shutdown() {
+async fn listener_shutdown() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -236,11 +236,11 @@ async fn ac5_listener_shutdown() {
     assert!(fixture.listener_handle.is_finished());
 }
 
-// ─── AC6: drain task fetches and advances watermark ─────────────────────────
+// ─── drain task fetches and advances watermark ──────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac6_drain_fetches_and_advances_watermark() {
+async fn drain_fetches_and_advances_watermark() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
@@ -293,11 +293,11 @@ async fn ac6_drain_fetches_and_advances_watermark() {
     fixture.shutdown.cancel();
 }
 
-// ─── AC7: coalescing (multi-notification during in-flight pass) ──────────────
+// ─── coalescing (multi-notification during in-flight pass) ──────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac7_coalescing() {
+async fn coalescing() {
     // Use a 200ms drain delay so each drain pass sleeps before querying the outbox.
     // This ensures all 4 NOTIFYs arrive while a drain pass is in-flight, forcing
     // the tokio Notify to coalesce them into a single stored permit.
@@ -342,11 +342,11 @@ async fn ac7_coalescing() {
     fixture.shutdown.cancel();
 }
 
-// ─── AC8: NOTIFY payload is the seq token ───────────────────────────────────
+// ─── NOTIFY payload is the seq token ───────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac8_notify_payload_is_seq() {
+async fn notify_payload_is_seq() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     let mut oob = PgListener::connect(&db_url).await.unwrap();
@@ -379,17 +379,17 @@ async fn ac8_notify_payload_is_seq() {
     fixture.shutdown.cancel();
 }
 
-// ─── AC10: sqlx offline cache up to date ────────────────────────────────────
+// ─── sqlx offline cache up to date ──────────────────────────────────────────
 
-// AC10 is verified at the CI level: SQLX_OFFLINE=true cargo build -p atc-server.
+// Verified at the CI level: SQLX_OFFLINE=true cargo build -p atc-server.
 // We skip a runtime test here since it requires a build environment check.
 // The .sqlx/ cache is regenerated when queries change; verify with SQLX_OFFLINE=true cargo build.
 
-// ─── AC12: shutdown completeness ────────────────────────────────────────────
+// ─── shutdown completeness ────────────────────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac12_shutdown_completeness() {
+async fn shutdown_completeness() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -414,11 +414,11 @@ async fn ac12_shutdown_completeness() {
     assert!(fixture.drain_handle.is_finished());
 }
 
-// ─── AC13: watermark initialized to MAX(seq) at startup ─────────────────────
+// ─── watermark initialized to MAX(seq) at startup ───────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn ac13_watermark_initialized_to_max_seq() {
+async fn watermark_initialized_to_max_seq() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // Pre-seed 3 outbox rows directly so the watermark will be initialized to seq=3.

@@ -10,7 +10,7 @@ import '../../app.css'
 
 import BackdropSuppressionHarness from './test-utils/BackdropSuppressionHarness.svelte'
 
-test('AC6.5 sibling-combinator backdrop suppression hides the second overlay', async () => {
+test('sibling-combinator backdrop suppression hides the second overlay', async () => {
   render(BackdropSuppressionHarness)
 
   // Wait for Svelte reactivity + Bits UI portal/presence to settle.

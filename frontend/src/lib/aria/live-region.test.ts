@@ -365,7 +365,7 @@ describe('LiveRegion', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Per-event error containment (AC6.6)
+  // Per-event error containment
   // ---------------------------------------------------------------------------
 
   describe('per-event error containment', () => {

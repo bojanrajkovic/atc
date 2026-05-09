@@ -55,10 +55,10 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
     (main_addr, app_state)
 }
 
-/// AC4.1: GET /v1/state with no prior events returns seq: 0, empty collections
+/// GET /v1/state with no prior events returns seq: 0, empty collections
 #[tokio::test]
 #[serial_test::serial]
-async fn test_ac4_1_empty_state() {
+async fn test_empty_state() {
     let (server_addr, _) = test_setup().await;
 
     let client = reqwest::Client::new();
@@ -82,10 +82,10 @@ async fn test_ac4_1_empty_state() {
     assert_eq!(json["jobs"], serde_json::json!([]), "jobs should be empty");
 }
 
-/// AC4.2: GET /v1/state after workflow_run_requested webhook returns seq: 1, run in runs
+/// GET /v1/state after workflow_run_requested webhook returns seq: 1, run in runs
 #[tokio::test]
 #[serial_test::serial]
-async fn test_ac4_2_state_after_run_event() {
+async fn test_state_after_run_event() {
     let (server_addr, _) = test_setup().await;
 
     let client = reqwest::Client::new();
@@ -209,10 +209,10 @@ async fn test_snapshot_seq_consistent_under_concurrent_writes() {
     }
 }
 
-/// AC4.4: GET /v1/state returns seq consistent with all reflected events
+/// GET /v1/state returns seq consistent with all reflected events
 #[tokio::test]
 #[serial_test::serial]
-async fn test_ac4_4_state_seq_consistency() {
+async fn test_state_seq_consistency() {
     let (server_addr, _) = test_setup().await;
 
     let client = reqwest::Client::new();

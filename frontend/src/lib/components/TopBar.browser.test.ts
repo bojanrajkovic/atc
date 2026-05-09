@@ -153,7 +153,7 @@ describe('TopBar (browser mode)', () => {
     expect(separators.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('AC3.1 — two pools sharing a groupName render with disambiguated labels', async () => {
+  it('two pools sharing a groupName render with disambiguated labels', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
       makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
@@ -166,7 +166,7 @@ describe('TopBar (browser mode)', () => {
     expect(screen.queryByText('GitHub Actions')).toBeNull()
   })
 
-  it('AC3.2 — single pool with non-null groupName renders without suffix', async () => {
+  it('single pool with non-null groupName renders without suffix', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
       makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
@@ -177,7 +177,7 @@ describe('TopBar (browser mode)', () => {
     expect(screen.queryByText('GitHub Actions ·')).toBeNull()
   })
 
-  it('AC3.3 — pool with null groupName falls back to joined labels', async () => {
+  it('pool with null groupName falls back to joined labels', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
       makeInProgressJob(1n, 1n, ['self-hosted', 'linux'], makeRunner(null)),
@@ -187,7 +187,7 @@ describe('TopBar (browser mode)', () => {
     expect(screen.getByText('linux, self-hosted')).toBeTruthy()
   })
 
-  it('AC3.4 — three pools sharing a groupName each get the suffix', async () => {
+  it('three pools sharing a groupName each get the suffix', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
       makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
@@ -202,7 +202,7 @@ describe('TopBar (browser mode)', () => {
     expect(screen.queryByText('GitHub Actions')).toBeNull()
   })
 
-  it('AC3.5 — mixed ambiguous and unambiguous pools', async () => {
+  it('mixed ambiguous and unambiguous pools', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
       makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),

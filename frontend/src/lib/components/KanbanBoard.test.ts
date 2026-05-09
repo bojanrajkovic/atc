@@ -87,7 +87,7 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     expect(screen.getByText('Jobs 1 of 3')).toBeTruthy()
   })
 
-  it('AC3.4: subscriber re-renders when applyJobEvent fires mid-lifecycle', async () => {
+  it('subscriber re-renders when applyJobEvent fires mid-lifecycle', async () => {
     // Place the run + initial jobs, then MOUNT the subscriber (KanbanBoard).
     runStore.applyRunEvent(
       createMockRunEvent({
@@ -115,7 +115,7 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     expect(screen.getByText('Jobs 2 of 2')).toBeTruthy()
   })
 
-  it('AC3.4: subscriber re-renders when applyRunEvent adds a new run mid-lifecycle', async () => {
+  it('subscriber re-renders when applyRunEvent adds a new run mid-lifecycle', async () => {
     render(KanbanBoardHarness)
 
     // Connected + zero runs → EmptyState component with default caption.

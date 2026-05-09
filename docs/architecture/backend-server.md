@@ -87,7 +87,7 @@ Events are created from GitHub webhook payloads by `atc-github` and applied to t
 2. **Idempotent reapplication** — Applying the same event twice is safe; the second application is a no-op. This allows out-of-order event tolerance (e.g., a job event may arrive before its run event).
 3. **Conclusion implies completion** — If a job has a conclusion set, its status must be Completed.
 4. **Index consistency** — Every job in the primary map exists in exactly one of `jobs_by_repo` (by repo) and exactly one entry in `jobs_by_run` (by run_id). Applying or evicting a job updates both indexes.
-5. **No orphaned jobs** — At the index level, every job is registered in `jobs_by_run` under its `run_id`. The run itself may not yet exist in the `runs` map if no `RunEvent` has arrived (out-of-order tolerance per AC3.5), but the job is always findable by its run_id.
+5. **No orphaned jobs** — At the index level, every job is registered in `jobs_by_run` under its `run_id`. The run itself may not yet exist in the `runs` map if no `RunEvent` has arrived (out-of-order tolerance), but the job is always findable by its run_id.
 
 ### TTL Eviction and Cleanup
 
@@ -247,7 +247,7 @@ pub struct SeqEvent {
 The frontend derives `RunnerPoolStats` from the underlying job state via `computePoolStats(runStore.jobs)` — see `frontend/src/lib/stores/runners.svelte.ts` (ADR 0004). The webhook handler does not take a pool-stats snapshot under the seq mutex.
 
 - **All successful events (Run or Job):** `SeqEvent { seq, event }` is broadcast. `seq` is the value of the AppState `seq` counter after pre-increment (first commit broadcasts `seq=1`).
-- **Failed transitions:** No broadcast occurs and no `SeqEvent` is emitted. Clients never receive events that are not reflected in the store (per AC1.5).
+- **Failed transitions:** No broadcast occurs and no `SeqEvent` is emitted. Clients never receive events that are not reflected in the store.
 
 **Wire format:** Serialized via `#[serde(rename_all = "camelCase")]`; TypeScript type emitted by ts-rs as `{ seq: bigint, event: WebhookEvent }`.
 

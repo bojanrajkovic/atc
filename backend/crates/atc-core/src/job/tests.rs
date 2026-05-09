@@ -1,7 +1,7 @@
 use super::*;
 use proptest::prelude::*;
 
-// core-domain.AC1.1 (job fields): Construct a `Job` with all fields populated
+// Job fields: Construct a `Job` with all fields populated
 // including `steps: vec![Step { ... }]` and `runner: Some(RunnerInfo { ... })`,
 // verify each field is accessible.
 #[test]
@@ -50,8 +50,7 @@ fn test_job_with_all_fields() {
     assert_eq!(job.completed_at, Some(now));
 }
 
-// core-domain.AC1.1 (step fields): Construct a `Step` with all fields,
-// verify accessible.
+// Step fields: Construct a `Step` with all fields, verify accessible.
 #[test]
 fn test_step_with_all_fields() {
     let now = Utc::now();
@@ -72,9 +71,8 @@ fn test_step_with_all_fields() {
     assert_eq!(step.completed_at, None);
 }
 
-// core-domain.AC1.4 (job serde): Serialize a `Job` (with populated steps
-// and runner) to JSON, deserialize back, assert round-trip equality.
-// Test `JobStatus` and `StepStatus` enum serialization.
+// Job serde: Serialize a `Job` (with populated steps and runner) to JSON,
+// deserialize back, assert round-trip equality.
 #[test]
 fn test_job_serde_round_trip() {
     let now = Utc::now();
@@ -151,7 +149,7 @@ fn test_step_status_serialization() {
     }
 }
 
-// core-domain.AC1.5: Construct a `RunnerInfo` with `id`, `name`, `group_id: Some(1)`,
+// Construct a `RunnerInfo` with `id`, `name`, `group_id: Some(1)`,
 // `group_name: Some("default")`. Embed it in a `Job`. Verify `RunnerInfo` is a
 // separate struct accessible via `job.runner`. Serialize/deserialize `RunnerInfo`
 // independently.
@@ -236,7 +234,7 @@ fn test_job_conclusion_serialization() {
     }
 }
 
-// core-domain.AC2.1: Valid job transitions succeed
+// Valid job transitions succeed
 #[test]
 fn test_job_transition_queued_to_in_progress() {
     let result = JobStatus::Queued.transition_to(JobStatus::InProgress);
@@ -261,7 +259,7 @@ fn test_job_transition_in_progress_to_completed() {
     assert_eq!(result, Ok(JobStatus::Completed));
 }
 
-// core-domain.AC2.3: Invalid transitions return Err(InvalidJobTransition)
+// Invalid transitions return Err(InvalidJobTransition)
 #[test]
 fn test_job_transition_completed_to_in_progress_fails() {
     let result = JobStatus::Completed.transition_to(JobStatus::InProgress);
@@ -310,7 +308,7 @@ fn test_job_transition_completed_to_waiting_fails() {
     );
 }
 
-// core-domain.AC2.4: Idempotent re-application of same status always succeeds
+// Idempotent re-application of same status always succeeds
 #[test]
 fn test_job_transition_queued_to_queued_idempotent() {
     let result = JobStatus::Queued.transition_to(JobStatus::Queued);

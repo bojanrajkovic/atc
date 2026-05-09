@@ -99,7 +99,7 @@ describe('RunnerBar', () => {
     expect(list).toBeTruthy()
   })
 
-  it('AC5.2: pool with isActiveFilter=true gets is-active-filter class on its RunnerPool', () => {
+  it('pool with isActiveFilter=true gets is-active-filter class on its RunnerPool', () => {
     const pools = [
       {
         key: 'linux',
@@ -136,7 +136,7 @@ describe('RunnerBar', () => {
     expect(other!.classList.contains('is-active-filter')).toBe(false)
   })
 
-  it('AC5.5: when no pool has isActiveFilter=true, no RunnerPool gets is-active-filter class', () => {
+  it('when no pool has isActiveFilter=true, no RunnerPool gets is-active-filter class', () => {
     const pools = [
       {
         key: 'linux',

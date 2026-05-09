@@ -217,11 +217,11 @@ impl RunStateMachine {
     /// Ingest a job event, creating or updating the corresponding [`Job`].
     ///
     /// - Unknown job IDs create a new entry in whatever status the event
-    ///   implies (out-of-order tolerance, AC3.5).
+    ///   implies (out-of-order tolerance).
     /// - Known jobs apply the state machine transition.
-    /// - Steps are fully replaced on every event (snapshot semantics, AC3.4).
+    /// - Steps are fully replaced on every event (snapshot semantics).
     /// - Secondary indexes (`jobs_by_run`, `jobs_by_repo`) are updated on
-    ///   job creation (AC3.3).
+    ///   job creation.
     ///
     /// # Errors
     ///
@@ -272,7 +272,7 @@ impl RunStateMachine {
                 conclusion: conclusion.or(existing.conclusion),
                 runner: runner.or(existing.runner),
                 labels,
-                steps, // Snapshot replacement (AC3.4)
+                steps, // Snapshot replacement
                 started_at: envelope.started_at.or(existing.started_at),
                 completed_at: envelope.completed_at.or(existing.completed_at),
                 ..existing // id, name, run_id, created_at unchanged
@@ -294,7 +294,7 @@ impl RunStateMachine {
 
         state.jobs.insert(job_id, job);
 
-        // Update secondary indexes on first sight (AC3.3)
+        // Update secondary indexes on first sight
         if is_new {
             let repo_key = RepoKey::new(envelope.org, envelope.repo);
             state.jobs_by_run.entry(run_id).or_default().insert(job_id);
@@ -455,7 +455,7 @@ impl RunStateMachine {
         state.jobs_by_repo.retain(|_, set| !set.is_empty());
         state.jobs_by_run.retain(|_, set| !set.is_empty());
 
-        // Evict runs with no remaining jobs (AC5.3)
+        // Evict runs with no remaining jobs
         let mut runs_evicted: u64 = 0;
         for run_id in &affected_run_ids {
             let has_jobs = state
@@ -510,7 +510,7 @@ impl RunStateMachine {
     pub(crate) async fn assert_invariants(&self) {
         let state = self.state.read().await;
 
-        // AC6.1: Every job in jobs_by_repo exists in jobs map
+        // Every job in jobs_by_repo exists in jobs map
         for (repo, job_ids) in &state.jobs_by_repo {
             for job_id in job_ids {
                 assert!(
@@ -520,7 +520,7 @@ impl RunStateMachine {
             }
         }
 
-        // AC6.1: Every job in jobs map exists in exactly one jobs_by_repo set
+        // Every job in jobs map exists in exactly one jobs_by_repo set
         for job_id in state.jobs.keys() {
             let count = state
                 .jobs_by_repo
@@ -533,7 +533,7 @@ impl RunStateMachine {
             );
         }
 
-        // AC6.1: Every job in jobs_by_run exists in jobs map
+        // Every job in jobs_by_run exists in jobs map
         for (run_id, job_ids) in &state.jobs_by_run {
             for job_id in job_ids {
                 assert!(
@@ -543,7 +543,7 @@ impl RunStateMachine {
             }
         }
 
-        // AC6.1: Every job in jobs map exists in jobs_by_run under its run_id
+        // Every job in jobs map exists in jobs_by_run under its run_id
         for (job_id, job) in &state.jobs {
             let in_run_index = state
                 .jobs_by_run
@@ -556,7 +556,6 @@ impl RunStateMachine {
             );
         }
 
-        // AC6.3: No job has a "backward" status relative to its conclusion.
         // If conclusion is set, status must be Completed.
         for (job_id, job) in &state.jobs {
             if job.conclusion.is_some() {
@@ -568,10 +567,7 @@ impl RunStateMachine {
             }
         }
 
-        // AC6.4: Active jobs are never evicted — if a job exists,
-        // and has an active status, it must be in the primary map.
-        // (This is tautological from the map, but we verify it
-        // symmetrically with the indexes.)
+        // Active jobs are never evicted — verify symmetrically with the indexes.
         for (job_id, job) in &state.jobs {
             if matches!(
                 job.status,

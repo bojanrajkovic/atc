@@ -1,13 +1,11 @@
 //! Integration tests: PG state snapshot read path.
 //!
-//! T1 — Snapshot returns PG state: GET /v1/state reads runs and jobs from
-//!      PG after commit, returns them with correct lastSeq.
-//! T2 — Self-consistent snapshot under concurrent commits: REPEATABLE READ
-//!      guarantees entity_count == lastSeq (strong equality, not just >=).
-//! T3 — In-memory fallback: when pg_pool is None, GET /v1/state reads from
-//!      the in-memory RunStateMachine (original behavior unchanged).
+//! Covers GET /v1/state in PG mode (snapshot reads runs and jobs from PG with
+//! correct lastSeq under both quiet and concurrent-commit conditions) and the
+//! in-memory fallback (when `pg_pool` is None, the handler reads from the
+//! in-memory RunStateMachine, original behavior unchanged).
 //!
-//! Docker/OrbStack required for T1 and T2.
+//! Docker/OrbStack required for the PG-backed cases.
 
 mod common;
 
@@ -17,10 +15,10 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-// ─── T1: snapshot returns PG state ──────────────────────────────────────────
+// ─── snapshot returns PG state ──────────────────────────────────────────────
 
-/// T1: After committing a run and job via webhooks in PG mode, GET /v1/state
-///     returns a snapshot containing both entities and lastSeq = 2.
+/// After committing a run and job via webhooks in PG mode, GET /v1/state
+/// returns a snapshot containing both entities and lastSeq = 2.
 ///
 /// In PG mode the state handler reads `broadcast_watermark` (the commit-order
 /// cursor advanced by the drain after each successful pass) and then opens a
@@ -31,7 +29,7 @@ use tokio::time::timeout;
 /// drain's first wake-up after each webhook.
 #[tokio::test]
 #[serial]
-async fn t1_snapshot_returns_pg_state() {
+async fn snapshot_returns_pg_state() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -109,8 +107,8 @@ async fn t1_snapshot_returns_pg_state() {
     fixture.shutdown.cancel();
 }
 
-/// T1b: Placeholder run rows (created by job-before-run FK stubs) are excluded
-///      from the /v1/state snapshot.
+/// Placeholder run rows (created by job-before-run FK stubs) are excluded
+/// from the /v1/state snapshot.
 ///
 /// In PG mode, when a job event arrives before its run, `upsert_job_in_txn`
 /// inserts a stub run row with `placeholder=true`. The state handler's
@@ -118,7 +116,7 @@ async fn t1_snapshot_returns_pg_state() {
 /// appear in the snapshot.
 #[tokio::test]
 #[serial]
-async fn t1b_placeholder_runs_excluded_from_snapshot() {
+async fn placeholder_runs_excluded_from_snapshot() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -154,9 +152,9 @@ async fn t1b_placeholder_runs_excluded_from_snapshot() {
     fixture.shutdown.cancel();
 }
 
-// ─── T2: consistency under concurrent commits ────────────────────────────────
+// ─── consistency under concurrent commits ──────────────────────────────────
 
-/// T2: Snapshot is self-consistent under concurrent webhook commits.
+/// Snapshot is self-consistent under concurrent webhook commits.
 ///
 /// For each of three webhooks (each creating a distinct entity), the webhook
 /// POST and GET /v1/state are issued concurrently via `tokio::join!`. The
@@ -190,7 +188,7 @@ async fn t1b_placeholder_runs_excluded_from_snapshot() {
 /// committed events for the cases where the drain has caught up.
 #[tokio::test]
 #[serial]
-async fn t2_snapshot_self_consistent_under_concurrent_writes() {
+async fn snapshot_self_consistent_under_concurrent_writes() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -243,17 +241,17 @@ async fn t2_snapshot_self_consistent_under_concurrent_writes() {
     fixture.shutdown.cancel();
 }
 
-// ─── T3: in-memory fallback when pg_pool is None ────────────────────────────
+// ─── in-memory fallback when pg_pool is None ───────────────────────────────
 
-/// T3: When pg_pool is None (in-memory-only mode), GET /v1/state reads from
-///     the in-memory RunStateMachine, not from PG.
+/// When pg_pool is None (in-memory-only mode), GET /v1/state reads from
+/// the in-memory RunStateMachine, not from PG.
 ///
 /// Uses `build_app_no_secret()` which wires `pg_pool: None`. Fires one run
 /// webhook. Expects lastSeq=1 and the run in the snapshot — but via the
 /// in-memory path (seq mutex held, RunStateMachine.snapshot() called).
 #[tokio::test]
 #[serial]
-async fn t3_in_memory_fallback() {
+async fn in_memory_fallback() {
     // Build app with no PG pool.
     let (router, state) = common::build_app_no_secret();
 

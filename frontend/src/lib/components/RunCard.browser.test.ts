@@ -69,7 +69,7 @@ describe('RunCard (browser mode)', () => {
     resetDocumentAttrs()
   })
 
-  describe('AC10.4: ::before accent bar', () => {
+  describe('::before accent bar', () => {
     it('has width 3px, left 0, full height, background = --status-color', async () => {
       const run = createMockRun({ status: 'InProgress' })
       const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
@@ -87,8 +87,8 @@ describe('RunCard (browser mode)', () => {
     })
   })
 
-  describe('AC11: halo animation and reduced motion', () => {
-    it('AC11.1: InProgress card has animation-name = pulse-border', async () => {
+  describe('halo animation and reduced motion', () => {
+    it('InProgress card has animation-name = pulse-border', async () => {
       const run = createMockRun({ status: 'InProgress' })
       const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
       await settle()
@@ -97,7 +97,7 @@ describe('RunCard (browser mode)', () => {
       expect(getComputedStyle(card).animationName).toBe('pulse-border')
     })
 
-    it('AC11.2: @keyframes pulse-border animates box-shadow via --halo-color', () => {
+    it('@keyframes pulse-border animates box-shadow via --halo-color', () => {
       const kf = findKeyframes('pulse-border')
       expect(kf).not.toBeNull()
 
@@ -123,7 +123,7 @@ describe('RunCard (browser mode)', () => {
       expect(fifty).not.toMatch(/transparent|rgba\(0, ?0, ?0, ?0\)/)
     })
 
-    it('AC11.3: Queued and Completed cards do NOT animate', async () => {
+    it('Queued and Completed cards do NOT animate', async () => {
       for (const status of ['Queued', 'Completed'] as const) {
         const run = createMockRun({ status })
         const { container, unmount } = render(RunCard, {
@@ -137,17 +137,16 @@ describe('RunCard (browser mode)', () => {
       }
     })
 
-    it('AC11.4: reduced-motion rule exists for InProgress cards', () => {
+    it('reduced-motion rule exists for InProgress cards', () => {
       // CSS media queries are evaluated by the browser against the OS/browser
       // setting. We cannot flip that from JS in @vitest/browser's current API,
-      // so we verify the rule's existence as coverage for AC11.4. Behavioural
-      // proof is covered by manual verification; the presence of the rule in
-      // app.css is the fix.
+      // so we verify the rule's existence. Behavioural proof is covered by
+      // manual verification; the presence of the rule in app.css is the fix.
       const hasHaltRule = stylesContainReducedMotionHalt()
       expect(hasHaltRule).toBe(true)
     })
 
-    it('AC11.5: --halo-color differs between dark and light modes', async () => {
+    it('--halo-color differs between dark and light modes', async () => {
       // Dark (default)
       resetDocumentAttrs()
       await settle()
@@ -168,8 +167,8 @@ describe('RunCard (browser mode)', () => {
     })
   })
 
-  describe('AC13: compact density hides secondary content', () => {
-    it('AC13.1: compact hides run-card-meta, run-card-progress, run-card-runner', async () => {
+  describe('compact density hides secondary content', () => {
+    it('compact hides run-card-meta, run-card-progress, run-card-runner', async () => {
       document.documentElement.dataset.density = 'compact'
       const run = createMockRun({ status: 'InProgress' })
       const { container } = render(RunCard, {
@@ -187,7 +186,7 @@ describe('RunCard (browser mode)', () => {
       }
     })
 
-    it('AC13.2: without compact, the same elements are visible', async () => {
+    it('without compact, the same elements are visible', async () => {
       resetDocumentAttrs()
       const run = createMockRun({ status: 'InProgress' })
       const { container } = render(RunCard, {
@@ -205,7 +204,7 @@ describe('RunCard (browser mode)', () => {
       }
     })
 
-    it('AC13.3: toggling density does NOT re-mount the card DOM', async () => {
+    it('toggling density does NOT re-mount the card DOM', async () => {
       const run = createMockRun({ status: 'InProgress' })
       const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
       await settle()
@@ -221,7 +220,7 @@ describe('RunCard (browser mode)', () => {
       expect(cardAfter).toBe(cardBefore)
     })
 
-    it('AC13.4: compact keeps the header (name + glyph + duration) visible', async () => {
+    it('compact keeps the header (name + glyph + duration) visible', async () => {
       document.documentElement.dataset.density = 'compact'
       const run = createMockRun({ status: 'InProgress', displayTitle: 'CI — main' })
       const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
@@ -236,7 +235,7 @@ describe('RunCard (browser mode)', () => {
       expect(getComputedStyle(name).display).not.toBe('none')
     })
 
-    it('AC13.5: global class names survive compilation and match html[data-density] selector', async () => {
+    it('global class names survive compilation and match html[data-density] selector', async () => {
       document.documentElement.dataset.density = 'compact'
       const run = createMockRun({ status: 'InProgress' })
       render(RunCard, { props: { run, jobStats: emptyJobStats } })
@@ -246,7 +245,7 @@ describe('RunCard (browser mode)', () => {
       expect(el).toBeTruthy()
     })
 
-    it('AC13 (padding): compact selector actually shrinks .run-card padding', async () => {
+    it('compact selector actually shrinks .run-card padding', async () => {
       const run = createMockRun({ status: 'InProgress' })
       const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
       await settle()
@@ -321,7 +320,7 @@ describe('RunCard hover-peek behavior', () => {
     vi.useRealTimers()
   })
 
-  test('AC3.4 hover for less than 250 ms does NOT show popover', async () => {
+  test('hover for less than 250 ms does NOT show popover', async () => {
     const run = createMockRun({ status: 'InProgress' })
     const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
     // Flush the $effect that sets canHover from matchMedia
@@ -347,7 +346,7 @@ describe('RunCard hover-peek behavior', () => {
     expect(document.querySelector('.hover-peek-popover[data-state="open"]')).toBeNull()
   })
 
-  test('AC3.1 + AC3.5 hover for 250 ms shows popover portal-rendered to <body>', async () => {
+  test('hover for 250 ms shows popover portal-rendered to <body>', async () => {
     const run = createMockRun({ status: 'InProgress' })
     const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
     // Flush the $effect that sets canHover from matchMedia
@@ -363,17 +362,17 @@ describe('RunCard hover-peek behavior', () => {
     await tick()
 
     const popover = document.querySelector('.hover-peek-popover')
-    // AC3.1: popover is present after 250 ms hover and is open
+    // popover is present after 250 ms hover and is open
     expect(popover).not.toBeNull()
     expect(popover!.getAttribute('data-state')).toBe('open')
-    // AC3.5: popover is portal-rendered directly into <body>, not nested inside the article
+    // popover is portal-rendered directly into <body>, not nested inside the article
     expect(popover!.closest('article.run-card')).toBeNull()
     expect(popover!.parentElement?.tagName).toBe('DIV')
     // The portal ancestor chain: popover → div (floating-ui container) → body
     expect(popover!.parentElement?.parentElement).toBe(document.body)
   })
 
-  test('AC3.2 mouse-leave immediately clears popover', async () => {
+  test('mouse-leave immediately clears popover', async () => {
     const run = createMockRun({ status: 'InProgress' })
     const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
     await tick()
@@ -400,7 +399,7 @@ describe('RunCard hover-peek behavior', () => {
     expect(document.querySelector('.hover-peek-popover[data-state="open"]')).toBeNull()
   })
 
-  test('AC3.3 click during hover closes popover and sets selectedRunId', async () => {
+  test('click during hover closes popover and sets selectedRunId', async () => {
     const run = createMockRun({ status: 'InProgress' })
     const { container } = render(RunCard, { props: { run, jobStats: emptyJobStats } })
     await tick()

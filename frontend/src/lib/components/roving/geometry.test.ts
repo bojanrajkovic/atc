@@ -166,13 +166,13 @@ describe('runIdAt', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveTarget / ArrowDown', () => {
-  it('AC2.1: moves to row+1 in the same column (non-edge)', () => {
+  it('moves to row+1 in the same column (non-edge)', () => {
     const current = queued[3]!.id
     const result = resolveTarget(current, 'ArrowDown', threeCol)
     expect(result).toBe(queued[4]!.id)
   })
 
-  it('AC3.1: last row of column is a no-op — returns same id', () => {
+  it('last row of column is a no-op — returns same id', () => {
     const last = queued[queued.length - 1]!
     const result = resolveTarget(last.id, 'ArrowDown', threeCol)
     expect(result).toBe(last.id)
@@ -184,13 +184,13 @@ describe('resolveTarget / ArrowDown', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveTarget / ArrowUp', () => {
-  it('AC2.2: moves to row-1 in the same column (non-edge)', () => {
+  it('moves to row-1 in the same column (non-edge)', () => {
     const current = queued[4]!.id
     const result = resolveTarget(current, 'ArrowUp', threeCol)
     expect(result).toBe(queued[3]!.id)
   })
 
-  it('AC3.2: first row (row 0) is a no-op — returns same id', () => {
+  it('first row (row 0) is a no-op — returns same id', () => {
     const first = queued[0]!
     const result = resolveTarget(first.id, 'ArrowUp', threeCol)
     expect(result).toBe(first.id)
@@ -202,30 +202,30 @@ describe('resolveTarget / ArrowUp', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveTarget / ArrowRight', () => {
-  it('AC2.3: moves to adjacent non-empty column with matching row', () => {
+  it('moves to adjacent non-empty column with matching row', () => {
     // queued[1] → inProgress[1]
     const result = resolveTarget(queued[1]!.id, 'ArrowRight', threeCol)
     expect(result).toBe(inProgress[1]!.id)
   })
 
-  it('AC3.7: ArrowRight clamps row when target column is shorter', () => {
+  it('ArrowRight clamps row when target column is shorter', () => {
     // queued has 10 cards, inProgress has 3; row 5 → clamped to 2
     expect(resolveTarget(queued[5]!.id, 'ArrowRight', threeCol)).toBe(inProgress[2]!.id)
   })
 
-  it('AC3.3: rightmost non-empty column is a no-op — returns same id', () => {
+  it('rightmost non-empty column is a no-op — returns same id', () => {
     const last = completed[0]!
     const result = resolveTarget(last.id, 'ArrowRight', threeCol)
     expect(result).toBe(last.id)
   })
 
-  it('AC3.5: skips empty middle column when moving right', () => {
+  it('skips empty middle column when moving right', () => {
     // skipMiddle = [5 queued, 0 inProgress, 3 completed]
     const result = resolveTarget(queued5[1]!.id, 'ArrowRight', skipMiddle)
     expect(result).toBe(completed3[1]!.id)
   })
 
-  it('AC3.8: empty middle col with no further col is a no-op — returns same id', () => {
+  it('empty middle col with no further col is a no-op — returns same id', () => {
     // noRightNeighbour = [3 queued, 0, 0]
     const result = resolveTarget(queued3[1]!.id, 'ArrowRight', noRightNeighbour)
     expect(result).toBe(queued3[1]!.id)
@@ -237,19 +237,19 @@ describe('resolveTarget / ArrowRight', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveTarget / ArrowLeft', () => {
-  it('AC2.4: moves to adjacent non-empty column with matching row', () => {
+  it('moves to adjacent non-empty column with matching row', () => {
     // inProgress[1] → queued[1]
     const result = resolveTarget(inProgress[1]!.id, 'ArrowLeft', threeCol)
     expect(result).toBe(queued[1]!.id)
   })
 
-  it('AC3.4: leftmost non-empty column is a no-op — returns same id', () => {
+  it('leftmost non-empty column is a no-op — returns same id', () => {
     const first = queued[2]!
     const result = resolveTarget(first.id, 'ArrowLeft', threeCol)
     expect(result).toBe(first.id)
   })
 
-  it('AC3.6: skips empty middle column when moving left', () => {
+  it('skips empty middle column when moving left', () => {
     // skipMiddle = [5 queued, 0 inProgress, 3 completed]
     const result = resolveTarget(completed3[1]!.id, 'ArrowLeft', skipMiddle)
     expect(result).toBe(queued5[1]!.id)
@@ -261,7 +261,7 @@ describe('resolveTarget / ArrowLeft', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveTarget / Home', () => {
-  it('AC2.5: moves to row 0 of the same column', () => {
+  it('moves to row 0 of the same column', () => {
     const result = resolveTarget(queued[7]!.id, 'Home', threeCol)
     expect(result).toBe(queued[0]!.id)
   })
@@ -273,7 +273,7 @@ describe('resolveTarget / Home', () => {
 })
 
 describe('resolveTarget / End', () => {
-  it('AC2.6: moves to last row of the same column', () => {
+  it('moves to last row of the same column', () => {
     const result = resolveTarget(queued[2]!.id, 'End', threeCol)
     expect(result).toBe(queued[queued.length - 1]!.id)
   })

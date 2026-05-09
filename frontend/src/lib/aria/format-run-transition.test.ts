@@ -130,7 +130,7 @@ describe('formatRunTransition', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Branch elision when null (AC6.4)
+  // Branch elision when null
   // ---------------------------------------------------------------------------
 
   describe('branch elision', () => {

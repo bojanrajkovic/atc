@@ -1,4 +1,4 @@
-//! Test that metrics router does NOT serve health check endpoints (AC3.4).
+//! Test that metrics router does NOT serve health check endpoints.
 //! This test must run in its own binary because metrics::build() installs a global recorder.
 
 use axum::body::Body;
@@ -7,7 +7,7 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn metrics_router_does_not_serve_healthz_readyz() {
-    // AC3.4 — metrics router (side-port) must NOT have /healthz or /readyz routes.
+    // Metrics router (side-port) must NOT have /healthz or /readyz routes.
     // This isolates health checking to the main port.
     let (_prometheus_layer, metrics_router) = atc_server::metrics::build();
 

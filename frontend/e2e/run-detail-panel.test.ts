@@ -61,10 +61,7 @@ test.describe('Run detail panel', () => {
     await setupPage(page)
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.1 — Panel opens via selectedRunId and shows single-pane layout
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.1 panel opens and renders header + meta-grid when selectedRunId is set', async ({
+  test('interactivity — panel opens and renders header + meta-grid when selectedRunId is set', async ({
     page,
   }) => {
     await seedAndOpenPanel(page)
@@ -74,10 +71,7 @@ test.describe('Run detail panel', () => {
     await expect(page.locator('.meta-grid')).toBeVisible()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.2 — "Go to run" anchor attributes
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.2 Go-to-run link has correct href, target="_blank", rel="noopener noreferrer"', async ({
+  test('interactivity — Go-to-run link has correct href, target="_blank", rel="noopener noreferrer"', async ({
     page,
   }) => {
     const htmlUrl = await seedAndOpenPanel(page)
@@ -88,12 +82,7 @@ test.describe('Run detail panel', () => {
     await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.3 — Esc key closes panel and clears selectedRunId
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.3 Esc key closes panel and sets selectedRunId to null', async ({
-    page,
-  }) => {
+  test('interactivity — Esc key closes panel and sets selectedRunId to null', async ({ page }) => {
     await seedAndOpenPanel(page)
     await expect(page.getByRole('dialog')).toBeVisible()
 
@@ -105,12 +94,7 @@ test.describe('Run detail panel', () => {
     expect(runIdAfter).toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.4 — Close button closes panel
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.4 clicking "Close detail panel" button closes panel', async ({
-    page,
-  }) => {
+  test('interactivity — clicking "Close detail panel" button closes panel', async ({ page }) => {
     await seedAndOpenPanel(page)
     await expect(page.getByRole('dialog')).toBeVisible()
 
@@ -122,10 +106,7 @@ test.describe('Run detail panel', () => {
     expect(runIdAfter).toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.5 — Click outside closes panel
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.5 clicking outside the sheet closes the panel', async ({ page }) => {
+  test('interactivity — clicking outside the sheet closes the panel', async ({ page }) => {
     await seedAndOpenPanel(page)
     await expect(page.getByRole('dialog')).toBeVisible()
 
@@ -135,12 +116,7 @@ test.describe('Run detail panel', () => {
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3_000 })
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.6 — Focus trapped inside sheet while open
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.6 focus is trapped inside the sheet while it is open', async ({
-    page,
-  }) => {
+  test('interactivity — focus is trapped inside the sheet while it is open', async ({ page }) => {
     await seedAndOpenPanel(page)
     await expect(page.getByRole('dialog')).toBeVisible()
 
@@ -155,10 +131,7 @@ test.describe('Run detail panel', () => {
     expect(focusedInsideDialog).toBe(true)
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.7 — selectedJobId triggers JobBlock scroll-into-view and is cleared
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.7 setting selectedJobId calls scrollIntoView on the target block and clears selectedJobId', async ({
+  test('interactivity — setting selectedJobId calls scrollIntoView on the target block and clears selectedJobId', async ({
     page,
   }) => {
     // Seed run 1.
@@ -236,9 +209,6 @@ test.describe('Run detail panel', () => {
     expect(jobIdAfter).toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.8 — All 11 StatusKey fixtures render with correct data-status-key
-  // -----------------------------------------------------------------------
   const STATUS_KEY_FIXTURES: Array<{
     key: string
     action: Parameters<typeof makeRunEvent>[1]['action']
@@ -290,9 +260,7 @@ test.describe('Run detail panel', () => {
   ]
 
   for (const { key, action } of STATUS_KEY_FIXTURES) {
-    test(`interactivity.AC2.8 PanelHeader renders with data-status-key="${key}"`, async ({
-      page,
-    }) => {
+    test(`interactivity — PanelHeader renders with data-status-key="${key}"`, async ({ page }) => {
       await seedAndOpenPanel(page, action)
 
       const header = page.locator('.panel-header')
@@ -301,11 +269,6 @@ test.describe('Run detail panel', () => {
     })
   }
 
-  // -----------------------------------------------------------------------
-  // Panel-scroll regression: long job lists must scroll inside .job-blocks,
-  // not spill past the viewport. Sheet.Content has no built-in scroll prop;
-  // the fix is `flex-1 min-h-0 overflow-y-auto` on the .job-blocks container.
-  // -----------------------------------------------------------------------
   test('panel job list scrolls when content exceeds viewport', async ({ page }) => {
     await sendWS(
       page,
@@ -383,10 +346,7 @@ test.describe('Run detail panel', () => {
     expect(scrollTop).toBeGreaterThan(0)
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.9 — Missing-run fallback: selectedRunId for non-existent run is cleared
-  // -----------------------------------------------------------------------
-  test('interactivity.AC2.9 setting selectedRunId to a non-existent id is cleared without opening panel', async ({
+  test('interactivity — setting selectedRunId to a non-existent id is cleared without opening panel', async ({
     page,
   }) => {
     // Set a run id that does not exist in the store.

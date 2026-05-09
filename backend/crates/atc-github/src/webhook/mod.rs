@@ -131,7 +131,6 @@ mod tests {
 
     #[test]
     fn test_parse_workflow_run_requested() {
-        // AC6.1: Load workflow_run_requested.json fixture and parse
         let fixture = include_str!("../../tests/fixtures/workflow_run_requested.json");
         let result =
             parse_webhook("workflow_run", fixture.as_bytes()).expect("should parse without error");
@@ -151,7 +150,6 @@ mod tests {
 
     #[test]
     fn test_parse_workflow_job_queued() {
-        // AC6.2: Load workflow_job_queued.json fixture and parse
         let fixture = include_str!("../../tests/fixtures/workflow_job_queued.json");
         let result =
             parse_webhook("workflow_job", fixture.as_bytes()).expect("should parse without error");
@@ -174,7 +172,6 @@ mod tests {
 
     #[test]
     fn test_parse_unknown_event_skipped() {
-        // AC6.3: Call parse_webhook("push", body) and expect Skipped
         let result = parse_webhook("push", b"{}").expect("should return ParseResult::Skipped");
 
         match result {
@@ -187,7 +184,6 @@ mod tests {
 
     #[test]
     fn test_parse_unknown_event_type_skipped() {
-        // AC6.4: Call parse_webhook("unknown_event", body) and expect Skipped
         let result =
             parse_webhook("unknown_event", b"{}").expect("should return ParseResult::Skipped");
 
@@ -201,7 +197,6 @@ mod tests {
 
     #[test]
     fn test_parse_malformed_json() {
-        // AC1.7: Call parse_webhook("workflow_run", malformed_json)
         let result = parse_webhook("workflow_run", b"not valid json{{{");
 
         assert!(matches!(result, Err(ParseError::InvalidJson(_))));

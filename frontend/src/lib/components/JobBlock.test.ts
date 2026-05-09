@@ -21,12 +21,8 @@ function makeStep(overrides: Partial<Step> = {}): Step {
   }
 }
 
-// ---------------------------------------------------------------------------
-// interactivity.AC2.1 (partial) — flat list of job blocks with header + step list
-// ---------------------------------------------------------------------------
-
 describe('JobBlock', () => {
-  it('interactivity.AC2.1 sets id="job-{job.id}" on the section element', () => {
+  it('sets id="job-{job.id}" on the section element', () => {
     const job = createMockJob({ id: 42n })
     const { container } = render(JobBlock, {
       props: { job, durationText: '1:23', selectedJobId: null },
@@ -37,7 +33,7 @@ describe('JobBlock', () => {
     expect(section!.id).toBe('job-42')
   })
 
-  it('interactivity.AC2.1 renders the job name in the header', () => {
+  it('renders the job name in the header', () => {
     const job = createMockJob({ name: 'Run tests' })
     render(JobBlock, {
       props: { job, durationText: '0:45', selectedJobId: null },
@@ -46,7 +42,7 @@ describe('JobBlock', () => {
     expect(screen.getByText('Run tests')).toBeTruthy()
   })
 
-  it('interactivity.AC2.1 renders the durationText in the header', () => {
+  it('renders the durationText in the header', () => {
     const job = createMockJob({ status: 'InProgress' })
     render(JobBlock, {
       props: { job, durationText: '3:14', selectedJobId: null },
@@ -55,7 +51,7 @@ describe('JobBlock', () => {
     expect(screen.getByText('3:14')).toBeTruthy()
   })
 
-  it('interactivity.AC2.1 renders the status icon glyph for the job status', () => {
+  it('renders the status icon glyph for the job status', () => {
     const job = createMockJob({ status: 'Completed', conclusion: 'Success' })
     render(JobBlock, {
       props: { job, durationText: '2:00', selectedJobId: null },
@@ -65,7 +61,7 @@ describe('JobBlock', () => {
     expect(screen.getByText('✓')).toBeTruthy()
   })
 
-  it('interactivity.AC2.1 renders one StepItem per step in job.steps', () => {
+  it('renders one StepItem per step in job.steps', () => {
     const job = createMockJob({
       steps: [
         makeStep({ number: 1n, name: 'Checkout code', status: 'Completed', conclusion: 'Success' }),
@@ -82,7 +78,7 @@ describe('JobBlock', () => {
     expect(screen.getByText('Run tests')).toBeTruthy()
   })
 
-  it('interactivity.AC2.1 omits the step list entirely when job.steps is empty', () => {
+  it('omits the step list entirely when job.steps is empty', () => {
     // The empty <ol> used to render with a 0.5rem header margin-bottom that
     // produced asymmetric vertical spacing inside .job-block. The block now
     // omits StepList when there are no steps and uses flex `gap` for spacing,
@@ -95,7 +91,7 @@ describe('JobBlock', () => {
     expect(container.querySelector('ol.step-list')).toBeNull()
   })
 
-  it('interactivity.AC2.1 sets data-status-key attribute to the resolved status key', () => {
+  it('sets data-status-key attribute to the resolved status key', () => {
     const job = createMockJob({ status: 'Completed', conclusion: 'Failure' })
     const { container } = render(JobBlock, {
       props: { job, durationText: '0:30', selectedJobId: null },
@@ -105,7 +101,7 @@ describe('JobBlock', () => {
     expect(section!.getAttribute('data-status-key')).toBe('Failure')
   })
 
-  it('interactivity.AC2.1 sets --status-color inline style to the correct CSS var', () => {
+  it('sets --status-color inline style to the correct CSS var', () => {
     const job = createMockJob({ status: 'Queued', conclusion: null })
     const { container } = render(JobBlock, {
       props: { job, durationText: '—', selectedJobId: null },

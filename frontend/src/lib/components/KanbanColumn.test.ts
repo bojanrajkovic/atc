@@ -24,7 +24,7 @@ describe('KanbanColumn', () => {
     uiStore.destroy()
   })
 
-  describe('kanban-board.AC1.2: ARIA structure', () => {
+  describe('ARIA structure', () => {
     it('renders section with aria-labelledby referencing heading id', () => {
       const run = createMockRun()
       render(KanbanColumnHarness, {
@@ -305,7 +305,7 @@ describe('KanbanColumn', () => {
     })
   })
 
-  describe('AC5.1: pool filter applied to column', () => {
+  describe('pool filter applied to column', () => {
     it('renders only the matching run when activePoolFilter is set', () => {
       const runA = createMockRun({ id: 10n })
       const runB = createMockRun({ id: 20n })
@@ -341,7 +341,7 @@ describe('KanbanColumn', () => {
     })
   })
 
-  describe('AC5.5: null filter passthrough', () => {
+  describe('null filter passthrough', () => {
     it('renders all runs unchanged when activePoolFilter is null', () => {
       const runA = createMockRun({ id: 30n })
       const runB = createMockRun({ id: 40n })
@@ -364,7 +364,7 @@ describe('KanbanColumn', () => {
     })
   })
 
-  describe('frontend-1-0-polish.AC4.1: scroll container has atc-scrollbar class', () => {
+  describe('scroll container has atc-scrollbar class', () => {
     it('the role=list scroll container has class atc-scrollbar applied', () => {
       const run = createMockRun({ id: 1n })
       const { container } = render(KanbanColumnHarness, {
@@ -384,7 +384,7 @@ describe('KanbanColumn', () => {
     })
   })
 
-  describe('AC5.6: empty result when filter matches no jobs', () => {
+  describe('empty result when filter matches no jobs', () => {
     it('renders zero cards and does not crash when filter matches no jobs', () => {
       const runA = createMockRun({ id: 50n })
       const runB = createMockRun({ id: 60n })

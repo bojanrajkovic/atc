@@ -1,9 +1,9 @@
-//! AC4 (partial): Repository-scoped query tests.
+//! Repository-scoped query tests.
 
 use super::*;
 
 #[tokio::test]
-async fn test_ac4_1_query_returns_only_queried_repos() {
+async fn test_query_returns_only_queried_repos() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -53,7 +53,7 @@ async fn test_ac4_1_query_returns_only_queried_repos() {
 }
 
 #[tokio::test]
-async fn test_ac4_2_query_returns_owned_snapshots() {
+async fn test_query_returns_owned_snapshots() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -90,7 +90,7 @@ async fn test_ac4_2_query_returns_owned_snapshots() {
 }
 
 #[tokio::test]
-async fn test_ac4_5_empty_repos_returns_empty_result() {
+async fn test_empty_repos_returns_empty_result() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -122,7 +122,7 @@ async fn test_ac4_5_empty_repos_returns_empty_result() {
 }
 
 #[tokio::test]
-async fn test_ac4_6_multi_repo_query_isolation() {
+async fn test_multi_repo_query_isolation() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));
@@ -229,7 +229,7 @@ async fn test_ac4_6_multi_repo_query_isolation() {
 }
 
 #[tokio::test]
-async fn test_ac4_query_includes_parent_runs() {
+async fn test_query_includes_parent_runs() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock, Duration::from_secs(3600));

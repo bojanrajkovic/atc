@@ -19,7 +19,7 @@ use tokio::time::timeout;
 const METRIC_COUNT: &str = "atc_pg_outbox_lag_seconds_count";
 const METRIC_SUM: &str = "atc_pg_outbox_lag_seconds_sum";
 
-/// AC1 — A normal webhook drives one observation into the lag histogram.
+/// A normal webhook drives one observation into the lag histogram.
 ///
 /// One webhook, one outbox row, one drain pass, one broadcast → one
 /// histogram observation. The healthy-path lag is sub-millisecond, so the
@@ -73,7 +73,7 @@ async fn metrics_outbox_lag_records_one_observation_per_broadcast() {
     fixture.shutdown.cancel();
 }
 
-/// AC2 — A future-dated `inserted_at` produces a negative lag observation,
+/// A future-dated `inserted_at` produces a negative lag observation,
 /// but the histogram still records it (no panic, no input-side clamping).
 ///
 /// We do not assert on `_sum` because exporter handling of negative

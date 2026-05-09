@@ -42,7 +42,7 @@ describe('ConnectionManager', () => {
     server.close()
   })
 
-  describe('fe-foundation.AC4.4: Success — Reconnect with exponential backoff', () => {
+  describe('Success — Reconnect with exponential backoff', () => {
     it('transitions to reconnecting and retries after backoff delay', async () => {
       vi.useFakeTimers()
 
@@ -152,7 +152,7 @@ describe('ConnectionManager', () => {
     })
   })
 
-  describe('fe-foundation.AC4.5: Success — Reconnect re-runs full connect sequence', () => {
+  describe('Success — Reconnect re-runs full connect sequence', () => {
     it('re-fetches state during reconnect instead of just reopening WebSocket', async () => {
       vi.useFakeTimers()
 

@@ -1,5 +1,5 @@
 /**
- * frontend-1-0-polish.AC7.1 — Deterministic 1000-event burst perf test.
+ * Deterministic 1000-event burst perf test.
  *
  * Browser-mode rationale: requestAnimationFrame is a real browser API.
  * Running in Chromium ensures vi.stubGlobal reliably replaces window.requestAnimationFrame
@@ -30,7 +30,7 @@ const BATCH_SIZE = 100
 const BATCH_COUNT = 10
 const TOTAL_EVENTS = BATCH_SIZE * BATCH_COUNT // 1000
 
-describe('frontend-1-0-polish.AC7.1: deterministic 1000-event burst coalescing', () => {
+describe('deterministic 1000-event burst coalescing', () => {
   let eventDispatcher: typeof import('$lib/dispatcher')['eventDispatcher']
   let runStore: typeof import('$lib/stores/runs.svelte')['runStore']
 
@@ -138,13 +138,13 @@ describe('frontend-1-0-polish.AC7.1: deterministic 1000-event burst coalescing',
       tickRAF()
     }
 
-    // AC7.1 assertion 1: exactly N=10 flush callbacks (deterministic, not bounded).
+    // Assertion 1: exactly N=10 flush callbacks (deterministic, not bounded).
     expect(flushCount).toBe(BATCH_COUNT)
 
-    // AC7.1 assertion 2: every event landed in store state.
+    // Assertion 2: every event landed in store state.
     expect(runStore.runs.size).toBe(TOTAL_EVENTS)
 
-    // AC7.1 assertion 3: no events were dropped across all flushes.
+    // Assertion 3: no events were dropped across all flushes.
     expect(totalEventsReceived).toBe(TOTAL_EVENTS)
   })
 })

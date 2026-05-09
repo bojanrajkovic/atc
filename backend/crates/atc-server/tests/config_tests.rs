@@ -1,7 +1,7 @@
 use atc_server::config::{Config, LogFormat};
 use std::net::SocketAddr;
 
-/// Test 1: Config defaults when no env vars are set (AC1.1).
+/// Config defaults when no env vars are set.
 #[test]
 #[serial_test::serial]
 fn config_load_defaults() {
@@ -37,7 +37,7 @@ fn config_load_defaults() {
     }
 }
 
-/// Test 2: Config environment variable overrides (AC1.2).
+/// Config environment variable overrides.
 #[test]
 #[serial_test::serial]
 fn config_load_env_overrides() {
@@ -69,7 +69,7 @@ fn config_load_env_overrides() {
     }
 }
 
-/// Test 3: Malformed address causes error (AC1.3).
+/// Malformed address causes error.
 #[test]
 #[serial_test::serial]
 fn config_load_malformed_address() {
@@ -104,7 +104,7 @@ fn config_load_malformed_address() {
     }
 }
 
-/// Test 4: Invalid log_format value causes error (I2).
+/// Invalid log_format value causes error.
 #[test]
 #[serial_test::serial]
 fn config_load_invalid_log_format() {
@@ -139,7 +139,7 @@ fn config_load_invalid_log_format() {
     }
 }
 
-/// Test 5: GitHub webhook secret loads from env (server-wiring.AC6.1).
+/// GitHub webhook secret loads from env.
 #[test]
 #[serial_test::serial]
 fn config_github_webhook_secret_set() {
@@ -168,7 +168,7 @@ fn config_github_webhook_secret_set() {
     }
 }
 
-/// Test 6: GitHub webhook secret defaults to None (server-wiring.AC6.2).
+/// GitHub webhook secret defaults to None.
 #[test]
 #[serial_test::serial]
 fn config_github_webhook_secret_none() {

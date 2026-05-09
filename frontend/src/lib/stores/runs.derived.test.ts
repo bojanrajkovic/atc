@@ -15,8 +15,7 @@ describe('RunStore', () => {
     runStore.clear()
   })
 
-  // AC3.4: Derived filters work correctly
-  describe('AC3.4: Derived column filters', () => {
+  describe('Derived column filters', () => {
     it('should filter queuedRuns correctly', () => {
       const queued1 = 20n
       const queued2 = 21n
@@ -139,10 +138,8 @@ describe('RunStore', () => {
     })
   })
 
-  // AC3.1-AC3.5, AC3.7: Sort order tests
-  describe('AC3.1-AC3.7: Sort strategies', () => {
-    // AC3.1: queuedRuns sorted ascending by createdAt
-    it('AC3.1: queuedRuns sorted ascending by createdAt', () => {
+  describe('Sort strategies', () => {
+    it('queuedRuns sorted ascending by createdAt', () => {
       const runId1 = 100n
       const runId2 = 101n
 
@@ -170,8 +167,7 @@ describe('RunStore', () => {
       expect(runStore.queuedRuns[1]?.id).toBe(runId1) // Later second
     })
 
-    // AC3.2: inProgressRuns sorted descending by runStartedAt
-    it('AC3.2: inProgressRuns sorted descending by runStartedAt', () => {
+    it('inProgressRuns sorted descending by runStartedAt', () => {
       const runId1 = 110n
       const runId2 = 111n
 
@@ -201,8 +197,7 @@ describe('RunStore', () => {
       expect(runStore.inProgressRuns[1]?.id).toBe(runId1) // Earlier start second
     })
 
-    // AC3.3: inProgressRuns with null runStartedAt falls back to createdAt
-    it('AC3.3: inProgressRuns with null runStartedAt falls back to createdAt', () => {
+    it('inProgressRuns with null runStartedAt falls back to createdAt', () => {
       const runIdNull = 120n
       const runIdWithStart = 121n
 
@@ -249,8 +244,7 @@ describe('RunStore', () => {
       expect(runStore.inProgressRuns[1]?.id).toBe(runIdWithStart) // started run (runStartedAt 09:00:05)
     })
 
-    // AC3.4: completedRuns sorted descending by updatedAt
-    it('AC3.4: completedRuns sorted descending by updatedAt', () => {
+    it('completedRuns sorted descending by updatedAt', () => {
       const runId1 = 130n
       const runId2 = 131n
 
@@ -280,8 +274,7 @@ describe('RunStore', () => {
       expect(runStore.completedRuns[1]?.id).toBe(runId1) // Earlier update second
     })
 
-    // AC3.5: Tie-breaker tests using run.id
-    it('AC3.5a: queuedRuns tie-breaker uses ascending id', () => {
+    it('queuedRuns tie-breaker uses ascending id', () => {
       const runId1 = 3n
       const runId2 = 1n
       const runId3 = 2n
@@ -322,8 +315,7 @@ describe('RunStore', () => {
       expect(runStore.queuedRuns[2]?.id).toBe(runId1) // 3n
     })
 
-    // AC3.5b: inProgressRuns tie-breaker uses descending id
-    it('AC3.5b: inProgressRuns tie-breaker uses descending id', () => {
+    it('inProgressRuns tie-breaker uses descending id', () => {
       const runId1 = 3n
       const runId2 = 1n
       const runId3 = 2n
@@ -367,8 +359,7 @@ describe('RunStore', () => {
       expect(runStore.inProgressRuns[2]?.id).toBe(runId2) // 1n
     })
 
-    // AC3.5c: completedRuns tie-breaker uses descending id
-    it('AC3.5c: completedRuns tie-breaker uses descending id', () => {
+    it('completedRuns tie-breaker uses descending id', () => {
       const runId1 = 3n
       const runId2 = 1n
       const runId3 = 2n
@@ -412,9 +403,7 @@ describe('RunStore', () => {
       expect(runStore.completedRuns[2]?.id).toBe(runId2) // 1n
     })
 
-    // AC3.7: Sort uses lexical comparison, not localeCompare
-    // This test has two parts: behavioral verification and source-level assertion
-    it('AC3.7: Sort implementation uses direct lexical comparison', () => {
+    it('Sort implementation uses direct lexical comparison', () => {
       // Create runs with timestamps that would differ under locale-aware sorting
       const runId1 = 150n
       const runId2 = 151n
@@ -463,8 +452,7 @@ describe('RunStore', () => {
   })
 
   describe('runStore.jobStatsByRun', () => {
-    // AC3.1: Type shape and export
-    it('AC3.1: jobStatsByRun exports JobStats type with correct shape', () => {
+    it('jobStatsByRun exports JobStats type with correct shape', () => {
       runStore.applyRunEvent(
         createMockRunEvent({
           runId: 1n,
@@ -487,8 +475,7 @@ describe('RunStore', () => {
       expect(stats.runnerSummary).toBeNull()
     })
 
-    // AC3.2: Completed job count and summary
-    it('AC3.2: completed count reflects Completed jobs; runnerSummary matches summarizeRunners', () => {
+    it('completed count reflects Completed jobs; runnerSummary matches summarizeRunners', () => {
       const runId = 200n
 
       runStore.applyRunEvent(
@@ -556,8 +543,7 @@ describe('RunStore', () => {
       expect(stats!.runnerSummary).toBe('runner-a')
     })
 
-    // AC3.3: Total-map invariant — runs with no jobs get fallback entry
-    it('AC3.3: total-map invariant — every run has an entry, even with no jobs', () => {
+    it('total-map invariant — every run has an entry, even with no jobs', () => {
       const run1 = 300n
       const run2 = 301n
 
@@ -605,8 +591,7 @@ describe('RunStore', () => {
       expect(run2Stats!.runnerSummary).toBeNull()
     })
 
-    // AC3.4: Derived dependency tracking (formula correctness)
-    it('AC3.4: jobStatsByRun correctly computes counts from jobsByRun state', () => {
+    it('jobStatsByRun correctly computes counts from jobsByRun state', () => {
       const runId = 400n
 
       runStore.applyRunEvent(
@@ -692,8 +677,7 @@ describe('RunStore', () => {
       expect(stats!.completed).toBe(1)
     })
 
-    // AC3.5: Integration with summarizeRunners
-    it('AC3.5: runnerSummary integrates with summarizeRunners for single runner', () => {
+    it('runnerSummary integrates with summarizeRunners for single runner', () => {
       const runId = 500n
 
       runStore.applyRunEvent(
@@ -746,8 +730,7 @@ describe('RunStore', () => {
       expect(stats!.runnerSummary).toBe('runner-a')
     })
 
-    // AC3.5b: Integration with summarizeRunners for multiple runners
-    it('AC3.5: runnerSummary integrates with summarizeRunners for multiple runners', () => {
+    it('runnerSummary integrates with summarizeRunners for multiple runners', () => {
       const runId = 501n
 
       runStore.applyRunEvent(

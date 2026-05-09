@@ -1,10 +1,10 @@
-//! AC5: TTL eviction tests.
+//! TTL eviction tests.
 
 use super::*;
 use chrono::TimeDelta;
 
 #[tokio::test]
-async fn test_ac5_1_completed_job_within_ttl_retained() {
+async fn test_completed_job_within_ttl_retained() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
@@ -49,7 +49,7 @@ async fn test_ac5_1_completed_job_within_ttl_retained() {
 }
 
 #[tokio::test]
-async fn test_ac5_2_completed_job_past_ttl_evicted() {
+async fn test_completed_job_past_ttl_evicted() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
@@ -112,7 +112,7 @@ async fn test_ac5_2_completed_job_past_ttl_evicted() {
 }
 
 #[tokio::test]
-async fn test_ac5_3_run_with_no_jobs_evicted() {
+async fn test_run_with_no_jobs_evicted() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
@@ -160,7 +160,7 @@ async fn test_ac5_3_run_with_no_jobs_evicted() {
 }
 
 #[tokio::test]
-async fn test_ac5_3_run_with_active_job_retained() {
+async fn test_run_with_active_job_retained() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
@@ -232,7 +232,7 @@ async fn test_ac5_3_run_with_active_job_retained() {
 }
 
 #[tokio::test]
-async fn test_ac5_4_active_jobs_never_evicted() {
+async fn test_active_jobs_never_evicted() {
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
     let store = RunStateMachine::new(clock.clone(), Duration::from_secs(3600));
@@ -308,7 +308,7 @@ async fn test_ac5_4_active_jobs_never_evicted() {
 }
 
 #[tokio::test]
-async fn test_ac5_5_ttl_configurable() {
+async fn test_ttl_configurable() {
     let start_time = Utc::now();
     let one_hour_clock = Arc::new(TestClock::new(start_time));
     let five_min_clock = Arc::new(TestClock::new(start_time));

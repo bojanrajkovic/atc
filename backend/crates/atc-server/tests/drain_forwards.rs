@@ -1,10 +1,9 @@
 //! Integration tests: drain task forwards outbox events to WS clients.
 //!
-//! T4 — Drain forwards: webhook commits to PG, drain picks up the outbox row,
-//!      and broadcasts SeqEvent to WebSocket subscribers in order.
-//! T5 — Handler does not double-broadcast: in PG mode the webhook handler is
-//!      write-only; it commits to PG but does NOT broadcast via webhook_tx.
-//!      The broadcast comes solely from the drain.
+//! Covers the PG-mode broadcast pipeline: the webhook handler commits to PG
+//! and is write-only (no direct broadcast via `webhook_tx`); the drain task
+//! is the sole writer to the broadcast channel and forwards outbox rows in
+//! seq order.
 //!
 //! Docker/OrbStack required.
 
@@ -17,16 +16,16 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-// ─── T4: drain broadcasts in delivery order ──────────────────────────────────
+// ─── drain broadcasts in delivery order ───────────────────────────────────
 
-/// T4: Events committed via the PG webhook handler are broadcast by the drain
-///     in outbox seq order (1, 2, …).
+/// Events committed via the PG webhook handler are broadcast by the drain
+/// in outbox seq order (1, 2, …).
 ///
 /// Fires a run webhook (→ seq=1) then a job webhook (→ seq=2). Asserts both
 /// SeqEvents arrive at broadcast_rx with the correct seq numbers and in order.
 #[tokio::test]
 #[serial]
-async fn t4_drain_broadcasts_seq_in_order() {
+async fn drain_broadcasts_seq_in_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
     let mut rx = fixture.state.webhook_tx.subscribe();
@@ -97,11 +96,11 @@ async fn t4_drain_broadcasts_seq_in_order() {
     fixture.shutdown.cancel();
 }
 
-// ─── T5: handler does NOT broadcast in PG mode ──────────────────────────────
+// ─── handler does NOT broadcast in PG mode ────────────────────────────────
 
-/// T5: In PG mode the webhook handler is write-only — it does NOT send to the
-///     broadcast channel directly. The drain task is the SOLE writer to
-///     `webhook_tx`.
+/// In PG mode the webhook handler is write-only — it does NOT send to the
+/// broadcast channel directly. The drain task is the SOLE writer to
+/// `webhook_tx`.
 ///
 /// Determinism strategy: inject a 500 ms `drain_delay` so each drain pass
 /// sleeps before querying the outbox. After the handler returns 200, there is
@@ -113,7 +112,7 @@ async fn t4_drain_broadcasts_seq_in_order() {
 /// of absence is real and not just a scheduling race.
 #[tokio::test]
 #[serial]
-async fn t5_handler_silent_in_pg_mode() {
+async fn handler_silent_in_pg_mode() {
     let (pool, _container, db_url) = common::start_pg().await;
     // Slow the drain so the handler's return strictly precedes any drain
     // broadcast for the row it just committed. drain_delay sleeps at the

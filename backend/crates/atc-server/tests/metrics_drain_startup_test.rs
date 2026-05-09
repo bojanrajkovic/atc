@@ -18,10 +18,10 @@ use tokio::time::timeout;
 const METRIC_COUNT: &str = "atc_pg_drain_startup_seconds_count";
 const METRIC_SUM: &str = "atc_pg_drain_startup_seconds_sum";
 
-/// AC6 — A fresh fixture (which spawns a new drain task and runs one
-/// startup pass) records exactly one startup observation with a positive
-/// duration value. AC6b — additional webhooks driven through the same
-/// fixture do NOT extend the startup count: the once-per-process contract.
+/// A fresh fixture (which spawns a new drain task and runs one startup pass)
+/// records exactly one startup observation with a positive duration value.
+/// Additional webhooks driven through the same fixture do NOT extend the startup
+/// count: the once-per-process contract.
 #[tokio::test]
 #[serial]
 async fn metrics_drain_startup_records_once_per_process() {
@@ -51,7 +51,7 @@ async fn metrics_drain_startup_records_once_per_process() {
          baseline={baseline_sum} after={after_startup_sum}"
     );
 
-    // AC6b — drive a webhook through the same fixture; subsequent drain
+    // Drive a webhook through the same fixture; subsequent drain
     // passes must NOT add to the startup _count.
     let passes_before = fixture.observed_passes.load(Ordering::Relaxed);
     let body = common::fixture_workflow_run_requested();

@@ -46,7 +46,7 @@ describe('ConnectionManager', () => {
     server.close()
   })
 
-  describe('fe-foundation.AC4.8: Edge — Events buffered during state fetch are replayed after seq filtering', () => {
+  describe('Edge — Events buffered during state fetch are replayed after seq filtering', () => {
     it('buffers events arriving while state fetch is in progress', async () => {
       const manager = new ConnectionManager(baseUrl)
       let resolveStateFetch: (() => void) | undefined

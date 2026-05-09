@@ -162,9 +162,8 @@ impl JobStatus {
     /// - `Waiting` -> `InProgress`
     /// - `InProgress` -> `Completed`
     ///
-    /// Note: `Waiting` transitions are not in design AC2.1 but are
-    /// included to match GitHub's `workflow_job` model where jobs
-    /// can enter a `waiting` state for dependency resolution.
+    /// Note: `Waiting` transitions match GitHub's `workflow_job` model where
+    /// jobs can enter a `waiting` state for dependency resolution.
     ///
     /// # Errors
     ///

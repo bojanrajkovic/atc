@@ -9,18 +9,18 @@ import { createMockRun } from '$lib/test-utils/factories'
 import RunCardHarness from './test-utils/RunCard.test-harness.svelte'
 
 /**
- * AC12.7 — the static-Completed branch of RunCard's durationText $derived
- * MUST NOT subscribe to uiStore.nowMs. If it did, a future refactor that
- * accidentally hoists the nowMs read above the branch split would be silent:
- * text remains '2:14' because static inputs are constant, but the derivation
- * re-evaluates on every tick and call count grows.
+ * The static-Completed branch of RunCard's durationText $derived MUST NOT
+ * subscribe to uiStore.nowMs. If it did, a future refactor that accidentally
+ * hoists the nowMs read above the branch split would be silent: text remains
+ * '2:14' because static inputs are constant, but the derivation re-evaluates
+ * on every tick and call count grows.
  *
  * Technique: static imports (avoids vi.resetModules breaking Svelte runtime),
  * direct uiStore.nowMs assignment (avoids fake-timer interaction with the
  * module-scope singleton), and a spy on the pure computeDurationText module
  * to count reactive re-evaluations.
  */
-describe('RunCard — AC12.7 static-Completed derivation does not re-evaluate on tick', () => {
+describe('RunCard — static-Completed derivation does not re-evaluate on tick', () => {
   const emptyJobStats: JobStats = { completed: 0, total: 0, runnerSummary: null }
   const T0 = new Date('2026-04-17T10:00:00Z').getTime()
   let savedNowMs: number

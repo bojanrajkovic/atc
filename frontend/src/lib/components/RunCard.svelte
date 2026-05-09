@@ -48,8 +48,7 @@
    * State-aware duration. The static-Completed branch inside
    * computeDurationText does NOT read nowMs — so when `run` is a Completed
    * non-ActionRequired run, the short-circuit returns before `uiStore.nowMs`
-   * is accessed and the derivation never registers nowMs as a dependency
-   * (AC10.7 + AC12.7).
+   * is accessed and the derivation never registers nowMs as a dependency.
    */
   const durationText = $derived.by<string>(() => {
     if (run.status === 'Completed' && run.conclusion !== 'ActionRequired') {
@@ -59,7 +58,7 @@
   })
 
   /**
-   * aria-label for the inner activator button (AC4.7).
+   * aria-label for the inner activator button.
    * Format: "{displayTitle}, {statusLabel}, {repo}·{branch}" when branch is
    * non-null, or "{displayTitle}, {statusLabel}, {repo}" when branch is null.
    */
@@ -70,7 +69,7 @@
   })
 
   /**
-   * Step aggregations for the hover-peek popover (AC3.1).
+   * Step aggregations for the hover-peek popover.
    * Reads jobsByRunId derived from runStore to get the raw Job[] for this run.
    * "Completed" is the exact StepStatus variant confirmed from StepStatus.ts.
    */
@@ -95,7 +94,7 @@
   /**
    * Whether the device supports hover (matches the media query).
    * Single source of truth at the card level — touch devices never
-   * instantiate the timer or the popover (AC3.1).
+   * instantiate the timer or the popover.
    */
   let canHover = $state(false)
 

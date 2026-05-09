@@ -11,8 +11,7 @@ describe('RunStore', () => {
     runStore.clear()
   })
 
-  // AC3.1: applyRunEvent creates a new run for an unknown run ID
-  describe('AC3.1: Create new run for unknown run ID', () => {
+  describe('Create new run for unknown run ID', () => {
     it('should create a new run when given an envelope for an unknown run ID', () => {
       const runId = 1n
       const envelope: RunEventEnvelope = {
@@ -70,8 +69,7 @@ describe('RunStore', () => {
     })
   })
 
-  // AC3.2: applyRunEvent updates an existing run's status and fields
-  describe('AC3.2: Update existing run status and fields', () => {
+  describe('Update existing run status and fields', () => {
     it('should update an existing run from Queued to InProgress', () => {
       const runId = 3n
 
@@ -239,8 +237,7 @@ describe('RunStore', () => {
     })
   })
 
-  // AC3.9: Idempotent duplicate events
-  describe('AC3.9: Idempotent duplicate events', () => {
+  describe('Idempotent duplicate events', () => {
     it('should handle duplicate run events without creating duplicates', () => {
       const runId = 70n
       const envelope: RunEventEnvelope = {

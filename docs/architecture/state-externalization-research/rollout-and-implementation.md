@@ -67,9 +67,9 @@ In scope:
 - Tests for invalid transitions (rejected via `0 rows affected`) — **DONE**
 - Tests for idempotent same-status replay — **DONE**
 - Dual-write tests with full router and drift metrics (shadow_writes_tests.rs: 9 tests) — **DONE**
-- AC7 metric counter assertions (parity and transient failures) — **DONE**
+- Metric counter assertions for parity and transient failures — **DONE**
 
-Acceptance: a test that fires a sequence of run/job webhooks against a real Postgres and asserts PG row state matches the in-memory store at each step. **SATISFIED.** All 24 integration tests pass (15 persist_pg + 9 shadow_writes). All 255 backend tests pass. Metrics counters verified in AC7 tests.
+Acceptance: a test that fires a sequence of run/job webhooks against a real Postgres and asserts PG row state matches the in-memory store at each step. **SATISFIED.** All 24 integration tests pass (15 persist_pg + 9 shadow_writes). All 255 backend tests pass. Metrics counters verified.
 
 ADR refs: [ADR 0002 Decision 2](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (atomicity + concurrency control via UPDATE-WHERE-predicate).
 
@@ -81,11 +81,11 @@ In scope:
 - Add `outbox` table with `BIGSERIAL seq` primary key, `kind`, `run_id`, `job_id`, `payload JSONB`, and `inserted_at` — **DONE** (`migrations/0002_outbox.sql`)
 - 4 `pub(crate)` transaction helpers in `persist.rs`: `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn` — **DONE**
 - Webhook handler holds seq mutex across `pool.begin()…tx.commit()` to preserve broadcast-order = durable-order invariant — **DONE**
-- Reversed error policy: transient PG failures → 503, parity rejections → 200 `{"status":"rejected"}`, success → 200 `{"status":"processed"}` — **DONE** (Phase 3c later changed PG-mode success to `{"status":"accepted","seq":<i64>}`; in-memory mode still returns `processed`)
+- Reversed error policy: transient PG failures → 503, parity rejections → 200 `{"status":"rejected"}`, success → 200 `{"status":"processed"}` — **DONE** (Phase 3c later changed PG-mode success response to `{"status":"accepted","seq":<i64>}`; in-memory mode still returns `processed`)
 - Drop `pg_store: Option<Arc<dyn PersistentStore>>` from `AppState`; handler drives transactions directly via `&PgPool` — **DONE** (14 `pg_store: None` literals + 1 `Some(...)` helper site swept)
 - Rename metric `atc_shadow_pg_write_failures_total` → `atc_pg_write_failures_total`; add `atc_pg_in_memory_drift_total` — **DONE**
 - Rename test file `shadow_writes_tests.rs` → `transactional_writes_tests.rs` with inverted transient-failure assertion (now 503) — **DONE** (8 tests pass)
-- New `outbox_tests.rs` covering AC1–AC6: atomicity success/rollback, BIGSERIAL gap, stub run, payload envelope, error policy — **DONE** (11 tests pass)
+- New `outbox_tests.rs` covering: atomicity success/rollback, BIGSERIAL gap, stub run, payload envelope, error policy — **DONE** (11 tests pass)
 - The outbox is written but not yet read by anyone — in-memory path still authoritative for reads
 
 Acceptance: a test that triggers a transaction abort and confirms no outbox row is committed, and tests that confirm successful writes produce both a current-state row and a matching outbox row in one transaction. **SATISFIED.** 11 `outbox_tests` + 8 `transactional_writes_tests` + 15 `persist_pg_tests` all pass. Full backend test suite passes. `.sqlx/` offline cache covers all new queries.
@@ -104,12 +104,12 @@ In scope:
 - Add `ATC_DATABASE_LISTENER_URL` config option that defaults to `ATC_DATABASE_URL` if unset — **DONE** (IMPLEMENTED in Phase 2d)
 - Listener task in `atc-server` runs the level-triggered drain loop (per `overlap-and-forwarding.md` pseudocode) — but instead of forwarding to WS clients, it just logs received notifications and the rows it would have fetched — **DONE**
 - Tests verify NOTIFY fires after commit and the listener task receives it — **DONE**
-- Tests verify drain task fetches outbox rows and advances watermark — **DONE** (AC6: outbox row count + passes-delta assertions; AC13: pre-seeded-row zero-fetch + exact pass count after one webhook)
-- Tests verify wake-up coalescing (multiple notifications during a drain produce one extra pass, not concurrent fetches) — **DONE** (AC7: slow-drain fixture with `drain_delay=200ms`; `passes_delta ≤ 2` bound verified)
+- Tests verify drain task fetches outbox rows and advances watermark — **DONE** (outbox row count + passes-delta assertions; pre-seeded-row zero-fetch + exact pass count after one webhook)
+- Tests verify wake-up coalescing (multiple notifications during a drain produce one extra pass, not concurrent fetches) — **DONE** (slow-drain fixture with `drain_delay=200ms`; `passes_delta ≤ 2` bound verified)
 - Helm chart wired: `config.databaseListenerUrl` (plain value) and `existingSecret.databaseListenerUrlKey` (secret key ref); existingSecret path wins when both are set — **DONE**
 - Documentation updated: `docs/architecture/backend-server.md`, `docs/architecture/deployment.md`, `backend/crates/atc-server/CLAUDE.md`, this file, ADR 0002 — **DONE**
 
-Acceptance: an integration test that fires N webhooks and confirms the listener observes N notifications and would have fetched all N outbox rows in seq order. **SATISFIED** — all 10 ACs pass; AC6/AC7/AC13 tightened on the same branch after Codex review.
+Acceptance: an integration test that fires N webhooks and confirms the listener observes N notifications and would have fetched all N outbox rows in seq order. **SATISFIED** — all acceptance tests pass; outbox row count, passes-delta, and pre-seeded-row assertions tightened on the same branch after Codex review.
 
 ADR refs: [ADR 0002 Decision 3](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (NOTIFY + connection-pool compatibility), [ADR 0002 Decision 5](../../architecture-decisions/0002-state-externalization-postgres-outbox.md) (forwarder design including startup watermark).
 
@@ -218,7 +218,7 @@ In scope:
 - Update `deploy/helm/atc/values.yaml` storage-mode docs to the two-mode block — **DONE**
 - Remove SQLite values-matrix tests under `deploy/helm/atc/tests/` — **DONE** (`tests/values-persistence.yaml` and `tests/unit/pvc-invariant.yaml` deleted; `tests/values-multi-replica.yaml` added; CI matrix updated)
 - Update existing `{{ fail }}` guard logic for the new mode constraints — **DONE** (replaces the SQLite + persistence guards with the new multi-replica guard; tested in `tests/unit/fail-guards.yaml`)
-- Operationally test: deploy with `replicaCount = 2` against a shared Postgres; verify both replicas serve snapshots, both forward events, and clients on either replica see consistent state — **DONE via runbook** (the [Multi-replica smoke test](../deployment.md#multi-replica-smoke-test) in `deployment.md` is the closure evidence; AC11 measurement protocol)
+- Operationally test: deploy with `replicaCount = 2` against a shared Postgres; verify both replicas serve snapshots, both forward events, and clients on either replica see consistent state — **DONE via runbook** (the [Multi-replica smoke test](../deployment.md#multi-replica-smoke-test) in `deployment.md` is the closure evidence)
 - Update `docs/architecture/deployment.md` to reflect the two-mode story — **DONE** (two-mode storage decision, Multi-replica section, Multi-replica smoke test runbook, Storage-mode evolution note)
 
 Acceptance: a multi-replica test deployment shows two pods both serving `/v1/state` and `/v1/ws` against the same PG, with consistent state across both. **SATISFIED via runbook execution against OrbStack k8s 1.33.9 + PostgreSQL 18.3 (2026-05-06).** The smoke test asserts (a) `/v1/state` `lastSeq` convergence within 5 seconds across both pod-local endpoints, (b) exactly one `SeqEvent` per replica's WebSocket tap (`scripts/ws-tap.js`) per webhook (single-delivery via ring-buffer dedup), (c) both `/readyz` endpoints return 200 throughout. Evidence captured in PR #57.

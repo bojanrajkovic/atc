@@ -339,7 +339,6 @@ mod tests {
         assert_eq!(run.run_started_at, None);
     }
 
-    // core-domain.AC2.2: Valid run transitions succeed
     #[test]
     fn test_run_transition_queued_to_in_progress() {
         let result = RunStatus::Queued.transition_to(RunStatus::InProgress);
@@ -352,7 +351,6 @@ mod tests {
         assert_eq!(result, Ok(RunStatus::Completed));
     }
 
-    // core-domain.AC2.3: Invalid transitions return Err(InvalidRunTransition)
     #[test]
     fn test_run_transition_completed_to_in_progress_fails() {
         let result = RunStatus::Completed.transition_to(RunStatus::InProgress);
@@ -385,7 +383,6 @@ mod tests {
         );
     }
 
-    // core-domain.AC2.4: Idempotent re-application of same status updates fields without erroring
     #[test]
     fn test_run_transition_queued_to_queued_idempotent() {
         let result = RunStatus::Queued.transition_to(RunStatus::Queued);

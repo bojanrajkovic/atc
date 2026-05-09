@@ -17,7 +17,7 @@ the tag-triggered release workflow, alongside the container image and binary art
 
 **Decision:** Restricted Pod Security Standards by default, overridable via values for legitimate operator edge cases
 **Alternatives considered:** Hardcoded immutable security context; permissive defaults with a "hardened" values preset; let operators opt in to restricted contexts
-**Rationale:** The chart ships with restricted Pod Security Standards as the default values in `values.yaml` (`podSecurityContext` and `securityContext`). These defaults satisfy AC5.1/AC5.2/AC5.3 security controls and match what the distroless `:nonroot` image already guarantees at UID 65532. The fields are exposed in `values.yaml` and `values.schema.json`, allowing operators to override them via `--set` for legitimate edge cases: storage CSI drivers with non-standard UID constraints, sidecars requiring writable root filesystems, profilers needing elevated capabilities, etc. Organizations wanting to enforce the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the cluster level, not chart-level immutability. This approach balances secure-by-default with operational flexibility.
+**Rationale:** The chart ships with restricted Pod Security Standards as the default values in `values.yaml` (`podSecurityContext` and `securityContext`). These defaults match what the distroless `:nonroot` image already guarantees at UID 65532. The fields are exposed in `values.yaml` and `values.schema.json`, allowing operators to override them via `--set` for legitimate edge cases: storage CSI drivers with non-standard UID constraints, sidecars requiring writable root filesystems, profilers needing elevated capabilities, etc. Organizations wanting to enforce the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the cluster level, not chart-level immutability. This approach balances secure-by-default with operational flexibility.
 
 The default Pod-level security context enforces:
 ```yaml
@@ -96,7 +96,7 @@ The runtime invariants that make symmetric multi-replica safe (see [`state-exter
 
 ## Multi-replica smoke test
 
-Operationally validate a two-replica deploy against a real cluster (kind/k3d/homelab). This runbook is the AC11 measurement protocol.
+Operationally validate a two-replica deploy against a real cluster (kind/k3d/homelab).
 
 > **Why this is a runbook, not CI.** Issue #12 tracks adding kind-based chart-testing to CI. Execute this once before declaring issue #7 closed; PRs do not re-run it.
 
@@ -192,10 +192,10 @@ echo "single-delivery verified: A=1 B=1"
 # 200 throughout (the watchdog kills $$ on any sample failure above).
 kill "$READYZ_WATCH" "$WS_A" "$WS_B" "$PF_A" "$PF_B" 2>/dev/null || true
 wait 2>/dev/null || true
-echo "PASS: AC11 multi-replica smoke test"
+echo "PASS: multi-replica smoke test"
 ```
 
-Pass criteria for AC11:
+Pass criteria:
 - Both `/v1/state` endpoints converge on the same `lastSeq` within 5 seconds of the webhook POST.
 - Each WS-tap logfile shows exactly one `SeqEvent` for the webhook.
 - Both `/readyz` endpoints return 200 throughout the test.

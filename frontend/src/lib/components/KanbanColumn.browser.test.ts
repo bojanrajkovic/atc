@@ -41,7 +41,7 @@ function statsMapFor(runs: readonly WorkflowRun[]): Map<bigint, JobStats> {
 }
 
 describe('KanbanColumn (browser mode)', () => {
-  describe('kanban-board.AC5.3: animate:flip is applied to cards', () => {
+  describe('animate:flip is applied to cards', () => {
     it('keeps card DOM identity stable across array reorder', async () => {
       // Each test imports its own fresh copy of KanbanColumn
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
@@ -94,7 +94,7 @@ describe('KanbanColumn (browser mode)', () => {
     })
   })
 
-  describe('kanban-board.AC5.4: crossfade key matching between columns', () => {
+  describe('crossfade key matching between columns', () => {
     it('moves a card between two columns via crossfade matching', async () => {
       // Each test imports its own fresh copy of KanbanColumn
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
@@ -163,7 +163,7 @@ describe('KanbanColumn (browser mode)', () => {
     })
   })
 
-  describe('kanban-board.AC5.5: bigint as {#each} key', () => {
+  describe('bigint as {#each} key', () => {
     it('handles bigint run IDs without errors', async () => {
       // Each test imports its own fresh copy of KanbanColumn
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
@@ -212,7 +212,7 @@ describe('KanbanColumn (browser mode)', () => {
     })
   })
 
-  describe('kanban-board.AC5.6: burst (multiple runs in one update)', () => {
+  describe('burst (multiple runs in one update)', () => {
     it('moves multiple cards between columns in a single update', async () => {
       // Each test imports its own fresh copy of KanbanColumn
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
@@ -288,12 +288,12 @@ describe('KanbanColumn (browser mode)', () => {
     })
   })
 
-  describe('kanban-board.AC6.3 & AC6.4: Animations respect prefers-reduced-motion', () => {
+  describe('Animations respect prefers-reduced-motion', () => {
     // The vi.mock('svelte/motion', ...) at the top of this file ensures
     // prefersReducedMotion.current === true when kanban-transitions.ts is
     // first imported, so DURATION_MOVE/ARRIVE/REMOVE are all 0.
 
-    it('AC6.3: DURATION_MOVE is 0 under reduced motion (mock binds before module import)', async () => {
+    it('DURATION_MOVE is 0 under reduced motion (mock binds before module import)', async () => {
       // Import after the file-scope mock has taken effect. kanban-transitions.ts
       // reads prefersReducedMotion.current at module-top; the vi.mock hoist ensures
       // the mocked value is visible at that import time.
@@ -307,7 +307,7 @@ describe('KanbanColumn (browser mode)', () => {
       expect(DURATION_REMOVE).toBe(0)
     })
 
-    it('AC6.3: cross-column movement completes without animation delay under reduced motion', async () => {
+    it('cross-column movement completes without animation delay under reduced motion', async () => {
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
       let runsA: readonly WorkflowRun[] = [createMockRun({ id: 100n })]
@@ -372,7 +372,7 @@ describe('KanbanColumn (browser mode)', () => {
       expect(containerB.querySelector('[data-run-id="100"]')).toBeTruthy()
     })
 
-    it('AC6.4: within-column reorder completes instantly under reduced motion', async () => {
+    it('within-column reorder completes instantly under reduced motion', async () => {
       const { default: KanbanColumn } = await import('./KanbanColumn.svelte')
 
       let runs: readonly WorkflowRun[] = [createMockRun({ id: 100n }), createMockRun({ id: 200n })]

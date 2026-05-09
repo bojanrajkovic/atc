@@ -23,10 +23,10 @@
     uiStore.selectedRunId !== null ? (runStore.jobsByRunId.get(uiStore.selectedRunId) ?? []) : []
   )
 
-  // AC2.9 missing-run fallback effect — clears selectedRunId when the id
+  // Missing-run fallback effect — clears selectedRunId when the id
   // references a run not present in runStore.runs (stale id, evicted run, etc.)
-  // Path A (AC7.2 fix): when the evicted run is also the panel's trigger source,
-  // call ctx.restoreFocusToInitial() directly here, bypassing Bits UI's
+  // When the evicted run is also the panel's trigger source, call
+  // ctx.restoreFocusToInitial() directly here, bypassing Bits UI's
   // onCloseAutoFocus path. That path requires focus to be inside the Sheet's
   // FocusScope at close time, but {#if run} collapses the dialog content (removing
   // the close button from the DOM) before the FocusScope can see focus inside —
@@ -71,26 +71,25 @@
 
       // Prevent Bits UI's built-in focus restoration unconditionally. The default
       // restoration tries to focus the original opener element, but in the evicted-
-      // trigger case (AC7.2 / Path A) that element is gone, which would land focus
-      // on <body>. We always supply our own restoration path below (or return with
-      // focus already placed by the AC2.9 $effect's restoreFocusToInitial call).
+      // trigger case that element is gone, which would land focus on <body>. We
+      // always supply our own restoration path below (or return with focus already
+      // placed by the missing-run $effect's restoreFocusToInitial call).
       event.preventDefault()
 
       // Read and consume the trigger.
       const triggerId = uiStore.lastTriggerRunId
       uiStore.lastTriggerRunId = null
 
-      // No trigger recorded (AC7.5) or already consumed by the AC2.9 $effect's
-      // Path A restoration — nothing to do, focus is already correctly placed.
+      // No trigger recorded or already consumed by the missing-run $effect's
+      // restoreFocusToInitial call — nothing to do, focus is already correctly placed.
       if (triggerId === null) return
       const trigger = document.querySelector<HTMLElement>(
         `.run-card[data-run-id="${triggerId}"] .run-card-activate`
       )
       if (trigger !== null) {
-        // Happy path. AC7.1.
         trigger.focus()
       } else {
-        // Trigger was evicted while panel was open. AC7.2 / AC7.4.
+        // Trigger was evicted while panel was open.
         ctx.restoreFocusToInitial()
       }
     }}

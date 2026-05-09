@@ -2,17 +2,10 @@
  * RunDetailPanel.browser.test.ts — browser-mode regression tests for
  * onCloseAutoFocus focus restoration.
  *
- * Why browser-mode (not jsdom): The regression for AC7.2 requires the real
- * Bits UI Sheet close lifecycle to fire onCloseAutoFocus against a real DOM.
- * Synthesizing the callback in jsdom would test internal wiring rather than
- * user-observable behavior — exactly the false-confidence pattern flagged in
- * feedback_subagent_shortcut_patterns.md.
- *
- * AC coverage:
- *  AC7.2 — evicted-source restoration (the bug regression, Test 1)
- *  AC7.1 — happy path preserved (Test 2)
- *  AC7.5 — no trigger recorded, Bits UI default focus handles it (Test 3)
- *  Guard — selectedRunId non-null guard returns early (Test 4)
+ * Why browser-mode (not jsdom): These tests require the real Bits UI Sheet
+ * close lifecycle to fire onCloseAutoFocus against a real DOM. Synthesizing
+ * the callback in jsdom would test internal wiring rather than user-observable
+ * behavior.
  */
 
 import { cleanup, render } from '@testing-library/svelte'
@@ -89,12 +82,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', () => {
-  // -------------------------------------------------------------------------
-  // AC7.2 — evicted-source restoration (THE REGRESSION TEST)
-  // Panel closes after trigger card was evicted; focus should land on
-  // initialFocusRunId (first queued card), NOT <body>.
-  // -------------------------------------------------------------------------
-  it('AC7.2 evicted-source: focus lands on first queued card when trigger card is gone', async () => {
+  it('evicted-source: focus lands on first queued card when trigger card is gone', async () => {
     // Seed run 2n as Queued (will become initialFocusRunId / restoration target).
     // Seed run 1n as InProgress (the trigger run — not in queuedRuns).
     // This keeps queuedRuns = [2n] so initialFocusRunId === 2n unambiguously.
@@ -129,7 +117,7 @@ describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', (
     })
 
     // Now evict run 1n from the store to simulate TTL eviction while panel was open.
-    // The AC2.9 $effect will fire and set selectedRunId = null, which closes the panel.
+    // The missing-run $effect will fire and set selectedRunId = null, which closes the panel.
     // We need to re-set selectedRunId = 1n AFTER the eviction so the panel stays
     // open long enough for us to close it via Esc.
     //
@@ -165,17 +153,13 @@ describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', (
     await tick()
     await waitForAnimation()
 
-    // AC7.2 assertion: focus must be on run-2's activate button, NOT <body>.
+    // Focus must be on run-2's activate button, NOT <body>.
     expect(document.activeElement).toBe(card2Button)
     // Trigger id must have been consumed:
     expect(uiStore.lastTriggerRunId).toBeNull()
   })
 
-  // -------------------------------------------------------------------------
-  // AC7.1 — happy path: trigger card still mounted, focus restores to it.
-  // This is a regression check that the existing happy path is not broken.
-  // -------------------------------------------------------------------------
-  it('AC7.1 happy path: focus returns to trigger card when it is still present', async () => {
+  it('happy path: focus returns to trigger card when it is still present', async () => {
     // Seed run 1n as InProgress (trigger run).
     seedRun(1n, { type: 'InProgress' })
     await tick()
@@ -223,18 +207,13 @@ describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', (
     await tick()
     await waitForAnimation()
 
-    // AC7.1: focus lands on the trigger card's button.
+    // Focus lands on the trigger card's button.
     expect(document.activeElement).toBe(card1Button)
     // Trigger id consumed.
     expect(uiStore.lastTriggerRunId).toBeNull()
   })
 
-  // -------------------------------------------------------------------------
-  // AC7.5 — no trigger recorded: Bits UI default focus restoration handles it.
-  // onCloseAutoFocus returns early without preventDefault, so Bits UI's default
-  // behavior takes over.
-  // -------------------------------------------------------------------------
-  it('AC7.5 no trigger recorded: no run-card-activate receives focus when lastTriggerRunId is null', async () => {
+  it('no trigger recorded: no run-card-activate receives focus when lastTriggerRunId is null', async () => {
     // Seed run 1n as InProgress.
     seedRun(1n, { type: 'InProgress' })
     seedRun(2n, { type: 'Requested' }, '2026-04-16T09:00:00Z')
@@ -282,7 +261,7 @@ describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', (
     await tick()
     await waitForAnimation()
 
-    // AC7.5: No run-card-activate should have received .focus() during the close lifecycle.
+    // No run-card-activate should have received .focus() during the close lifecycle.
     const cardFocusCalls = focusSpy.mock.instances.filter(
       (el) => el instanceof HTMLElement && el.classList.contains('run-card-activate'),
     )
@@ -296,16 +275,7 @@ describe('RunDetailPanel.browser.test — onCloseAutoFocus focus restoration', (
     expect(uiStore.lastTriggerRunId).toBeNull()
   })
 
-  // -------------------------------------------------------------------------
-  // Guard: selectedRunId non-null → onCloseAutoFocus returns early.
-  // This guard prevents spurious focus restoration when the panel is not
-  // actually fully closed. Verified by observing that no restoration fires.
-  //
-  // Observation approach: Mount with panel open (selectedRunId set), then check
-  // that while selectedRunId is still non-null, lastTriggerRunId remains set
-  // (i.e., no spurious consume happened) and no run-card-activate has focus.
-  // -------------------------------------------------------------------------
-  it('Guard: onCloseAutoFocus is a no-op while selectedRunId is still non-null', async () => {
+  it('guard: onCloseAutoFocus is a no-op while selectedRunId is still non-null', async () => {
     // Seed runs.
     seedRun(1n, { type: 'InProgress' })
     seedRun(2n, { type: 'Requested' }, '2026-04-16T09:00:00Z')

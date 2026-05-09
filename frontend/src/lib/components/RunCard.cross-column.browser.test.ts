@@ -1,5 +1,5 @@
 /**
- * RunCard cross-column re-focus tests (AC6.1, AC6.2, AC6.3, AC6.4).
+ * RunCard cross-column re-focus tests.
  *
  * These tests need the REAL RovingFocusProvider so that RunCard's $effect
  * (which calls buttonEl.focus() when isFocused && ctx.kanbanHasFocus &&
@@ -8,10 +8,7 @@
  * They live in a separate file from RunCard.browser.test.ts because that file
  * applies a top-level vi.mock('$lib/components/roving/context') stub, which is
  * hoisted by Vitest and would poison the real RovingFocusProvider if this
- * describe block were appended there. This is the same environmental exception
- * that justified KanbanColumn.tabindex.browser.test.ts. The "do NOT split"
- * rule from feedback_no_split_ts_test_files.md applies to line-count splits;
- * this is a module-mock conflict split.
+ * describe block were appended there. This is a module-mock conflict split.
  */
 import { render } from '@testing-library/svelte'
 import { tick } from 'svelte'
@@ -64,7 +61,7 @@ function addInProgress(id: bigint): WorkflowRun {
   return runStore.runs.get(id)!
 }
 
-describe('roving cross-column re-focus (AC6)', () => {
+describe('roving cross-column re-focus', () => {
   let capturedCtx: RovingFocusContext | undefined
 
   beforeEach(() => {
@@ -76,7 +73,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     runStore.clear()
   })
 
-  it('AC6.1: in-column reorder preserves focus on same DOM node', async () => {
+  it('in-column reorder preserves focus on same DOM node', async () => {
     // Seed 3 queued runs. createdAt timestamps determine sort order (ascending).
     addQueued(100n, '2026-05-01T10:00:01Z')
     addQueued(200n, '2026-05-01T10:00:02Z')
@@ -141,7 +138,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     // Wait for FLIP animation to settle (mirrors KanbanColumn.browser.test.ts:18-67 pattern)
     await new Promise((r) => setTimeout(r, 350))
 
-    // AC6.1: same DOM node reference — FLIP reorders in place, does not remount
+    // Same DOM node reference — FLIP reorders in place, does not remount
     const card200After = container.querySelector('[data-run-id="200"]')
     expect(card200After).toBeTruthy()
     expect(card200After).toBe(card200Before)
@@ -154,7 +151,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     expect(document.activeElement).toBe(button200)
   })
 
-  it('AC6.2: cross-column move lands focus on new DOM node in destination column', async () => {
+  it('cross-column move lands focus on new DOM node in destination column', async () => {
     // Seed 3 queued + 2 in-progress
     addQueued(100n, '2026-05-01T10:00:01Z')
     addQueued(200n, '2026-05-01T10:00:02Z')
@@ -165,7 +162,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     const queuedBefore = [...runStore.queuedRuns]
     const inProgressBefore = [...runStore.inProgressRuns]
 
-    // AC6.2 uses document.activeElement ancestor walk — container is not needed
+    // Uses document.activeElement ancestor walk — container is not needed
     const { rerender } = render(KanbanBoardInvariantHarness, {
       props: {
         queuedRuns: queuedBefore,
@@ -215,7 +212,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     // Wait for crossfade animation to settle
     await new Promise((r) => setTimeout(r, 350))
 
-    // AC6.2: document.activeElement must be inside the article for run 100
+    // document.activeElement must be inside the article for run 100
     // (ancestor walk — coexistence during outgoing crossfade is acceptable)
     const activeArticle = document.activeElement?.closest('[data-run-id="100"]')
     expect(activeArticle).toBeTruthy()
@@ -227,7 +224,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     expect(inProgressSection).toBeTruthy()
   })
 
-  it('AC6.3: old DOM node loses focus after cross-column move', async () => {
+  it('old DOM node loses focus after cross-column move', async () => {
     // Seed runs
     addQueued(100n, '2026-05-01T10:00:01Z')
     addQueued(200n, '2026-05-01T10:00:02Z')
@@ -290,13 +287,13 @@ describe('roving cross-column re-focus (AC6)', () => {
     // Wait for crossfade to settle
     await new Promise((r) => setTimeout(r, 350))
 
-    // AC6.3: the old button is no longer document.activeElement
+    // The old button is no longer document.activeElement
     // (the incoming crossfade node, which is a new DOM element, now has focus)
     // We do NOT require card100ButtonBefore to be unmounted — coexistence is fine.
     expect(document.activeElement).not.toBe(card100ButtonBefore)
   })
 
-  it('AC6.4: kanbanHasFocus===false prevents focus migration on cross-column move', async () => {
+  it('kanbanHasFocus===false prevents focus migration on cross-column move', async () => {
     // Seed runs
     addQueued(100n, '2026-05-01T10:00:01Z')
     addQueued(200n, '2026-05-01T10:00:02Z')
@@ -306,7 +303,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     const inProgressBefore = [...runStore.inProgressRuns]
 
     const { rerender } = render(KanbanBoardInvariantHarness, {
-      // Note: `container` intentionally not destructured — AC6.4 queries via document.querySelector
+      // Note: `container` intentionally not destructured — queries via document.querySelector
       props: {
         queuedRuns: queuedBefore,
         inProgressRuns: inProgressBefore,
@@ -331,7 +328,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     document.activeElement instanceof HTMLElement && document.activeElement.blur()
     await tick()
 
-    // AC6.4 three-step check:
+    // Three-step check:
 
     // STEP 1 — Pre-assert: kanbanHasFocus must be false before the move.
     // If the harness mount stole focus into a card and triggered setKanbanHasFocus(true)
@@ -365,7 +362,7 @@ describe('roving cross-column re-focus (AC6)', () => {
     // STEP 3a — Post-assert: flag is still false (no stray focusin fired during the move)
     expect(ctx.kanbanHasFocus).toBe(false)
 
-    // STEP 3b — Post-assert: focus did NOT migrate into the new card button
+    // STEP 3b — focus did NOT migrate into the new card button
     // Query the new card in the inProgress column (100n moved there)
     const newButton = document.querySelector(
       'section[aria-labelledby="kanban-col-in-progress"] article[data-run-id="100"] .run-card-activate',

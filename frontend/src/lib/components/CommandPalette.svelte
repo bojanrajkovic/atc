@@ -128,7 +128,7 @@
     paletteStore.paletteOpen = false
   }
 
-  // Commands list — conditional rendering for AC1.12 + AC1.13
+  // Commands list — conditional rendering for dark mode and density toggles
   function toggleDarkMode() {
     uiStore.mode = uiStore.mode === 'dark' ? 'light' : 'dark'
     paletteStore.paletteOpen = false
@@ -213,7 +213,7 @@
       Manual empty-state: with shouldFilter={false}, <Command.Empty> does not
       auto-fire when nothing matches. Gate it manually: show only when a query is
       active AND all non-command sections are empty (Commands are always present
-      and excluded from the empty-state check per AC1.10).
+      and excluded from the empty-state check).
     -->
     {#if paletteStore.paletteQuery !== '' && recentRuns.length === 0 && allRuns.length === 0 && allJobs.length === 0 && filteredPools.length === 0}
       <Command.Empty forceMount>

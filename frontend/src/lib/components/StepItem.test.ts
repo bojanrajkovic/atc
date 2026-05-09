@@ -5,7 +5,6 @@ import type { StatusKey } from '$lib/format/status-key'
 import StepItem from './StepItem.svelte'
 
 describe('StepItem', () => {
-  // --- interactivity.AC2.8 ---
   // Parameterized over all 11 StatusKey variants.
   // Expected token names are hand-written (not derived from statusKeyToVar)
   // so the test is a real behavioral assertion, not a tautology.
@@ -23,7 +22,7 @@ describe('StepItem', () => {
     ['Skipped', 'var(--neutral)'],
   ] as const satisfies ReadonlyArray<
     [StatusKey, string]
-  >)('interactivity.AC2.8 renders statusKey=%s with correct data-status-key, --status-color, name, and duration', (statusKey, expectedVar) => {
+  >)('renders statusKey=%s with correct data-status-key, --status-color, name, and duration', (statusKey, expectedVar) => {
     render(StepItem, {
       props: {
         statusKey,

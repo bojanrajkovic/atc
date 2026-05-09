@@ -12,8 +12,7 @@ describe('RunStore', () => {
     runStore.clear()
   })
 
-  // AC3.5: loadSnapshot replaces all state atomically
-  describe('AC3.5: Atomic loadSnapshot', () => {
+  describe('Atomic loadSnapshot', () => {
     it('should replace all runs and jobs when loading a snapshot', () => {
       // Set up initial state
       runStore.applyRunEvent({
@@ -190,8 +189,7 @@ describe('RunStore', () => {
     })
   })
 
-  // AC3.6: Sort order stability across snapshot reloads
-  describe('AC3.6: Sort order stability on snapshot reload', () => {
+  describe('Sort order stability on snapshot reload', () => {
     it('queuedRuns maintains same order after reload with same runs in different input order', () => {
       // Create runs with identical createdAt (to test tie-breaker stability)
       const run1 = createMockRun({

@@ -29,7 +29,7 @@ describe('RunCard', () => {
   afterAll(() => {
     uiStore.destroy()
   })
-  it('renders displayTitle as visible text (AC4.1)', () => {
+  it('renders displayTitle as visible text', () => {
     const run = createMockRun({ displayTitle: 'Test Workflow Run' })
     renderOne(run)
 
@@ -37,7 +37,7 @@ describe('RunCard', () => {
     expect(title).toBeTruthy()
   })
 
-  it('renders status indicator with Queued status (AC4.2)', () => {
+  it('renders status indicator with Queued status', () => {
     const run = createMockRun({ status: 'Queued' })
     renderOne(run)
 
@@ -50,7 +50,7 @@ describe('RunCard', () => {
     expect(srOnly.className).toContain('sr-only')
   })
 
-  it('renders status indicator with InProgress status (AC4.2)', () => {
+  it('renders status indicator with InProgress status', () => {
     const run = createMockRun({ status: 'InProgress' })
     renderOne(run)
 
@@ -63,7 +63,7 @@ describe('RunCard', () => {
     expect(srOnly.className).toContain('sr-only')
   })
 
-  it('renders status indicator with Completed status (AC4.2)', () => {
+  it('renders status indicator with Completed status', () => {
     // Completed with no conclusion → resolveStatusKey returns 'Cancelled'
     const run = createMockRun({ status: 'Completed' })
     renderOne(run)
@@ -78,7 +78,7 @@ describe('RunCard', () => {
     expect(srOnly.className).toContain('sr-only')
   })
 
-  it('applies correct color variable for Queued status (AC4.2)', () => {
+  it('applies correct color variable for Queued status', () => {
     const run = createMockRun({ status: 'Queued' })
     const { container } = renderOne(run)
 
@@ -86,7 +86,7 @@ describe('RunCard', () => {
     expect(root?.getAttribute('style')).toContain('--status-color: var(--queued)')
   })
 
-  it('applies correct color variable for InProgress status (AC4.2)', () => {
+  it('applies correct color variable for InProgress status', () => {
     const run = createMockRun({ status: 'InProgress' })
     const { container } = renderOne(run)
 
@@ -94,7 +94,7 @@ describe('RunCard', () => {
     expect(root?.getAttribute('style')).toContain('--status-color: var(--running)')
   })
 
-  it('applies correct color variable for Completed status (AC4.2)', () => {
+  it('applies correct color variable for Completed status', () => {
     // Completed with no conclusion → Cancelled → var(--cancelled)
     const run = createMockRun({ status: 'Completed' })
     const { container } = renderOne(run)
@@ -113,9 +113,7 @@ describe('RunCard', () => {
   })
 
   describe('RunCard — composition', () => {
-    // AC10.1: scope-contract comment removed — reviewer-verified (see Task 3 commit).
-
-    it('AC10.2: sets --status-color to the correct CSS variable for each of the 11 StatusKeys', () => {
+    it('sets --status-color to the correct CSS variable for each of the 11 StatusKeys', () => {
       // Every branch in resolveStatusColorVar must be exercised here —
       // missing one means Codecov flags uncovered code AND a future refactor
       // could silently break a single StatusKey without any test failing.
@@ -131,7 +129,7 @@ describe('RunCard', () => {
         [{ status: 'Completed', conclusion: 'Stale' }, 'var(--neutral)'],
         [{ status: 'Completed', conclusion: 'Neutral' }, 'var(--neutral)'],
         [{ status: 'Completed', conclusion: 'Skipped' }, 'var(--neutral)'],
-        // bare Completed (conclusion: null) resolves to Cancelled per AC6A.4.
+        // bare Completed (conclusion: null) resolves to Cancelled.
         [{ status: 'Completed', conclusion: null }, 'var(--cancelled)'],
       ]
 
@@ -143,7 +141,7 @@ describe('RunCard', () => {
       }
     })
 
-    it('AC10.3: sets data-status to the exact PascalCase RunStatus value', () => {
+    it('sets data-status to the exact PascalCase RunStatus value', () => {
       const cases = [
         { status: 'Queued' as const },
         { status: 'InProgress' as const },
@@ -158,7 +156,7 @@ describe('RunCard', () => {
       }
     })
 
-    it('AC10.5: composes all five leaf components', () => {
+    it('composes all five leaf components', () => {
       const run = createMockRun({ status: 'Queued', repo: 'acme', branch: 'main' })
       const { container } = render(RunCardHarness, {
         props: {
@@ -178,7 +176,7 @@ describe('RunCard', () => {
       expect(screen.getByText('⊞', { exact: false })).toBeTruthy()
     })
 
-    it('AC10.6: RunCardProps exported interface has correct shape', () => {
+    it('RunCardProps exported interface has correct shape', () => {
       // Type-level assertion: fails compilation if RunCardProps is missing or wrong shape
       const _sample: RunCardProps = {
         run: createMockRun(),
@@ -186,12 +184,9 @@ describe('RunCard', () => {
       }
       expect(_sample).toBeTruthy()
     })
-
-    // AC10.7 reviewer guidance: only non-prop reactive read in RunCard.svelte is uiStore.nowMs.
-    // Behavioural proof lives in RunCard.duration.test.ts AC12.7.
   })
 
-  describe('RunCard — inner-button activation (interactivity AC4)', () => {
+  describe('RunCard — inner-button activation', () => {
     beforeEach(() => {
       // Reset uiStore selection state between tests to prevent cross-test pollution.
       // handleActivate writes both selectedRunId and lastTriggerRunId.
@@ -199,7 +194,7 @@ describe('RunCard', () => {
       uiStore.lastTriggerRunId = null
     })
 
-    it('AC4.1 + AC4.7: <article> contains a <button class="run-card-activate"> with correct aria-label (repo·branch)', () => {
+    it('<article> contains a <button class="run-card-activate"> with correct aria-label (repo·branch)', () => {
       const run = createMockRun({
         displayTitle: 'My Workflow',
         repo: 'acme',
@@ -213,7 +208,7 @@ describe('RunCard', () => {
 
       const button = container.querySelector('button.run-card-activate')
       expect(button).toBeTruthy()
-      // Button must be inside the article (AC4.7 screen-reader contract: article > button > aria-label)
+      // Button must be inside the article
       expect(article!.contains(button)).toBe(true)
 
       const statusLabel = statusKeyToHumanLabel(resolveStatusKey(run))
@@ -221,7 +216,7 @@ describe('RunCard', () => {
       expect(button!.getAttribute('aria-label')).toBe(expectedLabel)
     })
 
-    it('AC4.7: aria-label omits the middle-dot separator when branch is null', () => {
+    it('aria-label omits the middle-dot separator when branch is null', () => {
       const run = createMockRun({
         displayTitle: 'My Workflow',
         repo: 'acme',
@@ -240,7 +235,7 @@ describe('RunCard', () => {
       expect(button!.getAttribute('aria-label')).not.toContain('·')
     })
 
-    it('AC4.2: click on the activator button sets uiStore.selectedRunId', () => {
+    it('click on the activator button sets uiStore.selectedRunId', () => {
       const run = createMockRun({ id: 42n })
       const { container } = renderOne(run)
 
@@ -252,7 +247,7 @@ describe('RunCard', () => {
       expect(uiStore.selectedRunId).toBe(42n)
     })
 
-    it('AC4.3: Enter on the focused button activates via native button semantics (no custom keydown handler)', () => {
+    it('Enter on the focused button activates via native button semantics (no custom keydown handler)', () => {
       // Native <button> converts Enter → click event. Dispatching a click on the
       // focused button replicates that path without a custom onkeydown handler.
       // If a custom keydown handler were added, this test would still pass — the
@@ -271,8 +266,8 @@ describe('RunCard', () => {
       expect(uiStore.selectedRunId).toBe(43n)
     })
 
-    it('AC4.4: Space on the focused button activates via native button semantics', () => {
-      // Same path as AC4.3 — native <button> also converts Space → click.
+    it('Space on the focused button activates via native button semantics', () => {
+      // Native <button> also converts Space → click.
       const run = createMockRun({ id: 44n })
       const { container } = renderOne(run)
 
@@ -287,9 +282,9 @@ describe('RunCard', () => {
       expect(uiStore.selectedRunId).toBe(44n)
     })
 
-    it('AC4.6: button sits as a sibling of leaf components inside the article (layout-layer click capture verified)', () => {
-      // AC4.6 states that clicks on text inside the article (e.g., the run title)
-      // do NOT break activation. In real browsers this works because the absolutely-
+    it('button sits as a sibling of leaf components inside the article (layout-layer click capture verified)', () => {
+      // Clicks on text inside the article (e.g., the run title) do NOT break
+      // activation. In real browsers this works because the absolutely-
       // positioned button covers the card's z-stack and the pointer click lands on
       // the button. jsdom has no layout engine, so the z-stack property cannot be
       // tested here. This test instead asserts the structural contract:
@@ -312,7 +307,7 @@ describe('RunCard', () => {
     })
   })
 
-  describe('roving tabindex (AC1)', () => {
+  describe('roving tabindex', () => {
     beforeEach(() => {
       runStore.clear()
       uiStore.selectedRunId = null
@@ -323,7 +318,7 @@ describe('RunCard', () => {
       runStore.clear()
     })
 
-    it('AC1.1 / AC1.3: focused card gets tabindex=0, other card gets tabindex=-1', async () => {
+    it('focused card gets tabindex=0, other card gets tabindex=-1', async () => {
       const run1 = createMockRun({ id: 1n, status: 'Queued', createdAt: '2026-04-16T10:00:00Z' })
       const run2 = createMockRun({ id: 2n, status: 'Queued', createdAt: '2026-04-16T10:01:00Z' })
 
@@ -365,19 +360,19 @@ describe('RunCard', () => {
       expect(btn1!.getAttribute('tabindex')).toBe('0')
       expect(btn2!.getAttribute('tabindex')).toBe('-1')
 
-      // AC1.3: setFocus to run2 → run2 gets tabindex=0, run1 gets tabindex=-1
+      // setFocus to run2 → run2 gets tabindex=0, run1 gets tabindex=-1
       capturedCtx!.setFocus(2n)
       await tick()
 
       expect(btn1!.getAttribute('tabindex')).toBe('-1')
       expect(btn2!.getAttribute('tabindex')).toBe('0')
 
-      // AC1.6 implicit: never both tabindex=0 simultaneously
+      // Never both tabindex=0 simultaneously
       const allZero = container.querySelectorAll('button.run-card-activate[tabindex="0"]')
       expect(allZero.length).toBe(1)
     })
 
-    it('AC1.5: zero-to-one transition — new first card receives tabindex=0 reactively', async () => {
+    it('zero-to-one transition — new first card receives tabindex=0 reactively', async () => {
       // Start with empty store (beforeEach clears it)
       const run = createMockRun({ id: 5n, status: 'Queued' })
 
@@ -456,7 +451,7 @@ describe('RunCard', () => {
       expect(btn11!.getAttribute('tabindex')).toBe('-1')
     })
 
-    it('AC1.7: no role="grid" or role="gridcell" in rendered DOM', () => {
+    it('no role="grid" or role="gridcell" in rendered DOM', () => {
       const run = createMockRun({ id: 20n, status: 'Queued' })
       const { container } = renderOne(run)
 

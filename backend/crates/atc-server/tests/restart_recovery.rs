@@ -1,9 +1,9 @@
 //! Integration tests: restart recovery (no historical replay).
 //!
-//! T10 — After a simulated server restart (second fixture against same PG),
-//!       the new drain task does NOT replay events already committed before the
-//!       restart. The watermark is initialized to COALESCE(MAX(seq), 0) at boot,
-//!       so historical outbox rows are skipped.
+//! After a simulated server restart (second fixture against the same PG), the
+//! new drain task does NOT replay events already committed before the restart.
+//! The watermark is initialized to `COALESCE(MAX(seq), 0)` at boot, so
+//! historical outbox rows are skipped.
 //!
 //! Docker/OrbStack required.
 
@@ -15,8 +15,8 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-/// T10: After restart, the new drain task initializes its watermark from
-///      MAX(seq) in the outbox and does NOT rebroadcast historical events.
+/// After restart, the new drain task initializes its watermark from MAX(seq)
+/// in the outbox and does NOT rebroadcast historical events.
 ///
 /// Protocol:
 ///   1. Start fixture f1 (pool + listener). Fire two webhooks → seq=1, seq=2.
@@ -29,7 +29,7 @@ use tokio::time::timeout;
 ///      arrives within the timeout.
 #[tokio::test]
 #[serial]
-async fn t10_no_historical_replay_after_restart() {
+async fn no_historical_replay_after_restart() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // ── Step 1: f1 — commit two events ───────────────────────────────────────

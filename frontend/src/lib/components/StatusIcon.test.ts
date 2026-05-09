@@ -4,7 +4,7 @@ import { STATUS_KEYS } from '$lib/format/status-key'
 import StatusIcon from './StatusIcon.svelte'
 
 describe('StatusIcon', () => {
-  describe('run-cards.AC6.1: renders the correct glyph for each StatusKey', () => {
+  describe('renders the correct glyph for each StatusKey', () => {
     it('renders the Queued glyph (◐) with "Queued" label', () => {
       render(StatusIcon, { props: { value: 'Queued' } })
       expect(screen.getByText('\u25D0')).toBeTruthy()
@@ -72,7 +72,7 @@ describe('StatusIcon', () => {
     })
   })
 
-  describe('run-cards.AC6.2: inherits color via --status-color', () => {
+  describe('inherits color via --status-color', () => {
     it('sets inline color: var(--status-color) on the status-icon span', () => {
       const { container } = render(StatusIcon, { props: { value: 'Queued' } })
       const icon = container.querySelector('.status-icon')
@@ -82,7 +82,7 @@ describe('StatusIcon', () => {
     })
   })
 
-  describe('run-cards.AC6.3: sr-only label accompanies every glyph', () => {
+  describe('sr-only label accompanies every glyph', () => {
     it('renders the sr-only label for Queued', () => {
       render(StatusIcon, { props: { value: 'Queued' } })
       const srOnly = screen.getByText('Queued', { exact: false })
@@ -90,7 +90,7 @@ describe('StatusIcon', () => {
     })
   })
 
-  describe('run-cards.AC6.4: glyph element carries aria-hidden="true"', () => {
+  describe('glyph element carries aria-hidden="true"', () => {
     it('sets aria-hidden="true" on the glyph span', () => {
       const { container } = render(StatusIcon, { props: { value: 'Queued' } })
       const glyphSpan = container.querySelector('[aria-hidden="true"]')
@@ -98,7 +98,7 @@ describe('StatusIcon', () => {
     })
   })
 
-  describe('run-cards.AC6.5: exhaustive StatusKey lookup via satisfies', () => {
+  describe('exhaustive StatusKey lookup via satisfies', () => {
     it('renders all 11 StatusKey values without throwing', () => {
       for (const key of STATUS_KEYS) {
         const result = render(StatusIcon, { props: { value: key } })

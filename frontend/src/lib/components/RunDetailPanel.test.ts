@@ -46,10 +46,7 @@ describe('RunDetailPanel', () => {
     uiStore.destroy()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.1 — Panel opens when selectedRunId is set to a valid run
-  // -----------------------------------------------------------------------
-  it('interactivity.AC2.1 panel renders single-pane layout when selectedRunId set to existing run', async () => {
+  it('panel renders single-pane layout when selectedRunId set to existing run', async () => {
     seedRun(RUN_ID)
     render(RunDetailPanel)
 
@@ -67,17 +64,14 @@ describe('RunDetailPanel', () => {
     expect(document.querySelector('.meta-grid')).toBeTruthy()
   })
 
-  it('interactivity.AC2.1 panel does NOT render when selectedRunId is null', () => {
+  it('panel does NOT render when selectedRunId is null', () => {
     render(RunDetailPanel)
     // selectedRunId is null — {#if run} block should not mount the Sheet
     expect(document.querySelector('.panel-header')).toBeNull()
     expect(document.querySelector('.meta-grid')).toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.2 — "Go to run" link attributes
-  // -----------------------------------------------------------------------
-  it('interactivity.AC2.2 Go-to-run anchor has correct href, target, and rel', async () => {
+  it('Go-to-run anchor has correct href, target, and rel', async () => {
     const htmlUrl = 'https://github.com/test-org/test-repo/actions/runs/42'
     seedRun(RUN_ID, { htmlUrl })
     render(RunDetailPanel)
@@ -93,10 +87,7 @@ describe('RunDetailPanel', () => {
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.3 — Esc key closes panel and clears selectedRunId
-  // -----------------------------------------------------------------------
-  it('interactivity.AC2.3 Esc key clears selectedRunId and unmounts the sheet', async () => {
+  it('Esc key clears selectedRunId and unmounts the sheet', async () => {
     seedRun(RUN_ID)
     render(RunDetailPanel)
 
@@ -122,10 +113,7 @@ describe('RunDetailPanel', () => {
     })
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.4 — Close button ("Close detail panel") closes panel
-  // -----------------------------------------------------------------------
-  it('interactivity.AC2.4 clicking "Close detail panel" button clears selectedRunId', async () => {
+  it('clicking "Close detail panel" button clears selectedRunId', async () => {
     seedRun(RUN_ID)
     render(RunDetailPanel)
 
@@ -144,7 +132,7 @@ describe('RunDetailPanel', () => {
   })
 
   // -----------------------------------------------------------------------
-  // AC2.8 — All 11 StatusKey fixtures render with correct data-status-key
+  // All 11 StatusKey fixtures render with correct data-status-key
   // -----------------------------------------------------------------------
 
   // Mapping from StatusKey → (status, conclusion) that resolves to it.
@@ -162,9 +150,7 @@ describe('RunDetailPanel', () => {
     { key: 'Skipped', status: 'Completed', conclusion: 'Skipped' },
   ] as const
 
-  it.each(
-    STATUS_KEY_FIXTURES,
-  )('interactivity.AC2.8 PanelHeader has data-status-key="$key" for $key run', async ({
+  it.each(STATUS_KEY_FIXTURES)('PanelHeader has data-status-key="$key" for $key run', async ({
     key,
     status,
     conclusion,
@@ -213,10 +199,7 @@ describe('RunDetailPanel', () => {
     runStore.clear()
   })
 
-  // -----------------------------------------------------------------------
-  // AC2.9 — Missing-run fallback: selectedRunId for non-existent run is cleared
-  // -----------------------------------------------------------------------
-  it('interactivity.AC2.9 selectedRunId is cleared when referencing a run not in runStore', async () => {
+  it('selectedRunId is cleared when referencing a run not in runStore', async () => {
     render(RunDetailPanel)
 
     // 99999n is not seeded in runStore — fallback $effect should clear it.
@@ -231,7 +214,7 @@ describe('RunDetailPanel', () => {
     expect(document.querySelector('.panel-header')).toBeNull()
   })
 
-  it('interactivity.AC2.9 selectedRunId stays null when null (no loop)', async () => {
+  it('selectedRunId stays null when null (no loop)', async () => {
     render(RunDetailPanel)
     // Starting at null — the fallback $effect should not trigger or loop.
     uiStore.selectedRunId = null
@@ -239,10 +222,7 @@ describe('RunDetailPanel', () => {
     expect(uiStore.selectedRunId).toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // Additional: after close via selectedRunId = null, panel unmounts cleanly
-  // -----------------------------------------------------------------------
-  it('interactivity.AC2.1 panel unmounts when selectedRunId set back to null', async () => {
+  it('panel unmounts when selectedRunId set back to null', async () => {
     seedRun(RUN_ID)
     render(RunDetailPanel)
 

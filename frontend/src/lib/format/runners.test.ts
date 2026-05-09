@@ -25,7 +25,7 @@ function createMockJob(overrides?: Partial<Job>): Job {
 }
 
 describe('format/runners', () => {
-  describe('run-cards.AC5.1: Aggregates multiple jobs with same runner name', () => {
+  describe('Aggregates multiple jobs with same runner name', () => {
     it('returns runner name when all jobs share the same runner', () => {
       const jobs = [
         createMockJob({
@@ -45,7 +45,7 @@ describe('format/runners', () => {
     })
   })
 
-  describe('run-cards.AC5.2: Returns count when multiple distinct runners', () => {
+  describe('Returns count when multiple distinct runners', () => {
     it('returns "2 runners" when jobs span exactly two distinct runner names', () => {
       const jobs = [
         createMockJob({
@@ -80,7 +80,7 @@ describe('format/runners', () => {
     })
   })
 
-  describe('run-cards.AC5.3: Returns null when no runners assigned', () => {
+  describe('Returns null when no runners assigned', () => {
     it('returns null for empty job list', () => {
       const jobs: Job[] = []
 
@@ -102,7 +102,7 @@ describe('format/runners', () => {
     })
   })
 
-  describe('run-cards.AC5.4: Handles partial runner coverage', () => {
+  describe('Handles partial runner coverage', () => {
     it('returns the single runner name when one job has runner and others do not', () => {
       const jobs = [
         createMockJob({
@@ -118,7 +118,7 @@ describe('format/runners', () => {
     })
   })
 
-  describe('run-cards.AC5.5: Pure function with no side effects', () => {
+  describe('Pure function with no side effects', () => {
     it('returns identical output when called twice with same input', () => {
       const jobs = [
         createMockJob({

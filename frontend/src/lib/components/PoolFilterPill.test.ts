@@ -4,12 +4,11 @@ import { describe, expect, it, vi } from 'vitest'
 import PoolFilterPill from './PoolFilterPill.svelte'
 
 describe('PoolFilterPill', () => {
-  // AC5.2: clear button has a visible :focus-visible outline rule.
   // jsdom does not compute :focus-visible styles (the heuristic is browser-level);
   // computed-style verification lives in e2e/focus-rings.test.ts. Here we assert
   // the clear button is a proper interactive element (type="button", aria-label,
   // no inline outline suppression) so CSS rules can take effect in a real browser.
-  it('AC5.2: clear button is a focusable interactive element with no inline outline suppression', () => {
+  it('clear button is a focusable interactive element with no inline outline suppression', () => {
     render(PoolFilterPill, {
       props: {
         labelText: 'linux · x86',
@@ -24,7 +23,7 @@ describe('PoolFilterPill', () => {
     expect(button.style.outline).not.toBe('none')
     expect(button.style.outlineStyle).not.toBe('none')
   })
-  it('AC5.3: renders labelText content', () => {
+  it('renders labelText content', () => {
     render(PoolFilterPill, {
       props: {
         labelText: 'linux · self-hosted · x86',
@@ -36,7 +35,7 @@ describe('PoolFilterPill', () => {
     expect(screen.getByText('Filtering by')).toBeTruthy()
   })
 
-  it('AC5.3: clear button has aria-label "Clear pool filter"', () => {
+  it('clear button has aria-label "Clear pool filter"', () => {
     render(PoolFilterPill, {
       props: {
         labelText: 'linux · x86',
@@ -48,7 +47,7 @@ describe('PoolFilterPill', () => {
     expect(button).toBeTruthy()
   })
 
-  it('AC5.3: clicking the clear button invokes onClear', async () => {
+  it('clicking the clear button invokes onClear', async () => {
     const onClear = vi.fn()
     render(PoolFilterPill, {
       props: {

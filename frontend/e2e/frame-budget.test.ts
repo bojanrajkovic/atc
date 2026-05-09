@@ -1,5 +1,5 @@
 /**
- * frontend-1-0-polish.AC7.2 — Frame-budget tracing (informational).
+ * frame-budget.test.ts — Frame-budget tracing (informational).
  *
  * Measures end-to-end injection-loop + first-flush + post-flush rAF tail
  * latency while the EventDispatcher receives a 1000-event burst, by parsing
@@ -67,7 +67,7 @@ function percentile(sorted: number[], p: number): number {
   return sorted[Math.max(0, idx)] ?? 0
 }
 
-test.describe('AC7.2: frame-budget tracing (informational)', () => {
+test.describe('Frame-budget tracing (informational)', () => {
   // This test exercises real rendering via CDP tracing — give it extra time.
   test.setTimeout(60_000)
 

@@ -7,7 +7,7 @@ import { type TransitionKind, VERB_BY_CONCLUSION } from './transition-kinds'
  * Format: "Run {displayTitle} for {org}/{repo} on {branch} ({event}) {verb}"
  *
  * Branch elision: when `run.branch` is null, the "on {branch}" segment is
- * omitted entirely (AC6.4 — never render "on null").
+ * omitted entirely.
  *
  * Verb lookup: for Requested transitions, always "queued"; for Completed
  * transitions, the conclusion-specific verb from VERB_BY_CONCLUSION.

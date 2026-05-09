@@ -1,5 +1,5 @@
 /**
- * Kanban-level tabindex invariant tests (AC1.1, AC1.4, AC1.6, AC1.7).
+ * Kanban-level tabindex invariant tests.
  *
  * These tests need the REAL RovingFocusProvider (not a vi.mock stub) so that
  * tabindex derivation in RunCard is driven by live $state/$derived reactivity.
@@ -82,7 +82,7 @@ function addCompletedRuns(ids: bigint[]): WorkflowRun[] {
   return runs
 }
 
-describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)', () => {
+describe('roving-tabindex single-active invariant', () => {
   let capturedCtx: RovingFocusContext | undefined
 
   beforeEach(() => {
@@ -97,7 +97,7 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     uiStore.activePoolFilter = null
   })
 
-  it('AC1.1: initial render with all three columns populated — exactly one tabindex=0 on first queued card', async () => {
+  it('initial render with all three columns populated — exactly one tabindex=0 on first queued card', async () => {
     const queued = addQueuedRuns([10n, 20n, 30n])
     const inProgress = addInProgressRuns([40n, 50n])
     const completed = addCompletedRuns([60n])
@@ -121,14 +121,14 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     const focused = container.querySelectorAll('button.run-card-activate[tabindex="0"]')
     expect(focused).toHaveLength(1)
 
-    // That card must be the first queued run (highest priority per AC1.1)
+    // That card must be the first queued run (highest priority: Queued > InProgress > Completed)
     const firstQueuedId = runStore.queuedRuns[0]?.id
     expect(firstQueuedId).toBe(10n)
     const focusedCard = focused[0]?.closest('.run-card')
     expect(focusedCard?.getAttribute('data-run-id')).toBe(String(firstQueuedId))
   })
 
-  it('AC1.1 (column priority): empty Queued, populated InProgress — tabindex=0 on first in-progress card', async () => {
+  it('empty Queued, populated InProgress — tabindex=0 on first in-progress card', async () => {
     const inProgress = addInProgressRuns([40n, 50n])
 
     const { container } = render(KanbanBoardInvariantHarness, {
@@ -152,7 +152,7 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     expect(focusedCard?.getAttribute('data-run-id')).toBe(String(firstInProgressId))
   })
 
-  it('AC1.4: all three columns empty — no card has tabindex=0, currentFocusRunId===null', async () => {
+  it('all three columns empty — no card has tabindex=0, currentFocusRunId===null', async () => {
     // Store is already clear from beforeEach
 
     const { container } = render(KanbanBoardInvariantHarness, {
@@ -178,7 +178,7 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     expect(capturedCtx?.currentFocusRunId).toBeNull()
   })
 
-  it('AC1.6: mid-reorder — never two cards simultaneously have tabindex=0', async () => {
+  it('mid-reorder — never two cards simultaneously have tabindex=0', async () => {
     const queued = addQueuedRuns([10n, 20n, 30n])
 
     let capturedCtx2: RovingFocusContext | undefined
@@ -234,7 +234,7 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     expect(focusedCard?.getAttribute('data-run-id')).toBe('20')
   })
 
-  it('AC1.7: no role="grid" or role="gridcell" exists in the kanban subtree', async () => {
+  it('no role="grid" or role="gridcell" exists in the kanban subtree', async () => {
     const queued = addQueuedRuns([10n])
 
     const { container } = render(KanbanBoardInvariantHarness, {
@@ -257,7 +257,7 @@ describe('roving-tabindex single-active invariant (AC1.1, AC1.4, AC1.6, AC1.7)',
     expect(container.querySelectorAll('[role="listitem"]').length).toBeGreaterThan(0)
   })
 
-  it('AC1.1 with pool filter: tabindex=0 lands on the first VISIBLE card, not the filter-hidden first card', async () => {
+  it('with pool filter: tabindex=0 lands on the first VISIBLE card, not the filter-hidden first card', async () => {
     // Seed two queued runs: run 1n has pool-A jobs, run 2n has pool-B jobs.
     // With activePoolFilter = poolKey(['B']), run 1n is hidden and run 2n is visible.
     // The bug: provider derives initialFocusRunId from raw runStore.queuedRuns[0] = run 1n,

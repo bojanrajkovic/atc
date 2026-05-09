@@ -18,7 +18,7 @@ function makeAnchor(): HTMLElement {
 }
 
 describe('HoverPeekPopover', () => {
-  it('AC3.1: renders status label in the Status row when open=true', () => {
+  it('renders status label in the Status row when open=true', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'Queued' })
     render(HoverPeekPopover, {
@@ -42,7 +42,7 @@ describe('HoverPeekPopover', () => {
     expect(statusLabelEl?.textContent?.trim()).toBe('Queued')
   })
 
-  it('AC3.1: renders title row with run displayTitle', () => {
+  it('renders title row with run displayTitle', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress', displayTitle: 'My workflow run' })
     render(HoverPeekPopover, {
@@ -62,7 +62,7 @@ describe('HoverPeekPopover', () => {
     expect(screen.getByText('My workflow run')).toBeTruthy()
   })
 
-  it('AC3.1: renders Steps complete row as "{stepsCompleted}/{stepsTotal}"', () => {
+  it('renders Steps complete row as "{stepsCompleted}/{stepsTotal}"', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     render(HoverPeekPopover, {
@@ -84,7 +84,7 @@ describe('HoverPeekPopover', () => {
     expect(screen.getByText('7/20')).toBeTruthy()
   })
 
-  it('AC3.1: renders Duration row with durationText value', () => {
+  it('renders Duration row with durationText value', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     render(HoverPeekPopover, {
@@ -106,7 +106,7 @@ describe('HoverPeekPopover', () => {
     expect(screen.getByText('3:15')).toBeTruthy()
   })
 
-  it('AC3.1: renders Runner row when runnerSummary is non-null', () => {
+  it('renders Runner row when runnerSummary is non-null', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     render(HoverPeekPopover, {
@@ -127,7 +127,7 @@ describe('HoverPeekPopover', () => {
     expect(screen.getByText('2 runners')).toBeTruthy()
   })
 
-  it('AC3.1: omits Runner row when runnerSummary is null', () => {
+  it('omits Runner row when runnerSummary is null', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'Queued' })
     render(HoverPeekPopover, {
@@ -147,7 +147,7 @@ describe('HoverPeekPopover', () => {
     expect(screen.queryByText('Runner')).toBeNull()
   })
 
-  it('AC3.1: renders keyboard hint footer', () => {
+  it('renders keyboard hint footer', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'Queued' })
     render(HoverPeekPopover, {
@@ -170,7 +170,7 @@ describe('HoverPeekPopover', () => {
     expect(hint?.textContent).toContain('Enter')
   })
 
-  it('AC3.5: popover content is portal-rendered (not inside mount container)', () => {
+  it('popover content is portal-rendered (not inside mount container)', () => {
     const anchor = makeAnchor()
     const run = createMockRun({ status: 'InProgress' })
     const { container } = render(HoverPeekPopover, {

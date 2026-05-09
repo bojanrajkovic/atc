@@ -11,7 +11,7 @@ describe('EventDispatcher', () => {
     runStore.clear()
   })
 
-  describe('fe-foundation.AC4.2: Basic event dispatching', () => {
+  describe('Basic event dispatching', () => {
     it('dispatches a Run event to the store', () => {
       // Create a minimal RunEventEnvelope
       const envelope: RunEventEnvelope = {
@@ -124,7 +124,7 @@ describe('EventDispatcher', () => {
     })
   })
 
-  describe('fe-foundation.AC4.3: Event batching via RAF', () => {
+  describe('Event batching via RAF', () => {
     it('batches multiple events dispatched rapidly into a single flush', () => {
       const applyRunEventSpy = vi.spyOn(runStore, 'applyRunEvent')
 
@@ -185,7 +185,7 @@ describe('EventDispatcher', () => {
     })
   })
 
-  describe('AC6: setOnFlush post-flush callback hook', () => {
+  describe('setOnFlush post-flush callback hook', () => {
     beforeEach(() => {
       // Always reset the callback so previous tests don't leak callbacks
       eventDispatcher.setOnFlush(null)
@@ -216,7 +216,7 @@ describe('EventDispatcher', () => {
       },
     })
 
-    it('AC6.1 — callback is invoked with flushed events after flush()', () => {
+    it('callback is invoked with flushed events after flush()', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
 
@@ -230,7 +230,7 @@ describe('EventDispatcher', () => {
       expect(cb).toHaveBeenCalledWith([e1, e2])
     })
 
-    it('AC6.2 — callback is NOT invoked when no events were queued (empty flush)', () => {
+    it('callback is NOT invoked when no events were queued (empty flush)', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
 
@@ -240,7 +240,7 @@ describe('EventDispatcher', () => {
       expect(cb).not.toHaveBeenCalled()
     })
 
-    it('AC6.3 — callback receives only events from the current flush, not cumulative', () => {
+    it('callback receives only events from the current flush, not cumulative', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
 
@@ -257,7 +257,7 @@ describe('EventDispatcher', () => {
       expect(cb).toHaveBeenNthCalledWith(2, [e2])
     })
 
-    it('AC6.4 — dispatch(); flush() produces exactly one non-empty callback (no phantom RAF callback)', () => {
+    it('dispatch(); flush() produces exactly one non-empty callback (no phantom RAF callback)', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
 
@@ -274,7 +274,7 @@ describe('EventDispatcher', () => {
       expect(cb).toHaveBeenCalledWith([e1])
     })
 
-    it('AC6.5 — setOnFlush(null) detaches the callback', () => {
+    it('setOnFlush(null) detaches the callback', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
       eventDispatcher.setOnFlush(null)
@@ -285,7 +285,7 @@ describe('EventDispatcher', () => {
       expect(cb).not.toHaveBeenCalled()
     })
 
-    it('AC6.6 — calling setOnFlush twice replaces the prior callback (idempotent replacement)', () => {
+    it('calling setOnFlush twice replaces the prior callback (idempotent replacement)', () => {
       const cb1 = vi.fn()
       const cb2 = vi.fn()
 
@@ -299,7 +299,7 @@ describe('EventDispatcher', () => {
       expect(cb2).toHaveBeenCalledOnce()
     })
 
-    it('AC6.7 — no invocation when setOnFlush was never set', () => {
+    it('no invocation when setOnFlush was never set', () => {
       // Don't set any callback — should not throw and nothing should fail
       eventDispatcher.dispatch(makeRunSeqEvent(1n))
       expect(() => eventDispatcher.flush()).not.toThrow()
@@ -354,7 +354,7 @@ describe('EventDispatcher', () => {
   })
 
   describe('unknown event type tolerance (wire-skew resilience)', () => {
-    // Helper factories reused from the AC6 section pattern
+    // Helper factories
     const makeRunSeqEvent = (id: bigint): SeqEvent => ({
       seq: id,
       event: {

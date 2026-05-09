@@ -41,8 +41,7 @@ describe('UIStore', () => {
     mockLocalStorage.clear()
   })
 
-  // AC3.8: UIStore persists theme and mode to localStorage and restores on initialization
-  describe('AC3.8: localStorage persistence and DOM attribute setting', () => {
+  describe('localStorage persistence and DOM attribute setting', () => {
     it('should initialize with default theme (radar) and mode (dark)', () => {
       expect(uiStore.theme).toBe('radar')
       expect(uiStore.mode).toBe('dark')

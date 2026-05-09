@@ -36,8 +36,8 @@ use tower::ServiceExt;
 /// global `metrics` recorder exactly once. Two separate OnceLocks (one local,
 /// one common) would each install the recorder, and the second installation
 /// panics with `SetRecorderError` because the global recorder is already in
-/// place. AC4.1/AC4.2 use the common fixture, so all tests in this binary must
-/// agree on a single OnceLock and a single initializer.
+/// place. The concurrent broadcast tests use the common fixture, so all tests
+/// in this binary must agree on a single OnceLock and a single initializer.
 fn prometheus_layer() -> PrometheusMetricLayer<'static> {
     common::PROMETHEUS_INIT
         .get_or_init(common::install_test_recorder)
@@ -211,10 +211,10 @@ async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// AC1 — Atomicity (success path)
+// Atomicity (success path)
 // ---------------------------------------------------------------------------
 
-/// AC1.1: A workflow_run.requested webhook produces both a `runs` row and an
+/// A workflow_run.requested webhook produces both a `runs` row and an
 /// `outbox` row with kind='run' in the same transaction.
 #[tokio::test]
 #[serial_test::serial]
@@ -262,11 +262,11 @@ async fn run_webhook_produces_run_and_outbox_row() {
     );
 }
 
-/// AC1.2: seq values in the outbox are strictly increasing across N committed transactions.
+/// seq values in the outbox are strictly increasing across N committed transactions.
 ///
 /// Uses direct DB INSERT statements for different run_ids to avoid fixture limitations.
 /// "Strictly increasing" is the requirement — not "consecutive" (BIGSERIAL may have gaps
-/// from aborted txns; see AC2.2).
+/// from aborted txns).
 #[tokio::test]
 #[serial_test::serial]
 async fn seq_strictly_increasing() {
@@ -306,7 +306,7 @@ async fn seq_strictly_increasing() {
     }
 }
 
-/// AC1.3: The outbox payload serializes as a RunEventEnvelope and does NOT
+/// The outbox payload serializes as a RunEventEnvelope and does NOT
 /// contain top-level keys `pool_stats_after` or `seq`.
 #[tokio::test]
 #[serial_test::serial]
@@ -348,10 +348,10 @@ async fn payload_roundtrips_as_envelope() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2 — Atomicity (rollback path)
+// Atomicity (rollback path)
 // ---------------------------------------------------------------------------
 
-/// AC2.1: Parity rejection (invalid run state transition) rolls back the outbox INSERT.
+/// Parity rejection (invalid run state transition) rolls back the outbox INSERT.
 ///
 /// Pre-insert a Completed run directly. Fire workflow_run.requested (Queued target),
 /// which fails the predicate `WHERE status = ANY(['Queued'])` — Completed is not in
@@ -386,7 +386,7 @@ async fn parity_rejection_rolls_back_outbox() {
     );
 }
 
-/// AC2.2: BIGSERIAL gap property — an aborted transaction consumes a seq that
+/// BIGSERIAL gap property — an aborted transaction consumes a seq that
 /// will never appear in the committed outbox rows.
 ///
 /// Direct DB test (no route handler):
@@ -445,18 +445,13 @@ async fn bigserial_gap_property() {
     );
 }
 
-/// AC2.3: Second job webhook with invalid transition (Queued → Completed) rolls back
+/// Second job webhook with invalid transition (Queued → Completed) rolls back
 /// the transaction. End state: 1 stub run, 1 job (still Queued), 1 outbox row
 /// (from first successful webhook only).
 ///
 /// predecessors_of(Completed) for jobs = [InProgress, Completed].
 /// Queued → Completed is therefore invalid (Queued is not a predecessor of Completed for jobs).
 /// The transaction rolls back; no new outbox row is written.
-///
-/// AC5.2 note: the strict new-stub-in-rejecting-tx scenario is structurally unreachable
-/// through the route handler (if a job row exists, the run FK row already exists via prior
-/// commit — the stub UPSERT becomes ON CONFLICT DO NOTHING). The rollback machinery tested
-/// here is the same that AC5.2's invariant rests on.
 #[tokio::test]
 #[serial_test::serial]
 async fn job_upsert_rejection_rolls_back_stub_run() {
@@ -535,10 +530,10 @@ async fn job_upsert_rejection_rolls_back_stub_run() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3 — Error policy (subset testable without failure injection)
+// Error policy (subset testable without failure injection)
 // ---------------------------------------------------------------------------
 
-/// AC3.1: Parity rejection returns HTTP 200 with body `{"status":"rejected"}`
+/// Parity rejection returns HTTP 200 with body `{"status":"rejected"}`
 /// and increments the parity counter by 1.
 #[tokio::test]
 #[serial_test::serial]
@@ -572,7 +567,7 @@ async fn parity_rejection_returns_200_rejected() {
     );
 }
 
-/// AC3.4: Successful webhook in PG mode returns HTTP 200 with body
+/// Successful webhook in PG mode returns HTTP 200 with body
 /// `{"status":"accepted","seq":<i64>}` and does NOT increment
 /// `atc_pg_write_failures_total`.
 #[tokio::test]
@@ -615,7 +610,7 @@ async fn success_returns_200_accepted() {
     );
 }
 
-/// AC3.5: With pg_pool: None (in-memory only mode), a webhook returns 200 processed
+/// With pg_pool: None (in-memory only mode), a webhook returns 200 processed
 /// and the in-memory store reflects the event. No DB calls are made.
 #[tokio::test]
 #[serial_test::serial]
@@ -670,10 +665,10 @@ async fn no_pg_pool_uses_in_memory_path() {
 }
 
 // ---------------------------------------------------------------------------
-// AC5 — Stub run created inside transaction for job-before-run path
+// Stub run created inside transaction for job-before-run path
 // ---------------------------------------------------------------------------
 
-/// AC5.1: A workflow_job.queued for an unknown run_id creates:
+/// A workflow_job.queued for an unknown run_id creates:
 /// - 1 stub run row (status=Queued)
 /// - 1 job row
 /// - 1 outbox row with kind='job'
@@ -756,10 +751,10 @@ async fn job_webhook_creates_stub_run_and_outbox() {
 }
 
 // ---------------------------------------------------------------------------
-// AC6 — Payload is RunEventEnvelope / JobEventEnvelope, NOT SeqEvent
+// Payload is RunEventEnvelope / JobEventEnvelope, NOT SeqEvent
 // ---------------------------------------------------------------------------
 
-/// AC6.1: Both a run and a job outbox payload deserialize as their respective
+/// Both a run and a job outbox payload deserialize as their respective
 /// envelope types and do NOT contain SeqEvent top-level keys.
 #[tokio::test]
 #[serial_test::serial]
@@ -831,10 +826,10 @@ async fn payload_is_envelope_not_seq_event() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3.3 — Post-commit in-memory drift returns 200, increments drift counter
+// Post-commit in-memory drift
 // ---------------------------------------------------------------------------
 
-/// AC3.3: drift is structurally unreachable in PG mode.
+/// In-memory drift is structurally unreachable in PG mode.
 ///
 /// The in-memory apply is silenced in PG mode — the handler commits to PG,
 /// emits NOTIFY, and returns. The drain task is the sole writer to
@@ -918,10 +913,10 @@ async fn no_in_memory_drift_in_pg_mode() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4 — Broadcast order matches durable outbox.seq order
+// Broadcast order matches durable outbox.seq order
 // ---------------------------------------------------------------------------
 
-/// AC4.1: N concurrent `workflow_run.requested` webhooks for the SAME run_id — exercises
+/// N concurrent `workflow_run.requested` webhooks for the SAME run_id — exercises
 /// same-row PG contention under genuine concurrent request racing.
 ///
 /// Uses a real TcpListener-based server with reqwest so that the tokio runtime
@@ -933,10 +928,7 @@ async fn no_in_memory_drift_in_pg_mode() {
 /// Because all payloads are identical (same run_id → same content in broadcast and
 /// outbox), we assert count-level invariants instead of run_id ordering: exactly N
 /// SeqEvents broadcast with strictly increasing seq values, exactly N outbox rows
-/// created. The broadcast-order == durable-order content assertion is covered by
-/// AC4.2 (distinct run_ids). AC4.1 specifically validates that same-row PG
-/// row-level locking + drain serial broadcast handles concurrent idempotent
-/// replays without deadlock, double-broadcast, or outbox row loss.
+/// created.
 ///
 /// Uses `build_app_with_pg_and_listener` (full fixture with drain task)
 /// because the drain — not the handler — is the broadcaster in PG mode.
@@ -1023,7 +1015,7 @@ async fn concurrent_run_requested_broadcast_matches_durable_order() {
     fixture.shutdown.cancel();
 }
 
-/// AC4.2: N concurrent `workflow_run.requested` webhooks for N different run_ids —
+/// N concurrent `workflow_run.requested` webhooks for N different run_ids —
 /// broadcast order matches outbox.seq order under genuine concurrent request
 /// racing.
 ///

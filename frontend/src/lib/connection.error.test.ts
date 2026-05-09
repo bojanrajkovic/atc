@@ -37,7 +37,7 @@ describe('ConnectionManager', () => {
     server.close()
   })
 
-  describe('fe-foundation.AC4.7: Failure — State fetch failure triggers reconnect', () => {
+  describe('Failure — State fetch failure triggers reconnect', () => {
     it('transitions to reconnecting on state fetch 500 error', async () => {
       vi.useFakeTimers()
 

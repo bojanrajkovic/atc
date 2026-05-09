@@ -36,7 +36,7 @@ describe('ConnectionManager', () => {
     server.close()
   })
 
-  describe('fe-foundation.AC4.6: Success — destroy() closes WebSocket and clears timers', () => {
+  describe('Success — destroy() closes WebSocket and clears timers', () => {
     it('closes WebSocket when destroy is called', async () => {
       const manager = new ConnectionManager(baseUrl)
 

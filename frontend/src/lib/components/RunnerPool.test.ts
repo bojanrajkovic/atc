@@ -162,8 +162,7 @@ describe('RunnerPool', () => {
     expect(group).toBeTruthy()
   })
 
-  // AC5.2: isActiveFilter prop and visual treatment
-  it('AC5.2 — omitting isActiveFilter leaves is-active-filter class absent', () => {
+  it('omitting isActiveFilter leaves is-active-filter class absent', () => {
     const { container } = render(RunnerPool, {
       props: {
         pool: {
@@ -181,7 +180,7 @@ describe('RunnerPool', () => {
     expect(root!.classList.contains('is-active-filter')).toBe(false)
   })
 
-  it('AC5.2 — isActiveFilter={false} leaves is-active-filter class absent', () => {
+  it('isActiveFilter={false} leaves is-active-filter class absent', () => {
     const { container } = render(RunnerPool, {
       props: {
         pool: {
@@ -200,7 +199,7 @@ describe('RunnerPool', () => {
     expect(root!.classList.contains('is-active-filter')).toBe(false)
   })
 
-  it('AC5.2 — isActiveFilter={true} adds is-active-filter class to root', () => {
+  it('isActiveFilter={true} adds is-active-filter class to root', () => {
     const { container } = render(RunnerPool, {
       props: {
         pool: {

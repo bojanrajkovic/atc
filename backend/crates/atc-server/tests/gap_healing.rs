@@ -1,15 +1,19 @@
 //! Integration tests: gap-healing backstop and dedup ring buffer.
 //!
-//! T6  — Drain dedup: reverse-order concurrent-commit A/B race from §D2.
-//!        Transaction B commits first (seq N+1), drain broadcasts it.
-//!        Transaction A commits late (seq N), triggering a backstop rescan.
-//!        Rescan picks up both rows; seq N+1 is suppressed by dedup ring,
-//!        seq N is new and gets broadcast. Dedup counter increments exactly 1.
-//! T6b — Drain pagination: a rescan triggered after seeding >DRAIN_BATCH_SIZE
-//!        rows is paginated correctly (all rows forwarded, no duplicates).
-//! T7  — min_pending_seq swap unit test: pure Rust, no testcontainers.
+//! Covers three behaviors of the drain's gap-healing pipeline:
 //!
-//! Docker/OrbStack required for T6 and T6b.
+//! - **Drain dedup**: a reverse-order concurrent-commit A/B race (transaction
+//!   B commits seq N+1 first, drain broadcasts it, transaction A commits late
+//!   at seq N triggering a backstop rescan). The rescan picks up both rows;
+//!   seq N+1 is suppressed by the dedup ring, seq N is new and gets broadcast.
+//!   The dedup counter increments exactly once.
+//! - **Drain pagination**: a rescan triggered after seeding more than
+//!   `DRAIN_BATCH_SIZE` rows is paginated correctly (all rows forwarded, no
+//!   duplicates).
+//! - **`min_pending_seq` swap semantics**: pure Rust unit test, no
+//!   testcontainers.
+//!
+//! Docker/OrbStack required for the dedup and pagination tests.
 
 mod common;
 
@@ -45,15 +49,15 @@ fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
     0
 }
 
-// ─── T7: pure unit test for min_pending_seq swap semantics ──────────────────
+// ─── pure unit test for min_pending_seq swap semantics ────────────────────
 
-/// T7: Verify the gap-healing backstop atomic swap behavior.
+/// Verify the gap-healing backstop atomic swap behavior.
 ///
 /// `fetch_min(seq, Release)` registers the pending seq from a NOTIFY. The drain
 /// then `swap(MAX, AcqRel)` to capture it. This tests the invariant directly
 /// without any PG dependency.
 #[test]
-fn t7_min_pending_seq_swap_semantics() {
+fn min_pending_seq_swap_semantics() {
     let atomic = Arc::new(AtomicI64::new(i64::MAX));
 
     // Simulate listener receiving NOTIFY for seq=5.
@@ -106,9 +110,9 @@ fn t7_min_pending_seq_swap_semantics() {
     );
 }
 
-/// T7b: fetch_min does not go below an already-smaller value.
+/// `fetch_min` does not go below an already-smaller value.
 #[test]
-fn t7b_fetch_min_does_not_increase() {
+fn fetch_min_does_not_increase() {
     let atomic = Arc::new(AtomicI64::new(10));
 
     // Attempting to register seq=20 should not change the stored minimum.
@@ -121,9 +125,9 @@ fn t7b_fetch_min_does_not_increase() {
     );
 }
 
-// ─── T6: dedup ring buffer suppresses re-broadcast in real A/B race ─────────
+// ─── dedup ring buffer suppresses re-broadcast in real A/B race ──────────
 
-/// T6: Two raw concurrent SQL transactions manufacture the §D2 reverse-order
+/// Two raw concurrent SQL transactions manufacture the reverse-order
 ///     concurrent-commit race: B commits first (seq N+1), drain broadcasts it
 ///     and advances the watermark past N. A commits late (seq N), its deferred
 ///     NOTIFY fires, backstop captures N, rescan fetches both N and N+1.
@@ -137,7 +141,7 @@ fn t7b_fetch_min_does_not_increase() {
 /// drain for seq_a after that point.
 #[tokio::test]
 #[serial]
-async fn t6_dedup_suppresses_rescan_rebroadcast() {
+async fn dedup_suppresses_rescan_rebroadcast() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
@@ -290,9 +294,9 @@ async fn t6_dedup_suppresses_rescan_rebroadcast() {
     fixture.shutdown.cancel();
 }
 
-// ─── T6b: drain pagination ──────────────────────────────────────────────────
+// ─── drain pagination ─────────────────────────────────────────────────────
 
-/// T6b: The drain paginates across `DRAIN_BATCH_SIZE` correctly and
+/// The drain paginates across `DRAIN_BATCH_SIZE` correctly and
 ///      `atc_pg_drain_rows_total` advances by exactly 600 during the rescan.
 ///
 /// Design:
@@ -312,7 +316,7 @@ async fn t6_dedup_suppresses_rescan_rebroadcast() {
 /// The counter assertion proves the loop did NOT stop at the 500-row boundary.
 #[tokio::test]
 #[serial]
-async fn t6b_drain_paginates_across_batch_boundary() {
+async fn drain_paginates_across_batch_boundary() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // ── Step 1: Pre-seed 600 outbox rows with VALID payloads ─────────────────
@@ -404,9 +408,9 @@ async fn t6b_drain_paginates_across_batch_boundary() {
     fixture.shutdown.cancel();
 }
 
-// ─── T8: drain silently skips bogus-payload rows ────────────────────────────
+// ─── drain silently skips bogus-payload rows ──────────────────────────────
 
-/// T8: Drain payload-decode error paths: `kind='run'` and `kind='job'` rows
+/// Drain payload-decode error paths: `kind='run'` and `kind='job'` rows
 ///     with payloads that do not deserialize as the expected envelope types.
 ///
 /// The CHECK constraint on `outbox.kind` is `kind IN ('run', 'job')`, so the
@@ -432,7 +436,7 @@ async fn t6b_drain_paginates_across_batch_boundary() {
 ///    - `atc_pg_drain_duplicate_skipped_total` unchanged.
 #[tokio::test]
 #[serial]
-async fn t8_drain_skips_bogus_payload_rows() {
+async fn drain_skips_bogus_payload_rows() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 

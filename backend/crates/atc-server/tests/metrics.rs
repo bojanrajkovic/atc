@@ -84,21 +84,21 @@ async fn metrics_endpoint_contains_expected_families() {
 
     let client = reqwest::Client::new();
 
-    // Fire a request at /healthz so axum_http_requests_total gets a row (AC2.4, AC3.5).
+    // Fire a request at /healthz so axum_http_requests_total gets a row.
     let healthz_url = format!("http://{main_addr}/healthz");
     let healthz_resp = client.get(&healthz_url).send().await.unwrap();
     assert_eq!(healthz_resp.status(), 200);
 
-    // Fire a request at /readyz so both paths appear in axum_http_requests_total (AC3.5).
+    // Fire a request at /readyz so both paths appear in axum_http_requests_total.
     let readyz_url = format!("http://{main_addr}/readyz");
     let readyz_resp = client.get(&readyz_url).send().await.unwrap();
     assert_eq!(readyz_resp.status(), 200);
 
-    // Fetch /metrics from the side-port listener (AC2.1).
+    // Fetch /metrics from the side-port listener.
     let metrics_url = format!("http://{metrics_addr}/metrics");
     let resp = client.get(&metrics_url).send().await.unwrap();
 
-    // AC2.2 — Content-Type must match the Prometheus text exposition format
+    // Content-Type must match the Prometheus text exposition format
     // spec exactly: `text/plain; version=0.0.4; charset=utf-8`. axum-prometheus
     // emits only `text/plain; charset=utf-8` by default, so `metrics::build()`
     // wraps the render in an explicit header tuple — if this assertion ever
@@ -123,7 +123,7 @@ async fn metrics_endpoint_contains_expected_families() {
 
     let body = resp.text().await.unwrap();
 
-    // AC2.2 — build_info gauge with all required labels (real VERGEN_* labels from build.rs)
+    // build_info gauge with all required labels (real VERGEN_* labels from build.rs)
     assert!(
         body.contains("atc_build_info{"),
         "expected atc_build_info gauge in /metrics body"
@@ -150,7 +150,7 @@ async fn metrics_endpoint_contains_expected_families() {
         "expected target_triple label in atc_build_info"
     );
 
-    // AC2.3 — process metrics
+    // process metrics
     for expected in &[
         "process_cpu_seconds_total",
         "process_resident_memory_bytes",
@@ -163,7 +163,7 @@ async fn metrics_endpoint_contains_expected_families() {
         );
     }
 
-    // AC2.4 + AC3.5 — axum_http_requests_total with healthz and readyz paths
+    // axum_http_requests_total with healthz and readyz paths
     assert!(
         body.contains("axum_http_requests_total"),
         "expected axum_http_requests_total in /metrics body"
