@@ -1,6 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicI64;
 
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+
 mod common;
 use common::{fixture_workflow_job_queued, fixture_workflow_run_requested};
 
@@ -39,6 +42,8 @@ async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())

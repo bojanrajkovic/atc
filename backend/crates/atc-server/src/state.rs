@@ -3,6 +3,8 @@ use std::sync::atomic::AtomicI64;
 
 use atc_github::WebhookEvent;
 use tokio::sync::{Mutex, broadcast};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use atc_core::RunStateMachine;
 
@@ -94,6 +96,24 @@ pub struct AppState {
     /// drain's local `watermark`, so `/v1/state` returns a non-zero `lastSeq`
     /// before the first post-startup drain pass completes.
     pub broadcast_watermark: Arc<AtomicI64>,
+    /// Phase-2 cancellation token for WS handlers.
+    ///
+    /// Cancelled by `main` after the drain handle has been awaited (phase 2).
+    /// Each WS handler clones this token via `AppState` and adds a third
+    /// `biased` arm to its select loop: when cancelled, it sends
+    /// `Message::Close(CloseFrame { code: 1001, reason: "going away" })` and
+    /// exits. Keeps the going-away signal decoupled from the phase-1
+    /// `shutdown` token so WS handlers can drain their broadcast events before
+    /// receiving the close signal.
+    pub ws_close: CancellationToken,
+    /// Task tracker for spawned WS handler futures.
+    ///
+    /// Each WS handler future is wrapped via `ws_tracker.track_future(...)` in
+    /// `ws_handler` before being passed to `ws.on_upgrade(...)`. `main` calls
+    /// `ws_tracker.close()` followed by `ws_tracker.wait()` (bounded by
+    /// `SHUTDOWN_TIMEOUT_WS`) during phase 2 to ensure all connected clients
+    /// have sent their Close frames before process exit.
+    pub ws_tracker: TaskTracker,
 }
 
 /// A domain event annotated with a monotonic sequence number.

@@ -9,11 +9,12 @@ use std::sync::Arc;
 use axum::{
     extract::{
         State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use crate::state::{AppState, SeqEvent};
 
@@ -23,19 +24,35 @@ pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let rx = state.webhook_tx.subscribe();
-    ws.on_upgrade(move |socket| handle_socket(socket, rx))
+    let ws_close = state.ws_close.clone();
+    ws.on_upgrade(move |socket| {
+        state
+            .ws_tracker
+            .track_future(handle_socket(socket, rx, ws_close))
+    })
 }
 
 /// Per-connection task: forward broadcast events as JSON text frames.
 ///
-/// Uses `tokio::select!` to race broadcast recv against socket recv,
-/// so idle-period client disconnects are detected promptly rather than
-/// waiting for the next broadcast event to trigger a failed send.
-async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEvent>) {
+/// Uses `tokio::select! { biased; … }` to prioritise arms top-down:
+/// 1. `rx.recv()` — drain any buffered broadcast events first.
+/// 2. `socket.recv()` — detect client-initiated close or errors promptly.
+/// 3. `ws_close.cancelled()` — send `Close(1001 "going away")` on shutdown.
+///
+/// The biased order ensures buffered events are delivered to the client
+/// before the cancellation arm fires, preserving the event stream up to the
+/// shutdown signal. The close send is best-effort (`let _ = ...`): if the
+/// client has already disconnected, the attempt silently fails.
+async fn handle_socket(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<SeqEvent>,
+    ws_close: CancellationToken,
+) {
     tracing::info!("WebSocket client connected");
 
     let reason = loop {
         tokio::select! {
+            biased;
             result = rx.recv() => {
                 match result {
                     Ok(seq_event) => {
@@ -82,6 +99,13 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEve
                         break "read error";
                     }
                 }
+            }
+            () = ws_close.cancelled() => {
+                let _ = socket.send(Message::Close(Some(CloseFrame {
+                    code: 1001,
+                    reason: "going away".into(),
+                }))).await;
+                break "shutdown";
             }
         }
     };

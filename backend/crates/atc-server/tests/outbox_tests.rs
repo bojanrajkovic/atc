@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -107,6 +109,8 @@ fn build_app_with_pg(
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -638,6 +642,8 @@ async fn no_pg_pool_uses_in_memory_path() {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())

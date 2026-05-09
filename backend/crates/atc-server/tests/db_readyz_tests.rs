@@ -13,6 +13,8 @@ use std::time::Duration;
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 use axum_prometheus::PrometheusMetricLayer;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -55,6 +57,8 @@ async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     atc_server::routes::api_routes(layer).with_state(app_state)
 }

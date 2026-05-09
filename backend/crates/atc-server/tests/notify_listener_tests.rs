@@ -15,6 +15,8 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use sqlx::postgres::PgListener;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -161,6 +163,8 @@ async fn no_notify_in_memory_mode() {
         })),
         broadcast_watermark: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let router = atc_server::routes::api_routes(layer)
         .with_state(state.clone())

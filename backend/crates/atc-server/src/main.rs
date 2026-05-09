@@ -18,6 +18,7 @@ use atc_server::metrics;
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 /// Validates that a database URL uses a scheme ATC supports (postgres:// or
 /// postgresql://) and exits the process with an actionable log message if not.
@@ -171,6 +172,8 @@ async fn main() {
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before

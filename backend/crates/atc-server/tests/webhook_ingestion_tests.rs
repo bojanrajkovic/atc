@@ -1,6 +1,8 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use std::sync::atomic::AtomicI64;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 mod common;
@@ -446,6 +448,8 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
         persist,
+        ws_close: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     let main_router = atc_server::routes::api_routes(layer.clone())
