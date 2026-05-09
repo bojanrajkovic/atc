@@ -3,6 +3,7 @@
 
 mod assets;
 
+use std::future::IntoFuture;
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64};
@@ -16,8 +17,10 @@ use atc_server::db;
 use atc_server::listener;
 use atc_server::metrics;
 use atc_server::routes;
+use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 /// Validates that a database URL uses a scheme ATC supports (postgres:// or
 /// postgresql://) and exits the process with an actionable log message if not.
@@ -132,9 +135,6 @@ async fn main() {
         Duration::from_secs(3600),
     ));
 
-    // Start the background eviction task. Runs every 60 seconds.
-    let eviction_handle = state_machine.start_eviction_task(Duration::from_secs(60));
-
     // Create the broadcast channel for pushing domain events to WebSocket clients.
     // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
     // and should re-fetch via GET /v1/state.
@@ -164,6 +164,15 @@ async fn main() {
             webhook_tx.clone(),
         )),
     };
+    // Single shared cancellation token observed by all supervised surfaces:
+    // axum × 2 (with_graceful_shutdown), listener, drain, eviction, process
+    // metrics collector, and every WS handler. Construct before AppState so the
+    // token can be cloned into both the router (via app_state) and into each
+    // background-task spawn site below. WS handlers treat RecvError::Closed as
+    // a graceful shutdown signal (sending Close(1001) on either path), so no
+    // separate keepalive is needed to cover the broadcast-channel race.
+    let shutdown = CancellationToken::new();
+    let ws_tracker = TaskTracker::new();
     let app_state = Arc::new(AppState {
         state_machine,
         webhook_tx: webhook_tx.clone(),
@@ -174,6 +183,8 @@ async fn main() {
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
         persist,
+        shutdown: shutdown.clone(),
+        ws_tracker: ws_tracker.clone(),
     });
 
     // Build Prometheus layer + metrics side-port router. Must happen before
@@ -185,11 +196,14 @@ async fn main() {
     metrics::register_build_info();
     metrics::register_pg_write_counters();
     metrics::register_listener_metrics();
-    metrics::spawn_process_collector();
 
-    // Create a shared cancellation token for both servers and background tasks.
-    // Must be created before the listener init so we can pass shutdown.clone() to the tasks.
-    let shutdown = CancellationToken::new();
+    // Spawn the process metrics collector with a cooperative shutdown handle.
+    let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
+
+    // Start the background eviction task. Runs every 60 seconds.
+    let eviction_handle = app_state
+        .state_machine
+        .start_eviction_task(Duration::from_secs(60), shutdown.clone());
 
     // If a PG pool is configured, initialize the listener and drain background tasks.
     let (listener_handle, drain_handle) = if let Some(pool) = pg_pool_for_listener {
@@ -255,8 +269,14 @@ async fn main() {
         (None, None)
     };
 
+    // Clone the Arc into the router so `app_state` itself stays in this scope
+    // for the lifetime of `main`. With `app_state` still held here, AppState's
+    // embedded `webhook_tx` clone keeps the broadcast channel open through
+    // shutdown orchestration — WS handlers see `shutdown.cancelled()` and send
+    // Close(1001) rather than racing against a `RecvError::Closed` from a
+    // prematurely-dropped AppState.
     let app = routes::api_routes(prometheus_layer)
-        .with_state(app_state)
+        .with_state(app_state.clone())
         .fallback(assets::fallback_handler());
 
     // Bind metrics listener first so a port-conflict failure is detected before
@@ -280,44 +300,39 @@ async fn main() {
         });
     tracing::info!("listening on http://{}", cfg.http_addr);
 
-    // Spawn the signal handler task that will cancel the token
-    let shutdown_clone = shutdown.clone();
-    tokio::spawn(shutdown_signal(shutdown_clone));
+    // Spawn the signal handler task that will cancel the shutdown token.
+    tokio::spawn(shutdown_signal(shutdown.clone()));
 
-    // Both servers observe the same cancellation token
-    let shutdown_main = shutdown.clone();
-    let shutdown_metrics = shutdown.clone();
+    // Both servers observe the same cancellation token. axum::serve(...).with_graceful_shutdown(...)
+    // is IntoFuture (not Future), so spawn via .into_future() so the runtime
+    // drives them independently of main's shutdown choreography.
     let main_serve =
-        axum::serve(main_listener, app).with_graceful_shutdown(shutdown_main.cancelled_owned());
+        axum::serve(main_listener, app).with_graceful_shutdown(shutdown.clone().cancelled_owned());
     let metrics_serve = axum::serve(metrics_listener, metrics_router)
-        .with_graceful_shutdown(shutdown_metrics.cancelled_owned());
+        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
 
-    tokio::select! {
-        res = main_serve => {
-            if let Err(e) = res {
-                tracing::error!("main server error: {e}");
-                shutdown.cancel();
-                process::exit(1);
-            }
-        }
-        res = metrics_serve => {
-            if let Err(e) = res {
-                tracing::error!("metrics server error: {e}");
-                shutdown.cancel();
-                process::exit(1);
-            }
-        }
-    }
+    let main_serve_task = tokio::spawn(main_serve.into_future());
+    let metrics_serve_task = tokio::spawn(metrics_serve.into_future());
 
-    // Clean up: abort the eviction and listener/drain background tasks, then
-    // await each within a short budget to allow clean task teardown.
-    eviction_handle.abort();
-    if let Some(h) = listener_handle {
-        h.abort();
-        let _ = tokio::time::timeout(Duration::from_millis(500), h).await;
-    }
-    if let Some(h) = drain_handle {
-        h.abort();
-        let _ = tokio::time::timeout(Duration::from_millis(500), h).await;
+    // Cooperative shutdown orchestration. Awaits the trigger (signal handler
+    // or unexpected serve-task exit), waits for tracked WS handlers to flush
+    // Close(1001) frames, then joins serve tasks and remaining background
+    // handles within bounded timeouts. Returns `true` if the trigger was an
+    // early serve-task failure — propagate to a non-zero process exit so K8s
+    // / systemd restart the pod and alert.
+    let serve_failure = run_shutdown_orchestration(
+        shutdown,
+        ws_tracker,
+        main_serve_task,
+        metrics_serve_task,
+        drain_handle,
+        listener_handle,
+        eviction_handle,
+        metrics_handle,
+    )
+    .await;
+
+    if serve_failure {
+        process::exit(1);
     }
 }

@@ -14,6 +14,8 @@ use std::time::Duration;
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -55,6 +57,8 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     let main_router = routes::api_routes(layer.clone())
@@ -263,84 +267,108 @@ async fn disconnect_does_not_crash_server() {
     assert_eq!(seq_event.seq, 1, "Client 2 should receive the event");
 }
 
-// TODO(coverage): The `Lagged` close arm in `ws.rs:handle_socket` (lines 54-68)
-// is currently at 0% coverage. To cover it deterministically we need to:
-//   1. Use `test_setup(2)` (capacity-2 channel).
-//   2. Subscribe the WS client, then WITHOUT reading from the socket, call
-//      `state.webhook_tx.send(...)` ≥3 times synchronously so the ring laps.
-//   3. Then read from the WS — expect the connection to close (None or Close frame).
-// The main obstacle is that the `webhook_tx` handle on `AppState` is not easily
-// accessible once the server is running in a background task, so we need to
-// either clone `app_state` before spawning (the `test_setup` helper already
-// returns it) or inject events via the webhook HTTP endpoint and accept that
-// the handler task consumes them before the WS handler can lag.
-// Deferred because (a) the 2 lines are not load-bearing for the coverage
-// threshold and (b) `lagging_client_continues_receiving` below already exercises
-// the capacity-2 setup and its assertions would need revisiting once lag-driven
-// close is deterministic.
-
-/// Lagging client receives warning log, continues receiving (not disconnected)
+/// Lagging client is disconnected — the server closes the connection on lag.
+///
+/// Uses a capacity-2 broadcast channel. The WS client subscribes and then
+/// does NOT read from the socket. Sending 3 events via the broadcast sender
+/// wraps the ring buffer, causing the receiver to lag. When the handler
+/// finally calls `rx.recv()`, it gets `RecvError::Lagged(n)` and closes
+/// the connection. The test asserts the client sees the connection close.
 #[tokio::test]
 #[serial_test::serial]
-async fn lagging_client_continues_receiving() {
-    // Use a small broadcast capacity to make lag easy to trigger
-    let (server_addr, _) = test_setup(2).await;
+async fn lagging_client_is_disconnected() {
+    // Capacity-2 channel: 3 sends without any recv causes lag.
+    let (server_addr, state) = test_setup(2).await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
 
-    // Give the handler time to subscribe to the broadcast channel
+    // Give the handler time to subscribe to the broadcast channel before we
+    // flood it.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Post multiple webhooks to the server to generate more events than the
-    // broadcast capacity. This will cause lag on the WS client.
-    let client = reqwest::Client::new();
-    let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
+    // Parse a valid fixture to get a real WebhookEvent.
+    let fixture = common::fixture_workflow_run_requested();
+    let parsed = atc_github::parse_webhook("workflow_run", &fixture).expect("fixture parse failed");
+    let event = match parsed {
+        atc_github::ParseResult::Parsed(boxed) => *boxed,
+        other => panic!("unexpected parse result: {:?}", other),
+    };
 
-    for _ in 0..5 {
-        let body = common::fixture_workflow_run_requested();
-        let resp = client
-            .post(&webhook_url)
-            .header("X-GitHub-Event", "workflow_run")
-            .body(body)
-            .send()
-            .await
-            .expect("Webhook POST failed");
-        assert_eq!(resp.status(), 200);
+    // Send 3 events directly via the sender without the WS client consuming
+    // them. With capacity 2, the third send laps the ring — the receiver's
+    // position is invalidated and the next recv() returns Lagged.
+    for i in 0..3u64 {
+        let _ = state.webhook_tx.send(SeqEvent {
+            seq: i + 1,
+            event: event.clone(),
+        });
     }
 
-    // The client should eventually receive events after the lag.
-    // Due to lag, it may not receive all events, but it should receive at least some.
-    let mut received_count = 0;
-    for _ in 0..10 {
-        match tokio::time::timeout(Duration::from_millis(500), socket.next()).await {
-            Ok(Some(Ok(Message::Text(_)))) => {
-                received_count += 1;
-                if received_count >= 2 {
-                    break; // We've received at least 2 events, lagging handled correctly
-                }
-            }
-            Ok(Some(Ok(other))) => {
-                panic!("Expected text frame, got: {:?}", other);
-            }
-            Ok(Some(Err(e))) => {
-                panic!("WebSocket error: {}", e);
-            }
-            Ok(None) => {
-                panic!("WebSocket connection closed");
-            }
-            Err(_) => {
-                // Timeout is expected — we're just polling
-                tokio::time::sleep(Duration::from_millis(50)).await;
+    // The handler should observe lag and close the socket. Assert close or
+    // connection drop within a short budget.
+    let got_close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Close(_))) => return true,
+                Some(Ok(_)) => {} // may receive frames before lag fires
+                Some(Err(_)) | None => return true, // connection dropped
             }
         }
-    }
+    })
+    .await
+    .expect("timed out waiting for server to close lagging connection");
 
     assert!(
-        received_count >= 2,
-        "Lagging client should eventually receive at least 2 events (got {})",
-        received_count
+        got_close,
+        "lagging client should have its connection closed by the server"
+    );
+}
+
+/// Cancelling the WS-close token causes an idle connected client to receive
+/// a Close frame with code 1001 "going away" within 200 ms.
+///
+/// The client is idle — it neither sends frames nor reads during the cancel
+/// window, so the server-side handler is blocked in the select loop when the
+/// cancel fires. We cancel, wait a short budget, then read and verify the
+/// Close frame arrives.
+#[tokio::test]
+#[serial_test::serial]
+async fn idle_client_receives_close_on_cancel() {
+    let (server_addr, state) = test_setup(256).await;
+
+    let ws_url = format!("ws://{}/v1/ws", server_addr);
+    let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WebSocket connection failed");
+
+    // Give the handler time to subscribe and enter the select loop before we cancel.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Fire the shutdown token; WS handler should send Close(1001) and exit.
+    state.shutdown.cancel();
+
+    // The handler should send Close(1001) promptly. Assert within 200 ms.
+    let frame = tokio::time::timeout(Duration::from_millis(200), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Close(frame))) => return frame,
+                Some(Ok(_)) => {} // skip any stray frames
+                Some(Err(e)) => panic!("WebSocket error waiting for close: {e}"),
+                None => panic!("connection dropped without a Close frame"),
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for Close frame from server");
+
+    let close = frame.expect("Close frame should carry a CloseFrame payload");
+    assert_eq!(
+        u16::from(close.code),
+        1001,
+        "close code should be 1001 (Going Away), got {:?}",
+        close.code
     );
 }

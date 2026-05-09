@@ -14,6 +14,7 @@ use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, P
 use axum_prometheus::utils::SECONDS_DURATION_BUCKETS;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -163,6 +164,8 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -194,6 +197,8 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer.clone())
         .with_state(app_state.clone())
@@ -431,6 +436,8 @@ async fn build_app_inner(
         last_drain_pass_at: last_drain_pass_at.clone(),
         broadcast_watermark: broadcast_watermark.clone(),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     let router = atc_server::routes::api_routes(layer)

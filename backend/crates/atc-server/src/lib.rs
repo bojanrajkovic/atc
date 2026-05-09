@@ -5,5 +5,6 @@ pub mod listener;
 pub mod metrics;
 pub mod persist;
 pub mod routes;
+pub mod shutdown;
 pub mod state;
 pub mod ws;

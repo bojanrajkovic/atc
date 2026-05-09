@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-08 (#66 closed: § Metrics hoisted to `metrics.md` as the canonical home for `/metrics` documentation; nine legacy `atc_pg_*` counters now carry seven-element interpretation blocks alongside the six operational-metrics blocks.)
+Last verified: 2026-05-09
 
 ## Purpose
 
@@ -369,9 +369,101 @@ In `main.rs`:
    5. Spawn listener task (receives PG NOTIFYs, calls `min_pending_seq.fetch_min(seq, Release)`, fires `Arc<Notify>`).
    6. Spawn drain task (wakes on `Arc<Notify>` or 5 s heartbeat tick; NOTIFY-driven passes fetch `seq > pass_start_floor ORDER BY seq` in pages, apply ring-buffer dedup, broadcast `SeqEvent`s, advance `watermark`; every iteration updates `last_drain_pass_at`).
 10. Bind the server to `http_addr` via `axum::serve`
-11. On graceful shutdown, abort the eviction task, listener task, and drain task
+11. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
 
 The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
+
+## Supervision and Shutdown
+
+ATC uses a single-token cooperative shutdown model implemented in `backend/crates/atc-server/src/shutdown.rs`. The orchestration function `run_shutdown_orchestration` is called from `main` and awaits the full sequence to completion before the process exits.
+
+### Cancellation surfaces
+
+Five supervised surfaces observe a single shared `CancellationToken` (`shutdown`) and exit cooperatively when it fires:
+
+1. **Eviction task** (`atc-core::state_machine::start_eviction_task`) — `tokio::select!` on `cancel.cancelled()` vs `ticker.tick()`. Exits at its next tick boundary after the token fires.
+2. **Listener task** (`atc-server::listener::spawn_listener_task`) — `tokio::select!` on `cancel.cancelled()` vs `pg_listener.recv()`. Exits cooperatively.
+3. **Drain task** (`atc-server::listener::spawn_drain_task`) — checks the token only between drain passes, never inside `drain_pass()`. The current pass always runs to completion (or to a Postgres error); cancellation fires at the next inter-pass check.
+4. **Process metrics collector** (`atc-server::metrics::spawn_process_collector`) — `tokio::select!` on `cancel.cancelled()` vs `ticker.tick()`. `Collector::collect()` is synchronous; the cancel arm fires between ticks, not mid-collect.
+5. **WebSocket handlers** (`atc-server::ws::handle_socket`) — each spawned as a tracked future in `ws_tracker`. The select loop watches `shutdown.cancelled()` (top of the biased order); on cancel the handler emits `Close(1001 "going away")` and returns.
+
+The two `axum::serve(...).with_graceful_shutdown(...)` futures observe the same token through `cancelled_owned()` clones.
+
+### Trigger paths
+
+`shutdown.cancel()` fires from one of two paths:
+
+- **Signal-driven (normal path):** SIGTERM / SIGINT → signal handler → `shutdown.cancel()`.
+- **Self-healing on serve failure:** if either spawned `axum::serve` task exits unexpectedly before any signal arrives (e.g., an accept-loop failure), `run_shutdown_orchestration` observes that exit via `tokio::select!`, logs an `error!` naming the affected serve, and calls `shutdown.cancel()` itself so the remaining tasks shut down cooperatively rather than getting orphaned by a half-up process.
+
+In either case, once `shutdown` is cancelled:
+
+```
+shutdown.cancel()
+  ├── axum serves:    graceful_shutdown future resolves → stops accepting new connections
+  ├── eviction task:  cancel arm fires → exits at next tick
+  ├── listener task:  cancel arm fires → exits
+  ├── metrics task:   cancel arm fires → exits at next tick
+  ├── drain task:     cancel arm fires between passes → finishes current pass → exits
+  └── WS handlers:    cancel arm fires → send Close(1001) → return → ws_tracker counts down
+```
+
+The orchestration then awaits `ws_tracker.wait()` (so connected clients receive their Close frames before runtime drop), joins the spawned serve tasks, and joins the remaining background-task handles, each within a bounded timeout.
+
+### Why a single token suffices
+
+A previous design used two tokens (`shutdown` for tasks, a separate `ws_close` for WS handlers) plus a `webhook_tx_keepalive` clone, so WS clients on the dying replica would receive every event from the drain task's final pass before their Close frame. That ordering is not load-bearing — clients reconnect to a healthy replica and fetch `/v1/state`, whose REPEATABLE READ snapshot reflects every committed row in PG (including ones the dying replica's drain didn't broadcast). The frontend uses `snapshot.lastSeq` as its cursor and resumes WS event delivery from there; see `frontend/src/lib/connection.ts`.
+
+The new replica does not re-broadcast the dying replica's unprocessed outbox rows: its drain seeds `initial_watermark` from `MAX(seq) FROM outbox` at startup and only broadcasts seqs strictly greater than that. Catch-up is purely the snapshot endpoint's job.
+
+### WS handler — biased select
+
+The WS handler loop uses `tokio::select! { biased; … }` with arms ordered:
+
+1. `shutdown.cancelled()` — send `Close(1001 "going away")` and exit.
+2. `rx.recv()` — forward broadcast events as JSON text frames.
+3. `socket.recv()` — detect client-initiated close or read errors.
+
+Cancel is first so the cancel signal is preferred over any concurrently-ready arm, keeping shutdown predictable for tests and operators. A client-initiated Close still wins via arm 3 if it arrives independently; the server then exits via the client-initiated branch (no server-side Close 1001).
+
+`main` keeps an `Arc<AppState>` clone alive for the lifetime of the function (`with_state(app_state.clone())` rather than moving the Arc into the router), so the `webhook_tx` sender embedded in `AppState` stays alive through the full orchestration. This means the `RecvError::Closed` arm of `rx.recv()` is only reached in genuinely abnormal scenarios — not as part of the normal shutdown path — and the handler simply returns from there without trying to send a Close frame on a torn-down channel.
+
+### WS task tracking — `TaskTracker`
+
+`AppState` holds a `pub ws_tracker: TaskTracker`. The WS handler wraps each upgrade future via `state.ws_tracker.track_future(handle_socket(...))` before passing it to `ws.on_upgrade(...)`. This lets `run_shutdown_orchestration` call `ws_tracker.wait()` after the cancel signal and know when all in-flight WS handlers have finished sending their Close frames.
+
+`TaskTracker::close()` is called before `wait()` — this is the signal that makes `wait()` return once the in-flight count reaches zero. A late WS upgrade that arrives between `close()` and `wait()` returning is still tracked; since `shutdown` is already cancelled by that point, the late handler enters its cancel arm immediately and exits in milliseconds.
+
+### Per-task timeout budgets
+
+| Constant | Value | Applies to |
+|---|---|---|
+| `SHUTDOWN_TIMEOUT_DRAIN` | 5 s | drain handle (worst case: one in-flight 500-row pass with PG round-trips) |
+| `SHUTDOWN_TIMEOUT_WS` | 2 s | `ws_tracker.wait()` — time for connected WS clients to receive their Close frames |
+| `SHUTDOWN_TIMEOUT_SERVES` | 3 s | spawned axum serve tasks |
+| `SHUTDOWN_TIMEOUT_LISTENER` | 1 s | listener handle |
+| `SHUTDOWN_TIMEOUT_EVICTION` | 1 s | eviction handle |
+| `SHUTDOWN_TIMEOUT_METRICS` | 1 s | process metrics collector handle |
+
+Aggregate worst-case shutdown: ~13 seconds.
+
+**On per-handle timeout:** `AbortHandle::abort()` is called (best-effort and asynchronous — the task may run until its next await point). An `error!` log naming the task is emitted. Orchestration continues.
+
+**On `ws_tracker.wait()` or serves-join timeout:** No per-task abort surface is available. An `error!` log is emitted and orchestration continues; remaining tasks are reaped by runtime drop at process exit.
+
+### Operator shutdown contract
+
+**Signal:** ATC shuts down gracefully on SIGTERM or SIGINT. The signal handler cancels the `shutdown` token, which begins the sequence above.
+
+**Aggregate timeout:** Worst-case shutdown completes in approximately 13 seconds (5 s drain + 2 s WS tracker + 3 s serves + 1 s each for listener, eviction, and metrics, if every timeout fires). In practice, tasks exit well within budget on clean shutdown.
+
+**K8s settings:** `terminationGracePeriodSeconds: 30` (the Kubernetes default) is sufficient. The 13-second aggregate worst case leaves 17 seconds of headroom. No adjustment to this value is needed for ATC's shutdown budget.
+
+**Load-balancer de-registration:** Kubernetes removes a pod from `Endpoints` after the pod enters `Terminating`, but the propagation delay to the load balancer means in-flight requests may still arrive for a few seconds after SIGTERM. A `preStop` lifecycle hook (e.g., a `sleep 5`) can absorb this propagation delay before the shutdown signal is delivered. This is tracked as a separate operational improvement (issue #79) and is not part of the pod-internal shutdown sequence described here.
+
+**Webhook durability during shutdown:** Webhooks committed to the outbox before or during the shutdown window are durable in PG. The dying replica's drain task may exit before broadcasting all committed-but-undrained rows; this is intentional. Clients reconnecting to a healthy replica fetch `/v1/state`, whose REPEATABLE READ snapshot reflects every committed row (including ones the dying replica didn't broadcast) and exposes the corresponding `lastSeq` cursor. Subsequent WS events flow normally from there. No committed webhook is lost.
+
+**In-memory mode:** The listener and drain tasks do not exist. The `drain_handle` and `listener_handle` are `None`; their join steps are skipped. In-memory state is lost on process exit; this is expected and documented as a dev-only mode.
 
 ### Health Probes
 

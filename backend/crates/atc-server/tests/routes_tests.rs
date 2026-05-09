@@ -5,6 +5,8 @@ use std::sync::atomic::AtomicI64;
 
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -45,6 +47,8 @@ fn build_full_app() -> axum::Router {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     atc_server::routes::api_routes(layer.clone())
         .with_state(app_state)

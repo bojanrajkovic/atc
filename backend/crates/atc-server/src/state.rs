@@ -3,6 +3,8 @@ use std::sync::atomic::AtomicI64;
 
 use atc_github::WebhookEvent;
 use tokio::sync::{Mutex, broadcast};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use atc_core::RunStateMachine;
 
@@ -94,6 +96,23 @@ pub struct AppState {
     /// drain's local `watermark`, so `/v1/state` returns a non-zero `lastSeq`
     /// before the first post-startup drain pass completes.
     pub broadcast_watermark: Arc<AtomicI64>,
+    /// Cancellation token for cooperative shutdown.
+    ///
+    /// Cloned from `main`'s `shutdown` token. WS handlers observe it via the
+    /// first (biased) arm of their `select!` loop and emit
+    /// `Message::Close(CloseFrame { code: 1001, reason: "going away" })`
+    /// before returning. Other supervised surfaces (eviction, listener, drain,
+    /// process metrics, axum's `with_graceful_shutdown`) observe the same
+    /// token directly via their own clones in `main`.
+    pub shutdown: CancellationToken,
+    /// Task tracker for spawned WS handler futures.
+    ///
+    /// Each WS handler future is wrapped via `ws_tracker.track_future(...)` in
+    /// `ws_handler` before being passed to `ws.on_upgrade(...)`. `main` calls
+    /// `ws_tracker.close()` followed by `ws_tracker.wait()` (bounded by
+    /// `SHUTDOWN_TIMEOUT_WS`) during shutdown so connected clients have time
+    /// to emit their Close frames before process exit.
+    pub ws_tracker: TaskTracker,
 }
 
 /// A domain event annotated with a monotonic sequence number.

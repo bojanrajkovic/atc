@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use chrono::TimeDelta;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -482,13 +483,14 @@ impl RunStateMachine {
     /// Start a background task that periodically evicts expired entries.
     ///
     /// Must be called on an `Arc<RunStateMachine>`. Returns a
-    /// [`JoinHandle`](tokio::task::JoinHandle) — drop or abort it to
-    /// stop the eviction loop.
+    /// [`JoinHandle`](tokio::task::JoinHandle) that resolves when the task
+    /// exits cooperatively after `cancel` is cancelled.
     ///
     /// The first eviction runs after `interval` elapses (not immediately).
     pub fn start_eviction_task(
         self: &Arc<Self>,
         interval: Duration,
+        cancel: CancellationToken,
     ) -> tokio::task::JoinHandle<()> {
         let store = Arc::clone(self);
         tokio::spawn(async move {
@@ -496,8 +498,10 @@ impl RunStateMachine {
             // First tick completes immediately — consume it
             ticker.tick().await;
             loop {
-                ticker.tick().await;
-                store.evict_expired().await;
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    _ = ticker.tick() => store.evict_expired().await,
+                }
             }
         })
     }

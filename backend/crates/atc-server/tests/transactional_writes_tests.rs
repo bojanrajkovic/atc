@@ -24,6 +24,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum_prometheus::PrometheusMetricLayer;
 use std::sync::OnceLock;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 fn now_millis_for_test() -> i64 {
@@ -120,6 +122,8 @@ pub fn build_app_with_pg(
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())
@@ -553,6 +557,8 @@ async fn in_memory_mode_behavioral_invariance() {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes(layer)
         .with_state(app_state.clone())

@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-08
+Last verified: 2026-05-09
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -43,7 +43,7 @@ Enforced by implementation and verified by tests. Full detail in `docs/architect
 - **NOTIFY emission:** Inside the webhook handler transaction (after outbox INSERT, before commit), `SELECT pg_notify('atc_outbox', seq::text)` emits the outbox row's seq to all listeners. PG queues NOTIFYs during a txn and delivers on COMMIT; aborted txns silently drop. Metric: `atc_pg_notify_emitted_total{kind}`.
 - **Drain pipeline:** Listener registers NOTIFY-arriving seqs into `min_pending_seq` for gap-healing. Drain wakes on signal or 5s heartbeat tick, swaps the backstop, computes `pass_start_floor = watermark.min(backstop.saturating_sub(1))`, fetches outbox rows ordered by seq (paginated, batch size 500), deduplicates via 2048-entry ring buffer, broadcasts to subscribers, advances `broadcast_watermark`. On failed pass, re-registers the captured backstop and does not refresh the heartbeat (so `/readyz` reflects sustained drain failure after 30s). Sole broadcaster in PG mode.
 - **Seq ordering:** In-memory mode acquires `Mutex<u64>` BEFORE apply + seq assignment + broadcast (strictly monotonic, resets to 0 on restart). PG mode draws ordering from outbox `BIGSERIAL` plus drain's ascending ORDER BY.
-- **Broadcast semantics:** Bounded channel (capacity 256). Slow subscribers may miss events; `LaggingError` logs a warning and does not disconnect.
+- **Broadcast semantics:** Bounded channel (capacity 256). When a subscriber falls behind and the channel buffer overflows, `RecvError::Lagged` is returned. The WS handler closes the connection on `Lagged` (logs a warning, then breaks the loop) — the client reconnects and fetches `/v1/state` to re-establish its seq cursor. This prevents a permanently gapped event stream on the client side.
 - **State snapshot (PG mode):** Loads `broadcast_watermark` BEFORE opening a REPEATABLE READ transaction reading runs (`WHERE placeholder=false`) and jobs. The cursor is monotonic in commit order; the frontend tolerates `entity_count >= last_seq` (snapshot may include commits the drain hasn't yet broadcast). Placeholder stub runs are excluded.
 - **State snapshot (in-memory mode):** Holds `Mutex<u64>` across snapshot and seq read. `lastSeq=0` is the cold-start sentinel.
 - **PG access:** `AppState.pg_pool: Option<sqlx::PgPool>`. Used by the state handler for REPEATABLE READ snapshots and by `/readyz`. `PgStore` holds its own pool internally for the write path. `atc_pg_write_failures_total{kind=parity|transient}` and `atc_pg_notify_emitted_total{kind}` are emitted from `PgStore::apply_*_event`.

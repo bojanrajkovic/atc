@@ -2,6 +2,7 @@
 
 use super::*;
 use chrono::TimeDelta;
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn test_completed_job_within_ttl_retained() {
@@ -398,5 +399,23 @@ async fn test_ttl_configurable() {
     assert!(
         job_five_min.is_none(),
         "Job in 5-minute store should be evicted"
+    );
+}
+
+#[tokio::test]
+async fn eviction_task_exits_cooperatively_on_cancel() {
+    let clock = Arc::new(TestClock::new(Utc::now()));
+    let store = Arc::new(RunStateMachine::new(clock, Duration::from_secs(3600)));
+
+    // Use a long interval so the task sits waiting on the ticker, not mid-eviction.
+    let cancel = CancellationToken::new();
+    let handle = store.start_eviction_task(Duration::from_secs(3600), cancel.clone());
+
+    cancel.cancel();
+
+    let result = tokio::time::timeout(Duration::from_millis(200), handle).await;
+    assert!(
+        result.is_ok(),
+        "eviction task did not exit within 200 ms after cancellation"
     );
 }

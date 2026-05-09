@@ -8,6 +8,8 @@ use std::time::Duration;
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -28,8 +30,9 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
     // Step 2: Register build info with real VERGEN_* labels from build.rs
     atc_server::metrics::register_build_info();
 
-    // Step 3: Spawn process collector task
-    atc_server::metrics::spawn_process_collector();
+    // Step 3: Spawn process collector task (token is dropped after test; task exits at next tick)
+    let _collector_handle =
+        atc_server::metrics::spawn_process_collector(tokio_util::sync::CancellationToken::new());
 
     // Step 4: Create app state
     let state_machine = Arc::new(RunStateMachine::new(
@@ -53,6 +56,8 @@ async fn test_setup() -> (SocketAddr, SocketAddr) {
         last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     // Step 5: Build main router using the production api_routes function

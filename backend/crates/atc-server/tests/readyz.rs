@@ -22,6 +22,8 @@ use atc_server::state::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serial_test::serial;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 fn now_millis() -> i64 {
@@ -70,6 +72,8 @@ async fn stale_heartbeat_returns_503() {
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     let app = atc_server::routes::api_routes(layer)
@@ -217,6 +221,8 @@ async fn no_pg_always_200() {
         last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
         broadcast_watermark: Arc::new(AtomicI64::new(0)),
         persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
     });
 
     let app = atc_server::routes::api_routes(layer)

@@ -9,11 +9,12 @@ use std::sync::Arc;
 use axum::{
     extract::{
         State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use crate::state::{AppState, SeqEvent};
 
@@ -23,19 +24,44 @@ pub async fn ws_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let rx = state.webhook_tx.subscribe();
-    ws.on_upgrade(move |socket| handle_socket(socket, rx))
+    let shutdown = state.shutdown.clone();
+    ws.on_upgrade(move |socket| {
+        state
+            .ws_tracker
+            .track_future(handle_socket(socket, rx, shutdown))
+    })
 }
 
 /// Per-connection task: forward broadcast events as JSON text frames.
 ///
-/// Uses `tokio::select!` to race broadcast recv against socket recv,
-/// so idle-period client disconnects are detected promptly rather than
-/// waiting for the next broadcast event to trigger a failed send.
-async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEvent>) {
+/// On `shutdown.cancelled()`, emits `Close(1001 "going away")` and returns.
+/// Catch-up after reconnect is the frontend's responsibility via `/v1/state`
+/// on a healthy replica (see `docs/architecture/backend-server.md` §
+/// "Supervision and Shutdown").
+///
+/// `tokio::select! { biased; … }` evaluates arms top-down with
+/// `shutdown.cancelled()` first so the cancel signal is preferred over any
+/// concurrently-ready arm, keeping shutdown predictable for tests and
+/// operators. `main` keeps an `Arc<AppState>` alive through orchestration, so
+/// the broadcast channel stays open through the cancel-fire window — the
+/// `RecvError::Closed` arm is only reached in genuinely abnormal scenarios.
+async fn handle_socket(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<SeqEvent>,
+    shutdown: CancellationToken,
+) {
     tracing::info!("WebSocket client connected");
 
     let reason = loop {
         tokio::select! {
+            biased;
+            () = shutdown.cancelled() => {
+                let _ = socket.send(Message::Close(Some(CloseFrame {
+                    code: 1001,
+                    reason: "going away".into(),
+                }))).await;
+                break "shutdown";
+            }
             result = rx.recv() => {
                 match result {
                     Ok(seq_event) => {
@@ -54,13 +80,9 @@ async fn handle_socket(mut socket: WebSocket, mut rx: broadcast::Receiver<SeqEve
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // The subscriber missed `n` events because the
                         // bounded broadcast channel (capacity 256) advanced
-                        // past their cursor. Continuing on the same receiver
-                        // would deliver subsequent events but leave the gap
-                        // permanently filled in the client's view. Close the
-                        // socket instead — the frontend's reconnect handler
-                        // will fetch /v1/state, which returns a fresh
-                        // snapshot keyed by `broadcast_watermark` and
-                        // re-establishes the seq cursor.
+                        // past their cursor. Close the socket — the frontend's
+                        // reconnect handler will fetch /v1/state and
+                        // re-establish the seq cursor from the snapshot.
                         tracing::warn!(
                             missed = n,
                             "WebSocket client lagging; closing to force re-snapshot",
