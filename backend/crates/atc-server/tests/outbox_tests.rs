@@ -1,4 +1,4 @@
-//! Integration tests for the Phase 2c outbox acceptance criteria.
+//! Integration tests for the transactional outbox write path.
 //!
 //! Boots ephemeral Postgres via testcontainers. Route-handler tests fire real
 //! webhooks through the full Axum router. Direct DB tests operate against the
@@ -6,8 +6,6 @@
 //! query caching.
 //!
 //! Requires Docker (or OrbStack) to be running.
-//!
-//! Test naming convention: `phase_2c_outbox_ac<N>_<seq>_<description>`
 
 mod common;
 
@@ -220,7 +218,7 @@ async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
 /// `outbox` row with kind='run' in the same transaction.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac1_1_run_webhook_produces_run_and_outbox_row() {
+async fn run_webhook_produces_run_and_outbox_row() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -271,7 +269,7 @@ async fn phase_2c_outbox_ac1_1_run_webhook_produces_run_and_outbox_row() {
 /// from aborted txns; see AC2.2).
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac1_2_seq_strictly_increasing() {
+async fn seq_strictly_increasing() {
     let (pool, _c, _) = common::start_pg().await;
 
     // Insert stub runs for FK satisfaction
@@ -312,7 +310,7 @@ async fn phase_2c_outbox_ac1_2_seq_strictly_increasing() {
 /// contain top-level keys `pool_stats_after` or `seq`.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac1_3_payload_roundtrips_as_envelope() {
+async fn payload_roundtrips_as_envelope() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -360,7 +358,7 @@ async fn phase_2c_outbox_ac1_3_payload_roundtrips_as_envelope() {
 /// predecessors_of(Queued). The transaction rolls back; outbox stays at 0 rows.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac2_1_parity_rejection_rolls_back_outbox() {
+async fn parity_rejection_rolls_back_outbox() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -397,7 +395,7 @@ async fn phase_2c_outbox_ac2_1_parity_rejection_rolls_back_outbox() {
 /// - seq_b > seq_a (strictly) AND no committed row has seq = seq_a
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac2_2_bigserial_gap_property() {
+async fn bigserial_gap_property() {
     let (pool, _c, _) = common::start_pg().await;
 
     // Insert a stub run for FK constraint satisfaction
@@ -461,7 +459,7 @@ async fn phase_2c_outbox_ac2_2_bigserial_gap_property() {
 /// here is the same that AC5.2's invariant rests on.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
+async fn job_upsert_rejection_rolls_back_stub_run() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -544,7 +542,7 @@ async fn phase_2c_outbox_ac2_3_job_upsert_rejection_rolls_back_stub_run() {
 /// and increments the parity counter by 1.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac3_1_parity_rejection_returns_200_rejected() {
+async fn parity_rejection_returns_200_rejected() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -579,7 +577,7 @@ async fn phase_2c_outbox_ac3_1_parity_rejection_returns_200_rejected() {
 /// `atc_pg_write_failures_total`.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac3_4_success_returns_200_accepted() {
+async fn success_returns_200_accepted() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -621,7 +619,7 @@ async fn phase_2c_outbox_ac3_4_success_returns_200_accepted() {
 /// and the in-memory store reflects the event. No DB calls are made.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
+async fn no_pg_pool_uses_in_memory_path() {
     // Build app inline using the local prometheus_layer() to reuse the OnceLock recorder.
     let layer = prometheus_layer();
     let state_machine = Arc::new(RunStateMachine::new(
@@ -684,7 +682,7 @@ async fn phase_2c_outbox_ac3_5_no_pg_pool_uses_in_memory_path() {
 /// adds a second outbox row.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac5_1_job_webhook_creates_stub_run_and_outbox() {
+async fn job_webhook_creates_stub_run_and_outbox() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -765,7 +763,7 @@ async fn phase_2c_outbox_ac5_1_job_webhook_creates_stub_run_and_outbox() {
 /// envelope types and do NOT contain SeqEvent top-level keys.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event() {
+async fn payload_is_envelope_not_seq_event() {
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
 
@@ -836,27 +834,22 @@ async fn phase_2c_outbox_ac6_1_payload_is_envelope_not_seq_event() {
 // AC3.3 — Post-commit in-memory drift returns 200, increments drift counter
 // ---------------------------------------------------------------------------
 
-/// AC3.3 (Phase 3c rewrite): drift is structurally unreachable in PG mode.
+/// AC3.3: drift is structurally unreachable in PG mode.
 ///
-/// Phase 3c §D4 silenced the in-memory apply in PG mode — the handler commits
-/// to PG, emits NOTIFY, and returns. The drain task is the sole writer to
+/// The in-memory apply is silenced in PG mode — the handler commits to PG,
+/// emits NOTIFY, and returns. The drain task is the sole writer to
 /// `webhook_tx`, and the in-memory `state.store` is never written. There is
 /// no in-memory state to drift from, so `atc_pg_in_memory_drift_total` is a
 /// stuck-at-zero counter under PG mode.
 ///
-/// The original AC3.3 scenario relied on the handler dual-writing (PG + in-mem)
-/// and detecting divergence post-commit. After 3c that whole machinery is
-/// gone: the seq mutex is unused in PG mode, the store stays empty, and the
-/// drift counter never increments.
-///
-/// This rewrite asserts the **invariant** instead of the **mechanism**: after a
+/// This test asserts the **invariant** instead of the **mechanism**: after a
 /// webhook commits in PG mode, the in-memory store is still empty, no drift
 /// counter incremented, and the response shape advertises the outbox seq
 /// (status="accepted" with seq, not "processed"). The original drift detection
 /// is preserved at the metric level — drift_total stays at baseline.
 #[tokio::test]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac3_3_no_in_memory_drift_in_pg_mode() {
+async fn no_in_memory_drift_in_pg_mode() {
     atc_server::metrics::register_pg_write_counters();
 
     let (pool, _c, _) = common::start_pg().await;
@@ -945,11 +938,11 @@ async fn phase_2c_outbox_ac3_3_no_in_memory_drift_in_pg_mode() {
 /// row-level locking + drain serial broadcast handles concurrent idempotent
 /// replays without deadlock, double-broadcast, or outbox row loss.
 ///
-/// Phase 3c: uses `build_app_with_pg_and_listener` (full fixture with drain task)
+/// Uses `build_app_with_pg_and_listener` (full fixture with drain task)
 /// because the drain — not the handler — is the broadcaster in PG mode.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durable_order() {
+async fn concurrent_run_requested_broadcast_matches_durable_order() {
     const N: usize = 4;
     let (pool, _c, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
@@ -1040,12 +1033,12 @@ async fn phase_2c_outbox_ac4_1_concurrent_run_requested_broadcast_matches_durabl
 /// matches BIGSERIAL allocation order — which IS durable outbox.seq order.
 /// The test asserts broadcast order == durable outbox.seq order.
 ///
-/// Phase 3c: ordering is now provided by outbox `BIGSERIAL` + drain's
-/// ascending ORDER BY (the seq mutex is bypassed in PG mode). The test
-/// uses the full fixture so the drain task is running.
+/// Ordering is provided by outbox `BIGSERIAL` + drain's ascending ORDER BY
+/// (the seq mutex is bypassed in PG mode). The test uses the full fixture
+/// so the drain task is running.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial]
-async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durable_order() {
+async fn concurrent_different_runs_broadcast_matches_durable_order() {
     const N: usize = 4;
     let (pool, _c, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
@@ -1117,14 +1110,14 @@ async fn phase_2c_outbox_ac4_2_concurrent_different_runs_broadcast_matches_durab
 
     assert_eq!(outbox_run_ids.len(), N, "outbox must have exactly N rows");
 
-    // Phase 3c: broadcast order is COMMIT order, not BIGSERIAL allocation
-    // order. Under concurrent commits, BIGSERIAL allocates a seq before
-    // commit, but transactions can commit in a different order. The drain
-    // sees rows only after they commit, and may also rescan when a delayed
-    // commit's NOTIFY arrives — gap-healing can interleave a freshly seen
-    // low seq among previously-broadcast higher seqs. Pre-Phase 3c (with the
-    // seq mutex serializing the handler), broadcast order matched BIGSERIAL
-    // allocation order; we no longer enforce that.
+    // Broadcast order is COMMIT order, not BIGSERIAL allocation order. Under
+    // concurrent commits, BIGSERIAL allocates a seq before commit, but
+    // transactions can commit in a different order. The drain sees rows only
+    // after they commit, and may also rescan when a delayed commit's NOTIFY
+    // arrives — gap-healing can interleave a freshly seen low seq among
+    // previously-broadcast higher seqs. When the seq mutex serialized the
+    // handler, broadcast order matched BIGSERIAL allocation order; in PG mode
+    // we no longer enforce that.
     //
     // The invariants we DO enforce here are weaker but still load-bearing:
     //   1. Every run_id committed to the outbox is broadcast exactly once.

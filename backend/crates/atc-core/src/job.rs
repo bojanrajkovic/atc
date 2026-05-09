@@ -96,7 +96,7 @@ pub struct RunnerInfo {
 
 /// A job within a workflow run.
 ///
-/// Created and updated by `JobEvent`s (Phase 2). Steps use snapshot
+/// Created and updated by `JobEvent`s. Steps use snapshot
 /// semantics — the entire `Vec<Step>` is replaced on each event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

@@ -195,8 +195,9 @@
     section order (Recent → Runs → Jobs → Pools → Commands) and source order
     within each section regardless of match scores.
 
-    onOpenAutoFocus and the focus $effect above are forwarded by Phase 1's patch
-    to command-dialog.svelte. Without that patch they would be silently dropped.
+    onOpenAutoFocus and the focus $effect above are forwarded to
+    command-dialog.svelte via explicit props. Without that forwarding they would
+    be silently dropped.
   -->
   <Command.Input
     bind:ref={inputEl}

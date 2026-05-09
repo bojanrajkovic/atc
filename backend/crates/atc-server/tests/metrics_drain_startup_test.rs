@@ -1,4 +1,4 @@
-//! Phase 5 — `atc_pg_drain_startup_seconds` histogram.
+//! `atc_pg_drain_startup_seconds` histogram.
 //!
 //! Asserts that startup-init latency (watermark init through first drain
 //! pass exit) records exactly one observation per process lifetime, and

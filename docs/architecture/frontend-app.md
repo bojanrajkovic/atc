@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-05-05 (Phase 3a/3b: snapshot cursor renamed to `lastSeq`, buffer filter inverted to `seq > lastSeq`, runner pools now `$derived.by(() => computePoolStats(runStore.jobs))` — no more `loadPools` and no more `SeqEvent.poolStatsAfter` sidecar)
+Last verified: 2026-05-05
 
 ## Purpose
 
@@ -13,7 +13,7 @@ The frontend app is a standalone Svelte 5 single-page application built with Vit
 - Comprehensive test coverage with Vitest (unit tests) and Playwright (E2E tests)
 - A static build output (`frontend/dist/`) that the backend embeds into its release binary via rust-embed
 
-Complete through Sub-Phase 5 + Sub-Phase 6a (kanban keyboard navigation). Sub-Phase 5 adds: Cmd+K command palette (five sections — Recent/Runs/Jobs/Pools/Commands; theme submenu), slide-over detail panel (Sheet with header, action row, metadata grid, job blocks with step timeline), RunCard activation (inner button overlay + hover-peek popover gated by `(hover: hover) and (pointer: fine)`), pool filter integration (palette → `activePoolFilter` → kanban columns + RunnerPool accent + PoolFilterPill), nested-dialog stacking with global Cmd+K listener, and the first branded TypeScript type (`PoolKey`). Sub-Phase 6a (kanban keyboard navigation, see `docs/design-plans/2026-05-01-kanban-keyboard-nav.md`) adds the roving tabindex system: `RovingFocusProvider` context wrapper (wraps App subtree excluding ConnectionManager), `use:roving` action on KanbanBoard's grid `<div>`, per-card tabindex derivation in RunCard (tabindex=0 on the current-focus card, tabindex=-1 on all others), imperative `.focus()` via a `$effect` in RunCard (with `!popoverOpen` re-entrancy guard), 2D arrow + Home/End navigation with no-wrap and empty-column-skip, modifier-key delegation back to the App-level window handler, structural suspension via natural focus scoping when dialogs open, card-stable focus through FLIP/crossfade transitions, and lost-trigger restoration on panel close (existing `RunDetailPanel.onCloseAutoFocus` bug fixed). Initial focus falls back to the first card of the first non-empty column (Queued > InProgress > Completed priority). Test coverage spans unit (jsdom), browser-mode (Playwright chromium), and E2E tiers. 676 unit/browser tests + 119 E2E tests passing.
+Feature set: Cmd+K command palette (five sections — Recent/Runs/Jobs/Pools/Commands; theme submenu), slide-over detail panel (Sheet with header, action row, metadata grid, job blocks with step timeline), RunCard activation (inner button overlay + hover-peek popover gated by `(hover: hover) and (pointer: fine)`), pool filter integration (palette → `activePoolFilter` → kanban columns + RunnerPool accent + PoolFilterPill), nested-dialog stacking with global Cmd+K listener, and the first branded TypeScript type (`PoolKey`). The roving tabindex system provides keyboard navigation (see `docs/design-plans/2026-05-01-kanban-keyboard-nav.md`): `RovingFocusProvider` context wrapper (wraps App subtree excluding ConnectionManager), `use:roving` action on KanbanBoard's grid `<div>`, per-card tabindex derivation in RunCard (tabindex=0 on the current-focus card, tabindex=-1 on all others), imperative `.focus()` via a `$effect` in RunCard (with `!popoverOpen` re-entrancy guard), 2D arrow + Home/End navigation with no-wrap and empty-column-skip, modifier-key delegation back to the App-level window handler, structural suspension via natural focus scoping when dialogs open, card-stable focus through FLIP/crossfade transitions, and lost-trigger restoration on panel close. Initial focus falls back to the first card of the first non-empty column (Queued > InProgress > Completed priority). Test coverage spans unit (jsdom), browser-mode (Playwright chromium), and E2E tiers. 676 unit/browser tests + 119 E2E tests passing.
 
 ## Key Decisions
 
@@ -35,12 +35,12 @@ Complete through Sub-Phase 5 + Sub-Phase 6a (kanban keyboard navigation). Sub-Ph
 
 **Decision:** Vendored `Command.Dialog` wrapper extended (not theming-modified) to forward content-level dismissal props
 **Alternatives considered:** Raw `Dialog.Root` + `Dialog.Portal` + `Dialog.Overlay` + `Dialog.Content` + `Command.Root` composition inlined in `CommandPalette.svelte` (no vendor change at all)
-**Rationale:** The shadcn-svelte 1.2.7 `command-dialog.svelte` wrapper types its `restProps` as `DialogPrimitive.RootProps & CommandPrimitive.RootProps`, which deliberately excludes content-level dismissal props — `escapeKeydownBehavior`, `interactOutsideBehavior`, `onCloseAutoFocus`, `onOpenAutoFocus` — because they live on `Dialog.Content`. Sub-Phase 5's nested-dialog stacking (palette over slide-over panel) needs all four on the inner `<Dialog.Content>`. We extend the vendored wrapper with explicit pass-through fields for the four props rather than inlining ~30 lines of raw Dialog composition in `CommandPalette.svelte`. Project guidance Rule 7 (no vendor modification) is for *theming* changes; API-surface extensions are permitted, with an in-source comment citing the rationale. The four props are extracted from destructuring so they do NOT bleed into `restProps` (which spreads onto `<Dialog.Root>` and `<Command>`, neither of which accepts content-level props). A `strip<T>()` helper removes undefined keys before spreading onto `<Dialog.Content>`, satisfying `exactOptionalPropertyTypes` (EOPT): Bits UI types optional props as absent-or-present-with-value, not present-with-undefined. Patch lives at `frontend/src/lib/components/ui/command/command-dialog.svelte`. **Re-running `pnpm dlx shadcn-svelte@latest add command` will clobber the patch — re-apply after any future re-vendoring.**
+**Rationale:** The shadcn-svelte 1.2.7 `command-dialog.svelte` wrapper types its `restProps` as `DialogPrimitive.RootProps & CommandPrimitive.RootProps`, which deliberately excludes content-level dismissal props — `escapeKeydownBehavior`, `interactOutsideBehavior`, `onCloseAutoFocus`, `onOpenAutoFocus` — because they live on `Dialog.Content`. Nested-dialog stacking (palette over slide-over panel) needs all four on the inner `<Dialog.Content>`. We extend the vendored wrapper with explicit pass-through fields for the four props rather than inlining ~30 lines of raw Dialog composition in `CommandPalette.svelte`. Project guidance Rule 7 (no vendor modification) is for *theming* changes; API-surface extensions are permitted, with an in-source comment citing the rationale. The four props are extracted from destructuring so they do NOT bleed into `restProps` (which spreads onto `<Dialog.Root>` and `<Command>`, neither of which accepts content-level props). A `strip<T>()` helper removes undefined keys before spreading onto `<Dialog.Content>`, satisfying `exactOptionalPropertyTypes` (EOPT): Bits UI types optional props as absent-or-present-with-value, not present-with-undefined. Patch lives at `frontend/src/lib/components/ui/command/command-dialog.svelte`. **Re-running `pnpm dlx shadcn-svelte@latest add command` will clobber the patch — re-apply after any future re-vendoring.**
 
 ## Boundaries
 
 **Owns:** UI rendering, design tokens (OKLCH system), theme switching, Tailwind configuration, Svelte component structure, frontend build output, WebSocket client, state stores, event dispatching, testing infrastructure
-**Does not own:** Responsive breakpoints, advanced analytics, routing (future phase), backend serving logic
+**Does not own:** Responsive breakpoints, advanced analytics, routing, backend serving logic
 **Prohibitions:** Do not import backend code. Do not add SvelteKit. Do not use PostCSS for Tailwind (use @tailwindcss/vite). Do not let Biome process .svelte files (use eslint/prettier for those). Do not hand-edit types in `src/lib/types/generated/` (these are generated by ts-rs).
 
 ## App Shell
@@ -159,7 +159,7 @@ All animations defined in `src/lib/animations/kanban-transitions.ts`:
 
 ### Animation Inventory (Reduced-Motion Audit)
 
-All animations in the codebase and their reduced-motion gate status (Sub-Phase 6b audit):
+All animations in the codebase and their reduced-motion gate status:
 
 | File:line | Type | Trigger | Gate status | Test coverage |
 |---|---|---|---|---|
@@ -205,7 +205,7 @@ RunCard (almost-pure: reads uiStore.nowMs + runStore.jobsByRunId + RovingFocusCo
   <button class="run-card-activate"> (inner overlay button; tabindex=0/−1 from roving context; imperative .focus() via $effect)
 ```
 
-Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the orchestrator — its `$derived.by` for `durationText` reads `uiStore.nowMs` (but only in live branches; completed non-ActionRequired cards never subscribe to the tick), and it reads `runStore.jobsByRunId` for step aggregation. Sub-Phase 5 added the hover-peek popover (gated by `(hover: hover) and (pointer: fine)` media query) and the inner activation button (opens RunDetailPanel). Kanban keyboard nav Phase 2 added `getRovingContext()` to RunCard for tabindex derivation (`isFocused = ctx.currentFocusRunId === run.id`) and an imperative focus `$effect` that calls `buttonEl.focus()` when `isFocused && ctx.kanbanHasFocus`.
+Leaf components are pure (props in, DOM out, no store reads). `RunCard` is the orchestrator — its `$derived.by` for `durationText` reads `uiStore.nowMs` (but only in live branches; completed non-ActionRequired cards never subscribe to the tick), and it reads `runStore.jobsByRunId` for step aggregation. The hover-peek popover (gated by `(hover: hover) and (pointer: fine)` media query) and the inner activation button (opens RunDetailPanel) are rendered by RunCard. `getRovingContext()` provides tabindex derivation (`isFocused = ctx.currentFocusRunId === run.id`) and an imperative focus `$effect` that calls `buttonEl.focus()` when `isFocused && ctx.kanbanHasFocus`.
 
 ### Store Additions
 
@@ -249,7 +249,7 @@ The duration formula is extracted to a pure `computeDurationText(run, nowMs): st
 
 ### Scrollbar Styling
 
-Sub-Phase 6b added a global `.atc-scrollbar` class in `app.css` for cross-browser thin scrollbar styling. Applied to `KanbanColumn`'s `role="list"` container and `RunDetailPanel`'s `job-blocks` container. `CommandPalette`'s list retains `no-scrollbar` (hides scrollbars by design).
+The global `.atc-scrollbar` class in `app.css` provides cross-browser thin scrollbar styling. It is applied to `KanbanColumn`'s `role="list"` container and `RunDetailPanel`'s `job-blocks` container. `CommandPalette`'s list retains `no-scrollbar` (hides scrollbars by design).
 
 **Token flow:** thumb uses `color-mix(in oklch, var(--border) 80%, transparent)` — anchored to `--border` so it tracks theme hue and mode changes automatically without new tokens. Track is transparent.
 
@@ -259,9 +259,9 @@ Sub-Phase 6b added a global `.atc-scrollbar` class in `app.css` for cross-browse
 
 ### Design Tokens
 
-Sub-Phase 4 added three OKLCH status tokens in both dark and light modes: `--timed-out` (H=40, amber-red), `--action-required` (H=55, warning-amber), `--neutral` (low-chroma, hue-following). A fourth token `--halo-color` is used by the halo animation; it lives in the mode-level token group, not the status group, because it's always amber.
+Three OKLCH status tokens exist in both dark and light modes: `--timed-out` (H=40, amber-red), `--action-required` (H=55, warning-amber), `--neutral` (low-chroma, hue-following). A fourth token `--halo-color` is used by the halo animation; it lives in the mode-level token group, not the status group, because it's always amber.
 
-Sub-Phase 5 added five tokens in `app.css` for the command palette and keyboard shortcut badges:
+Five additional tokens in `app.css` serve the command palette and keyboard shortcut badges:
 
 | Token | Dark | Light | Use |
 |-------|------|-------|-----|
@@ -303,10 +303,10 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 - Receives and applies `RunEvent` mutations from the WebSocket
 - Derives: three sorted arrays (`queuedRuns` ascending by createdAt, `inProgressRuns` descending by runStartedAt, `completedRuns` descending by updatedAt), each with run.id tie-breaker; direct lexical ISO-8601 comparison, no Date parsing
 - Uses `SvelteMap<bigint, WorkflowRun>` and `SvelteMap<bigint, Job[]>` from `svelte/reactivity` (not plain `$state<Map>`). `SvelteMap` tracks reads per-key and per-iteration: `.get(key)` / `.set(key, v)` invalidates only consumers of that key; `.values()` / `.keys()` / `.size` invalidate iterating consumers on any structural change. Plain class fields (no `$state` wrapper) — reassignment is intentionally *not* supported since it would replace the reactive instance and silently drop subscribers; mutations go through `.set()` / `.delete()` / `.clear()`. `loadSnapshot` and `clear` call `.clear()` then re-populate, preserving the reactive instance's identity.
-- **`jobs: $derived.by<Job[]>`** (Phase 3b) — flat view across all runs. Iterates `this.jobsByRun.values()` and concatenates each `Job[]` into a single array. Consumed by `runnerStore.pools` (`computePoolStats(runStore.jobs)`) so the runner-pool derivation has a stable single dependency rather than threading the per-run `SvelteMap` itself.
+- **`jobs: $derived.by<Job[]>`** — flat view across all runs. Iterates `this.jobsByRun.values()` and concatenates each `Job[]` into a single array. Consumed by `runnerStore.pools` (`computePoolStats(runStore.jobs)`) so the runner-pool derivation has a stable single dependency rather than threading the per-run `SvelteMap` itself.
 
 **RunnerStore** (`src/lib/stores/runners.svelte.ts`)
-- Phase 3b: `pools` is `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))`. No `$state`, no `loadPools`, no `clear`, no manual sidecar.
+- `pools` is `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))`. No `$state`, no `loadPools`, no `clear`, no manual sidecar.
 - `computePoolStats(jobs: Job[]): RunnerPoolStats[]` is exported from the same module as a pure function. It dedupes labels via `new Set(...)`, sorts them, uses `JSON.stringify(sortedLabels)` as a collision-free map key, skips jobs with status `Waiting` or `Completed`, increments `queued` / `running` per status, sets `groupName` from the most recent observed `runner.groupName`, sets `isElastic = true` whenever any observed `runner.groupId === 0n` (bigint-aware), and returns the resulting array sorted lexicographically by labels.
 - The derivation chain is: `runStore.jobsByRun` (mutated by `applyJobEvent`) → `runStore.jobs` (`$derived.by<Job[]>` flat view) → `runnerStore.pools`. Pool state self-heals on every job event without any explicit dispatch into the runner store.
 - See ADR 0004 (`docs/architecture-decisions/0004-frontend-derived-pool-stats.md`) for the rationale (multi-replica concurrent-writer correctness).
@@ -314,8 +314,7 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 **UIStore** (`src/lib/stores/ui.svelte.ts`)
 - Transient UI state: theme, dark/light mode, density, and selections
 - Does not persist to WebSocket (local-only state)
-- Sub-Phase 5 additions:
-  - `selectedRunId: bigint | null` — which run's detail panel is open (null = panel closed)
+- `selectedRunId: bigint | null` — which run's detail panel is open (null = panel closed)
   - `selectedJobId: bigint | null` — set by the palette when opening a run via a job row; consumed by JobBlock to scroll the job into view, then cleared
   - `lastTriggerRunId: bigint | null` — set by RunCard's `handleActivate` at click time; consumed by RunDetailPanel's `onCloseAutoFocus` to restore focus to the triggering card's inner button via `document.querySelector('.run-card[data-run-id="${id}"] .run-card-activate')`; then cleared
   - `activePoolFilter: PoolKey | null` — the active pool filter (null = no filter); `PoolKey` is a branded type (see ADR 0001 at `docs/architecture-decisions/0001-pool-key-branded-type.md`)
@@ -379,7 +378,7 @@ Focus restoration after each dialog closes uses an id-then-querySelector pattern
 - **Palette closes (panel still open):** `onCloseAutoFocus` queries `button[aria-label="Close detail panel"]` (stable aria-label set by PanelActions.svelte) and focuses it.
 - **Panel closes:** `onCloseAutoFocus` reads `uiStore.lastTriggerRunId`, queries `.run-card[data-run-id="${lastTriggerRunId}"] .run-card-activate` (set by RunCard as `data-run-id` on the `<article>`), focuses the inner button, and clears `lastTriggerRunId`. The `data-run-id` attribute survives remounts; the element ref would not.
 
-See Phase 6 plan Note 4 (`docs/implementation-plans/2026-04-25-interactivity/phase_06.md`) for the rationale comparing alternative approaches (element-ref-on-store, default Bits UI focus-scope).
+The id-then-querySelector pattern was chosen over element-ref-on-store and default Bits UI focus-scope approaches — RunCard instances unmount/remount when runs change columns, making stored element refs dangle.
 
 ### Roving Focus
 
@@ -486,7 +485,7 @@ Separators carry `hidden md:block` — hidden at `<md` to avoid floating divider
 | `≥768px` (md) | Single row: Logo → Separator → RunnerBar → Separator → ConnectionIndicator → SettingsPopover |
 | `<768px` | Row 1: Logo + ConnectionIndicator; Row 2: RunnerBar + SettingsPopover |
 
-The `md:` (768px) breakpoint was verified manually during Sub-Phase 6b implementation. Header height increases from 48px to ~94px when wrapping (two rows). The breakpoint feels appropriate for the amount of content.
+The `md:` (768px) breakpoint is verified manually. Header height increases from 48px to ~94px when wrapping (two rows). The breakpoint is appropriate for the amount of content.
 
 ### Pool label truncation
 
@@ -520,7 +519,7 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 5. Snapshot is loaded into stores; the `lastSeq` cursor is captured into `this.snapshotLastSeq`; buffered events with `seq > snapshotLastSeq` are flushed synchronously (events with `seq <= snapshotLastSeq` are already reflected in the snapshot and discarded)
 6. Connection transitions to `'connected'`; subsequent WS events are dispatched via `EventDispatcher`
 
-**Seq reconciliation (Phase 3a):**
+**Seq reconciliation:**
 - Each event carries a monotonic sequence number (`SeqEvent.seq`)
 - The snapshot returns `StateSnapshot.lastSeq: bigint` — the **highest committed** seq, not the next-to-assign. `lastSeq = 0n` is the unambiguous "no events committed since startup" sentinel.
 - Buffered pre-connect events with `seq <= lastSeq` are discarded as stale (already in the snapshot)
@@ -660,7 +659,7 @@ Coverage is collected from all three modalities and merged server-side by Codeco
 **Stores & State Management**
 - `frontend/src/lib/stores/connection.svelte.ts` — ConnectionStore: WebSocket lifecycle and status
 - `frontend/src/lib/stores/runs.svelte.ts` — RunsStore: WorkflowRun state and mutations
-- `frontend/src/lib/stores/runners.svelte.ts` — RunnerStore (Phase 3b: `pools` is `$derived.by(() => computePoolStats(runStore.jobs))`); also exports `computePoolStats(jobs: Job[]): RunnerPoolStats[]` as a pure function
+- `frontend/src/lib/stores/runners.svelte.ts` — RunnerStore (`pools` is `$derived.by(() => computePoolStats(runStore.jobs))`); also exports `computePoolStats(jobs: Job[]): RunnerPoolStats[]` as a pure function
 - `frontend/src/lib/stores/ui.svelte.ts` — UIStore: Local UI state (theme, mode, density, selectedRunId, selectedJobId, lastTriggerRunId, activePoolFilter, nowMs)
 - `frontend/src/lib/stores/palette.svelte.ts` — PaletteStore: command palette open/query/recent/submenu state
 

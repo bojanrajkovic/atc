@@ -7,7 +7,7 @@ import type { RunStatus } from "./RunStatus";
  * A workflow run in the ATC domain model.
  *
  * Top-level container that groups related jobs. Created and updated
- * by `RunEvent`s (Phase 2).
+ * by `RunEvent`s.
  */
 export type WorkflowRun = { 
 /**

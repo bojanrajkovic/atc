@@ -1,7 +1,7 @@
 //! WebSocket event stream.
 //!
 //! Each connection subscribes to the broadcast channel and receives
-//! `SeqEvent`s as JSON text frames. One-way push only in Phase 9 —
+//! `SeqEvent`s as JSON text frames. One-way push only —
 //! client-to-server messages are ignored.
 
 use std::sync::Arc;

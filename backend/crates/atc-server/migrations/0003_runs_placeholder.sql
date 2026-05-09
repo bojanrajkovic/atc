@@ -1,4 +1,4 @@
--- Phase 3c: Mark FK-only stub runs created by the job-before-run path.
+-- Mark FK-only stub runs created by the job-before-run path.
 --
 -- The webhook handler's transactional helper `upsert_job_in_txn` inserts a
 -- minimal "stub" run row (head_sha='', display_title='', etc.) to satisfy the

@@ -1,4 +1,4 @@
-//! Phase 3c integration tests: gap-healing backstop and dedup ring buffer.
+//! Integration tests: gap-healing backstop and dedup ring buffer.
 //!
 //! T6  — Drain dedup: reverse-order concurrent-commit A/B race from §D2.
 //!        Transaction B commits first (seq N+1), drain broadcasts it.
@@ -53,7 +53,7 @@ fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
 /// then `swap(MAX, AcqRel)` to capture it. This tests the invariant directly
 /// without any PG dependency.
 #[test]
-fn phase_3c_gap_healing_t7_min_pending_seq_swap_semantics() {
+fn t7_min_pending_seq_swap_semantics() {
     let atomic = Arc::new(AtomicI64::new(i64::MAX));
 
     // Simulate listener receiving NOTIFY for seq=5.
@@ -108,7 +108,7 @@ fn phase_3c_gap_healing_t7_min_pending_seq_swap_semantics() {
 
 /// T7b: fetch_min does not go below an already-smaller value.
 #[test]
-fn phase_3c_gap_healing_t7b_fetch_min_does_not_increase() {
+fn t7b_fetch_min_does_not_increase() {
     let atomic = Arc::new(AtomicI64::new(10));
 
     // Attempting to register seq=20 should not change the stored minimum.
@@ -137,7 +137,7 @@ fn phase_3c_gap_healing_t7b_fetch_min_does_not_increase() {
 /// drain for seq_a after that point.
 #[tokio::test]
 #[serial]
-async fn phase_3c_gap_healing_t6_dedup_suppresses_rescan_rebroadcast() {
+async fn t6_dedup_suppresses_rescan_rebroadcast() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
@@ -312,7 +312,7 @@ async fn phase_3c_gap_healing_t6_dedup_suppresses_rescan_rebroadcast() {
 /// The counter assertion proves the loop did NOT stop at the 500-row boundary.
 #[tokio::test]
 #[serial]
-async fn phase_3c_gap_healing_t6b_drain_paginates_across_batch_boundary() {
+async fn t6b_drain_paginates_across_batch_boundary() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // ── Step 1: Pre-seed 600 outbox rows with VALID payloads ─────────────────
@@ -432,7 +432,7 @@ async fn phase_3c_gap_healing_t6b_drain_paginates_across_batch_boundary() {
 ///    - `atc_pg_drain_duplicate_skipped_total` unchanged.
 #[tokio::test]
 #[serial]
-async fn phase_3c_t8_drain_skips_bogus_payload_rows() {
+async fn t8_drain_skips_bogus_payload_rows() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 

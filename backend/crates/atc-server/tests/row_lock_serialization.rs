@@ -1,4 +1,4 @@
-//! Phase 3c integration tests: row-lock serialization for same-entity concurrent commits.
+//! Integration tests: row-lock serialization for same-entity concurrent commits.
 //!
 //! T11 — Two concurrent webhooks for the SAME run entity are serialized by PG row
 //!        locking. Both use `workflow_run.requested` (idempotent same-status replay),
@@ -55,7 +55,7 @@ fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
 /// §D3 of the design plan holds: same-entity serialization prevents gap-healing rescans.
 #[tokio::test]
 #[serial]
-async fn phase_3c_row_lock_serialization_t11_concurrent_same_entity_commits_in_seq_order() {
+async fn t11_concurrent_same_entity_commits_in_seq_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
     let mut rx = fixture.state.webhook_tx.subscribe();
@@ -161,7 +161,7 @@ async fn phase_3c_row_lock_serialization_t11_concurrent_same_entity_commits_in_s
 ///       rows from failed or concurrent duplicate commits.
 #[tokio::test]
 #[serial]
-async fn phase_3c_row_lock_serialization_t11b_outbox_row_count_matches_accepted_commits() {
+async fn t11b_outbox_row_count_matches_accepted_commits() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 

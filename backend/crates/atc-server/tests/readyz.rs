@@ -1,4 +1,4 @@
-//! Phase 3c integration tests: /readyz drain heartbeat.
+//! Integration tests: /readyz drain heartbeat.
 //!
 //! T8 — Stale heartbeat returns 503: when `last_drain_pass_at` is older than
 //!      30 seconds (READYZ_HEARTBEAT_STALENESS_MS), /readyz returns 503 with
@@ -39,7 +39,7 @@ fn now_millis() -> i64 {
 /// drain task running.
 #[tokio::test]
 #[serial]
-async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
+async fn t8_stale_heartbeat_returns_503() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
     let layer = common::PROMETHEUS_INIT
@@ -115,7 +115,7 @@ async fn phase_3c_readyz_t8_stale_heartbeat_returns_503() {
 /// stopped 31 s ago".
 #[tokio::test]
 #[serial]
-async fn phase_3c_readyz_t8c_drain_abort_drives_503() {
+async fn t8c_drain_abort_drives_503() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -185,7 +185,7 @@ async fn phase_3c_readyz_t8c_drain_abort_drives_503() {
 ///      last_drain_pass_at (the drain heartbeat check only applies in PG mode).
 #[tokio::test]
 #[serial]
-async fn phase_3c_readyz_t8b_no_pg_always_200() {
+async fn t8b_no_pg_always_200() {
     let layer = common::PROMETHEUS_INIT
         .get_or_init(common::install_test_recorder)
         .0
@@ -250,7 +250,7 @@ async fn phase_3c_readyz_t8b_no_pg_always_200() {
 /// be fresh. Assert /readyz returns 200.
 #[tokio::test]
 #[serial]
-async fn phase_3c_readyz_t9_fresh_heartbeat_returns_200() {
+async fn t9_fresh_heartbeat_returns_200() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -292,7 +292,7 @@ async fn phase_3c_readyz_t9_fresh_heartbeat_returns_200() {
 /// refreshed — proving the tick fires even when no NOTIFY arrives.
 #[tokio::test]
 #[serial]
-async fn phase_3c_readyz_t9b_heartbeat_ticks_during_quiet_period() {
+async fn t9b_heartbeat_ticks_during_quiet_period() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 

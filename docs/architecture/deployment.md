@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-06 (Phase 4: SQLite + persistence machinery removed; multi-replica enabled with external Postgres)
+Last verified: 2026-05-06
 
 ## Purpose
 
@@ -46,23 +46,23 @@ seccompProfile:
 
 **Decision:** Constant `RollingUpdate` strategy (no per-mode flips)
 **Alternatives considered:** Conditional `Recreate` (rejected — was tied to `persistence.enabled`, now removed); operator-selectable `strategy` (rejected — adds surface without observed need); document-only approach with no enforcement
-**Rationale:** Both supported storage modes are RWO-volume-free at the application layer. Ephemeral mode keeps state process-local and tolerates rolling pod handoff (state loss is implicit at restart). External Postgres mode keeps state in PG; replicas are symmetric and tolerate rolling handoff (per ADR 0002 D5). Neither mode can suffer the ReadWriteOnce-volume foot-gun that drove the previous conditional `Recreate`. A single constant `RollingUpdate` block (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both modes. Phase 4 removed the conditional flip when the persistence machinery it was tied to was removed.
+**Rationale:** Both supported storage modes are RWO-volume-free at the application layer. Ephemeral mode keeps state process-local and tolerates rolling pod handoff (state loss is implicit at restart). External Postgres mode keeps state in PG; replicas are symmetric and tolerate rolling handoff (per ADR 0002 D5). Neither mode can suffer the ReadWriteOnce-volume foot-gun that drove the previous conditional `Recreate`. A single constant `RollingUpdate` block (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both modes.
 
 **Decision:** Metrics port always bound in the container; `metrics.enabled` gates only Service-level exposure
 **Alternatives considered:** Conditional metrics listener based on chart flag; separate metrics Deployment
 **Rationale:** The metrics listener is a backend concern — the binary always binds both ports. Gating the Service port exposure keeps Prometheus scraping optional without requiring chart-level changes to the container runtime behavior. This matches how CNCF projects (cert-manager, Linkerd) handle the same pattern.
 
-**Decision:** OCI-only chart publishing for Phase 3 (`oci://ghcr.io/bojanrajkovic/charts/atc`)
+**Decision:** OCI-only chart publishing (`oci://ghcr.io/bojanrajkovic/charts/atc`)
 **Alternatives considered:** chart-releaser + GitHub Pages HTTP repository; both OCI and Pages
 **Rationale:** OCI eliminates the need for a separate `gh-pages` branch, a chart index, and a GitHub Pages site. Helm 3.8+ supports OCI natively. GitHub Pages + chart-releaser is deferred as a future-work issue for operators who cannot use OCI registries.
 
 **Decision:** Dual routing support — optional Ingress (`networking.k8s.io/v1`) and optional HTTPRoute (`gateway.networking.k8s.io/v1`)
 **Alternatives considered:** Ingress only; Gateway API only; neither (document port-forward)
-**Rationale:** Ingress covers clusters with a classic ingress controller (nginx, traefik). HTTPRoute covers clusters running a Gateway API controller (Envoy Gateway, Cilium). Providing both optional templates at the same chart version avoids forking. The default is neither — port-forward instructions in NOTES.txt cover the zero-dependency case. (Optional templates added in Phase 4.)
+**Rationale:** Ingress covers clusters with a classic ingress controller (nginx, traefik). HTTPRoute covers clusters running a Gateway API controller (Envoy Gateway, Cilium). Providing both optional templates at the same chart version avoids forking. The default is neither — port-forward instructions in NOTES.txt cover the zero-dependency case.
 
 ## Environment Variables (ATC_* surface)
 
-The chart wires Helm values to ATC_* environment variables. The canonical list is in `backend/crates/atc-server/src/config.rs`. Phase 2d adds one new optional variable:
+The chart wires Helm values to ATC_* environment variables. The canonical list is in `backend/crates/atc-server/src/config.rs`. One optional variable is available beyond the core set:
 
 ### `ATC_DATABASE_LISTENER_URL`
 
@@ -83,7 +83,7 @@ When neither is set, the listener falls back to `ATC_DATABASE_URL` and no `ATC_D
 
 `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard at the top of `templates/deployment.yaml`. The same template also rejects any non-PostgreSQL scheme on the inline `config.databaseUrl` path (`postgres://` and `postgresql://` are the only accepted prefixes); the `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`) that exits with a remediation-naming log line before any sqlx connect call. The chart's ephemeral in-memory mode is single-replica only.
 
-The runtime invariants that make symmetric multi-replica safe were established in Phases 2b/2c/2d/3c (see [`state-externalization-research/`](state-externalization-research/README.md)):
+The runtime invariants that make symmetric multi-replica safe (see [`state-externalization-research/`](state-externalization-research/README.md)):
 
 - **Per-replica `broadcast_watermark`.** Each replica owns an `Arc<AtomicI64>` cursor advanced by the drain task only after a successful drain pass. `/v1/state` snapshot reads do an `Acquire` load before opening the snapshot transaction; the snapshot's `lastSeq` is bounded by what that replica has actually broadcast.
 - **REPEATABLE READ snapshots.** `/v1/state` opens a REPEATABLE READ transaction that reads `runs`, `jobs`, and `MAX(outbox.seq)` from one MVCC snapshot. Without this isolation level, a concurrent webhook commit between the runs SELECT and the seq SELECT could advance `lastSeq` past content the snapshot hasn't materialized — the frontend's `seq > lastSeq` filter would then permanently drop a real event.
@@ -92,13 +92,13 @@ The runtime invariants that make symmetric multi-replica safe were established i
 
 **Sticky sessions are NOT required** and are discouraged outside specific cost-tuning scenarios. Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design (ADR 0002 D5). A client that always lands on the same replica via sticky cookies will never exercise the reconnect-across-replicas code path, masking gap-healing regressions in development. Operators with specific needs (e.g., reducing reconnect storms during rolling updates) can add sticky-cookie annotations themselves at the Ingress / HTTPRoute level — the chart does not do this by default.
 
-**Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8 — unblocked after Phase 4.
+**Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8.
 
 ## Multi-replica smoke test
 
-Operationally validate a two-replica deploy against a real cluster (kind/k3d/homelab). This runbook is the closure evidence for Phase 4 / issue #7 and the AC11 measurement protocol.
+Operationally validate a two-replica deploy against a real cluster (kind/k3d/homelab). This runbook is the AC11 measurement protocol.
 
-> **Why this is a runbook, not CI.** Issue #12 tracks adding kind-based chart-testing to CI. Phase 4 stays out of CI infrastructure to avoid coupling scope. Execute this once before declaring #7 closed; PRs do not re-run it.
+> **Why this is a runbook, not CI.** Issue #12 tracks adding kind-based chart-testing to CI. Execute this once before declaring issue #7 closed; PRs do not re-run it.
 
 Prerequisites: a Kubernetes cluster (`kind create cluster`, `k3d cluster create`, OrbStack, or any homelab cluster), `kubectl`, `helm`, `node` (for the WebSocket tap), `curl`, and `jq`. `helm`, `kubeconform`, `node`, and `jq` are all provisioned by `mise install` — invocations below assume `mise activate` is wired into your shell, otherwise prefix them with `mise exec --`. A reachable PostgreSQL — provision in-cluster via the bitnami PG chart, or point `databaseUrl` at an existing instance.
 
@@ -243,15 +243,15 @@ kubectl -n atc-smoke rollout status deploy/atc
 - `deploy/helm/atc/templates/tests/test-connection.yaml` — Helm test hook Pod with restricted Pod Security Standards; validates Service connectivity; excluded from charts via `helm.sh/hook: test` annotation
 - `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, metrics) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
 
-## Storage-mode evolution
+## Storage modes
 
-The chart originally shipped three storage modes: ephemeral, local-SQLite (with a PVC), and external Postgres. Phase 4 (2026-05-06) collapsed this to two modes — ephemeral and external Postgres — per ADR 0003 D3:
+The chart supports two storage modes — ephemeral in-memory and external Postgres — per ADR 0003 D3. SQLite was considered and rejected:
 
-- **SQLite removed.** SQLite has no `LISTEN/NOTIFY` equivalent. Preserving it as a single-replica durable mode would have required dual SQL flavors with different forwarder implementations (Postgres push, SQLite poll). The maintenance and test-matrix cost of dual SQL backends was judged to outweigh the value of preserving "single-binary + PVC durable mode" as a deployment shape.
-- **`persistence.*` chart machinery removed.** The PVC template (`templates/pvc.yaml`), the `persistence:` block in `values.yaml` and `values.schema.json`, and the persistence-conditional volume mounts in `deployment.yaml` were removed alongside SQLite. An audit at the time of removal found no application-code consumer of Kubernetes PVCs (only in-memory persistence, sessionStorage/localStorage in the frontend, and the PostgreSQL persistence layer matched the grep). With zero current/planned consumers, retaining the templated PVC was dead code.
-- **Update-strategy flip removed.** The `Recreate`/`RollingUpdate` selector that was tied to `persistence.enabled` was removed; both supported modes are RWO-volume-free, so a constant `RollingUpdate` (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both.
-- **Multi-replica precondition guard added.** A new template-render-time `{{ fail }}` guard rejects `replicaCount > 1` without a Postgres URL (via either `config.databaseUrl` or `existingSecret`). This replaces the previous persistence-with-replicaCount>1 guard, which became unreachable after persistence was removed.
+- **SQLite not supported.** SQLite has no `LISTEN/NOTIFY` equivalent. Supporting it as a single-replica durable mode would require dual SQL flavors with different forwarder implementations (Postgres push, SQLite poll). The maintenance and test-matrix cost of dual SQL backends outweighs the value of "single-binary + PVC durable mode" as a deployment shape.
+- **No `persistence.*` chart machinery.** The chart has no PVC template, `persistence:` values block, or persistence-conditional volume mounts. An audit found no application-code consumer of Kubernetes PVCs (only in-memory state, sessionStorage/localStorage in the frontend, and the PostgreSQL layer). With zero current or planned consumers, a templated PVC would be dead code.
+- **Constant `RollingUpdate` strategy.** Both supported modes are RWO-volume-free, so a constant `RollingUpdate` (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both.
+- **Multi-replica precondition guard.** A template-render-time `{{ fail }}` guard rejects `replicaCount > 1` without a Postgres URL (via either `config.databaseUrl` or `existingSecret`).
 
-Operators upgrading from a pre-Phase-4 chart with `persistence:` keys in their values files will see schema validation reject the unknown property (`additionalProperties: false`). Mitigation: remove the `persistence:` block from operator values files. There is no programmatic migration tool — this is a deliberate breaking change in a 0.x chart.
+Operators whose values files contain a `persistence:` key will see schema validation reject the unknown property (`additionalProperties: false`). Mitigation: remove the `persistence:` block from operator values files. There is no programmatic migration tool — this is a deliberate breaking change in a 0.x chart.
 
 If a future use case requires PVC-backed storage (e.g., a sidecar buffering audit logs to disk), the surface should be re-introduced tightly scoped to that consumer rather than as a general-purpose toggle.

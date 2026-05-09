@@ -1,4 +1,4 @@
-//! Phase 3c integration tests: PG state snapshot read path.
+//! Integration tests: PG state snapshot read path.
 //!
 //! T1 — Snapshot returns PG state: GET /v1/state reads runs and jobs from
 //!      PG after commit, returns them with correct lastSeq.
@@ -31,7 +31,7 @@ use tokio::time::timeout;
 /// drain's first wake-up after each webhook.
 #[tokio::test]
 #[serial]
-async fn phase_3c_state_pg_read_t1_snapshot_returns_pg_state() {
+async fn t1_snapshot_returns_pg_state() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -118,7 +118,7 @@ async fn phase_3c_state_pg_read_t1_snapshot_returns_pg_state() {
 /// appear in the snapshot.
 #[tokio::test]
 #[serial]
-async fn phase_3c_state_pg_read_t1b_placeholder_runs_excluded_from_snapshot() {
+async fn t1b_placeholder_runs_excluded_from_snapshot() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -190,7 +190,7 @@ async fn phase_3c_state_pg_read_t1b_placeholder_runs_excluded_from_snapshot() {
 /// committed events for the cases where the drain has caught up.
 #[tokio::test]
 #[serial]
-async fn phase_3c_state_pg_read_t2_snapshot_self_consistent_under_concurrent_writes() {
+async fn t2_snapshot_self_consistent_under_concurrent_writes() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -253,7 +253,7 @@ async fn phase_3c_state_pg_read_t2_snapshot_self_consistent_under_concurrent_wri
 /// in-memory path (seq mutex held, RunStateMachine.snapshot() called).
 #[tokio::test]
 #[serial]
-async fn phase_3c_state_pg_read_t3_in_memory_fallback() {
+async fn t3_in_memory_fallback() {
     // Build app with no PG pool.
     let (router, state) = common::build_app_no_secret();
 

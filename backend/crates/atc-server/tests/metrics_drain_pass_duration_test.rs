@@ -1,4 +1,4 @@
-//! Phase 5 — `atc_pg_drain_pass_duration_seconds` histogram.
+//! `atc_pg_drain_pass_duration_seconds` histogram.
 //!
 //! Asserts that NOTIFY-driven drain passes record a wall-time observation,
 //! and that heartbeat-only wakes (the 5s tick branch of the drain loop)

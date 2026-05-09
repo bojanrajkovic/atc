@@ -1,4 +1,4 @@
-//! Phase 3c integration tests: drain task forwards outbox events to WS clients.
+//! Integration tests: drain task forwards outbox events to WS clients.
 //!
 //! T4 — Drain forwards: webhook commits to PG, drain picks up the outbox row,
 //!      and broadcasts SeqEvent to WebSocket subscribers in order.
@@ -26,7 +26,7 @@ use tokio::time::timeout;
 /// SeqEvents arrive at broadcast_rx with the correct seq numbers and in order.
 #[tokio::test]
 #[serial]
-async fn phase_3c_drain_forwards_t4_drain_broadcasts_seq_in_order() {
+async fn t4_drain_broadcasts_seq_in_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
     let mut rx = fixture.state.webhook_tx.subscribe();
@@ -113,7 +113,7 @@ async fn phase_3c_drain_forwards_t4_drain_broadcasts_seq_in_order() {
 /// of absence is real and not just a scheduling race.
 #[tokio::test]
 #[serial]
-async fn phase_3c_drain_forwards_t5_handler_silent_in_pg_mode() {
+async fn t5_handler_silent_in_pg_mode() {
     let (pool, _container, db_url) = common::start_pg().await;
     // Slow the drain so the handler's return strictly precedes any drain
     // broadcast for the row it just committed. drain_delay sleeps at the

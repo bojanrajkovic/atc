@@ -1,6 +1,6 @@
 # Metrics — `/metrics` endpoint surface
 
-Last verified: 2026-05-08 (#66 closed: nine legacy `atc_pg_*` counters now carry seven-element interpretation blocks alongside the six operational-metrics blocks already documented; § Metrics hoisted out of `backend-server.md` to this canonical home.)
+Last verified: 2026-05-08 (#61 sweep: confirmed zero phase nomenclature in this doc and re-verified per-metric prose against `metrics.rs`, `listener.rs`, and `persist.rs` after their description-string and comment cleanup.)
 
 ## Purpose
 

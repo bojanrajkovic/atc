@@ -173,7 +173,7 @@
   /**
    * Handles activation of the inner button (click, or Enter/Space via native
    * button semantics). Clears hover timer + closes popover synchronously,
-   * then sets both lastTriggerRunId (for Phase 6 focus restoration) and
+   * then sets both lastTriggerRunId (for focus restoration) and
    * selectedRunId (opens RunDetailPanel).
    * No custom keydown handler — native <button> fires click on Enter/Space.
    */

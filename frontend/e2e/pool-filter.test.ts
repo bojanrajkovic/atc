@@ -2,13 +2,13 @@ import { expect, test } from './lib/fixtures'
 import { makeJobSeqEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /**
- * Pool filter integration E2E (Phase 5, Task 5).
+ * Pool filter integration E2E.
  *
  * Verifies the wiring from `uiStore.activePoolFilter` through KanbanBoard,
  * KanbanColumn, RunnerBar/RunnerPool, and PoolFilterPill. Where the palette
  * UI is involved (AC5.1, AC5.4) we drive it; for the rest we set the filter
  * key directly via the dev bridge to keep these tests focused on the
- * integration (palette behavior is covered by Phase 2's E2E suite).
+ * integration (palette behavior is covered separately).
  *
  * The PoolKey brand is `labels.sort().join('|')` — we cast through `as any`
  * in test setup blocks only (per project guidance: localized to test code).

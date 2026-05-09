@@ -9,7 +9,7 @@
     total: number | null
     isElastic: boolean
     /**
-     * True when this pool's labels match `uiStore.activePoolFilter` (Phase 5).
+     * True when this pool's labels match `uiStore.activePoolFilter`.
      * Computed at the connected layer (TopBar) so RunnerBar stays pure —
      * it does not read uiStore. The matching pool renders with a 2px accent
      * ring via the `is-active-filter` class on RunnerPool's root.

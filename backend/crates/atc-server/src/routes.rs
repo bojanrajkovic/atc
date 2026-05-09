@@ -108,7 +108,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// order because the drain only ever reads committed rows.
 ///
 /// In-memory mode: holds the seq mutex across the store snapshot and the seq
-/// read. Unchanged from Phase 3a/3b.
+/// read.
 async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(pool) = &state.pg_pool {
         // (1) Load the commit-order cursor BEFORE the snapshot view is taken.
@@ -190,7 +190,7 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 }
 
 /// Handler for removed endpoints that should return 404.
-/// `/health` was renamed to `/healthz` in phase 1 and has no backward-compat alias.
+/// `/health` was renamed to `/healthz` and has no backward-compat alias.
 async fn removed_endpoint_404() -> StatusCode {
     StatusCode::NOT_FOUND
 }

@@ -1,4 +1,4 @@
-//! Phase 5 — `atc_pg_broadcast_watermark` gauge.
+//! `atc_pg_broadcast_watermark` gauge.
 //!
 //! Asserts that the gauge mirrors the per-replica `broadcast_watermark`
 //! atomic after each successful drain pass and that it is initialized at

@@ -161,13 +161,13 @@ impl RunStateMachine {
             RunEvent::Completed { conclusion } => (RunStatus::Completed, Some(*conclusion)),
         };
 
-        // Phase 1: Validate transition before touching state.
+        // Validate: check transition before touching state.
         // If this fails, the map is untouched.
         if let Some(existing) = state.runs.get(&envelope.run_id) {
             existing.status.transition_to(target_status)?;
         }
 
-        // Phase 2: Build the new value and insert.
+        // Apply: build the new value and insert.
         // For updates, remove the old value and use struct update syntax
         // to carry forward unchanged fields.
         let run = match state.runs.remove(&envelope.run_id) {
@@ -258,12 +258,12 @@ impl RunStateMachine {
         let job_id = envelope.job_id;
         let run_id = envelope.run_id;
 
-        // Phase 1: Validate transition before touching state.
+        // Validate: check transition before touching state.
         if let Some(existing) = state.jobs.get(&job_id) {
             existing.status.transition_to(target_status)?;
         }
 
-        // Phase 2: Build the new value and insert.
+        // Apply: build the new value and insert.
         let is_new = !state.jobs.contains_key(&job_id);
 
         let job = match state.jobs.remove(&job_id) {
@@ -370,7 +370,7 @@ impl RunStateMachine {
     /// Return all runs and jobs in the store.
     ///
     /// This is the unfiltered read path used by `GET /v1/state` before
-    /// per-user scoping (Phase 11). Returns owned snapshots.
+    /// per-user scoping. Returns owned snapshots.
     pub async fn query_all(&self) -> QueryResult {
         let state = self.state.read().await;
 

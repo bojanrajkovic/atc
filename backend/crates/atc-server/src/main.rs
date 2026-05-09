@@ -140,7 +140,7 @@ async fn main() {
     // and should re-fetch via GET /v1/state.
     let (webhook_tx, _rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
 
-    // Phase 3c gap-healing backstop and drain heartbeat. min_pending_seq is
+    // Gap-healing backstop and drain heartbeat. min_pending_seq is
     // i64::MAX at boot (no in-flight handlers); last_drain_pass_at is now()
     // so /readyz cannot 503 between bind and the first drain pass.
     // broadcast_watermark seeds from the same MAX(seq) value used to seed the

@@ -54,7 +54,7 @@ pub struct AppState {
     /// READ snapshot reader. Persistence writes do **not** go through this
     /// field — they dispatch through `persist` (ADR 0005).
     pub pg_pool: Option<sqlx::PgPool>,
-    /// Gap-healing backstop for the outbox drain task (Phase 3c).
+    /// Gap-healing backstop for the outbox drain task.
     ///
     /// The listener task records the lowest in-flight seq it has ever observed
     /// via `fetch_min(seq, Release)`. The drain task `swap`s this back to
@@ -68,7 +68,7 @@ pub struct AppState {
     /// the drain task (resets). It exists on `AppState` for spawn-argument
     /// plumbing in `main.rs`. No-op in in-memory mode.
     pub min_pending_seq: Arc<AtomicI64>,
-    /// Drain-task heartbeat (epoch milliseconds, Phase 3c).
+    /// Drain-task heartbeat (epoch milliseconds).
     ///
     /// The drain task stores `now_millis()` at the top of every loop iteration
     /// (whether woken by NOTIFY or by the 5s heartbeat tick) AND after every
@@ -80,7 +80,7 @@ pub struct AppState {
     /// Initialized to `now_millis()` at construction so `/readyz` cannot
     /// 503 between server bind and the first drain pass.
     pub last_drain_pass_at: Arc<AtomicI64>,
-    /// Drain-task broadcast cursor (Phase 3c).
+    /// Drain-task broadcast cursor.
     ///
     /// Highest outbox `seq` the drain has fetched and broadcast through
     /// `webhook_tx`. Updated atomically after every successful drain pass.
@@ -88,7 +88,7 @@ pub struct AppState {
     /// **commit order** (the drain only sees committed rows via SELECT) —
     /// `MAX(outbox.seq)` would reflect allocation order and can advance past
     /// data that hasn't materialised in a concurrent REPEATABLE READ snapshot.
-    /// See ADR 0003 Phase 3c implementation notes.
+    /// See ADR 0003 implementation notes.
     ///
     /// Initialized at boot to the same `MAX(seq)` value that seeds the
     /// drain's local `watermark`, so `/v1/state` returns a non-zero `lastSeq`

@@ -29,7 +29,7 @@ use futures_util::stream::StreamExt;
 /// The server is configured with:
 /// - `Arc<RunStateMachine>` with `SystemClock` and 1-hour TTL
 /// - Broadcast channel with capacity 256
-/// - `Arc<AppState>` with `webhook_secret: None` (HMAC tested separately in Phase 2)
+/// - `Arc<AppState>` with `webhook_secret: None` (HMAC tested separately)
 /// - `seq: Arc::new(Mutex::new(0))` (shared with `InMemoryStore`)
 /// - `persist: Arc<dyn PersistentStore>` (`InMemoryStore` for in-memory mode)
 /// - OnceLock `PrometheusMetricLayer` with `#[serial_test::serial]`

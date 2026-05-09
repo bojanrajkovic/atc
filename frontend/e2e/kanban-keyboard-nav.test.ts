@@ -9,14 +9,12 @@ import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
  * (modifier-key delegation), AC5 (suspension via natural focus scoping).
  *
  * AC1.* (Tab-in entry, tabindex invariants) is covered in run-card-interactivity.test.ts.
- * AC6.* / AC7.* are Phase 4 territory.
+ * AC6.* / AC7.* are out of scope for this suite.
  *
  * All scenarios use focusFirstCard() for deterministic focus entry, EXCEPT
- * AC1.2-style tests which are explicitly marked as Phase 2 territory and
- * not re-done here.
+ * AC1.2-style tests which are out of scope for this suite.
  *
  * @see docs/design-plans/2026-05-01-kanban-keyboard-nav.md §AC2-AC5
- * @see docs/implementation-plans/2026-05-01-kanban-keyboard-nav/phase_03.md
  */
 
 // ---------------------------------------------------------------------------
@@ -218,8 +216,8 @@ async function seedCompleted(
 
 /**
  * Focus the first .run-card-activate button directly, bypassing Tab-order
- * brittleness. All scenarios except AC1.2 (Tab-into-kanban entry, covered by
- * Phase 2 in run-card-interactivity.test.ts) use this helper.
+ * brittleness. All scenarios except AC1.2 (Tab-into-kanban entry, covered in
+ * run-card-interactivity.test.ts) use this helper.
  *
  * Waits for focus to land before returning so that downstream focusedRunId()
  * reads don't race the focusin listener on the roving action.
@@ -378,7 +376,7 @@ test.describe('AC2: 2D arrow navigation', () => {
       )
     })
 
-    // Press ArrowDown at last row — roving handler fires first (bubble-phase, no capture),
+    // Press ArrowDown at last row — roving handler fires first (bubble phase, no capture),
     // but the document listener fires at the same bubble phase and captures the state.
     // Since the roving listener calls preventDefault synchronously before the document
     // listener fires (same bubble propagation), defaultPrevented will be true.

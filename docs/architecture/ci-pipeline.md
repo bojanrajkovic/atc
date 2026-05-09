@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-05-06 (updated 2026-05-06 for Phase 4 helm matrix swap: persistence → multi-replica)
+Last verified: 2026-05-06
 
 ## Purpose
 

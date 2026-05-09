@@ -1,4 +1,4 @@
-//! Phase 5 — `atc_pg_wake_coalesced_total` counter.
+//! `atc_pg_wake_coalesced_total` counter.
 //!
 //! Asserts that NOTIFYs arriving while a drain pass is in flight increment
 //! the wake-coalesced counter, and conversely that NOTIFYs arriving with

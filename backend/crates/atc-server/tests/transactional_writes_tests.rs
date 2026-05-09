@@ -1,12 +1,12 @@
-//! Integration tests for the webhook-handler transactional write path (Phase 2c).
+//! Integration tests for the webhook-handler transactional write path.
 //!
 //! Boots ephemeral Postgres via testcontainers, mounts the full router with
 //! a real `pg_pool: Some(pool)`, fires webhook payloads, and asserts atomically
-//! consistent PG + in-memory state. Covers Phase 2c behavioral invariants.
+//! consistent PG + in-memory state.
 //!
 //! Requires Docker (or OrbStack) to be running.
 //!
-//! Phase 2c behavioral contract (differs from Phase 2b shadow writes):
+//! Behavioral contract (replaces the earlier shadow-write mode):
 //! - PG failure → 503 SERVICE_UNAVAILABLE (not 200)
 //! - Success → both PG run/job row AND outbox row exist (transactional atomicity)
 //! - Parity rejection → 200 rejected, transaction rolled back (no outbox row)
@@ -158,7 +158,7 @@ async fn post_webhook(app: axum::Router, event_type: &str, body: &[u8]) -> Statu
 // Transactional success: both run/job row AND outbox row exist after commit
 // ---------------------------------------------------------------------------
 
-/// Phase 2c: Full run lifecycle: Queued → InProgress → Completed.
+/// Full run lifecycle: Queued → InProgress → Completed.
 /// At each step, assert in-memory and PG agree and outbox has a new row.
 #[tokio::test]
 #[serial_test::serial]
@@ -250,7 +250,7 @@ async fn transactional_write_run_lifecycle() {
     assert_eq!(outbox_count, 3, "outbox should have 3 rows after Completed");
 }
 
-/// Phase 2c: Job lifecycle with run pre-existing, both stores agree.
+/// Job lifecycle with run pre-existing, both stores agree.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_job_lifecycle() {
@@ -280,7 +280,7 @@ async fn transactional_write_job_lifecycle() {
     assert_eq!(outbox_count, 2, "outbox should have 2 rows (run + job)");
 }
 
-/// Phase 2c: Job-before-run — fire job first, then run; assert stub then reconciliation.
+/// Job-before-run — fire job first, then run; assert stub then reconciliation.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_job_before_run_lifecycle() {
@@ -332,7 +332,7 @@ async fn transactional_write_job_before_run_lifecycle() {
     assert_eq!(total_outbox, 2, "outbox should have 2 total rows");
 }
 
-/// Phase 2c: Idempotent replay — same webhook twice → PG stable.
+/// Idempotent replay — same webhook twice → PG stable.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_idempotent_replay() {
@@ -362,7 +362,7 @@ async fn transactional_write_idempotent_replay() {
 // Parity rejection: 200 rejected, transaction rolled back, no outbox row
 // ---------------------------------------------------------------------------
 
-/// Phase 2c: Parity rejection returns 200 rejected and rolls back the transaction.
+/// Parity rejection returns 200 rejected and rolls back the transaction.
 /// The parity counter increments and no outbox row is written.
 #[tokio::test]
 #[serial_test::serial]
@@ -392,7 +392,7 @@ async fn parity_metric_increments_when_pg_rejects() {
     // PG: Completed not in predecessors_of(InProgress) → 0 rows affected →
     // InvalidTransition → parity metric. In PG mode the in-memory store is never
     // written, so the parity check is purely PG-driven.
-    // Phase 3c: returns 200 rejected (parity rejection is not a transient failure).
+    // Parity rejection returns 200 rejected (not a transient failure).
     let (status, json) = post_webhook_full(
         app.clone(),
         "workflow_run",
@@ -434,10 +434,10 @@ async fn parity_metric_increments_when_pg_rejects() {
 // Transient PG failure: 503, no in-memory row, no outbox row
 // ---------------------------------------------------------------------------
 
-/// Phase 2c: DB outage → 503 SERVICE_UNAVAILABLE; no in-memory row; no outbox row.
+/// DB outage → 503 SERVICE_UNAVAILABLE; no in-memory row; no outbox row.
 ///
-/// Unlike Phase 2b (shadow mode: 200 always, drift tolerated), Phase 2c returns 503
-/// on transient PG failure and does NOT apply the event to the in-memory store.
+/// On transient PG failure the handler returns 503 and does NOT apply the
+/// event to the in-memory store.
 ///
 /// Satisfies AC3.2
 #[tokio::test]
@@ -462,11 +462,11 @@ async fn transient_metric_increments_on_db_outage() {
     )
     .await;
 
-    // Phase 2c: transient PG failure → 503 (not 200)
+    // Transient PG failure → 503 (not 200)
     assert_eq!(
         status,
         StatusCode::SERVICE_UNAVAILABLE,
-        "DB outage must cause 503 in Phase 2c transactional mode"
+        "DB outage must cause 503 in transactional mode"
     );
 
     // In-memory store must NOT have the run (transaction never committed)
@@ -528,7 +528,7 @@ async fn pg_write_failure_counters_are_registered() {
 // In-memory mode (pg_pool: None): no DB access, processes successfully
 // ---------------------------------------------------------------------------
 
-/// Phase 2c: pg_pool: None → webhooks still processed, no panic, in-memory reflects events.
+/// pg_pool: None → webhooks still processed, no panic, in-memory reflects events.
 #[tokio::test]
 #[serial_test::serial]
 async fn in_memory_mode_behavioral_invariance() {

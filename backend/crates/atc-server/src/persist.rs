@@ -611,7 +611,7 @@ pub(crate) async fn insert_outbox_job_in_txn(
 }
 
 // ---------------------------------------------------------------------------
-// Read-side helpers for /v1/state PG snapshot (Phase 3c)
+// Read-side helpers for /v1/state PG snapshot
 // ---------------------------------------------------------------------------
 
 /// Parse a SQL CHECK constraint string back to [`RunStatus`].

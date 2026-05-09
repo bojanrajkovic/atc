@@ -1,4 +1,4 @@
-//! Phase 5 — `atc_pg_outbox_lag_seconds` histogram.
+//! `atc_pg_outbox_lag_seconds` histogram.
 //!
 //! Asserts that every outbox row broadcast by the drain task records one
 //! observation into the `atc_pg_outbox_lag_seconds` histogram, and that the
@@ -89,7 +89,7 @@ async fn metrics_outbox_lag_records_observation_for_future_inserted_at() {
     let baseline_passes = fixture.observed_passes.load(Ordering::Relaxed);
     let baseline_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC_COUNT);
 
-    // Stub run row to satisfy the outbox FK pattern used in phase_3c tests.
+    // Stub run row to satisfy the outbox FK pattern used in the PG drain integration tests.
     sqlx::query(
         "INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, \
          status, created_at, updated_at, placeholder) \

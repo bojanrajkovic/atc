@@ -36,7 +36,7 @@ const DRAIN_STARTUP_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.
 ///   axum-prometheus HTTP duration distribution). Without this fallback,
 ///   `metrics-exporter-prometheus` 0.18 emits unmatched histograms as Summary
 ///   (no `_bucket` lines), which regresses the existing
-///   `axum_http_requests_duration_seconds_bucket` and Phase 5
+///   `axum_http_requests_duration_seconds_bucket` and
 ///   `atc_pg_outbox_lag_seconds_bucket` / `atc_pg_drain_pass_duration_seconds_bucket`
 ///   assertions.
 ///
@@ -189,11 +189,11 @@ pub fn register_listener_metrics() {
     );
     metrics::describe_counter!(
         "atc_pg_drain_duplicate_skipped_total",
-        "Outbox rows whose broadcast was suppressed by the dedup ring buffer (Phase 3c)"
+        "Outbox rows whose broadcast was suppressed by the dedup ring buffer"
     );
     metrics::describe_counter!(
         "atc_pg_drain_unknown_kind_total",
-        "Outbox rows with an unrecognized kind discriminator (Phase 3c)"
+        "Outbox rows with an unrecognized kind discriminator"
     );
     metrics::describe_counter!(
         "atc_pg_wake_coalesced_total",

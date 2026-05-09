@@ -5,8 +5,7 @@
  *
  * Verifies that every interactive surface in the dashboard has a visible focus
  * indicator (outline-width >= 2px OR box-shadow !== 'none') when focused via
- * keyboard Tab. Covers the four custom interactive elements that Phase 3 added
- * focus-visible rules to:
+ * keyboard Tab. Covers the four custom interactive elements with `:focus-visible` rules:
  *  - command-item (the palette list items)
  *  - PoolFilterPill clear button
  *  - PanelActions close button
@@ -168,7 +167,7 @@ test.describe('frontend-1-0-polish.AC5.3: Focus rings — PoolFilterPill clear b
       `PoolFilterPill clear button must have outline >=2px or box-shadow. Got outline: ${indicator.outlineWidth}, box-shadow: ${indicator.boxShadow}`,
     ).toBe(true)
 
-    // Specifically verify outline-width >= 2px (the Phase 3 change adds :focus-visible rule)
+    // Specifically verify outline-width >= 2px
     const outlinePx = parseOutlineWidthPx(indicator.outlineWidth)
     expect(outlinePx).toBeGreaterThanOrEqual(2)
   })

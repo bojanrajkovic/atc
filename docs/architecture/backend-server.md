@@ -1,12 +1,12 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-08 (#66 closed: § Metrics hoisted to `metrics.md` as the canonical home for `/metrics` documentation; nine legacy `atc_pg_*` counters now carry seven-element interpretation blocks alongside the six operational-metrics blocks. In-memory-mode-as-dev-only and Phase 3c webhook-handler/drain notes from prior versions preserved below.)
+Last verified: 2026-05-08 (#66 closed: § Metrics hoisted to `metrics.md` as the canonical home for `/metrics` documentation; nine legacy `atc_pg_*` counters now carry seven-element interpretation blocks alongside the six operational-metrics blocks.)
 
 ## Purpose
 
 The backend server (`atc-server` crate) is an Axum HTTP server that serves as the single entry point for the ATC application. It provides:
 
-- A REST API surface with liveness (`/healthz`) and readiness (`/readyz`) probes, expanded in future phases
+- A REST API surface with liveness (`/healthz`) and readiness (`/readyz`) probes
 - Frontend asset serving in release mode via rust-embed
 - Development proxy to Vite dev server in debug mode via reqwest
 - Configurable address binding and logging format via environment variables
@@ -58,7 +58,7 @@ The `atc-core` crate implements the canonical domain model for ATC, consisting o
 - **Job** — A unit of work within a run (e.g., "test-linux", "build-docker"). Identified by `job_id`. Belongs to exactly one run. State: Queued → InProgress → Completed (with optional conclusion: Success, Failure, Skipped, etc.).
 - **Step** — An individual action within a job (e.g., "Checkout code", "Run tests"). Identified by `step_id`. Belongs to exactly one job. Carries conclusion and conclusion text. Steps are immutable after completion.
 
-### PG Table Notes (Phase 3c)
+### PG Table Notes
 
 The `runs` PG table carries a `placeholder BOOLEAN NOT NULL DEFAULT false` column. Rows with `placeholder = true` are FK-only stubs created when a job event arrives before its parent run event; they are promoted to real rows when the matching `workflow_run` webhook arrives. The state snapshot (`/v1/state`) always reads `WHERE placeholder = false`.
 
@@ -95,7 +95,7 @@ The `evict_expired()` method runs periodically (e.g., every 30 minutes) and remo
 
 ### Runner Pool Stats (Frontend-Derived)
 
-Runner pool statistics are derived views over the current job state. As of Phase 3b they are computed entirely on the frontend by `computePoolStats(jobs: Job[]): RunnerPoolStats[]` (in `frontend/src/lib/stores/runners.svelte.ts`); the backend no longer ships them on the wire. The `RunnerPoolStats` type still derives `#[derive(TS)]` so the generated TypeScript type used by the frontend stays under ts-rs control.
+Runner pool statistics are derived views over the current job state. They are computed entirely on the frontend by `computePoolStats(jobs: Job[]): RunnerPoolStats[]` (in `frontend/src/lib/stores/runners.svelte.ts`); the backend does not ship them on the wire. The `RunnerPoolStats` type still derives `#[derive(TS)]` so the generated TypeScript type used by the frontend stays under ts-rs control.
 
 **RunnerPoolStats fields (used by the frontend derivation):**
 - `labels: Vec<String>` — Runner label set (e.g., ["linux", "x86_64"]) grouped into this pool
@@ -103,9 +103,9 @@ Runner pool statistics are derived views over the current job state. As of Phase
 - `running: u32` — Count of currently running jobs in this pool
 - `queued: u32` — Count of queued jobs waiting for a runner in this pool
 - `is_elastic: bool` — Derived from runner `group_id == Some(0)`. Indicates whether the pool auto-scales (true) or has fixed capacity (false).
-- `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented in a later phase. Used to render capacity bars and thresholds in the frontend.
+- `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented. Used to render capacity bars and thresholds in the frontend.
 
-**Phase 3b removals:** `RunStateMachine::pool_stats()` was deleted, the snapshot-time inline pool-stats computation in `RunStateMachine::snapshot()` was deleted (snapshot now returns `QueryResult` only), and the wire fields `StateSnapshot.pool_stats` and `SeqEvent.pool_stats_after` were removed (see ADR 0004). The lexicographic sort by `labels` is now the responsibility of `computePoolStats` on the frontend.
+The snapshot returns `QueryResult` only (no inline pool-stats computation). The wire carries no `pool_stats` or `pool_stats_after` fields (see ADR 0004). The lexicographic sort by `labels` is the responsibility of `computePoolStats` on the frontend.
 
 ## Key Decisions
 
@@ -123,7 +123,7 @@ Runner pool statistics are derived views over the current job state. As of Phase
 
 **Decision:** `/healthz` and `/readyz` stay at root; no backward-compat `/health` alias
 **Alternatives considered:** Deprecation shim for `/health`, versioned health endpoints under `/v1/`
-**Rationale:** No consumers of `/health` exist yet, so a no-alias rename is safe. Kubernetes conventions (kubelet probes) favor the `-z` suffix. Separate endpoints allow `/healthz` to signal liveness and `/readyz` to signal readiness independently in future phases.
+**Rationale:** No consumers of `/health` exist yet, so a no-alias rename is safe. Kubernetes conventions (kubelet probes) favor the `-z` suffix. Separate endpoints allow `/healthz` to signal liveness and `/readyz` to signal readiness independently.
 
 **Decision:** Use figment with `ATC_*` environment variable prefix for all server configuration
 **Alternatives considered:** clap for CLI flags, hand-rolled `std::env::var` reads, config file only
@@ -131,7 +131,7 @@ Runner pool statistics are derived views over the current job state. As of Phase
 
 Config fields and their `ATC_*` env var overrides:
 - `http_addr` (`ATC_HTTP_ADDR`) — default `0.0.0.0:8080`
-- `metrics_addr` (`ATC_METRICS_ADDR`) — default `0.0.0.0:9090` (used from Phase 2)
+- `metrics_addr` (`ATC_METRICS_ADDR`) — default `0.0.0.0:9090`
 - `database_url` (`ATC_DATABASE_URL`) — default `None`
 - `database_listener_url` (`ATC_DATABASE_LISTENER_URL`) — default `None` (falls back to `ATC_DATABASE_URL` when unset). Use to point the PG listener at a session-mode endpoint when the main pool runs through transaction-mode PgBouncer.
 - `log_filter` (`ATC_LOG_FILTER`) — default `"info"` (passed to `EnvFilter`)
@@ -141,7 +141,7 @@ Config fields and their `ATC_*` env var overrides:
 **Alternatives considered:** Always JSON, always pretty, runtime-only env var
 **Rationale:** Developer builds benefit from ANSI-colored pretty output without any configuration. Production/container builds default to structured JSON for log aggregators. Both can be overridden via `ATC_LOG_FORMAT`, satisfying the override ACs without special-casing in code. The `cfg!(debug_assertions)` default mirrors the existing assets.rs pattern for compile-time branching.
 
-## PostgreSQL Integration (Phase 2a)
+## PostgreSQL Integration
 
 ATC uses [sqlx](https://github.com/launchdarkis/sqlx) as its PostgreSQL client. The pool is created on startup when `ATC_DATABASE_URL` is set.
 
@@ -169,16 +169,16 @@ If you find yourself wanting to run in-memory mode against more than one replica
 
 Migrations live in `backend/crates/atc-server/migrations/`. They are embedded in the binary at compile time via `sqlx::migrate!("./migrations")` and run automatically on startup. Re-running is idempotent (tracked by `_sqlx_migrations` table).
 
-Current schema (Phase 3c):
-- `0001_initial_runs_jobs.sql` — Creates `runs` and `jobs` tables with columns, FK, CHECK constraints, and indexes to support Phase 3c read patterns and TTL eviction.
-- `0002_outbox.sql` — Creates `outbox` table with `BIGSERIAL seq` primary key (durable monotonic-not-gapless cursor), `kind TEXT CHECK('run','job')`, `run_id BIGINT`, `job_id BIGINT NULL`, `payload JSONB` (stores `RunEventEnvelope` / `JobEventEnvelope` — NOT `SeqEvent`), `inserted_at TIMESTAMPTZ DEFAULT now()`. Index on `run_id` for Phase 3c forwarder drain. No FK to `runs` (append-only log; eviction is independent).
+Current schema:
+- `0001_initial_runs_jobs.sql` — Creates `runs` and `jobs` tables with columns, FK, CHECK constraints, and indexes to support the read patterns and TTL eviction.
+- `0002_outbox.sql` — Creates `outbox` table with `BIGSERIAL seq` primary key (durable monotonic-not-gapless cursor), `kind TEXT CHECK('run','job')`, `run_id BIGINT`, `job_id BIGINT NULL`, `payload JSONB` (stores `RunEventEnvelope` / `JobEventEnvelope` — NOT `SeqEvent`), `inserted_at TIMESTAMPTZ DEFAULT now()`. Index on `run_id` for the drain forwarder. No FK to `runs` (append-only log; eviction is independent).
 - `0003_runs_placeholder.sql` — Adds `placeholder BOOLEAN NOT NULL DEFAULT false` to the `runs` table. The job-stub INSERT in `upsert_job_in_txn` writes `placeholder = true` to satisfy the FK constraint when a job event arrives before its parent run event. Real workflow_run UPSERTs leave `placeholder = false`, and the `ON CONFLICT UPDATE` clause explicitly sets `placeholder = false` to promote stubs to real rows. `/v1/state` reads `WHERE placeholder = false` to exclude stub rows from snapshots.
 
 ### sqlx feature flags
 
 `sqlx` is configured with: `postgres, runtime-tokio, tls-rustls-aws-lc-rs, chrono, migrate, macros, json`
 
-- `macros` — Enables `query!`/`query_as!` for compile-time SQL checking (used from Phase 2b). Requires either a live DB or the `.sqlx/` offline cache at compile time.
+- `macros` — Enables `query!`/`query_as!` for compile-time SQL checking. Requires either a live DB or the `.sqlx/` offline cache at compile time.
 - `migrate` — Enables `sqlx::migrate!()` for binary-embedded migrations (does NOT require a live DB at compile time).
 
 ### Testing
@@ -190,7 +190,7 @@ macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
 ## Boundaries
 
 **Owns:** HTTP routing, request handling, frontend asset serving, dev proxy, server lifecycle (bind, serve, shutdown)
-**Does not own:** Domain logic (atc-core), GitHub API integration (atc-github), frontend build process, authentication (future phase)
+**Does not own:** Domain logic (atc-core), GitHub API integration (atc-github), frontend build process, authentication
 **Prohibitions:** Do not put business logic in route handlers — extract to atc-core. Do not call GitHub API directly from handlers — use atc-github. Do not serve assets from filesystem in release mode — always use rust-embed.
 
 ## Metrics
@@ -222,7 +222,7 @@ struct AppState {
 ```
 
 - **`state_machine`** — Reference to the shared `atc-core` RunStateMachine. In in-memory mode, `InMemoryStore` applies events here. In PG mode, the state machine is not used by the webhook handler. REST state snapshot reads from the state machine in in-memory mode.
-- **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). **In PG mode the drain task is the SOLE writer** (Phase 3c). In in-memory mode `InMemoryStore::apply_*_event` broadcasts directly under the seq mutex. WebSocket clients subscribe as receivers.
+- **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). **In PG mode the drain task is the SOLE writer.** In in-memory mode `InMemoryStore::apply_*_event` broadcasts directly under the seq mutex. WebSocket clients subscribe as receivers.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
 - **`seq`** — `Arc<tokio::sync::Mutex<u64>>` counter holding the **highest committed sequence number** in **in-memory mode only**. Wrapped in `Arc` so `InMemoryStore` can hold a shared reference. In PG mode this mutex stays at 0 (seq comes from the outbox `BIGSERIAL`). The counter is pre-incremented inside `InMemoryStore::apply_*_event`: `*seq_guard += 1; let seq = *seq_guard;` — so the first event returns `seq = 1`. In in-memory mode, the state handler acquires this mutex across the snapshot + seq read to guarantee cursor/content consistency. In PG mode the state handler uses a REPEATABLE READ transaction instead.
 - **`pg_pool`** — `Option<sqlx::PgPool>`. `Some` when `ATC_DATABASE_URL` is configured and a connection pool was successfully created and migrated at startup. `None` in in-memory mode. Used by the state handler for REPEATABLE READ snapshots and by the `/readyz` probe. **Not** used directly by the webhook write path — see `persist` below.
@@ -244,7 +244,7 @@ pub struct SeqEvent {
 }
 ```
 
-Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend derives `RunnerPoolStats` from the underlying job state via `computePoolStats(runStore.jobs)` — see `frontend/src/lib/stores/runners.svelte.ts`. The webhook handler no longer takes a pool-stats snapshot under the seq mutex.
+The frontend derives `RunnerPoolStats` from the underlying job state via `computePoolStats(runStore.jobs)` — see `frontend/src/lib/stores/runners.svelte.ts` (ADR 0004). The webhook handler does not take a pool-stats snapshot under the seq mutex.
 
 - **All successful events (Run or Job):** `SeqEvent { seq, event }` is broadcast. `seq` is the value of the AppState `seq` counter after pre-increment (first commit broadcasts `seq=1`).
 - **Failed transitions:** No broadcast occurs and no `SeqEvent` is emitted. Clients never receive events that are not reflected in the store (per AC1.5).
@@ -312,7 +312,7 @@ Phase 3b removed the `pool_stats_after` sidecar (see ADR 0004). The frontend der
 
 **Responsibility:** Return the full current state snapshot and the highest committed seq cursor.
 
-**PG mode flow (Phase 3c):**
+**PG mode flow:**
 1. Load `broadcast_watermark` (the drain's commit-order cursor) **before** opening the snapshot transaction. Every seq ≤ this value has been fetched by the drain (which only sees committed rows) and broadcast through `webhook_tx`.
 2. Open a `pool.begin()` transaction. On failure → 503.
 3. Set `TRANSACTION ISOLATION LEVEL REPEATABLE READ`. The MVCC snapshot view is taken at this statement, strictly **after** the watermark load, so every row reflected in `lastSeq` is also visible in the snapshot.
@@ -338,7 +338,7 @@ struct StateSnapshot {
 }
 ```
 
-**Cursor semantics (Phase 3a/3c):** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `SeqEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
+**Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `SeqEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
 
 Return 200 with the JSON snapshot.
 
@@ -357,11 +357,11 @@ In `main.rs`:
 2. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
 3. Create `RunStateMachine` with `SystemClock` and TTL (default 1 hour)
 4. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
-5. Call `metrics::register_pg_write_counters()` after the recorder is installed (Phase 2b/2c)
+5. Call `metrics::register_pg_write_counters()` after the recorder is installed.
 6. Construct `persist: Arc<dyn PersistentStore>` — `PgStore::new(pool)` when `pg_pool` is `Some`, otherwise `InMemoryStore::new(state_machine, seq, webhook_tx)` (ADR 0005).
-7. Create `AppState` with all components (`state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist`, `pg_pool`, plus the Phase 3c atomics `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`) and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not touch `pg_pool` for the write path.
+7. Create `AppState` with all components (`state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`) and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not touch `pg_pool` for the write path.
 8. Start background eviction task: `start_eviction_task(state_machine.clone())`
-9. **If `pg_pool` is `Some`** (Phase 2d listener init sequence, before `axum::serve`):
+9. **If `pg_pool` is `Some`** (before `axum::serve`):
    1. Derive `listener_url` from `cfg.database_listener_url` if set, else fall back to `cfg.database_url`.
    2. `PgListener::connect(&listener_url)` — fail-fast on Err (exit(1)).
    3. `listener.listen(NOTIFY_CHANNEL)` — fail-fast on Err (exit(1)).
@@ -378,7 +378,7 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `/readyz` — Readiness probe. In in-memory mode (no PG pool), returns 200 immediately. When `ATC_DATABASE_URL` is configured: (1) runs `SELECT 1` against the pool — 503 `{"status":"db_unreachable"}` if the DB is unreachable; (2) checks the drain heartbeat age — if `last_drain_pass_at` is older than `READYZ_HEARTBEAT_STALENESS_MS` (30 s), returns 503 `{"status":"drain_stale"}`. A healthy drain updates its heartbeat every 5 s (`HEARTBEAT_TICK`), so any value older than 30 s indicates the drain task has stalled. Returns 200 `{"status":"ok"}` when both checks pass.
 - `/healthz` — Liveness probe. Returns 200 unconditionally — process up = alive regardless of DB state.
 
-### NOTIFY Emission and Drain Pipeline (Phase 2d + Phase 3c)
+### NOTIFY Emission and Drain Pipeline
 
 **Two-task coalescing structure:** The listener pipeline splits into two cooperating tasks:
 
@@ -400,10 +400,10 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 
 ### Modules
 
-- **`state.rs`** — `AppState` struct (fields: `state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist: Arc<dyn PersistentStore>`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`) and the `SeqEvent { seq, event }` broadcast type
+- **`state.rs`** — `AppState` struct (fields: `state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist: Arc<dyn PersistentStore>`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`) and the `SeqEvent { seq, event }` broadcast type (ADR 0004)
 - **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`, `/healthz`, `/readyz`; defines `StateSnapshot { last_seq, runs, jobs }`; webhook handler dispatches through `state.persist.apply_*_event(env)` uniformly for both modes (ADR 0005), returns `{"status":"accepted","seq":<u64>}` on success; state handler uses REPEATABLE READ in PG mode; `/readyz` checks drain heartbeat staleness in PG mode
 - **`ws.rs`** — WebSocket connection handling and message broadcast logic
-- **`persist.rs`** — `pub trait PersistentStore` with `apply_run_event` and `apply_job_event`; `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its own transaction lifecycle, emits metrics; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — locks seq mutex, applies to RunStateMachine, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the state handler (Phase 3c / ADR 0005)
+- **`persist.rs`** — `pub trait PersistentStore` with `apply_run_event` and `apply_job_event`; `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its own transaction lifecycle, emits metrics; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — locks seq mutex, applies to RunStateMachine, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the state handler (ADR 0005)
 
 ## Files
 
@@ -411,15 +411,15 @@ The eviction task runs periodically (default every 30 minutes) and removes compl
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
 - `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
-- `backend/crates/atc-server/src/state.rs` — AppState struct (includes `persist: Arc<dyn PersistentStore>` and `seq: Arc<Mutex<u64>>` per ADR 0005) and `SeqEvent { seq, event }` type (Phase 3b removed `pool_stats_after`); `StateSnapshot` lives in `routes.rs`
+- `backend/crates/atc-server/src/state.rs` — AppState struct (includes `persist: Arc<dyn PersistentStore>` and `seq: Arc<Mutex<u64>>` per ADR 0005) and `SeqEvent { seq, event }` type; `StateSnapshot` lives in `routes.rs`
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
-- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`) (Phase 2b/2c)
+- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`)
 - `backend/crates/atc-server/src/persist.rs` — `pub trait PersistentStore`; `PgStore` and `InMemoryStore` impls (ADR 0005); `pub(crate)` transaction helpers for UPSERT+outbox+NOTIFY pattern; `pub(crate)` read helpers for state handler
-- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. Spawned only when `pg_pool` is `Some`. (Phase 2d + Phase 3c) The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
+- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. Spawned only when `pg_pool` is `Some`. The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/crates/atc-server/migrations/0002_outbox.sql` — Outbox table: `BIGSERIAL seq` PK, `kind` discriminator, `run_id`/`job_id`, `payload JSONB` (domain event envelope), `inserted_at TIMESTAMPTZ`; `outbox_run_idx` on `run_id`
-- `backend/.sqlx/` — Offline query cache (committed to repo). Generated by `cargo sqlx prepare --workspace -- --tests` during Phase 2b to enable `SQLX_OFFLINE=true` builds without a live DB at compile time. Updated whenever SQL queries change.
+- `backend/.sqlx/` — Offline query cache (committed to repo). Generated by `cargo sqlx prepare --workspace -- --tests` to enable `SQLX_OFFLINE=true` builds without a live DB at compile time. Updated whenever SQL queries change.
 - `backend/Cargo.toml` — Workspace definition with shared dependency versions
 - `backend/crates/atc-server/Cargo.toml` — Server crate dependencies

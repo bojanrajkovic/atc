@@ -113,7 +113,7 @@ function makeWorkflowRun(f: (typeof STATUS_FIXTURE)[number]): StateSnapshot['run
   }
 }
 
-test.describe('run-cards (Sub-Phase 4)', () => {
+test.describe('run-cards', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(WS_MOCK_INIT_SCRIPT)
   })

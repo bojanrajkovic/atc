@@ -1,4 +1,4 @@
-//! Phase 3c integration tests: restart recovery (no historical replay).
+//! Integration tests: restart recovery (no historical replay).
 //!
 //! T10 — After a simulated server restart (second fixture against same PG),
 //!       the new drain task does NOT replay events already committed before the
@@ -29,10 +29,10 @@ use tokio::time::timeout;
 ///      arrives within the timeout.
 #[tokio::test]
 #[serial]
-async fn phase_3c_restart_recovery_t10_no_historical_replay_after_restart() {
+async fn t10_no_historical_replay_after_restart() {
     let (pool, _container, db_url) = common::start_pg().await;
 
-    // ── Phase 1: f1 — commit two events ──────────────────────────────────────
+    // ── Step 1: f1 — commit two events ───────────────────────────────────────
     let f1 = common::build_app_with_pg_and_listener(pool.clone(), db_url.clone()).await;
     let mut rx1 = f1.state.webhook_tx.subscribe();
 
@@ -78,7 +78,7 @@ async fn phase_3c_restart_recovery_t10_no_historical_replay_after_restart() {
     assert!(got_seq1, "f1 drain must have broadcast seq=1");
     assert!(got_seq2, "f1 drain must have broadcast seq=2");
 
-    // ── Phase 2: simulate clean shutdown of f1 ────────────────────────────────
+    // ── Step 2: simulate clean shutdown of f1 ────────────────────────────────
     f1.shutdown.cancel();
     timeout(Duration::from_secs(5), async {
         let _ = tokio::join!(f1.listener_handle, f1.drain_handle);
@@ -86,11 +86,11 @@ async fn phase_3c_restart_recovery_t10_no_historical_replay_after_restart() {
     .await
     .expect("f1 tasks did not shut down within 5s");
 
-    // ── Phase 3: f2 — fresh instance against the same PG ─────────────────────
+    // ── Step 3: f2 — fresh instance against the same PG ─────────────────────
     let f2 = common::build_app_with_pg_and_listener(pool.clone(), db_url.clone()).await;
     let mut rx2 = f2.state.webhook_tx.subscribe();
 
-    // ── Phase 4: fire a new event → seq=3 ─────────────────────────────────────
+    // ── Step 4: fire a new event → seq=3 ─────────────────────────────────────
     // Fire workflow_run_completed (updates the existing run to Completed).
     let (s3, b3) = common::post_webhook_to_router(
         f2.router.clone(),
@@ -103,7 +103,7 @@ async fn phase_3c_restart_recovery_t10_no_historical_replay_after_restart() {
     let seq3 = b3["seq"].as_i64().expect("seq should be i64");
     assert_eq!(seq3, 3, "third event should be seq=3");
 
-    // ── Phase 5: assert no historical replay, seq=3 arrives ──────────────────
+    // ── Step 5: assert no historical replay, seq=3 arrives ──────────────────
     // Collect events for up to 5 seconds.
     let mut historical_replays: Vec<u64> = Vec::new();
     let mut got_seq3 = false;

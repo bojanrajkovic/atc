@@ -1,4 +1,4 @@
-//! Background tasks for PG LISTEN/NOTIFY (Phase 2d + Phase 3c).
+//! Background tasks for PG LISTEN/NOTIFY.
 //!
 //! The listener task receives notifications from PG and registers each NOTIFY
 //! payload's seq into the gap-healing backstop atomic before waking the drain.
@@ -6,7 +6,7 @@
 //! row's payload, applies a bounded ring-buffer dedup, and broadcasts the
 //! resulting `SeqEvent` to WS subscribers via the shared broadcast channel.
 //!
-//! See `docs/architecture/backend-server.md` for the full design and Phase 3c
+//! See `docs/architecture/backend-server.md` for the full design and
 //! gap-healing notes.
 //!
 //! sqlx's `PgListener` auto-reconnects internally and re-subscribes to all
@@ -36,7 +36,7 @@ const DRAIN_BATCH_SIZE: i64 = 500;
 /// 6× margin under the 30 s staleness threshold.
 const HEARTBEAT_TICK: Duration = Duration::from_secs(5);
 
-/// Capacity of the recently-broadcast seq ring buffer (Phase 3c).
+/// Capacity of the recently-broadcast seq ring buffer.
 ///
 /// At 100 webhooks/sec peak, 2048 entries cover ~20 s of drain history — orders
 /// of magnitude wider than the in-flight commit window (milliseconds). Memory
@@ -65,7 +65,8 @@ pub async fn connect_listener(
 /// `notify_outbox_seq_in_txn`) and register it with `min_pending_seq` via
 /// `fetch_min(seq, Release)`. The Release ordering pairs with the drain's
 /// `Acquire` half of `swap(MAX, AcqRel)`, providing the synchronization that
-/// closes the concurrent-commits race documented in the Phase 3c plan §D2.
+/// closes the concurrent-commits race (see `docs/architecture/backend-server.md`
+/// § Gap-healing backstop).
 pub fn spawn_listener_task(
     mut listener: sqlx::postgres::PgListener,
     drain_notify: Arc<Notify>,
@@ -168,7 +169,7 @@ pub fn spawn_drain_task(
 
         // Run an unconditional first pass so observed_passes/drain_started
         // fire once at startup. This preserves the test fixture invariant
-        // (build_app waits for drain_started) and matches Phase 2d behavior.
+        // (build_app waits for drain_started before accepting requests).
         let mut first_iter = true;
         // Startup readiness latency is observed exactly once per process,
         // after the first pass exits. See `atc_pg_drain_startup_seconds`.
@@ -248,8 +249,8 @@ pub fn spawn_drain_task(
                 // will go stale and traffic gets routed away.
                 last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
                 // Publish the broadcast cursor. Read by `state_handler` as the
-                // PG-mode `lastSeq` (commit-order cursor — see ADR 0003 Phase
-                // 3c notes). Using `MAX(outbox.seq)` directly is unsafe:
+                // PG-mode `lastSeq` (commit-order cursor — see ADR 0003
+                // implementation notes). Using `MAX(outbox.seq)` directly is unsafe:
                 // BIGSERIAL is allocated pre-commit and can commit out of
                 // order, which would let `MAX(seq)` advance past data that
                 // hasn't materialised in a concurrent snapshot view.

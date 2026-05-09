@@ -1,9 +1,8 @@
-//! Integration tests for Phase 2d LISTEN/NOTIFY acceptance criteria.
+//! Integration tests for LISTEN/NOTIFY acceptance criteria.
 //!
 //! Boots ephemeral Postgres via testcontainers. All tests connect a real
 //! PgListener against a live container.
 //!
-//! Naming: phase_2d_notify_listener_ac<N>_<short_description>
 //! Docker/OrbStack required.
 
 mod common;
@@ -39,7 +38,7 @@ async fn fire_job_webhook(fixture: &common::AppFixture) -> StatusCode {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac1_notify_fires_on_commit() {
+async fn ac1_notify_fires_on_commit() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // Subscribe an out-of-band listener BEFORE firing webhooks.
@@ -70,7 +69,7 @@ async fn phase_2d_notify_listener_ac1_notify_fires_on_commit() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac2_no_notify_on_rollback() {
+async fn ac2_no_notify_on_rollback() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // Subscribe the out-of-band listener before any webhook so all NOTIFYs are visible.
@@ -128,7 +127,7 @@ async fn phase_2d_notify_listener_ac2_no_notify_on_rollback() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
+async fn ac3_no_notify_in_memory_mode() {
     use atc_core::{RunStateMachine, SystemClock};
     use atc_server::state::AppState;
 
@@ -184,7 +183,7 @@ async fn phase_2d_notify_listener_ac3_no_notify_in_memory_mode() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac4_listener_receives_all_notifications() {
+async fn ac4_listener_receives_all_notifications() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -218,7 +217,7 @@ async fn phase_2d_notify_listener_ac4_listener_receives_all_notifications() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac5_listener_shutdown() {
+async fn ac5_listener_shutdown() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -241,7 +240,7 @@ async fn phase_2d_notify_listener_ac5_listener_shutdown() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac6_drain_fetches_and_advances_watermark() {
+async fn ac6_drain_fetches_and_advances_watermark() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
@@ -298,7 +297,7 @@ async fn phase_2d_notify_listener_ac6_drain_fetches_and_advances_watermark() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac7_coalescing() {
+async fn ac7_coalescing() {
     // Use a 200ms drain delay so each drain pass sleeps before querying the outbox.
     // This ensures all 4 NOTIFYs arrive while a drain pass is in-flight, forcing
     // the tokio Notify to coalesce them into a single stored permit.
@@ -347,7 +346,7 @@ async fn phase_2d_notify_listener_ac7_coalescing() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac8_notify_payload_is_seq() {
+async fn ac8_notify_payload_is_seq() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     let mut oob = PgListener::connect(&db_url).await.unwrap();
@@ -384,13 +383,13 @@ async fn phase_2d_notify_listener_ac8_notify_payload_is_seq() {
 
 // AC10 is verified at the CI level: SQLX_OFFLINE=true cargo build -p atc-server.
 // We skip a runtime test here since it requires a build environment check.
-// The .sqlx/ cache was regenerated as part of Phase B+C implementation.
+// The .sqlx/ cache is regenerated when queries change; verify with SQLX_OFFLINE=true cargo build.
 
 // ─── AC12: shutdown completeness ────────────────────────────────────────────
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac12_shutdown_completeness() {
+async fn ac12_shutdown_completeness() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -419,7 +418,7 @@ async fn phase_2d_notify_listener_ac12_shutdown_completeness() {
 
 #[tokio::test]
 #[serial]
-async fn phase_2d_notify_listener_ac13_watermark_initialized_to_max_seq() {
+async fn ac13_watermark_initialized_to_max_seq() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     // Pre-seed 3 outbox rows directly so the watermark will be initialized to seq=3.

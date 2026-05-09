@@ -5,7 +5,7 @@ import { expect, test } from './lib/fixtures'
 import { bigintReplacer, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /**
- * Responsive layout tests (Phase 2).
+ * Responsive layout tests.
  *
  * AC2.1: ≥1280px → 3 kanban columns
  * AC2.2: 640–1279px → 2 kanban columns (Completed wraps onto row 2)

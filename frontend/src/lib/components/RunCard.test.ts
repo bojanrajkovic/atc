@@ -112,7 +112,7 @@ describe('RunCard', () => {
     expect(element?.getAttribute('data-run-id')).toBe('456')
   })
 
-  describe('RunCard — Sub-Phase 4 composition', () => {
+  describe('RunCard — composition', () => {
     // AC10.1: scope-contract comment removed — reviewer-verified (see Task 3 commit).
 
     it('AC10.2: sets --status-color to the correct CSS variable for each of the 11 StatusKeys', () => {

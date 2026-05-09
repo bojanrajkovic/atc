@@ -1,88 +1,73 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-08 (#66 closed: § Metrics hoisted to `docs/architecture/metrics.md` as the canonical home for `/metrics` documentation. Prior context preserved: #50 closed — PersistentStore trait relocated to atc-server with PgStore + InMemoryStore impls, route handler unified, ADR 0005. In-memory mode reframed as dev-only per Phase 5 follow-up; see "Storage modes" subsection.)
+Last verified: 2026-05-08
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
 ## Purpose
 
-Axum HTTP server wiring `atc-core` (state machine) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. The webhook write path dispatches through `AppState.persist: Arc<dyn PersistentStore>` — either `PgStore` (transactional outbox) or `InMemoryStore` (in-memory, dev-only). See ADR 0005.
+Axum HTTP server wiring `atc-core` (state machine) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. The webhook write path dispatches through `AppState.persist: Arc<dyn PersistentStore>` — either `PgStore` (transactional outbox) or `InMemoryStore`. See ADR 0005.
 
 ## Storage modes
 
-Two runtime modes; **only external Postgres is production-supported** — see `docs/architecture/backend-server.md` § "Storage modes — operator guidance" for the canonical write-up.
+Two runtime modes. Only external Postgres is production-supported — see `docs/architecture/backend-server.md` § "Storage modes — operator guidance" for the canonical write-up.
 
-- **External Postgres** (`ATC_DATABASE_URL` set) — required for `replicaCount > 1` (chart guard refuses to render otherwise). Drain task is sole broadcaster.
-- **In-memory** (`ATC_DATABASE_URL` unset) — **dev-only**, single-replica only. Useful for `just dev` against curl/smee.io-fired webhooks; lossy on restart; do not deploy to production. The webhook handler broadcasts directly under the seq mutex (see `routes.rs:432-436`).
+- **External Postgres** (`ATC_DATABASE_URL` set) — required for `replicaCount > 1` (chart guard refuses to render otherwise). The drain task is the sole broadcaster.
+- **In-memory** (`ATC_DATABASE_URL` unset) — **dev-only**, single-replica only. Useful for `just dev` against curl/smee.io-fired webhooks; lossy on restart; do not deploy to production. The webhook handler broadcasts directly under the seq mutex.
 
 ## Modules
 
 | Module | Role |
 |--------|------|
-| `main` | Server entry point, config loading, AppState creation, router setup, eviction task lifecycle; connects pool and stores it in AppState.pg_pool; when pool is configured, clones it to `pg_pool_for_listener`, initializes `PgListener` (connect + LISTEN + `COALESCE(MAX(seq),0)` watermark), spawns listener and drain tasks before binding `axum::serve` |
-| `config` | figment-based Config struct, GitHubConfig with webhook_secret, Config::load(); `database_listener_url: Option<String>` reads `ATC_DATABASE_LISTENER_URL` (falls back to `database_url` at runtime) |
-| `db` | `init_pool(url)` — connects sqlx PgPool and runs embedded migrations; extracted from main so it is testable as library code |
-| `routes` | HTTP route handlers: `POST /v1/webhooks/github`, `GET /v1/state`, `GET /v1/ws`, health/ready probes; webhook handler dispatches uniformly through `state.persist.apply_*_event(env).await` — no mode branching (ADR 0005); returns `{"status":"accepted","seq":<u64>}` on success, `{"status":"rejected"}` (200) on `PersistError::InvalidTransition`, 503 on `PersistError::Backend`; `/v1/state` in PG mode opens a REPEATABLE READ transaction, reads runs/jobs, uses `broadcast_watermark` as `lastSeq`; `/readyz` checks drain heartbeat staleness |
-| `state` | AppState struct (fields: `state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist: Arc<dyn PersistentStore>`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`); `SeqEvent { seq, event }` broadcast type (Phase 3b removed `pool_stats_after`). `seq: Arc<Mutex<u64>>` is **pre-incremented** in in-memory mode only (inside `InMemoryStore::apply_*_event`); wrapped in `Arc` so `InMemoryStore` can share the same counter. `persist: Arc<dyn PersistentStore>` is the write-path dispatch point (ADR 0005). `min_pending_seq: Arc<AtomicI64>` initialized to `i64::MAX`; listener calls `fetch_min(seq, Release)` on each NOTIFY; drain calls `swap(MAX, AcqRel)` to capture. `last_drain_pass_at: Arc<AtomicI64>` holds epoch-millis of last drain pass; `/readyz` returns 503 if age > `READYZ_HEARTBEAT_STALENESS_MS=30_000`. `broadcast_watermark: Arc<AtomicI64>` holds the highest outbox `seq` the drain has fetched and broadcast; read by `state_handler` as PG-mode `lastSeq` (commit-order cursor — see `docs/architecture/backend-server.md` § REST State Snapshot for the rationale). |
-| `ws` | WebSocket upgrade handler, broadcast subscription, SeqEvent serialization and push |
-| `assets` | rust-embed static file serving, SPA fallback, dev proxy to Vite |
-| `metrics` | Prometheus layer with explicit `install_recorder()` and custom histogram buckets (`atc_pg_drain_startup_seconds` + `_seconds` suffix fallback); `build_info` gauge; process collector; PG write counters (`register_pg_write_counters`); LISTEN/NOTIFY counters (`register_listener_metrics`); plus six operational metrics added in Phase 5 (`atc_pg_outbox_lag_seconds`, `atc_pg_drain_pass_duration_seconds`, `atc_pg_wake_coalesced_total`, `atc_pg_drain_startup_seconds`, `atc_pg_broadcast_watermark`, `atc_pg_min_pending_seq`). See `docs/architecture/metrics.md` for the seven-element interpretation block on every metric ATC emits, plus the authoring contract that new metrics must follow. |
-| `persist` | `pub trait PersistentStore` (ADR 0005 — relocated from atc-core); `pub struct PgStore` + `impl PersistentStore for PgStore` — opens its own `sqlx::Transaction`, calls upsert+outbox+notify helpers, commits, returns allocated seq, emits metrics; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — locks seq mutex, applies to `RunStateMachine`, broadcasts `SeqEvent`, returns seq; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by state handler |
-| `listener` | PG LISTEN/NOTIFY background tasks: listener task receives NOTIFY payloads and calls `min_pending_seq.fetch_min(seq, Release)`; drain task wakes on `Arc<Notify>` signal or 5s heartbeat tick, fetches outbox rows (`seq > watermark`, paginated in batches of `DRAIN_BATCH_SIZE=500`), decodes each as `RunEventEnvelope`, deduplicates via ring buffer (`DEDUP_CAP=2048`), broadcasts to `webhook_tx`, advances watermark, and updates `last_drain_pass_at`. Gap-healing: drain computes `pass_start_floor = watermark.min(backstop.saturating_sub(1))` to rescan rows that may have been missed. Spawned only when pg_pool is Some. (Phase 3c) |
-| `migrations/` | SQL migration files embedded at compile time via `sqlx::migrate!()`. `0001_initial_runs_jobs.sql` creates `runs` and `jobs` tables. `0002_outbox.sql` creates the `outbox` append-only event log table with BIGSERIAL primary key, `kind` discriminator, and JSONB payload. `0003_runs_placeholder.sql` adds `placeholder BOOLEAN NOT NULL DEFAULT false` to `runs`; stub rows (job-before-run FK stubs) use `placeholder=true` and are promoted to `false` by real run UPSERTs. Run automatically on startup when `ATC_DATABASE_URL` is set. |
+| `main` | Entry point, config loading, AppState creation, router setup, lifecycle (eviction task; in PG mode also listener + drain tasks) |
+| `config` | figment-based `Config` with `GitHubConfig`; `database_listener_url` falls back to `database_url` at runtime |
+| `db` | `init_pool(url)` — connects sqlx PgPool and runs embedded migrations |
+| `routes` | HTTP route handlers: webhook ingestion, REST state snapshot, WebSocket upgrade, health/ready probes |
+| `state` | `AppState` struct and broadcast types (`SeqEvent`, `StateSnapshot`) |
+| `ws` | WebSocket upgrade handler, broadcast subscription, event push |
+| `assets` | rust-embed static file serving with SPA fallback and dev proxy to Vite |
+| `metrics` | Prometheus layer: custom histogram buckets, `build_info` gauge, process collector, PG write counters, LISTEN/NOTIFY counters, drain operational metrics. See `docs/architecture/metrics.md` for the canonical surface and authoring contract. |
+| `persist` | `PersistentStore` trait (ADR 0005) with `PgStore` and `InMemoryStore` impls; transaction helpers (`upsert_*`, `insert_outbox_*`, `notify_outbox_seq_in_txn`) and read helpers (`read_all_runs`, `read_all_jobs`) |
+| `listener` | PG LISTEN/NOTIFY background tasks: listener task plus drain task with ring-buffer dedup and gap-healing backstop |
+| `migrations/` | SQL migration files embedded via `sqlx::migrate!()` and run on startup when `ATC_DATABASE_URL` is set |
 
 ## TypeScript Generation
 
-`SeqEvent` and `StateSnapshot` derive `#[derive(TS)]` with `#[ts(export)]` to generate TypeScript interfaces for WebSocket and REST payloads.
-
-**Serialization format:**
-- `SeqEvent` is serialized as `{ seq, event }` (camelCase via `#[serde(rename_all = "camelCase")]`); Phase 3b removed `pool_stats_after`
-- `StateSnapshot { last_seq, runs, jobs }` uses `#[serde(rename_all = "camelCase")]` so `last_seq` serializes as `lastSeq` in JSON; Phase 3b removed `pool_stats`
-- WebSocket events use the adjacently-tagged serde format inherited from `atc-core::WebhookEvent` (discriminated union with `type` and `data` fields)
-
-Generated types are written to `frontend/src/lib/types/generated/` via `just types` recipe.
+`SeqEvent` and `StateSnapshot` derive `#[derive(TS)]` with `#[ts(export)]`. Generated types are written to `frontend/src/lib/types/generated/` via `just types`. See `docs/architecture/backend-server.md` § SeqEvent Wire Contract and § REST State Snapshot for the wire shape.
 
 ## Contracts
 
-These rules are enforced by implementation and verified by tests:
+Enforced by implementation and verified by tests. Full detail in `docs/architecture/backend-server.md`.
 
-- **Webhook ingestion (both modes):** HMAC-SHA256 verification (when secret configured), parse via atc-github, then dispatch through `state.persist.apply_*_event(env).await`. `PgStore` impl: begins transaction, UPSERT run/job, INSERT outbox row, emit `SELECT pg_notify('atc_outbox', seq::text)`, commit. No seq mutex acquired, no in-memory store apply, no broadcast — drain is the sole broadcaster in PG mode. `InMemoryStore` impl: acquires seq mutex, applies to RunStateMachine, pre-increments seq, broadcasts SeqEvent. Both modes return `{"status":"accepted","seq":<u64>}` on success, `{"status":"rejected"}` (200) on `PersistError::InvalidTransition`, 503 on `PersistError::Backend`. (ADR 0005)
+- **Webhook ingestion (both modes):** HMAC-SHA256 verification (when secret configured), parse via atc-github, then dispatch through `state.persist.apply_*_event(env).await`. Returns `{"status":"accepted","seq":<u64>}` on success, `{"status":"rejected"}` (200) on `PersistError::InvalidTransition`, 503 on `PersistError::Backend`. (ADR 0005)
 - **NOTIFY emission:** Inside the webhook handler transaction (after outbox INSERT, before commit), `SELECT pg_notify('atc_outbox', seq::text)` emits the outbox row's seq to all listeners. PG queues NOTIFYs during a txn and delivers on COMMIT; aborted txns silently drop. Metric: `atc_pg_notify_emitted_total{kind}`.
-- **Drain pipeline:** Listener calls `min_pending_seq.fetch_min(seq, Release)` on each NOTIFY, signals `Arc<Notify>`. Drain wakes, calls `swap(MAX, AcqRel)` to capture backstop floor, computes `pass_start_floor = watermark.min(backstop.saturating_sub(1))` for gap-healing rescans. Fetches rows `seq > pass_start_floor ORDER BY seq LIMIT DRAIN_BATCH_SIZE`, paginates until partial page, deduplicates via `VecDeque<i64>` + `HashSet<i64>` ring buffer (`DEDUP_CAP=2048`), decodes each as `RunEventEnvelope`, broadcasts to `webhook_tx`, advances watermark. **On successful pass**: updates `last_drain_pass_at`, advances `broadcast_watermark` (the commit-order cursor read by `state_handler` as `lastSeq`). **On failed pass**: re-registers the captured backstop into `min_pending_seq` (so a transient query failure doesn't lose the gap-healing signal) and does NOT refresh the heartbeat (so `/readyz` reflects sustained drain failure after 30s). Heartbeat-only ticks (5s `HEARTBEAT_TICK` arm of `tokio::select!`, no NOTIFY pending) refresh `last_drain_pass_at` to keep `/readyz` fresh during quiet periods. Metrics: `atc_pg_drain_duplicate_skipped_total`, `atc_pg_drain_unknown_kind_total`. Local watermark initializes to `COALESCE(MAX(seq), 0)` at boot (ADR 0002 Decision 5); `broadcast_watermark` seeds from the same value.
-- **Seq ordering (in-memory mode):** `Mutex<u64>` acquired BEFORE apply + seq assignment + broadcast. Strictly monotonic, no gaps in-process. Resets to `0` on restart. In PG mode, ordering is provided by outbox `BIGSERIAL` + drain's ascending ORDER BY.
-- **Broadcast semantics:** Bounded channel (capacity 256) means slow subscribers may miss events. LaggingError logs warning but does not disconnect. In in-memory mode, broadcast happens under seq mutex. In PG mode, the drain is the sole broadcaster and operates without seq mutex.
-- **State snapshot (PG mode):** Loads `broadcast_watermark` (the drain's commit-order cursor) BEFORE opening a REPEATABLE READ transaction that reads runs (`WHERE placeholder=false`) and jobs from a single MVCC snapshot. `MAX(outbox.seq)` is **not** used as `lastSeq` — BIGSERIAL is allocated pre-commit and can commit out of order, which would let the cursor advance past data the snapshot can't see and cause the frontend to permanently drop a buffered event. The drain's `broadcast_watermark` only advances after a successful pass, and the drain only sees committed rows via SELECT, so the cursor is monotonic in commit order. The frontend invariant the snapshot must uphold: `entity_count >= last_seq` (snapshot reflects everything the cursor advertises, plus possibly newer commits the drain hasn't broadcast yet — those are buffered and applied idempotently). Placeholder stub runs are always excluded.
-- **State snapshot (in-memory mode):** `Mutex<u64>` held across snapshot + seq read, ensuring cursor matches snapshot content. `lastSeq=0` is the cold-start sentinel.
-- **PG access:** `AppState.pg_pool` is `Option<sqlx::PgPool>`. `Some(pool)` when `ATC_DATABASE_URL` is configured; `None` in in-memory-only mode. `pg_pool` is used by the state handler for REPEATABLE READ snapshots and by the `/readyz` probe. The webhook write path goes through `AppState.persist: Arc<dyn PersistentStore>` (ADR 0005) — `PgStore` holds its own pool internally. `atc_pg_write_failures_total` (labels: `kind=parity` or `kind=transient`) and `atc_pg_notify_emitted_total{kind}` are emitted from within `PgStore::apply_*_event`.
-- **WebSocket:** Clients connect and receive SeqEvent stream in real time. Disconnection is clean (no crash, no effect on other clients)
-- **Config:** ATC_GITHUB__WEBHOOK_SECRET loads webhook_secret. If None, HMAC verification skipped
+- **Drain pipeline:** Listener registers NOTIFY-arriving seqs into `min_pending_seq` for gap-healing. Drain wakes on signal or 5s heartbeat tick, swaps the backstop, computes `pass_start_floor = watermark.min(backstop.saturating_sub(1))`, fetches outbox rows ordered by seq (paginated, batch size 500), deduplicates via 2048-entry ring buffer, broadcasts to subscribers, advances `broadcast_watermark`. On failed pass, re-registers the captured backstop and does not refresh the heartbeat (so `/readyz` reflects sustained drain failure after 30s). Sole broadcaster in PG mode.
+- **Seq ordering:** In-memory mode acquires `Mutex<u64>` BEFORE apply + seq assignment + broadcast (strictly monotonic, resets to 0 on restart). PG mode draws ordering from outbox `BIGSERIAL` plus drain's ascending ORDER BY.
+- **Broadcast semantics:** Bounded channel (capacity 256). Slow subscribers may miss events; `LaggingError` logs a warning and does not disconnect.
+- **State snapshot (PG mode):** Loads `broadcast_watermark` BEFORE opening a REPEATABLE READ transaction reading runs (`WHERE placeholder=false`) and jobs. The cursor is monotonic in commit order; the frontend tolerates `entity_count >= last_seq` (snapshot may include commits the drain hasn't yet broadcast). Placeholder stub runs are excluded.
+- **State snapshot (in-memory mode):** Holds `Mutex<u64>` across snapshot and seq read. `lastSeq=0` is the cold-start sentinel.
+- **PG access:** `AppState.pg_pool: Option<sqlx::PgPool>`. Used by the state handler for REPEATABLE READ snapshots and by `/readyz`. `PgStore` holds its own pool internally for the write path. `atc_pg_write_failures_total{kind=parity|transient}` and `atc_pg_notify_emitted_total{kind}` are emitted from `PgStore::apply_*_event`.
+- **WebSocket:** Clean disconnection — no crash, no effect on other clients.
+- **Config:** `ATC_GITHUB__WEBHOOK_SECRET` loads `webhook_secret`. If `None`, HMAC verification is skipped.
 
 ## Testing
 
 ```bash
-cargo test -p atc-server        # 110+ tests across three tiers (unit + integration)
+cargo test -p atc-server        # ~319 tests across three tiers (route-level oneshot, full-stack ephemeral, PG-backed)
 cargo clippy -p atc-server -- -D warnings
-cargo test -p atc-server --test e2e_tests  # 3 full-stack e2e tests
 ```
 
-**Docker required:** The PG-backed tier (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`, `notify_listener_tests`, `phase_3c_*`) uses testcontainers to boot a single shared PostgreSQL container — `tests/common/start_pg()` uses `ReuseDirective::Always` to reuse a container named `atc-test-pg` across all tests, with each test creating its own ephemeral database (`test_<pid>_<nanos>_<counter>`). Cuts test wall clock by ~10× vs per-test containers (~17s for 319 tests vs ~3 min). `cargo test -p atc-server` (and `just test`) require Docker or OrbStack to be running.
-
-**Cleanup:** the `atc-test-pg` container persists after `cargo test` ends. Run `just cleanup-test-pg` after a heavy session to reclaim the container + its accumulated `test_*` databases. Safe to skip — the container is small (~150 MB) and gets recreated on the next test run.
+**Docker required.** PG-backed integration tests boot a single shared PostgreSQL container (`atc-test-pg`) via testcontainers with `ReuseDirective::Always`; each test creates its own ephemeral database. Run `just cleanup-test-pg` to reclaim the container and accumulated `test_*` databases.
 
 macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` before running tests.
 
-Test organization by tier:
+Tests using `PrometheusMetricLayer::pair()` must be marked `#[serial_test::serial]` because the PrometheusBuilder global recorder can only be installed once per binary. The `PROMETHEUS_INIT` OnceLock in `tests/common/mod.rs` ensures this is called exactly once.
 
-- **Route-level oneshot tests** (`config_tests`, `routes_tests`, `webhook_hmac_tests`, `webhook_ingestion_tests`, `metrics`, `metrics_router_isolation`, `state_tests`) — Use tower's `oneshot()` to send requests directly through the router without binding a network port. Isolate endpoint behavior. (`sidecar_tests` was deleted in Phase 3b alongside the `pool_stats_after` field.)
-- **Full-stack ephemeral tests** (`e2e_tests`, `ws_tests`) — Start an ephemeral TcpListener on 127.0.0.1:0, spawn a real server, send HTTP/WebSocket clients through real network I/O. Verify end-to-end flows.
-- **PG-backed integration tests** (`db_readyz_tests`, `persist_pg_tests`, `transactional_writes_tests`, `outbox_tests`, `notify_listener_tests`) — Boot ephemeral Postgres via testcontainers, mount the router with a real `pg_pool: Some(pool)`, and exercise the transactional outbox path end-to-end (Phase 2b/2c/2d). `outbox_tests.rs` covers the 11 Phase 2c outbox ACs; `transactional_writes_tests.rs` covers the inverted-from-shadow behavioral contract (PG-failure → 503, transactional atomicity, no drift tolerated); `notify_listener_tests.rs` covers Phase 2d LISTEN/NOTIFY AC1–AC13 and follows the same testcontainers + `#[serial]` pattern.
-- **Phase 3c tests** (`phase_3c_state_pg_read`, `phase_3c_drain_forwards`, `phase_3c_gap_healing`, `phase_3c_readyz`, `phase_3c_restart_recovery`, `phase_3c_row_lock_serialization`) — Dedicated PG-backed tests for Phase 3c contracts: REPEATABLE READ state snapshot with `broadcast_watermark` cursor (T1/T1b/T2/T3), drain broadcast end-to-end (T4/T5), gap-healing backstop + ring-buffer dedup with reverse-order concurrent commits (T6/T6b/T7), `/readyz` heartbeat staleness (T8/T9), restart recovery (T10), row-lock serialization (T11). T2 asserts `entity_count >= last_seq` — the snapshot can include commits the drain hasn't yet broadcast (which is safe, frontend applies them idempotently from the buffer). T6 uses two concurrent SQL transactions with reverse commit order to force the gap-healing rescan.
-
-**Concurrency requirement:** Tests using `PrometheusMetricLayer::pair()` must be marked with `#[serial_test::serial]` because the PrometheusBuilder global recorder can only be installed once per binary. The `PROMETHEUS_INIT` OnceLock in `tests/common/mod.rs` ensures this is called exactly once and reused across tests.
+Test tier organization is in `docs/architecture/backend-server.md` § Testing.
 
 ## Key References
 
-- Architecture: `docs/architecture/backend-server.md` (full design)
+- Architecture: `docs/architecture/backend-server.md`
 - Design plan: `docs/design-plans/2026-04-11-server-wiring.md`
-- Domain model: `backend/crates/atc-core/` (RunStateMachine, events)
-- GitHub integration: `backend/crates/atc-github/` (parse_webhook, verify_signature)
+- Domain model: `backend/crates/atc-core/`
+- GitHub integration: `backend/crates/atc-github/`

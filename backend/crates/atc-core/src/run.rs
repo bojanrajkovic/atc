@@ -47,7 +47,7 @@ pub enum RunConclusion {
 /// A workflow run in the ATC domain model.
 ///
 /// Top-level container that groups related jobs. Created and updated
-/// by `RunEvent`s (Phase 2).
+/// by `RunEvent`s.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

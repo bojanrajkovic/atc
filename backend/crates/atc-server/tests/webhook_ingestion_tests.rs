@@ -412,8 +412,8 @@ async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
 
 /// Pre-increment invariant: the first webhook after server start broadcasts seq=1, never seq=0.
 ///
-/// This tests the Phase 3a pre-increment fix that eliminates the cold-start race
-/// between snapshot reads and the first broadcast. With pre-increment, seq=0
+/// The pre-increment fix eliminates the cold-start race between snapshot reads
+/// and the first broadcast. With pre-increment, seq=0
 /// is an unambiguous sentinel meaning "no events committed" and seq=1 is the
 /// smallest valid broadcast seq.
 #[tokio::test]

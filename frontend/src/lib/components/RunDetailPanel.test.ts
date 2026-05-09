@@ -7,9 +7,9 @@ import { createMockRunEvent } from '$lib/test-utils/factories'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 
 // RunDetailPanel is rendered via its test harness so that getRovingContext()
-// (added in kanban-keyboard-nav Phase 4) resolves correctly inside jsdom tests.
-// The harness wraps RunDetailPanel in a real RovingFocusProvider with an empty
-// synthetic-kanban div — all panel behavior under test is unchanged.
+// resolves correctly inside jsdom tests. The harness wraps RunDetailPanel in a
+// real RovingFocusProvider with an empty synthetic-kanban div — all panel
+// behavior under test is unchanged.
 import RunDetailPanel from './test-utils/RunDetailPanel.test-harness.svelte'
 
 // Shared fixture run id used by most tests.

@@ -1,4 +1,4 @@
-//! Phase 5 — `atc_pg_min_pending_seq` gauge.
+//! `atc_pg_min_pending_seq` gauge.
 //!
 //! Asserts that the gauge mirrors the per-replica gap-healing backstop
 //! atomic when it holds a real registered seq, and that it returns to its

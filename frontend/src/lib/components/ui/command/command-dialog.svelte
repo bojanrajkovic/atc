@@ -8,7 +8,7 @@
   // API-surface extension — NOT theming (see project guidance Rule 7).
   // DialogPrimitive.RootProps does not include content-level dismissal props;
   // they must be forwarded explicitly to <Dialog.Content> so callers
-  // (Phase 6 focus-restoration) can pass onCloseAutoFocus etc. The four new
+  // can pass onCloseAutoFocus and other focus-restoration props. The four new
   // fields below are extracted from the destructure so they do NOT bleed
   // into restProps (which spreads onto <Dialog.Root> and <Command>, neither
   // of which accepts these content-level props).
