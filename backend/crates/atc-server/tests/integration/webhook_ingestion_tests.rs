@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
-mod common;
+use crate::common;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()

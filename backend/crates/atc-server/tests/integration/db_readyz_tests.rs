@@ -4,7 +4,7 @@
 //! `atc_server::db::init_pool`, and verifies GET /readyz behavior in healthy and
 //! unreachable DB states. Requires Docker (or OrbStack) to be running.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;

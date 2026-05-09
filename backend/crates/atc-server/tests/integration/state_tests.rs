@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicI64;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-mod common;
+use crate::common;
 use common::{fixture_workflow_job_queued, fixture_workflow_run_requested};
 
 fn now_millis_for_test() -> i64 {

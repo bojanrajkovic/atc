@@ -4,7 +4,7 @@
 //! For lag handling tests, we send events directly via state.webhook_tx.send() to avoid
 //! timing races and more easily control event volume.
 
-mod common;
+use crate::common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

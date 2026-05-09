@@ -12,7 +12,7 @@
 //! - Parity rejection → 200 rejected, transaction rolled back (no outbox row)
 //! - In-memory apply follows PG commit — no drift tolerated
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;

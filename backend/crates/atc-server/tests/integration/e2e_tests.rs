@@ -5,7 +5,7 @@
 //! and verifies state via GET /v1/state and WebSocket messages. Tests exercise the full stack
 //! through real network I/O with no shortcuts.
 
-mod common;
+use crate::common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;

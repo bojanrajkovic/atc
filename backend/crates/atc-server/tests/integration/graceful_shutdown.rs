@@ -12,7 +12,7 @@
 //! Docker/OrbStack required. Set `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock`
 //! if using OrbStack.
 
-mod common;
+use crate::common;
 
 use std::future::IntoFuture;
 use std::net::SocketAddr;

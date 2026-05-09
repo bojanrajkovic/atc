@@ -11,7 +11,7 @@
 //! directly. Fresh-heartbeat tests require Docker for the real PG pool
 //! (needed for the DB check to pass).
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};

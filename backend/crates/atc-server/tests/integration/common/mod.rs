@@ -208,32 +208,32 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
 
 // Fixture: workflow_run_requested.json
 pub fn fixture_workflow_run_requested() -> Vec<u8> {
-    include_bytes!("../../../atc-github/tests/fixtures/workflow_run_requested.json").to_vec()
+    include_bytes!("../../../../atc-github/tests/fixtures/workflow_run_requested.json").to_vec()
 }
 
 // Fixture: workflow_job_queued.json
 pub fn fixture_workflow_job_queued() -> Vec<u8> {
-    include_bytes!("../../../atc-github/tests/fixtures/workflow_job_queued.json").to_vec()
+    include_bytes!("../../../../atc-github/tests/fixtures/workflow_job_queued.json").to_vec()
 }
 
 // Fixture: workflow_run_completed.json
 pub fn fixture_workflow_run_completed() -> Vec<u8> {
-    include_bytes!("../../../atc-github/tests/fixtures/workflow_run_completed.json").to_vec()
+    include_bytes!("../../../../atc-github/tests/fixtures/workflow_run_completed.json").to_vec()
 }
 
 // Fixture: workflow_run_in_progress.json
 pub fn fixture_workflow_run_in_progress() -> Vec<u8> {
-    include_bytes!("../../../atc-github/tests/fixtures/workflow_run_in_progress.json").to_vec()
+    include_bytes!("../../../../atc-github/tests/fixtures/workflow_run_in_progress.json").to_vec()
 }
 
 // Fixture: workflow_job_in_progress.json
 pub fn fixture_workflow_job_in_progress() -> Vec<u8> {
-    include_bytes!("../../../atc-github/tests/fixtures/workflow_job_in_progress.json").to_vec()
+    include_bytes!("../../../../atc-github/tests/fixtures/workflow_job_in_progress.json").to_vec()
 }
 
 // Fixture: workflow_job_completed.json
 pub fn fixture_workflow_job_completed() -> Vec<u8> {
-    include_bytes!("../../../atc-github/tests/fixtures/workflow_job_completed.json").to_vec()
+    include_bytes!("../../../../atc-github/tests/fixtures/workflow_job_completed.json").to_vec()
 }
 
 // ---------------------------------------------------------------------------

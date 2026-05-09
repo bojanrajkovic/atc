@@ -5,7 +5,7 @@
 //!
 //! Requires Docker (or OrbStack) to be running.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 
