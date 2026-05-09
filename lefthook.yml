@@ -15,7 +15,7 @@ pre-commit:
       root: "backend/"
       run: mise exec -- cargo fmt --check
     biome:
-      glob: "*.{ts,js}"
+      glob: "*.{ts,js,css}"
       root: "frontend/"
       run: mise exec -- pnpm exec biome check .
     eslint-svelte:
