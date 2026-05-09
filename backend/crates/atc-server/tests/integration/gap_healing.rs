@@ -15,7 +15,7 @@
 //!
 //! Docker/OrbStack required for the dedup and pagination tests.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};

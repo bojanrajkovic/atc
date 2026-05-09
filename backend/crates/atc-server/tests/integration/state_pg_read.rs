@@ -7,7 +7,7 @@
 //!
 //! Docker/OrbStack required for the PG-backed cases.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

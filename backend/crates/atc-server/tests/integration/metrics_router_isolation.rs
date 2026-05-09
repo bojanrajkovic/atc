@@ -1,5 +1,9 @@
 //! Test that metrics router does NOT serve health check endpoints.
-//! This test must run in its own binary because metrics::build() installs a global recorder.
+//! Uses `common::build_metrics_router` to share the per-binary recorder
+//! install — calling `atc_server::metrics::build()` would attempt a second
+//! `set_global_recorder` and panic.
+
+use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -9,7 +13,7 @@ use tower::ServiceExt;
 async fn metrics_router_does_not_serve_healthz_readyz() {
     // Metrics router (side-port) must NOT have /healthz or /readyz routes.
     // This isolates health checking to the main port.
-    let (_prometheus_layer, metrics_router) = atc_server::metrics::build();
+    let metrics_router = common::build_metrics_router();
 
     // Try GET /healthz on the metrics router (should return 404)
     let healthz_request = Request::builder()

@@ -2,7 +2,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-mod common;
+use crate::common;
 
 use common::{
     build_app_no_secret, build_app_with_secret, compute_signature, fixture_workflow_run_requested,

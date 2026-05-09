@@ -1,5 +1,7 @@
 //! Integration tests for the metrics side-port.
 
+use crate::common;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
@@ -22,10 +24,15 @@ use tokio::net::TcpListener;
 /// Build the full server setup with metrics registration.
 /// Returns (main_addr, metrics_addr).
 async fn test_setup() -> (SocketAddr, SocketAddr) {
-    // Step 1: Build Prometheus layer + metrics side-port router. Must happen before
-    // register_build_info() and spawn_process_collector() because pair()
-    // installs the global metrics recorder.
-    let (prometheus_layer, metrics_router) = atc_server::metrics::build();
+    // Step 1: Get the shared Prometheus layer + metrics side-port router via
+    // common's installer. All integration tests share one process-global
+    // recorder; calling atc_server::metrics::build() here would attempt a
+    // second install_recorder() and panic with SetRecorderError.
+    let prometheus_layer = common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0
+        .clone();
+    let metrics_router = common::build_metrics_router();
 
     // Step 2: Register build info with real VERGEN_* labels from build.rs
     atc_server::metrics::register_build_info();

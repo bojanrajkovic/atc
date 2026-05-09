@@ -7,7 +7,7 @@
 //!
 //! Requires Docker (or OrbStack) to be running.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
