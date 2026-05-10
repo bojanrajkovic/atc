@@ -90,8 +90,27 @@ nodeSelector: {}
 # -- Tolerations for pod scheduling.
 tolerations: []
 
-# -- Affinity rules for pod scheduling.
+# -- Affinity rules for pod scheduling. When non-empty, this value is rendered
+# verbatim and fully overrides the chart's default podAntiAffinity injection
+# (see podAntiAffinity below). Use this for compound affinity needs (mixing
+# nodeAffinity, podAffinity, custom weights/topologies, etc.).
 affinity: {}
+
+# Pod anti-affinity convenience knob. Convenience shortcut that the chart
+# expands into a full `affinity.podAntiAffinity` block keyed off the standard
+# selector labels (app.kubernetes.io/name + app.kubernetes.io/instance) at
+# topologyKey: kubernetes.io/hostname. Setting `affinity:` (above) to a
+# non-empty value fully overrides this.
+podAntiAffinity:
+  # -- Anti-affinity mode:
+  #  - "soft" (default): preferredDuringSchedulingIgnoredDuringExecution with weight 100.
+  #    The scheduler tries to spread replicas across nodes but does not refuse to schedule
+  #    when only one node is available (e.g., single-node homelab clusters, kind/k3d).
+  #  - "hard": requiredDuringSchedulingIgnoredDuringExecution. Replicas refuse to schedule
+  #    on a node that already runs another ATC replica from the same release. Only
+  #    appropriate when the cluster has at least replicaCount nodes available.
+  #  - "off": omit the chart-injected podAntiAffinity rule entirely.
+  type: soft
 
 # -- ATC application configuration. All values map to ATC_* environment variables.
 config:

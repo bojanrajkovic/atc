@@ -105,7 +105,18 @@
     },
     "affinity": {
       "type": "object",
-      "description": "Affinity rules for pod scheduling."
+      "description": "Affinity rules for pod scheduling. When non-empty, fully overrides the chart's podAntiAffinity injection (see podAntiAffinity)."
+    },
+    "podAntiAffinity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["soft", "hard", "off"],
+          "description": "Anti-affinity mode. 'soft' (default) preferred with weight 100, 'hard' required, 'off' omits the chart-injected rule. Overridden by a non-empty affinity value."
+        }
+      }
     },
     "config": {
       "type": "object",

@@ -27,7 +27,8 @@ Helm chart packaging ATC for Kubernetes deployment. Published via two parallel c
 - **Multi-replica precondition:** `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. Enforced at template-render time via a `{{ fail }}` guard in `templates/deployment.yaml`.
 - **URL scheme validation:** the inline `config.databaseUrl` path is rejected at render time unless it starts with `postgres://` or `postgresql://`. The `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`), which exits with a remediation-naming log line before any sqlx connect call.
 - **Sticky sessions are NOT required.** Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design. Configuring sticky cookies is discouraged outside specific cost-tuning scenarios — it can mask gap-healing regressions in development.
-- **Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8.
+- **Pod anti-affinity** ships on by default via `podAntiAffinity.type` (`soft` / `hard` / `off`). A non-empty `affinity:` value fully overrides the chart's injection. Canonical write-up: `docs/architecture/deployment.md` § Multi-replica.
+- **PDB / HPA defaults are not provided.** Tracked as #9 / #8.
 - **Graceful shutdown surface:** `shutdown.preStopSleepSeconds` (default 5; `0` opts out and omits the `lifecycle` block) and `shutdown.terminationGracePeriodSeconds` (default 30) pair the EndpointSlice/preStop drain with `atc-server`'s ~13 s in-process budget. The `preStop` hook uses Kubernetes' native `Sleep` action (KEP-3960) — required because the runtime image is Distroless `cc:nonroot` (no `sleep` binary). `kubeVersion` is pinned to `>=1.32.0-0`. Canonical write-up: `docs/architecture/deployment.md` § Graceful shutdown.
 
 ## Commands

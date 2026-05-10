@@ -95,7 +95,17 @@ The runtime invariants that make symmetric multi-replica safe (see [`state-exter
 
 **Sticky sessions are NOT required** and are discouraged outside specific cost-tuning scenarios. Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design (ADR 0002 D5). A client that always lands on the same replica via sticky cookies will never exercise the reconnect-across-replicas code path, masking gap-healing regressions in development. Operators with specific needs (e.g., reducing reconnect storms during rolling updates) can add sticky-cookie annotations themselves at the Ingress / HTTPRoute level — the chart does not do this by default.
 
-**Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8.
+**Pod anti-affinity** ships on by default. The chart injects an `affinity.podAntiAffinity` rule keyed off the standard selector labels (`app.kubernetes.io/name` + `app.kubernetes.io/instance`) at `topologyKey: kubernetes.io/hostname`, controlled by `podAntiAffinity.type`:
+
+| `podAntiAffinity.type` | Behavior |
+|------------------------|----------|
+| `soft` (default) | `preferredDuringSchedulingIgnoredDuringExecution` with weight `100`. The scheduler tries to spread replicas across nodes but does not refuse to schedule when only one node is available — safe for single-node homelab clusters and kind/k3d. |
+| `hard` | `requiredDuringSchedulingIgnoredDuringExecution`. Replicas refuse to schedule onto a node already running another ATC replica from the same release. Only safe when the cluster has at least `replicaCount` schedulable nodes. |
+| `off` | Chart omits the `affinity` block entirely. |
+
+Setting `affinity:` to a non-empty value (full operator override) takes precedence over `podAntiAffinity.type` — the chart renders the supplied value verbatim and skips the convenience injection. Use this for compound affinity needs that mix `nodeAffinity`, `podAffinity`, custom weights, or non-hostname topology keys.
+
+**PDB / HPA defaults are not provided.** Tracked as #9 / #8.
 
 ## Graceful shutdown
 

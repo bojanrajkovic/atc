@@ -1,0 +1,84 @@
+suite: Pod anti-affinity defaults — soft / hard / off and operator override
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: renders soft podAntiAffinity by default with weight 100 and hostname topology
+    asserts:
+      - exists:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+      - notExists:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
+          value: 100
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.labelSelector.matchLabels["app.kubernetes.io/name"]
+          value: atc
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.labelSelector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: renders hard podAntiAffinity with required rule and hostname topology
+    set:
+      podAntiAffinity.type: hard
+    asserts:
+      - exists:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution
+      - notExists:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchLabels["app.kubernetes.io/name"]
+          value: atc
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: omits affinity entirely when podAntiAffinity.type is off
+    set:
+      podAntiAffinity.type: "off"
+    asserts:
+      - notExists:
+          path: spec.template.spec.affinity
+
+  - it: lets a non-empty affinity value fully override and suppresses podAntiAffinity injection
+    set:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+    asserts:
+      - exists:
+          path: spec.template.spec.affinity.nodeAffinity
+      - notExists:
+          path: spec.template.spec.affinity.podAntiAffinity
+
+  - it: lets a non-empty affinity value win even when podAntiAffinity.type is hard
+    set:
+      podAntiAffinity.type: hard
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/arch
+                    operator: In
+                    values:
+                      - amd64
+    asserts:
+      - exists:
+          path: spec.template.spec.affinity.nodeAffinity
+      - notExists:
+          path: spec.template.spec.affinity.podAntiAffinity
