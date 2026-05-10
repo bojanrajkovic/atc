@@ -2,6 +2,7 @@
 
 Last verified: 2026-05-10
 
+
 ## Purpose
 
 The release pipeline automates versioning, artifact generation, and publication for the ATC project. It follows a two-phase design:
@@ -123,9 +124,9 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
-**Decision:** Helm chart published via two parallel channels — OCI on `ghcr.io/<owner>/charts/atc` (Sigstore-attested) and a classic HTTP repo on GitHub Pages (`https://<owner>.github.io/<repo>`)
+**Decision:** Helm chart published via two parallel channels — OCI on `ghcr.io/<owner>/charts/atc` (Sigstore-attested) and a classic HTTP repo on GitHub Pages (`https://<owner>.github.io/<repo>/charts`)
 
-**Alternatives considered:** OCI only; GitHub Pages only; publish on every push to main; unsigned artifacts
+**Alternatives considered:** OCI only; GitHub Pages only; publish on every push to main; unsigned artifacts; chart index at the gh-pages branch root vs. a `charts/` subpath
 
 **Rationale:** Both channels are tag-triggered from `release.yml` so chart versions always correspond to tagged application releases, and they stay in lockstep on the same tag rather than drifting between distribution surfaces. The split exists because the two surfaces serve different consumer profiles:
 
@@ -133,6 +134,12 @@ Both workflows integrate with the conventional commits framework to provide full
 - **GitHub Pages (`publish-helm-pages`)** — the recommended channel for consumers without GHCR authentication (a `helm repo add` URL works against any laptop or CI without registry credentials). Uses `helm/chart-releaser-action` to package the chart, attach a `.tgz` to a per-chart `atc-<version>` GitHub Release, and refresh `index.yaml` on the `gh-pages` branch. Gated on `needs: publish-helm-chart` so the OCI channel must succeed first; this preserves the existing supply-chain ordering (chart only lands publicly after its container image and OCI artifact are in place). The action is pinned to the SHA of `helm/chart-releaser-action@v1.7.0`, with the underlying `cr` binary explicitly pinned to `v1.8.1` (matching the `helm-cr` tool in `.mise.toml`) so local dry-runs and CI agree.
 
 `mark_as_latest: false` on the chart-releaser invocation prevents the per-chart `atc-<version>` release from clobbering the canonical `v<version>` release that `taiki-e/create-gh-release-action` already creates with the binaries. `fetch-depth: 0` on the checkout is required by chart-releaser, which diffs against prior tags. Permissions are `contents: write` only — Pages serves passively from the `gh-pages` branch, so no `pages: write` scope is needed.
+
+**`charts/` subpath layout (deploy/helm/cr.yaml):** `index.yaml` lives at `gh-pages/charts/index.yaml`, not the branch root. The action takes `pages-index-path: charts` from `deploy/helm/cr.yaml` (passed via the `config` input) and `cr index` writes the index file under that subdirectory. `.tgz` artifacts continue to live on per-chart GitHub Releases — the `urls:` field inside `index.yaml` points there regardless of where `index.yaml` itself sits, so only one path moves.
+
+The subpath layout is a forward-compatibility decision: it reserves the gh-pages branch root for a future static docs site at `https://<owner>.github.io/<repo>/`, served from the same Pages instance. Once consumers run `helm repo add atc https://<host>/<repo>/charts`, that URL becomes a public contract — moving the chart index later would break every operator who already configured it. Picking the `/charts` subpath before any consumer adopts the chart is essentially free; renaming after adoption is not.
+
+The same shape carries through to a custom domain: if `<owner>.github.io/<repo>` is later remapped to `https://atc.example.com/`, the chart index becomes `https://atc.example.com/charts` (the host changes, the subpath does not). chart-releaser preserves any `CNAME` file at the gh-pages branch root across runs because `cr` uses `git worktree add` to check out the existing tree and `git add <specific paths>` to stage only the modified `charts/` files — the root `CNAME` is never touched. (Verified against `helm/chart-releaser` `pkg/git/git.go` and `pkg/releaser/releaser.go` at v1.8.1.) Operators can therefore add a custom domain at any time without coordinating with the release pipeline.
 
 **Manual prerequisite:** GitHub Pages must be enabled with source = `gh-pages` branch in repo Settings → Pages. chart-releaser does not provision Pages itself — the first release run will create the `gh-pages` branch, but the operator must wire it to Pages once.
 
@@ -190,3 +197,4 @@ The regular `Dockerfile` is unchanged and remains the canonical entry point for 
 - `Dockerfile.release.dockerignore` — Per-Dockerfile ignore-list for `Dockerfile.release`; allowlists only `atc-server` (Docker 23.0+ convention)
 - `release-please-config.json` — Configures release-please plugins, version sync, and CHANGELOG generation
 - `.release-please-manifest.json` — Tracks current versions for all packages
+- `deploy/helm/cr.yaml` — chart-releaser config; pins `pages-index-path: charts` so the Helm index lives at `gh-pages/charts/index.yaml` and the gh-pages branch root stays available for a future docs site

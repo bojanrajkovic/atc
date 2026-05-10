@@ -405,6 +405,7 @@ jobs:
         with:
           version: v1.8.1
           charts_dir: deploy/helm
+          config: deploy/helm/cr.yaml
           pages_branch: gh-pages
           mark_as_latest: false
         env:

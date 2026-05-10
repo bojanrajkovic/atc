@@ -13,7 +13,7 @@ For architecture details and design decisions, see [`docs/architecture/deploymen
 The chart is published as a classic HTTP Helm repo on GitHub Pages. This is the recommended path for consumers without GHCR authentication:
 
 ```bash
-helm repo add atc https://bojanrajkovic.github.io/atc
+helm repo add atc https://bojanrajkovic.github.io/atc/charts
 helm repo update
 helm install atc atc/atc --version <version>
 ```
