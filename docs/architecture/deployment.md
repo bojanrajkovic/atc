@@ -113,9 +113,11 @@ Setting `affinity:` to a non-empty value (full operator override) takes preceden
 
 The chart renders an optional `HorizontalPodAutoscaler` (`autoscaling/v2`) gated on `autoscaling.enabled`. When enabled, the chart drops `spec.replicas` from the Deployment so the HPA owns the replica count — the autoscaler treats `replicas` as an external mutation otherwise, and operators see warning events on every reconcile. Operators set `autoscaling.minReplicas` for floor-count semantics.
 
-The HPA always emits a CPU `Resource` metric with `target.type: Utilization` driven by `autoscaling.targetCPUUtilizationPercentage` (default 80). When `autoscaling.targetMemoryUtilizationPercentage` is non-null, a memory `Resource` metric is appended alongside CPU.
+The HPA emits a CPU `Resource` metric with `target.type: Utilization` driven by `autoscaling.targetCPUUtilizationPercentage` (default 80) and, when `autoscaling.targetMemoryUtilizationPercentage` is non-null, a memory `Resource` metric alongside it. Either target may be set to `null` to omit the corresponding metric (e.g., for memory-only autoscaling); when both are null, the HPA renders without a `metrics` block (uncommon — typically paired with custom `metrics.external` set elsewhere).
 
-**Multi-replica precondition extends to autoscaling.** The same `{{ fail }}` guard that rejects `replicaCount > 1` without a Postgres URL also fires when `autoscaling.enabled` is true with `autoscaling.maxReplicas > 1`. The guard tests `maxReplicas` (not `minReplicas`) because the autoscaler is allowed to scale up to that ceiling — any unguarded ceiling above 1 admits divergent in-memory state.
+**Resource-request precondition.** Utilization-based metrics divide observed usage by the Pod's `resources.requests.<resource>`. When the request is unset, metrics-server reports `FailedGetResourceMetric` / `missing request for cpu` and the HPA never makes a scaling decision. The chart enforces this at template-render time: setting `autoscaling.targetCPUUtilizationPercentage` (default 80) without `resources.requests.cpu` fails the render with a remediation message, and the same guard pairs `autoscaling.targetMemoryUtilizationPercentage` with `resources.requests.memory`. The guard fires before any HPA is created, so operators see the misconfig at `helm install` time rather than after a load test.
+
+**Multi-replica precondition extends to autoscaling.** The same `{{ fail }}` guard that rejects `replicaCount > 1` without a Postgres URL also fires when `autoscaling.enabled` is true with `autoscaling.maxReplicas > 1`. The guard tests `maxReplicas` (not `minReplicas`) because the autoscaler is allowed to scale up to that ceiling — any unguarded ceiling above 1 admits divergent in-memory state. When `autoscaling.enabled` is true, the guard considers ONLY `autoscaling.maxReplicas` and ignores `replicaCount`, because the HPA owns `spec.replicas` (replicaCount is dead config in that mode); a high `replicaCount` paired with `autoscaling.maxReplicas: 1` is therefore valid for in-memory single-replica installs. When `autoscaling.enabled` is false, the guard falls back to `replicaCount > 1`.
 
 **Knobs.**
 
@@ -124,8 +126,8 @@ The HPA always emits a CPU `Resource` metric with `target.type: Utilization` dri
 | `autoscaling.enabled` | `false` | When false, the Deployment uses `replicaCount` directly and no HPA is rendered. |
 | `autoscaling.minReplicas` | `1` | Floor; respected during low-traffic windows. |
 | `autoscaling.maxReplicas` | `5` | Ceiling; values > 1 require a Postgres URL via the multi-replica fail-guard. |
-| `autoscaling.targetCPUUtilizationPercentage` | `80` | CPU `Resource` metric target. |
-| `autoscaling.targetMemoryUtilizationPercentage` | `null` | When set, appends a memory `Resource` metric alongside CPU. |
+| `autoscaling.targetCPUUtilizationPercentage` | `80` | CPU `Resource` metric target. When set, requires `resources.requests.cpu`. Set to `null` to omit the CPU metric. |
+| `autoscaling.targetMemoryUtilizationPercentage` | `null` | When set, appends a memory `Resource` metric alongside CPU; requires `resources.requests.memory`. |
 
 ## PodDisruptionBudget
 

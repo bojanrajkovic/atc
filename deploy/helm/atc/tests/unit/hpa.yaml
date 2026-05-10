@@ -13,6 +13,9 @@ tests:
     set:
       autoscaling.enabled: true
       config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
     asserts:
       - hasDocuments:
           count: 1
@@ -41,6 +44,9 @@ tests:
     set:
       autoscaling.enabled: true
       config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
     asserts:
       - lengthEqual:
           path: spec.metrics
@@ -63,6 +69,10 @@ tests:
       autoscaling.enabled: true
       autoscaling.targetMemoryUtilizationPercentage: 75
       config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
     asserts:
       - lengthEqual:
           path: spec.metrics
@@ -86,6 +96,9 @@ tests:
       autoscaling.minReplicas: 2
       autoscaling.maxReplicas: 10
       config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
     asserts:
       - equal:
           path: spec.minReplicas
@@ -93,3 +106,51 @@ tests:
       - equal:
           path: spec.maxReplicas
           value: 10
+
+  - it: fails when CPU utilization target is set but resources.requests.cpu is unset — message names the remediation path
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+    asserts:
+      - failedTemplate:
+          errorPattern: "resources\\.requests\\.cpu"
+      - failedTemplate:
+          errorPattern: "targetCPUUtilizationPercentage"
+
+  - it: fails when CPU utilization target is set but resources.requests.cpu is empty
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "resources\\.requests\\.cpu"
+
+  - it: fails when memory utilization target is set but resources.requests.memory is unset
+    set:
+      autoscaling.enabled: true
+      autoscaling.targetMemoryUtilizationPercentage: 75
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+    asserts:
+      - failedTemplate:
+          errorPattern: "resources\\.requests\\.memory"
+      - failedTemplate:
+          errorPattern: "targetMemoryUtilizationPercentage"
+
+  - it: renders successfully when CPU utilization is disabled (null) and no CPU request is set — no metrics, fail-guard does not fire
+    set:
+      autoscaling.enabled: true
+      autoscaling.targetCPUUtilizationPercentage: null
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: HorizontalPodAutoscaler
+      - notExists:
+          path: spec.metrics

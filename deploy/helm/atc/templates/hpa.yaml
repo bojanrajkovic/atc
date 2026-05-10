@@ -1,4 +1,21 @@
 {{- if .Values.autoscaling.enabled }}
+{{- /*
+   Resource-utilization metrics require a matching resources.requests entry on
+   the target Pod — the metrics-server computes utilization as
+   (current usage / requested) and reports FailedGetResourceMetric if the
+   request is missing. Fail at render time so operators see the misconfig at
+   `helm install` instead of after a load test reveals a non-functional HPA.
+*/ -}}
+{{- $cpuTarget := .Values.autoscaling.targetCPUUtilizationPercentage -}}
+{{- $cpuRequest := dig "requests" "cpu" "" .Values.resources -}}
+{{- if and (ne $cpuTarget nil) (eq (toString $cpuRequest) "") -}}
+{{- fail "autoscaling.targetCPUUtilizationPercentage is set but resources.requests.cpu is unset. Utilization-based HPA metrics require a CPU request so metrics-server can compute (usage / requested); without one the HPA reports FailedGetResourceMetric and never scales. Set resources.requests.cpu (e.g., resources.requests.cpu=100m) or set autoscaling.targetCPUUtilizationPercentage=null to omit the CPU metric." -}}
+{{- end -}}
+{{- $memTarget := .Values.autoscaling.targetMemoryUtilizationPercentage -}}
+{{- $memRequest := dig "requests" "memory" "" .Values.resources -}}
+{{- if and (ne $memTarget nil) (eq (toString $memRequest) "") -}}
+{{- fail "autoscaling.targetMemoryUtilizationPercentage is set but resources.requests.memory is unset. Utilization-based HPA metrics require a memory request so metrics-server can compute (usage / requested); without one the HPA reports FailedGetResourceMetric and never scales. Set resources.requests.memory (e.g., resources.requests.memory=128Mi) or set autoscaling.targetMemoryUtilizationPercentage=null to omit the memory metric." -}}
+{{- end -}}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -12,14 +29,17 @@ spec:
     name: {{ include "atc.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  {{- if or (ne $cpuTarget nil) (ne $memTarget nil) }}
   metrics:
+    {{- with $cpuTarget }}
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
-    {{- with .Values.autoscaling.targetMemoryUtilizationPercentage }}
+          averageUtilization: {{ . }}
+    {{- end }}
+    {{- with $memTarget }}
     - type: Resource
       resource:
         name: memory
@@ -27,4 +47,5 @@ spec:
           type: Utilization
           averageUtilization: {{ . }}
     {{- end }}
+  {{- end }}
 {{- end }}

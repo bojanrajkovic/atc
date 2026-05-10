@@ -7,10 +7,22 @@
 {{- end -}}
 {{- end -}}
 {{- $hasDbUrl := or (and .Values.existingSecret.name .Values.existingSecret.databaseUrlKey) $hasInlineDbUrl -}}
-{{- $hpaCanScale := and .Values.autoscaling.enabled (gt (int .Values.autoscaling.maxReplicas) 1) -}}
-{{- $multiReplica := or (gt (int .Values.replicaCount) 1) $hpaCanScale -}}
+{{- /*
+   Multi-replica fail-guard. The effective scale ceiling depends on which
+   controller owns spec.replicas:
+     - autoscaling.enabled=false → operator-supplied replicaCount
+     - autoscaling.enabled=true  → HPA-supplied autoscaling.maxReplicas
+   When the HPA owns the count, the Deployment's spec.replicas is omitted
+   (see the `if not .Values.autoscaling.enabled` block below) and replicaCount
+   is dead config — so a high replicaCount paired with maxReplicas: 1 cannot
+   actually scale above one pod and must not trip this guard.
+*/ -}}
+{{- $multiReplica := ternary
+      (gt (int .Values.autoscaling.maxReplicas) 1)
+      (gt (int .Values.replicaCount) 1)
+      .Values.autoscaling.enabled -}}
 {{- if and $multiReplica (not $hasDbUrl) -}}
-{{- fail "Multi-replica mode requires a PostgreSQL connection string. Set config.databaseUrl=postgres://... or existingSecret.name (with existingSecret.databaseUrlKey). This applies when replicaCount > 1 or when autoscaling.enabled with autoscaling.maxReplicas > 1. The chart's ephemeral in-memory mode is single-replica only." -}}
+{{- fail "Multi-replica mode requires a PostgreSQL connection string. Set config.databaseUrl=postgres://... or existingSecret.name (with existingSecret.databaseUrlKey). This applies when replicaCount > 1 (autoscaling disabled) or when autoscaling.enabled with autoscaling.maxReplicas > 1. The chart's ephemeral in-memory mode is single-replica only." -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment

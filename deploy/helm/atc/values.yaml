@@ -285,11 +285,17 @@ autoscaling:
   # -- Maximum replicas the HPA may scale up to. When > 1, requires an external
   # Postgres connection string (same multi-replica guard as replicaCount > 1).
   maxReplicas: 5
-  # -- Target average CPU utilization (percentage of requested CPU). Always rendered.
+  # -- Target average CPU utilization (percentage of requested CPU). When set
+  # (default 80), requires resources.requests.cpu — utilization-based HPA metrics
+  # are non-functional without a CPU request (metrics-server reports
+  # FailedGetResourceMetric). Set to null to omit the CPU metric (e.g., for
+  # memory-only autoscaling). Enforced at template-render time via a {{ fail }}
+  # guard in templates/hpa.yaml.
   targetCPUUtilizationPercentage: 80
   # -- Target average memory utilization (percentage of requested memory). When null,
   # the memory metric is omitted; when set to an integer, a memory Resource metric
-  # is appended alongside CPU.
+  # is appended alongside CPU. When set, requires resources.requests.memory (same
+  # render-time fail-guard as the CPU metric).
   targetMemoryUtilizationPercentage: null
 
 # Pod lifecycle for graceful shutdown. Pairs with the in-process shutdown

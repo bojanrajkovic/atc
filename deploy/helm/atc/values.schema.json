@@ -341,9 +341,9 @@
           "description": "Maximum replicas the HPA may scale up to. When > 1, requires an external Postgres connection string."
         },
         "targetCPUUtilizationPercentage": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1,
-          "description": "Target average CPU utilization (percentage of requested CPU)."
+          "description": "Target average CPU utilization (percentage of requested CPU). When null, the CPU metric is omitted; when set, requires resources.requests.cpu."
         },
         "targetMemoryUtilizationPercentage": {
           "type": ["integer", "null"],
