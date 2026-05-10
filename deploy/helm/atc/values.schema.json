@@ -251,6 +251,22 @@
         }
       }
     },
+    "shutdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preStopSleepSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Seconds the preStop hook sleeps before SIGTERM. 0 disables the hook."
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Pod-spec terminationGracePeriodSeconds. Should be >= preStopSleepSeconds + 13."
+        }
+      }
+    },
     "tests": {
       "type": "object",
       "additionalProperties": false,

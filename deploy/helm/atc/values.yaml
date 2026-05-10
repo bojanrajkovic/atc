@@ -203,3 +203,18 @@ gateway:
 tests:
   # -- Whether to include the helm test hook Pod (test-connection).
   enabled: true
+
+# Pod lifecycle for graceful shutdown. Pairs with the in-process shutdown
+# orchestration in atc-server (~13 s aggregate budget). See
+# docs/architecture/deployment.md § Graceful shutdown.
+shutdown:
+  # -- Seconds the preStop hook sleeps before SIGTERM is delivered. Absorbs the
+  # propagation delay between the EndpointSlice flipping ready=false and
+  # kube-proxy / cloud-LB rule sync. Set to 0 to disable the hook.
+  # Implemented via the kubelet-native preStop sleep action (K8s 1.32+).
+  preStopSleepSeconds: 5
+
+  # -- Pod-spec terminationGracePeriodSeconds. Must be >= preStopSleepSeconds + 13
+  # (the worst-case in-process shutdown budget). Default 30 covers the default
+  # 5 s preStop with comfortable headroom.
+  terminationGracePeriodSeconds: 30

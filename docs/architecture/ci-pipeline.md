@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-05-06
+Last verified: 2026-05-09
 
 ## Purpose
 
@@ -23,7 +23,7 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 
 **Decision:** Helm validation is split across two jobs — `helm-lint` (single instance, runs `helm lint` + `helm unittest`) and `helm` (2 × 5 matrix of Kubernetes versions × test values files for `helm template | kubeconform`)
 **Alternatives considered:** Single k8s version; inline bash loop instead of matrix; combine lint and matrix into one job; matrix-multiply lint over k8s versions
-**Rationale:** A two-endpoint matrix (oldest supported, latest stable) catches API deprecations and removals without the combinatorial overhead of testing every minor version. Five values files correspond to the five distinct feature surfaces (defaults, ingress, gateway, multi-replica, metrics) — exhaustive coverage without duplication. `helm lint` and `helm unittest` are k8s-version-independent (they don't run against an API server), so they live in a single non-matrixed `helm-lint` job rather than running ten times across the matrix. The two jobs land under one `helm-result` gate so branch protection treats them as a single required check.
+**Rationale:** A two-endpoint matrix (chart's declared `kubeVersion` floor, latest stable) catches API deprecations and removals without the combinatorial overhead of testing every minor version. The script (`scripts/helm-kubeconform-one.sh`) passes `--kube-version` to `helm template` so Helm enforces the chart's own `kubeVersion` constraint at render time — without that flag, kubeconform alone validates only resource schemas, and a chart declaring an incompatible `kubeVersion` would still render green. Five values files correspond to the five distinct feature surfaces (defaults, ingress, gateway, multi-replica, metrics) — exhaustive coverage without duplication. `helm lint` and `helm unittest` are k8s-version-independent (they don't run against an API server), so they live in a single non-matrixed `helm-lint` job rather than running ten times across the matrix. The two jobs land under one `helm-result` gate so branch protection treats them as a single required check.
 
 **Decision:** kubeconform uses datreeio/CRDs-catalog as a supplemental schema location
 **Alternatives considered:** Skip CRD validation; vendor CRD schemas into the repo; use kubeconform's built-in `--ignore-missing-schemas`
