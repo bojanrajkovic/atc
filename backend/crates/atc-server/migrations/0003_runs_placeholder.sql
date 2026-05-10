@@ -1,0 +1,13 @@
+-- Mark FK-only stub runs created by the job-before-run path.
+--
+-- The webhook handler's transactional helper `upsert_job_in_txn` inserts a
+-- minimal "stub" run row (head_sha='', display_title='', etc.) to satisfy the
+-- jobs.run_id foreign key when a workflow_job webhook arrives before its
+-- workflow_run webhook. The in-memory store never exposed these stubs in
+-- /v1/state — they have no real workflow data — so the PG-backed read path
+-- needs a way to filter them out.
+--
+-- placeholder = true on these stub rows; real workflow_run UPSERTs leave
+-- placeholder = false (the column default). `read_all_runs` filters
+-- WHERE placeholder = false.
+ALTER TABLE runs ADD COLUMN placeholder BOOLEAN NOT NULL DEFAULT false;

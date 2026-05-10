@@ -1,0 +1,92 @@
+import { render, screen } from '@testing-library/svelte'
+import { describe, expect, it } from 'vitest'
+
+import Wrapper from './test-utils/PaletteCommandItemWrapper.svelte'
+
+describe('PaletteCommandItem (browser mode)', () => {
+  it('renders label text inside Command context', () => {
+    render(Wrapper, {
+      props: {
+        label: 'Copy run URL',
+        onSelect: () => {},
+      },
+    })
+
+    expect(screen.getByText('Copy run URL')).toBeTruthy()
+  })
+
+  it('renders icon glyph when provided', () => {
+    const { container } = render(Wrapper, {
+      props: {
+        label: 'Copy',
+        icon: '📋',
+        onSelect: () => {},
+      },
+    })
+
+    expect(container.querySelector('.icon')).toBeTruthy()
+    expect(screen.getByText('📋')).toBeTruthy()
+  })
+
+  it('does not render icon span when icon is not provided', () => {
+    const { container } = render(Wrapper, {
+      props: {
+        label: 'Command',
+        onSelect: () => {},
+      },
+    })
+
+    expect(container.querySelector('.icon')).toBeFalsy()
+  })
+
+  it('renders shortcut chips as kbd elements when provided', () => {
+    const { container } = render(Wrapper, {
+      props: {
+        label: 'Open palette',
+        shortcut: ['⌘', 'K'],
+        onSelect: () => {},
+      },
+    })
+
+    const kbdElements = container.querySelectorAll('kbd')
+    expect(kbdElements.length).toBe(2)
+    expect(kbdElements[0]?.textContent).toBe('⌘')
+    expect(kbdElements[1]?.textContent).toBe('K')
+  })
+
+  it('renders empty shortcut wrapper (data-slot=command-shortcut) when shortcut is not provided', () => {
+    // The wrapper is always rendered with data-slot="command-shortcut" so the
+    // upstream CheckIcon in command-item.svelte hides via its
+    // `:has([data-slot=command-shortcut])` selector. Empty wrappers collapse via
+    // `display: none` in the component's `.shortcut:empty` rule, so they are
+    // visually absent but structurally present.
+    const { container } = render(Wrapper, {
+      props: {
+        label: 'Command',
+        onSelect: () => {},
+      },
+    })
+
+    const shortcut = container.querySelector('.shortcut')
+    expect(shortcut).toBeTruthy()
+    expect(shortcut?.getAttribute('data-slot')).toBe('command-shortcut')
+    expect(shortcut?.children.length).toBe(0)
+  })
+
+  it('renders with all properties together', () => {
+    const { container } = render(Wrapper, {
+      props: {
+        label: 'Copy URL',
+        icon: '🔗',
+        shortcut: ['⌘', 'C'],
+        onSelect: () => {},
+      },
+    })
+
+    expect(screen.getByText('Copy URL')).toBeTruthy()
+    expect(screen.getByText('🔗')).toBeTruthy()
+
+    const kbdElements = container.querySelectorAll('kbd')
+    expect(kbdElements.length).toBe(2)
+  })
+})

@@ -1,0 +1,49 @@
+# Codecov configuration. Reference: https://docs.codecov.com/docs/codecov-yaml
+#
+# Path-filtered CI causes one of `flags: backend` or `flags: frontend` to be
+# absent on most PRs (a frontend-only change skips the backend job, so no
+# `backend/lcov.info` is uploaded for that commit). Without `carryforward: yes`
+# Codecov treats the missing flag as a coverage drop and reports
+# `codecov/project: failure`. Carrying forward the previous coverage from the
+# parent commit means a missing upload no longer regresses the comparison.
+
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: backend
+      paths:
+        - backend/
+      carryforward: true
+    - name: frontend
+      paths:
+        - frontend/
+      carryforward: true
+
+coverage:
+  status:
+    project:
+      default:
+        # Don't fail PRs over small coverage fluctuations from carryforward
+        # comparisons (different commits have slightly different denominators).
+        threshold: 1%
+    patch:
+      default:
+        # Patch coverage is a softer gate — vendored shadcn-svelte primitives
+        # (`frontend/src/lib/components/ui/**`) and test-only modules are
+        # excluded from vitest's coverage instrumentation, but the lcov path
+        # mapping is approximate from Codecov's side, so allow some slack.
+        threshold: 5%
+
+# Files excluded from coverage analysis.
+# main.rs is binary entry-point wiring (signal handling, task spawning, server bind)
+# that is never exercised by tests. metrics.rs is one-shot metric registrations with
+# no conditional branches. Both accumulate missing lines that are not meaningful gaps.
+ignore:
+  - "backend/crates/atc-server/src/main.rs"
+  - "backend/crates/atc-server/src/metrics.rs"
+
+# Suppress the bot comment on PRs that touched only docs / config (no source).
+comment:
+  layout: "reach,diff,flags,tree"
+  require_changes: true

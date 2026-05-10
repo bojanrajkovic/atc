@@ -1,0 +1,4 @@
+replicaCount: 2
+
+config:
+  databaseUrl: "postgres://atc:atc@postgres:5432/atc"

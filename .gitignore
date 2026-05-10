@@ -1,10 +1,13 @@
 # Rust
 target/
+# Cargo — ignore root, track backend workspace lock
 Cargo.lock
+!backend/Cargo.lock
 
 # Node
 node_modules/
 dist/
+coverage/
 
 # pnpm
 .pnpm-store/
@@ -24,10 +27,28 @@ Thumbs.db
 .mise.local.toml
 mise.lock
 
+# Claude Code — track .claude/ config but ignore runtime state
+.remember/
+
+# Temporary / ephemeral
+tmp/
+
 # Environment
 .env
 .env.*
 !.env.example
+
+# ts-rs generated TypeScript bindings — canonical location is frontend/src/lib/types/generated/
+backend/**/bindings/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# Vitest artifacts
+.vitest-attachments/
+__screenshots__/
 
 # Implementation plans (generated, not source-controlled)
 docs/implementation-plans/

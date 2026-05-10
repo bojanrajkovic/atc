@@ -1,0 +1,32 @@
+suite: Deployment strategy — constant RollingUpdate (AC7)
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: renders RollingUpdate with maxSurge=1 and maxUnavailable=0 by default
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+
+  - it: keeps RollingUpdate strategy regardless of replicaCount or databaseUrl
+    set:
+      replicaCount: 3
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+    asserts:
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0

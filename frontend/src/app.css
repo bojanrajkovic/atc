@@ -1,0 +1,290 @@
+@import "tailwindcss";
+
+:root {
+  --hue: 155; /* radar (default theme) */
+  color-scheme: dark;
+
+  /* Neutral surfaces */
+  --bg: oklch(12% 0.063 var(--hue));
+  --surface: oklch(16% 0.063 var(--hue));
+  --surface-raised: oklch(20% 0.06 var(--hue));
+  --border: oklch(25% 0.055 var(--hue));
+
+  /* Text */
+  --text: oklch(85% 0.028 var(--hue));
+  --text-dim: oklch(72% 0.03 var(--hue));
+  --text-quiet: oklch(55% 0.02 var(--hue));
+  --kbd-bg: oklch(18% 0.015 var(--hue));
+  --kbd-border: oklch(30% 0.02 var(--hue));
+  --mark-bg: oklch(40% 0.2 80);
+  --mark-underline: oklch(65% 0.22 80);
+
+  /* Status colors — fixed hues, theme-independent */
+  --queued: oklch(72% 0.15 250);
+  --running: oklch(78% 0.16 80);
+  --success: oklch(72% 0.16 155);
+  --failed: oklch(72% 0.17 25);
+  --cancelled: var(--text-dim);
+  --timed-out: oklch(76% 0.18 40);
+  --action-required: oklch(88% 0.2 55);
+  --neutral: oklch(60% 0.025 var(--hue));
+
+  /* Accent */
+  --accent: oklch(45% 0.2 250);
+  --text-on-accent: white;
+  --halo-color: oklch(78% 0.16 80 / 0.25);
+
+  /* Typography */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* Type scale (Major Third 1.25) */
+  --text-xs: 0.625rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.9375rem;
+
+  /* Line heights */
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+
+  /* Letter spacing */
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.1em;
+
+  /* Motion tokens */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 400ms;
+
+  /* shadcn compatibility aliases */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--text-on-accent);
+  --secondary: var(--surface-raised);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-raised);
+  --muted-foreground: var(--text-dim);
+  --ring: var(--accent);
+  --destructive: var(--failed);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --input: var(--border);
+  --accent-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --destructive-foreground: var(--text-on-accent);
+}
+
+/* Theme hue selectors */
+[data-theme="warm"] {
+  --hue: 70;
+}
+
+[data-theme="radar"] {
+  --hue: 155;
+}
+
+[data-theme="violet"] {
+  --hue: 280;
+}
+
+[data-theme="pink"] {
+  --hue: 310;
+}
+
+/* Run card halo — running-state pulsating animation */
+.run-card[data-status="InProgress"] {
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 8px 2px var(--halo-color);
+  }
+}
+
+/* Run-card base layout (global so compact-density overrides can beat it).
+   Svelte-scoped rules on `.run-card` would be hashed into a higher-specificity
+   selector and win over the [data-density] override, leaving compact mode
+   with hidden rows but full padding. */
+.run-card {
+  position: relative;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* 3px accent bar colored by the inline `--status-color` custom property set
+   on the card root (RunCard.svelte writes `style="--status-color: ..."`). */
+.run-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--status-color);
+}
+
+/* Compact-density overrides (hide secondary card content, shrink padding/type) */
+[data-density="compact"] .run-card-meta,
+[data-density="compact"] .run-card-progress,
+[data-density="compact"] .run-card-runner {
+  display: none;
+}
+
+[data-density="compact"] .run-card {
+  padding: 6px 10px;
+}
+
+[data-density="compact"] .run-card-name {
+  font-size: var(--text-sm);
+}
+
+/* Light mode override */
+[data-mode="light"] {
+  color-scheme: light;
+  --bg: oklch(97% 0.022 var(--hue));
+  --surface: oklch(99% 0.013 var(--hue));
+  --surface-raised: oklch(92% 0.025 var(--hue));
+  --border: oklch(85% 0.028 var(--hue));
+  --text: oklch(16% 0.063 var(--hue));
+  --text-dim: oklch(40% 0.04 var(--hue));
+  --text-quiet: oklch(55% 0.02 var(--hue));
+  --kbd-bg: oklch(95% 0.01 var(--hue));
+  --kbd-border: oklch(85% 0.02 var(--hue));
+  --mark-bg: oklch(85% 0.22 80);
+  --mark-underline: oklch(55% 0.3 80);
+  --queued: oklch(45% 0.18 250);
+  --running: oklch(45% 0.15 80);
+  --success: oklch(42% 0.15 155);
+  --failed: oklch(48% 0.18 25);
+  --cancelled: var(--text-dim);
+  --timed-out: oklch(49% 0.18 40);
+  --action-required: oklch(50% 0.18 55);
+  --neutral: oklch(45% 0.025 var(--hue));
+  --accent: oklch(45% 0.2 250);
+  --halo-color: oklch(50% 0.15 80 / 0.5);
+}
+
+/* prefers-reduced-motion reset */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    transition-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    scroll-behavior: auto !important;
+  }
+
+  .run-card[data-status="InProgress"] {
+    /* biome-ignore lint/complexity/noImportantStyles: prefers-reduced-motion overrides require !important */
+    animation: none !important;
+  }
+}
+
+/*
+ * Hide subsequent backdrop overlays when multiple Bits UI Dialogs are open.
+ * Bits UI portals every overlay to document.body in mount order, so with palette
+ * opened on top of panel both overlays are siblings under <body>. The general
+ * sibling combinator (~) hides every overlay after the first, preventing
+ * double-darkening of the kanban behind a stacked palette+panel.
+ *
+ * Note: Bits UI's `data-nested` attribute (set when DialogRootState.parent !== null)
+ * does NOT fire for sibling components — DialogRootContext is lexical Svelte context,
+ * not portal-runtime. The mount-order approach is the equivalent for siblings.
+ */
+[data-dialog-overlay] ~ [data-dialog-overlay] {
+  display: none;
+}
+
+/* @theme block — Tailwind v4 bridge */
+@theme {
+  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-family-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+}
+
+/*
+ * Bridge shadcn-svelte color aliases (declared on :root above) to Tailwind v4
+ * theme keys. Without this, classes like `bg-popover` / `text-popover-foreground`
+ * are never generated by Tailwind because v4 only sees `--color-*` tokens inside
+ * `@theme` as theme colors. `inline` keeps the value as `var(--popover)` at the
+ * utility site so cascade-based theme switching ([data-theme], [data-mode])
+ * stays live.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* Base styles */
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: var(--leading-normal);
+}
+
+/*
+ * Cross-browser thin scrollbar using existing OKLCH tokens.
+ * Thumb: var(--border) at 80% opacity for visibility without
+ * competing with content. Track: transparent.
+ *
+ * Firefox: scrollbar-width + scrollbar-color (standard).
+ * Chromium/Safari: ::-webkit-scrollbar family with border +
+ * background-clip: padding-box (Rauno Freiberg pattern) so the
+ * border gap acts as the track spacing.
+ */
+.atc-scrollbar {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--border) 80%, transparent) transparent;
+}
+
+.atc-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.atc-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.atc-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--border) 80%, transparent);
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}

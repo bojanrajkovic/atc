@@ -1,0 +1,196 @@
+{{- $dbUrl := .Values.config.databaseUrl | default "" -}}
+{{- $hasInlineDbUrl := ne $dbUrl "" -}}
+{{- if $hasInlineDbUrl -}}
+{{- if not (or (hasPrefix "postgres://" $dbUrl) (hasPrefix "postgresql://" $dbUrl)) -}}
+{{- $scheme := (splitn "://" 2 $dbUrl)._0 -}}
+{{- fail (printf "config.databaseUrl must use the postgres:// or postgresql:// scheme; got %q. ATC only supports external PostgreSQL." $scheme) -}}
+{{- end -}}
+{{- end -}}
+{{- $hasDbUrl := or (and .Values.existingSecret.name .Values.existingSecret.databaseUrlKey) $hasInlineDbUrl -}}
+{{- /*
+   Multi-replica fail-guard. The effective scale ceiling depends on which
+   controller owns spec.replicas:
+     - autoscaling.enabled=false → operator-supplied replicaCount
+     - autoscaling.enabled=true  → HPA-supplied autoscaling.maxReplicas
+   When the HPA owns the count, the Deployment's spec.replicas is omitted
+   (see the `if not .Values.autoscaling.enabled` block below) and replicaCount
+   is dead config — so a high replicaCount paired with maxReplicas: 1 cannot
+   actually scale above one pod and must not trip this guard.
+*/ -}}
+{{- $multiReplica := ternary
+      (gt (int .Values.autoscaling.maxReplicas) 1)
+      (gt (int .Values.replicaCount) 1)
+      .Values.autoscaling.enabled -}}
+{{- if and $multiReplica (not $hasDbUrl) -}}
+{{- fail "Multi-replica mode requires a PostgreSQL connection string. Set config.databaseUrl=postgres://... or existingSecret.name (with existingSecret.databaseUrlKey). This applies when replicaCount > 1 (autoscaling disabled) or when autoscaling.enabled with autoscaling.maxReplicas > 1. The chart's ephemeral in-memory mode is single-replica only." -}}
+{{- end -}}
+{{- if and .Values.otel.enabled (eq (.Values.otel.endpoint | default "") "") -}}
+{{- fail "otel.enabled=true requires a non-empty otel.endpoint (HTTP/protobuf OTLP URL, e.g. http://otel-collector.observability:4318). atc-server treats an empty endpoint as disabled, so leaving it blank silently turns telemetry off." -}}
+{{- end -}}
+{{- $ratioSampler := or (eq .Values.otel.sampler "traceidratio") (eq .Values.otel.sampler "parentbased_traceidratio") -}}
+{{- if and .Values.otel.enabled $ratioSampler (eq (.Values.otel.samplerArg | default "") "") -}}
+{{- fail (printf "otel.sampler=%q requires a non-empty otel.samplerArg (decimal in [0, 1], e.g. \"0.1\" for 10%% sampling). For unconditional sampling use otel.sampler=parentbased_always_on (default) or always_on instead." .Values.otel.sampler) -}}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atc.fullname" . }}
+  labels:
+    {{- include "atc.labels" . | nindent 4 }}
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "atc.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "atc.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "atc.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ATC_HTTP_ADDR
+              value: {{ .Values.config.httpAddr | quote }}
+            - name: ATC_LOG_FILTER
+              value: {{ .Values.config.logFilter | quote }}
+            {{- if .Values.config.logFormat }}
+            - name: ATC_LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+            {{- end }}
+            {{- if .Values.existingSecret.name }}
+            - name: ATC_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name | quote }}
+                  key: {{ .Values.existingSecret.databaseUrlKey | quote }}
+            {{- else if .Values.config.databaseUrl }}
+            - name: ATC_DATABASE_URL
+              value: {{ .Values.config.databaseUrl | quote }}
+            {{- end }}
+            {{- if and .Values.existingSecret.name .Values.existingSecret.databaseListenerUrlKey }}
+            - name: ATC_DATABASE_LISTENER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret.name | quote }}
+                  key: {{ .Values.existingSecret.databaseListenerUrlKey | quote }}
+            {{- else if .Values.config.databaseListenerUrl }}
+            - name: ATC_DATABASE_LISTENER_URL
+              value: {{ .Values.config.databaseListenerUrl | quote }}
+            {{- end }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_K8S_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: OTEL_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otel.serviceName | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "k8s.pod.name=$(OTEL_K8S_POD_NAME),k8s.namespace.name=$(OTEL_K8S_POD_NAMESPACE),k8s.pod.uid=$(OTEL_K8S_POD_UID),k8s.node.name=$(OTEL_K8S_NODE_NAME),k8s.deployment.name=%s%s" (include "atc.fullname" .) (ternary (printf ",%s" .Values.otel.resourceAttributes) "" (ne .Values.otel.resourceAttributes "")) | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.otel.sampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.otel.samplerArg | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          {{- if gt (.Values.shutdown.preStopSleepSeconds | int) 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.shutdown.preStopSleepSeconds }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else if ne .Values.podAntiAffinity.type "off" }}
+      affinity:
+        podAntiAffinity:
+          {{- if eq .Values.podAntiAffinity.type "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "atc.selectorLabels" . | nindent 18 }}
+              topologyKey: kubernetes.io/hostname
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "atc.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+          {{- end }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.shutdown.terminationGracePeriodSeconds }}

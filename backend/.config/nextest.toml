@@ -1,0 +1,24 @@
+[profile.default]
+# Warn (don't terminate) when individual tests are slow. Some PG-backed tests
+# legitimately wait ~11s on the production HEARTBEAT_TICK constant; defaults
+# would otherwise mark them slow.
+slow-timeout = { period = "30s", terminate-after = 10 }
+
+# Each test runs in its own subprocess. The PG-backed tests in `atc-server`
+# each spin up an ephemeral testcontainer; on a single Docker daemon, spawning
+# too many in parallel saturates the daemon. Cap the local default at 8 — the
+# `ci` profile relaxes this for higher-core runners.
+test-threads = 8
+
+[profile.ci]
+# CI runners may flake on testcontainers boots under contention; one retry
+# per test keeps spurious failures from blocking PRs without hiding real bugs.
+retries = { backoff = "exponential", count = 1, delay = "1s" }
+
+# GitHub-hosted ubuntu runners have 4 vCPUs; matching that avoids over-
+# subscribing CPU and Docker daemon.
+test-threads = 4
+
+# Don't stop the whole run on the first failure — surface the full failure
+# set to the developer.
+fail-fast = false

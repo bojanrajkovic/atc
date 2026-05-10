@@ -1,0 +1,156 @@
+suite: HorizontalPodAutoscaler — gated rendering and metric flow-through
+
+templates:
+  - hpa.yaml
+
+tests:
+  - it: does not render an HPA when autoscaling.enabled is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders an HPA when autoscaling.enabled is true, targeting the chart Deployment
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: HorizontalPodAutoscaler
+      - equal:
+          path: apiVersion
+          value: autoscaling/v2
+      - equal:
+          path: spec.scaleTargetRef.apiVersion
+          value: apps/v1
+      - equal:
+          path: spec.scaleTargetRef.kind
+          value: Deployment
+      - equal:
+          path: spec.scaleTargetRef.name
+          value: RELEASE-NAME-atc
+      - equal:
+          path: spec.minReplicas
+          value: 1
+      - equal:
+          path: spec.maxReplicas
+          value: 5
+
+  - it: renders only the CPU Resource metric by default
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+    asserts:
+      - lengthEqual:
+          path: spec.metrics
+          count: 1
+      - equal:
+          path: spec.metrics[0].type
+          value: Resource
+      - equal:
+          path: spec.metrics[0].resource.name
+          value: cpu
+      - equal:
+          path: spec.metrics[0].resource.target.type
+          value: Utilization
+      - equal:
+          path: spec.metrics[0].resource.target.averageUtilization
+          value: 80
+
+  - it: appends a memory Resource metric when targetMemoryUtilizationPercentage is set
+    set:
+      autoscaling.enabled: true
+      autoscaling.targetMemoryUtilizationPercentage: 75
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+    asserts:
+      - lengthEqual:
+          path: spec.metrics
+          count: 2
+      - equal:
+          path: spec.metrics[1].type
+          value: Resource
+      - equal:
+          path: spec.metrics[1].resource.name
+          value: memory
+      - equal:
+          path: spec.metrics[1].resource.target.type
+          value: Utilization
+      - equal:
+          path: spec.metrics[1].resource.target.averageUtilization
+          value: 75
+
+  - it: flows non-default minReplicas and maxReplicas through to the HPA spec
+    set:
+      autoscaling.enabled: true
+      autoscaling.minReplicas: 2
+      autoscaling.maxReplicas: 10
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+    asserts:
+      - equal:
+          path: spec.minReplicas
+          value: 2
+      - equal:
+          path: spec.maxReplicas
+          value: 10
+
+  - it: fails when CPU utilization target is set but resources.requests.cpu is unset — message names the remediation path
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+    asserts:
+      - failedTemplate:
+          errorPattern: "resources\\.requests\\.cpu"
+      - failedTemplate:
+          errorPattern: "targetCPUUtilizationPercentage"
+
+  - it: fails when CPU utilization target is set but resources.requests.cpu is empty
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "resources\\.requests\\.cpu"
+
+  - it: fails when memory utilization target is set but resources.requests.memory is unset
+    set:
+      autoscaling.enabled: true
+      autoscaling.targetMemoryUtilizationPercentage: 75
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+      resources:
+        requests:
+          cpu: 100m
+    asserts:
+      - failedTemplate:
+          errorPattern: "resources\\.requests\\.memory"
+      - failedTemplate:
+          errorPattern: "targetMemoryUtilizationPercentage"
+
+  - it: renders successfully when CPU utilization is disabled (null) and no CPU request is set — no metrics, fail-guard does not fire
+    set:
+      autoscaling.enabled: true
+      autoscaling.targetCPUUtilizationPercentage: null
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: HorizontalPodAutoscaler
+      - notExists:
+          path: spec.metrics

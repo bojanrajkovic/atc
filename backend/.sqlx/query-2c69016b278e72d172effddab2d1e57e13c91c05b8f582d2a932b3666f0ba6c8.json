@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT workflow_name FROM runs WHERE id = 4001",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "workflow_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "2c69016b278e72d172effddab2d1e57e13c91c05b8f582d2a932b3666f0ba6c8"
+}

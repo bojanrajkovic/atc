@@ -1,0 +1,156 @@
+use crate::common;
+
+use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
+
+use atc_core::{RunStateMachine, SystemClock};
+use atc_server::state::{AppState, SeqEvent};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+
+fn now_millis_for_test() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode, header};
+use std::time::Duration;
+use tower::ServiceExt;
+
+/// Helper to build and test the full app with API routes and asset fallback.
+/// Must be used in tests marked with #[serial_test::serial] since the global
+/// recorder install can only happen once per binary.
+fn build_full_app() -> axum::Router {
+    common::ensure_recorder_installed();
+    let state_machine = Arc::new(RunStateMachine::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
+    let app_state = Arc::new(AppState {
+        state_machine,
+        webhook_tx,
+        webhook_secret: None,
+        seq,
+        pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
+    });
+    atc_server::routes::api_routes()
+        .with_state(app_state)
+        .fallback(atc_server::assets::fallback_handler())
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn healthz_returns_ok() {
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify response body is valid JSON
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("failed to read response body");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
+    assert_eq!(json["status"], "ok");
+
+    // Verify content-type header
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|v| v.to_str().unwrap()),
+        Some("application/json")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn readyz_returns_ok() {
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify response body is valid JSON
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("failed to read response body");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
+    assert_eq!(json["status"], "ok");
+
+    // Verify content-type header
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .map(|v| v.to_str().unwrap()),
+        Some("application/json")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn health_returns_404() {
+    // Test that the full app (with fallback) returns 404 for /health, not SPA index.html.
+    // Verifies unknown API paths return 404 at the app level.
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}

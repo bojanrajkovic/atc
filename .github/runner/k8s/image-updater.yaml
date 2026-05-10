@@ -1,0 +1,181 @@
+# CronJob: resolve ghcr.io/<owner>/atc-runner:latest to its immutable
+# digest and patch the ARC AutoscalingRunnerSet so `imagePullPolicy:
+# IfNotPresent` sees a new ref and rolls runner pods. Pre-pulls the new
+# image on every amd64 node so the Kubernetes scheduler's ImageLocality
+# scoring doesn't pin all runners to one node.
+#
+# Runs Monday 08:00 UTC — two hours after the weekly image build at
+# 06:00 UTC (see .github/workflows/runner-image.yml).
+#
+# Setup:
+#   1. After the first image push, make the package public so anonymous
+#      GHCR token exchange works. GitHub's REST API does NOT expose a
+#      visibility-PATCH endpoint for personal-account packages (only for
+#      org-owned ones), so for a personal-account image use the UI:
+#
+#        https://github.com/<owner>?tab=packages
+#          → atc-runner → Package settings
+#          → "Change visibility" → Public (type package name to confirm)
+#
+#      If the package is later moved to an org, the API works:
+#        gh api --method PATCH \
+#          /orgs/<org>/packages/container/atc-runner/visibility \
+#          -f visibility=public
+#
+#   2. Apply this manifest:
+#        kubectl apply -f .github/runner/k8s/image-updater.yaml
+#
+#   3. Update the ARC AutoscalingRunnerSet `gha-arc-atc` (in the
+#      `gha-arc-personal` namespace) to use `ghcr.io/bojanrajkovic/
+#      atc-runner:latest` as the runner container image. The first run of
+#      this CronJob will then resolve :latest to a digest and patch the
+#      AutoscalingRunnerSet to use the immutable digest reference.
+#
+# Resource names are prefixed `atc-` so this manifest can co-exist with
+# similar updaters for other repos sharing the same namespace (e.g. a
+# future `nacha-image-updater` for gha-arc-nacha-visualizer).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atc-image-updater
+  namespace: gha-arc-personal
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: atc-image-updater
+  namespace: gha-arc-personal
+rules:
+  - apiGroups: ["actions.github.com"]
+    resources: ["autoscalingrunnersets"]
+    verbs: ["get", "patch"]
+  # The script's `kubectl apply -f -` is an upsert: create on first run,
+  # update on subsequent runs (e.g. if a prior run was interrupted before
+  # the explicit delete and left the DaemonSet behind). Need patch/update
+  # in addition to create/get/delete/watch.
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["create", "get", "patch", "update", "delete", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: atc-image-updater
+  namespace: gha-arc-personal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: atc-image-updater
+subjects:
+  - kind: ServiceAccount
+    name: atc-image-updater
+    namespace: gha-arc-personal
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: atc-image-updater
+  namespace: gha-arc-personal
+spec:
+  schedule: "0 8 * * 1" # Monday 08:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          serviceAccountName: atc-image-updater
+          restartPolicy: Never
+          containers:
+            - name: updater
+              image: alpine/k8s:1.35.2
+              env:
+                - name: IMAGE
+                  value: ghcr.io/bojanrajkovic/atc-runner
+                - name: RESOURCE
+                  value: autoscalingrunnersets/gha-arc-atc
+                - name: NAMESPACE
+                  value: gha-arc-personal
+              command: ["/bin/bash", "-euo", "pipefail", "-c"]
+              args:
+                - |
+                  # Resolve :latest to its immutable digest via the OCI distribution API.
+                  # The image is public, so we use anonymous token exchange — no PAT needed.
+                  REPO="${IMAGE#ghcr.io/}"
+                  TOKEN=$(curl -sf "https://ghcr.io/token?scope=repository:${REPO}:pull" \
+                    | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+                  # The digest comes back in the Docker-Content-Digest response header,
+                  # so we only need curl + grep — no jq required.
+                  DIGEST=$(curl -sf --head \
+                    -H "Authorization: Bearer ${TOKEN}" \
+                    -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json,application/vnd.docker.distribution.manifest.list.v2+json" \
+                    "https://ghcr.io/v2/${REPO}/manifests/latest" \
+                    | grep -i docker-content-digest | awk '{print $2}' | tr -d '\r\n')
+
+                  if [ -z "$DIGEST" ]; then
+                    echo "ERROR: could not resolve digest for ${IMAGE}:latest"
+                    exit 1
+                  fi
+
+                  PINNED="${IMAGE}@${DIGEST}"
+
+                  # Compare to what's currently deployed
+                  CURRENT=$(kubectl get "$RESOURCE" -n "$NAMESPACE" \
+                    -o jsonpath='{.spec.template.spec.containers[?(@.name=="runner")].image}')
+
+                  if [ "$CURRENT" = "$PINNED" ]; then
+                    echo "Image unchanged: ${PINNED}"
+                    exit 0
+                  fi
+
+                  echo "Updating runner image:"
+                  echo "  from: ${CURRENT}"
+                  echo "  to:   ${PINNED}"
+
+                  # Patch both the runner container and the init-dind-externals init container
+                  kubectl patch "$RESOURCE" -n "$NAMESPACE" --type json -p "[
+                    {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"${PINNED}\"},
+                    {\"op\":\"replace\",\"path\":\"/spec/template/spec/initContainers/0/image\",\"value\":\"${PINNED}\"}
+                  ]"
+
+                  echo "Done — ARC will use the new image for subsequent runner pods."
+
+                  # Pre-pull the new image on all amd64 nodes so the scheduler's
+                  # ImageLocality scoring doesn't pin all runner pods to whichever
+                  # node already has the image cached.
+                  echo "Pre-pulling image on all amd64 nodes..."
+                  cat <<DSEOF | kubectl apply -f -
+                  apiVersion: apps/v1
+                  kind: DaemonSet
+                  metadata:
+                    name: ci-runner-prepull
+                    namespace: ${NAMESPACE}
+                  spec:
+                    selector:
+                      matchLabels:
+                        app: ci-runner-prepull
+                    template:
+                      metadata:
+                        labels:
+                          app: ci-runner-prepull
+                      spec:
+                        nodeSelector:
+                          kubernetes.io/arch: amd64
+                        initContainers:
+                        - name: pull
+                          image: ${PINNED}
+                          command: ["true"]
+                        containers:
+                        - name: pause
+                          image: gcr.io/google-containers/pause:3.2
+                        terminationGracePeriodSeconds: 0
+                  DSEOF
+
+                  kubectl rollout status daemonset/ci-runner-prepull -n "${NAMESPACE}" --timeout=120s || true
+                  kubectl delete daemonset ci-runner-prepull -n "${NAMESPACE}" --ignore-not-found
+                  echo "Pre-pull complete."

@@ -8,32 +8,37 @@ pre-commit:
   commands:
     clippy:
       glob: "*.rs"
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      root: "backend/"
+      run: mise exec -- cargo clippy --all-targets --all-features -- -D warnings
     rustfmt:
       glob: "*.rs"
-      run: cargo fmt --check
+      root: "backend/"
+      run: mise exec -- cargo fmt --check
     biome:
-      glob: "*.{ts,js}"
-      run: pnpm exec biome check {staged_files}
+      glob: "*.{ts,js,css}"
+      root: "frontend/"
+      run: mise exec -- pnpm exec biome check .
     eslint-svelte:
       glob: "*.svelte"
-      run: pnpm exec eslint {staged_files}
+      root: "frontend/"
+      run: mise exec -- pnpm exec eslint '**/*.svelte'
+    prettier-svelte:
+      glob: "*.svelte"
+      root: "frontend/"
+      run: mise exec -- pnpm exec prettier --check '**/*.svelte'
 
 commit-msg:
   commands:
     commitlint:
-      run: pnpm exec commitlint --edit {1}
+      run: mise exec -- pnpm exec commitlint --edit {1}
 
 pre-push:
   commands:
     cargo-test:
-      # PHASE 2+ UPDATE REQUIRED: Remove condition when Cargo.toml exists
-      run: "if [ -f Cargo.toml ]; then cargo test --all; else echo 'cargo test: no Rust project yet (skipped)'; fi"
+      root: "backend/"
+      run: mise exec -- cargo nextest run --workspace
     vitest:
-      # PHASE 2+ UPDATE REQUIRED: Remove condition when vitest is configured
-      run: "if pnpm exec vitest --version >/dev/null 2>&1; then pnpm exec vitest run; else echo 'vitest: not configured yet (skipped)'; fi"
-    playwright:
-      # PHASE 2+ UPDATE REQUIRED: Remove condition when playwright is configured
-      run: "if pnpm exec playwright --version >/dev/null 2>&1; then pnpm exec playwright test; else echo 'playwright: not configured yet (skipped)'; fi"
+      root: "frontend/"
+      run: mise exec -- pnpm exec vitest run
     doc-staleness:
       run: scripts/check-docs-lefthook.sh

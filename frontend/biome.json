@@ -1,0 +1,107 @@
+{
+  "$schema": "https://biomejs.dev/schemas/latest/schema.json",
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "complexity": {
+        "noForEach": "warn",
+        "noImportantStyles": "warn",
+        "noUselessCatch": "error",
+        "noUselessStringConcat": "error",
+        "noUselessUndefined": "error",
+        "noVoid": "error",
+        "useArrowFunction": "error"
+      },
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "warn",
+        "useExhaustiveDependencies": "error"
+      },
+      "style": {
+        "noNegationElse": "error",
+        "noNonNullAssertion": "warn",
+        "noParameterAssign": "error",
+        "noUselessElse": "error",
+        "useCollapsedElseIf": "error",
+        "useCollapsedIf": "error",
+        "useConst": "error",
+        "useDefaultParameterLast": "error",
+        "useExplicitLengthCheck": "error",
+        "useExportType": "error",
+        "useForOf": "error",
+        "useImportType": "error",
+        "useNumberNamespace": "error",
+        "useShorthandAssign": "error",
+        "useTemplate": "error",
+        "useThrowNewError": "error",
+        "useThrowOnlyError": "error"
+      },
+      "suspicious": {
+        "noConsole": "warn",
+        "noDoubleEquals": "error",
+        "noEvolvingTypes": "error",
+        "noExplicitAny": "warn",
+        "noImplicitAnyLet": "error",
+        "noShadowRestrictedNames": "error",
+        "useAwait": "error"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "semicolons": "asNeeded"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
+    "formatter": {
+      "indentStyle": "space",
+      "indentWidth": 2
+    }
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**/*",
+      "!!**/*.svelte",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!**/pnpm-lock.yaml",
+      "!!**/src/lib/types/generated",
+      "!!**/test-results",
+      "!!**/playwright-report",
+      "!!**/coverage"
+    ]
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/test-utils/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ],
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  }
+}

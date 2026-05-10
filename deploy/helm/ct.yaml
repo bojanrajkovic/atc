@@ -1,0 +1,11 @@
+# chart-testing config consumed by the `helm-install` CI job
+# (.github/workflows/ci.yml). `ct install` reads `*-values.yaml` from each
+# chart's `ci/` directory automatically; the actual test fixture lives at
+# `deploy/helm/atc/ci/test-values.yaml`.
+chart-dirs:
+  - deploy/helm
+
+# `helm install --wait` is the readiness gate ct uses; bound it so a stuck
+# pull or scheduling issue surfaces as a CI failure rather than the job's
+# 6-hour default cap.
+helm-extra-args: --timeout 300s

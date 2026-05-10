@@ -1,0 +1,110 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,\n               commit_message, event, display_title, status, conclusion,\n               html_url, created_at, run_started_at, updated_at\n          FROM runs\n         WHERE placeholder = false\n         ORDER BY id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "org",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "workflow_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "workflow_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "branch",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "head_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "commit_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "event",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "display_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "conclusion",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "html_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "run_started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "27541255fc22ba7cd2de170cf669309183056b81ce9fdd2d31335a05ac2b43d8"
+}

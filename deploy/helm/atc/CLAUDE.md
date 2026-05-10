@@ -1,0 +1,51 @@
+# CLAUDE.md — deploy/helm/atc
+
+Last verified: 2026-05-10
+
+> Canonical documentation lives in `docs/architecture/deployment.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
+
+## Purpose
+
+Helm chart packaging ATC for Kubernetes deployment. Published via two parallel channels on tag-triggered release: OCI on `oci://ghcr.io/bojanrajkovic/charts/atc` (Sigstore-attested) and a classic HTTP Helm repo at `https://bojanrajkovic.github.io/atc/charts` (no auth required). Index path uses the `/charts` subpath so the gh-pages root stays available for a future docs site — see `docs/architecture/release-pipeline.md` for the URL-stability rationale and `deploy/helm/cr.yaml` for the chart-releaser config.
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `Chart.yaml` | Chart metadata and version |
+| `values.yaml` | Default values (restricted Pod Security Standards) |
+| `values.schema.json` | JSON Schema for values validation (`additionalProperties: false`) |
+| `templates/` | Kubernetes manifests (Deployment, Service, ServiceAccount, optional Ingress/HTTPRoute/HPA/PDB/NetworkPolicy) |
+| `tests/` | helm-unittest test suites + values fixtures consumed by `just helm-template` and `just helm-check` |
+| `ci/test-values.yaml` | `ct install` values fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for kind-loaded image) |
+
+## Contracts
+
+- **Restricted security by default:** `runAsNonRoot: true`, UID 65532, seccomp RuntimeDefault. Overridable via values for operator edge cases.
+- **Optional resources gated by flags:** Ingress and HTTPRoute each default to `false`.
+- **OpenTelemetry export gated by `otel.enabled`:** when `true`, the deployment template injects five spec-standard env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`) PLUS four downward-API env vars (`OTEL_K8S_POD_NAME`, `OTEL_K8S_POD_NAMESPACE`, `OTEL_K8S_POD_UID`, `OTEL_K8S_NODE_NAME`) consumed by `OTEL_RESOURCE_ATTRIBUTES` to publish `k8s.pod.name`/`k8s.namespace.name`/`k8s.pod.uid`/`k8s.node.name`/`k8s.deployment.name` as resource attributes. Operator-supplied `otel.resourceAttributes` are appended after the k8s prefix; an explicit `k8s.*` override in values wins because duplicate-key resolution takes the last value. When `otel.enabled: false` (default) none are injected. OTLP transport is HTTP/protobuf only — no `protocol` values key. Render-time `{{ fail }}` rejects `otel.enabled: true` with an empty `otel.endpoint` (the binary treats an empty endpoint as disabled, so a blank value would silently turn telemetry off). A second guard fails if `otel.sampler` is `traceidratio` or `parentbased_traceidratio` with an empty `otel.samplerArg` — operators must supply the ratio explicitly, OR pick an always-style sampler (`always_on`, `parentbased_always_on`, etc.) where the arg is meaningless.
+- **Removed in chart 0.2:** `metrics.*` values block, `config.metricsAddr`, the `metrics` Service port, and the `templates/servicemonitor.yaml` template are gone. The values schema's `additionalProperties: false` rejects any leftover `metrics.*` or `config.metricsAddr` overrides at render time. Operators upgrading from 0.1.x must remove those keys.
+- **PgBouncer + listener compatibility:** Operators running the main pool through transaction-mode PgBouncer MUST set `ATC_DATABASE_LISTENER_URL` (via `config.databaseListenerUrl` or `existingSecret.databaseListenerUrlKey`) to point the PG listener at a session-mode endpoint. Transaction-mode PgBouncer reassigns the underlying connection between transactions, silently dropping `LISTEN` registrations and breaking the listener task. The `existingSecret` path wins over the plain-value path when both are set.
+- **Multi-replica precondition:** `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. Enforced at template-render time via a `{{ fail }}` guard in `templates/deployment.yaml`.
+- **URL scheme validation:** the inline `config.databaseUrl` path is rejected at render time unless it starts with `postgres://` or `postgresql://`. The `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`), which exits with a remediation-naming log line before any sqlx connect call.
+- **Sticky sessions are NOT required.** Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design. Configuring sticky cookies is discouraged outside specific cost-tuning scenarios — it can mask gap-healing regressions in development.
+- **Pod anti-affinity** ships on by default via `podAntiAffinity.type` (`soft` / `hard` / `off`). A non-empty `affinity:` value fully overrides the chart's injection. Canonical write-up: `docs/architecture/deployment.md` § Multi-replica.
+- **PodDisruptionBudget gating:** off by default; opt in via `podDisruptionBudget.enabled: true`. `minAvailable` (default `1`) and `maxUnavailable` are mutually exclusive — set one, leave the other null. The chart fails template rendering when both are set. Canonical write-up: `docs/architecture/deployment.md` § PodDisruptionBudget.
+- **HPA gating:** `autoscaling.enabled` renders `templates/hpa.yaml` (`autoscaling/v2`) and drops `spec.replicas` from the Deployment so the HPA owns the count. When the HPA owns scaling, `replicaCount` is dead config — the multi-replica fail-guard considers ONLY `autoscaling.maxReplicas > 1` in that mode and falls back to `replicaCount > 1` when autoscaling is disabled. Utilization-based HPA metrics also require matching `resources.requests.<cpu|memory>` — the chart fails at render time if `targetCPUUtilizationPercentage` / `targetMemoryUtilizationPercentage` is set without the matching request, since metrics-server returns `FailedGetResourceMetric` otherwise. Canonical write-up: `docs/architecture/deployment.md` § Autoscaling.
+- **Graceful shutdown surface:** `shutdown.preStopSleepSeconds` (default 5; `0` opts out and omits the `lifecycle` block) and `shutdown.terminationGracePeriodSeconds` (default 30) pair the EndpointSlice/preStop drain with `atc-server`'s ~13 s in-process budget. The `preStop` hook uses Kubernetes' native `Sleep` action (KEP-3960) — required because the runtime image is Distroless `cc:nonroot` (no `sleep` binary). `kubeVersion` is pinned to `>=1.32.0-0`. Canonical write-up: `docs/architecture/deployment.md` § Graceful shutdown.
+- **NetworkPolicy gating:** `networkPolicy.enabled` (default `false`) renders `networking.k8s.io/v1` NetworkPolicy with chart selectorLabels. `ingress` / `egress` rule lists pass through verbatim. `policyTypes` mirrors which keys are **present** under `networkPolicy` (via `hasKey`), not whether the list has entries — so `ingress: []` renders default-deny ingress, while `ingress: null` omits the direction entirely. Defaults are permissive (operators harden in production). Canonical write-up: `docs/architecture/deployment.md` § NetworkPolicy.
+
+## Commands
+
+```bash
+helm lint deploy/helm/atc                      # Lint chart
+helm template atc deploy/helm/atc              # Render templates
+helm unittest deploy/helm/atc                  # Run helm-unittest suites
+helm template atc deploy/helm/atc | kubeconform -strict  # Validate against k8s schemas
+```
+
+## Key References
+
+- Architecture: `docs/architecture/deployment.md`
+- Multi-replica smoke test runbook: `docs/architecture/deployment.md#multi-replica-smoke-test`
+- CI matrix: `docs/architecture/ci-pipeline.md` (Helm job section — covers `helm-lint`, `helm` kubeconform matrix, and `helm-install` kind+chart-testing)

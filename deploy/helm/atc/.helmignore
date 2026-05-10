@@ -1,0 +1,15 @@
+# Patterns to ignore when building the chart package.
+# Follows .gitignore conventions.
+.DS_Store
+.git
+.gitignore
+.helmignore
+*.tmp
+*.bak
+
+# CI test fixtures — not shipped in the chart tarball
+/tests/
+/ci/
+
+# Helm-docs source template — rendered README is committed separately
+README.md.gotmpl

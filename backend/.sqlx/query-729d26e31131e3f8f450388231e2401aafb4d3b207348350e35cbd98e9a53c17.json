@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(MAX(seq), 0) AS \"max!: i64\" FROM outbox",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "729d26e31131e3f8f450388231e2401aafb4d3b207348350e35cbd98e9a53c17"
+}

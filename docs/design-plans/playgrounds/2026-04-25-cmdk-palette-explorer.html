@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ATC · Cmd+K Palette Explorer</title>
+    <style>
+      :root {
+        --hue: 155;
+        color-scheme: dark;
+
+        --bg: oklch(12% 0.063 var(--hue));
+        --surface: oklch(16% 0.063 var(--hue));
+        --surface-raised: oklch(20% 0.06 var(--hue));
+        --border: oklch(25% 0.055 var(--hue));
+
+        --text: oklch(85% 0.028 var(--hue));
+        --text-dim: oklch(72% 0.03 var(--hue));
+        --text-quiet: oklch(60% 0.04 var(--hue));
+
+        --queued: oklch(72% 0.15 250);
+        --running: oklch(78% 0.16 80);
+        --success: oklch(72% 0.16 155);
+        --failed: oklch(72% 0.17 25);
+        --timed-out: oklch(76% 0.18 40);
+
+        --accent: oklch(45% 0.2 250);
+        --halo-color: oklch(78% 0.16 80 / 0.25);
+
+        --kbd-bg: oklch(28% 0.05 var(--hue));
+        --kbd-border: oklch(35% 0.05 var(--hue));
+        --mark-bg: oklch(72% 0.18 var(--hue) / 0.25);
+        --mark-underline: oklch(72% 0.18 var(--hue) / 0.6);
+        --backdrop: oklch(0% 0.05 var(--hue) / 0.6);
+
+        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        --mono: "SF Mono", "Cascadia Code", monospace;
+
+        --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+        --duration-fast: 100ms;
+        --duration-normal: 200ms;
+        --duration-slow: 250ms;
+      }
+
+      [data-theme="warm"] { --hue: 70; }
+      [data-theme="radar"] { --hue: 155; }
+      [data-theme="violet"] { --hue: 280; }
+      [data-theme="pink"] { --hue: 310; }
+
+      [data-mode="light"] {
+        color-scheme: light;
+        --bg: oklch(97% 0.022 var(--hue));
+        --surface: oklch(99% 0.013 var(--hue));
+        --surface-raised: oklch(92% 0.025 var(--hue));
+        --border: oklch(85% 0.028 var(--hue));
+        --text: oklch(16% 0.063 var(--hue));
+        --text-dim: oklch(40% 0.04 var(--hue));
+        --text-quiet: oklch(55% 0.04 var(--hue));
+        --queued: oklch(45% 0.18 250);
+        --running: oklch(45% 0.15 80);
+        --success: oklch(42% 0.15 155);
+        --failed: oklch(48% 0.18 25);
+        --timed-out: oklch(49% 0.18 40);
+        --kbd-bg: oklch(88% 0.025 var(--hue));
+        --kbd-border: oklch(78% 0.04 var(--hue));
+        --mark-bg: oklch(60% 0.18 var(--hue) / 0.25);
+        --mark-underline: oklch(50% 0.18 var(--hue) / 0.7);
+        --halo-color: oklch(50% 0.15 80 / 0.5);
+        --backdrop: oklch(15% 0.05 var(--hue) / 0.4);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 14px;
+        line-height: 1.5;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+      }
+
+      /* ===== Controls ===== */
+      .controls {
+        display: grid;
+        gap: 14px 22px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+      .control { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+      .control-label {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-quiet);
+      }
+      .seg {
+        display: inline-flex;
+        flex-wrap: wrap;
+        gap: 3px;
+        padding: 3px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+      }
+      .seg button {
+        appearance: none;
+        background: transparent;
+        color: var(--text-dim);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 5px 10px;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all var(--duration-fast) var(--ease-out-expo);
+      }
+      .seg button:hover { color: var(--text); }
+      .seg button[aria-pressed="true"] {
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: 0 1px 0 0 var(--border);
+      }
+
+      .control input[type="text"],
+      .control select {
+        appearance: none;
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 12px;
+        font: inherit;
+        font-size: 13px;
+        outline: none;
+        transition: border-color var(--duration-fast);
+      }
+      .control input[type="text"]:focus,
+      .control select:focus { border-color: var(--accent); }
+      .control select {
+        padding-right: 28px;
+        background-image:
+          linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+          linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+        background-position: calc(100% - 14px) calc(50% - 2px), calc(100% - 9px) calc(50% - 2px);
+        background-size: 5px 5px;
+        background-repeat: no-repeat;
+      }
+
+      /* ===== Stage ===== */
+      .stage {
+        position: relative;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        padding: 32px;
+      }
+      .stage-bg {
+        position: absolute;
+        inset: 0;
+        background:
+          repeating-linear-gradient(
+            -45deg,
+            transparent 0,
+            transparent 80px,
+            oklch(50% 0.02 var(--hue) / 0.04) 80px,
+            oklch(50% 0.02 var(--hue) / 0.04) 81px
+          ),
+          var(--bg);
+        pointer-events: none;
+      }
+      .backdrop {
+        position: absolute;
+        inset: 0;
+        background: var(--backdrop);
+        pointer-events: none;
+      }
+
+      /* ===== Palette ===== */
+      .palette {
+        position: relative;
+        z-index: 1;
+        width: 640px;
+        max-width: calc(100% - 32px);
+        height: min(580px, calc(100vh - 200px));
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow:
+          0 0 0 1px oklch(50% 0 0 / 0.04),
+          0 32px 64px -16px oklch(0% 0 0 / 0.5);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        animation: palette-enter var(--duration-normal) var(--ease-out-expo);
+      }
+
+      @keyframes palette-enter {
+        from { transform: scale(0.97); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+
+      /* ===== Search input ===== */
+      .palette-input {
+        position: relative;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 14px;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .palette-input::after {
+        content: "";
+        position: absolute;
+        bottom: -1px;
+        left: 0;
+        height: 2px;
+        width: var(--accent-width, 0%);
+        background: var(--accent);
+        transition: width var(--duration-normal) var(--ease-out-expo);
+      }
+      .palette-input.focused { --accent-width: 100%; }
+      .palette-input-icon {
+        font-size: 18px;
+        line-height: 1;
+        color: var(--text-dim);
+        transition: color var(--duration-fast) var(--ease-out-expo);
+      }
+      .palette-input.focused .palette-input-icon { color: var(--text); }
+      .palette-input input {
+        background: transparent;
+        border: 0;
+        outline: none;
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 17px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        width: 100%;
+        padding: 0;
+      }
+      .palette-input input::placeholder {
+        color: var(--text-dim);
+        font-weight: 400;
+      }
+      .palette-input-hint { display: none; align-items: center; }
+      .palette-input.focused .palette-input-hint { display: inline-flex; }
+
+      /* ===== Body / sliding container ===== */
+      .palette-body {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .palette-pane {
+        position: absolute;
+        inset: 0;
+        overflow: auto;
+        padding: 8px 0;
+        transition:
+          transform var(--duration-slow) var(--ease-out-expo),
+          opacity var(--duration-normal) var(--ease-out-expo);
+      }
+      .palette-pane.main { transform: translateX(0); opacity: 1; }
+      .palette-pane.submenu {
+        transform: translateX(40px);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .palette-body[data-submenu="true"] .palette-pane.main {
+        transform: translateX(-40px);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .palette-body[data-submenu="true"] .palette-pane.submenu {
+        transform: translateX(0);
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      /* ===== Sections ===== */
+      .section { margin-bottom: 4px; }
+      .section-heading {
+        margin: 0;
+        padding: 11px 20px 6px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-quiet);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .section-heading .glyph {
+        color: var(--text-dim);
+        font-size: 11px;
+        line-height: 1;
+      }
+
+      /* ===== Row ===== */
+      .row {
+        display: grid;
+        grid-template-columns: 22px 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 0 20px;
+        height: 36px;
+        position: relative;
+        cursor: pointer;
+        border-left: 2px solid transparent;
+        transition:
+          background var(--duration-fast) var(--ease-out-expo),
+          border-color var(--duration-fast) var(--ease-out-expo);
+      }
+      .row > * {
+        transition: transform var(--duration-fast) var(--ease-out-expo);
+      }
+      .row:hover,
+      .row.focused {
+        background: var(--surface-raised);
+        border-left-color: var(--accent);
+      }
+      .row:hover > *,
+      .row.focused > * {
+        transform: translateX(2px);
+      }
+
+      .row-icon {
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1;
+        color: var(--status-color, var(--text-dim));
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+      }
+      .row-icon[data-status="InProgress"] {
+        box-shadow: 0 0 0 1px var(--halo-color);
+      }
+      .row-icon.pool-icon,
+      .row-icon.command-icon {
+        color: var(--text-dim);
+      }
+
+      .row-title {
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: -0.005em;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .row-meta {
+        font-size: 12px;
+        color: var(--text-dim);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        flex: 0 0 auto;
+      }
+      .row-meta .in-prefix { opacity: 0.7; }
+
+      /* ===== Pool row 3-state ===== */
+      .row.pool-row {
+        align-items: start;
+        height: auto;
+        min-height: 36px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      .row.pool-row .row-icon {
+        margin-top: 2px;
+      }
+      .row.pool-row .row-meta {
+        margin-top: 2px;
+      }
+      .pool-labels {
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: -0.005em;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .row.pool-row.expanded .pool-labels {
+        white-space: normal;
+        word-break: break-word;
+        overflow: visible;
+        text-overflow: clip;
+        line-height: 1.5;
+      }
+
+      /* ===== Mark highlight ===== */
+      mark {
+        background: var(--mark-bg);
+        color: var(--text);
+        padding: 0 1px;
+        border-radius: 2px;
+        text-decoration: underline;
+        text-decoration-color: var(--mark-underline);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 2px;
+      }
+
+      /* ===== kbd ===== */
+      kbd {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 600;
+        background: var(--kbd-bg);
+        border: 1px solid var(--kbd-border);
+        color: var(--text);
+        padding: 1px 5px;
+        border-radius: 3px;
+        line-height: 1.5;
+        margin-left: 2px;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      kbd:first-child { margin-left: 0; }
+      .row-meta kbd {
+        font-size: 10px;
+        padding: 1px 4px;
+      }
+
+      /* ===== Empty state ===== */
+      .empty-state {
+        height: 100%;
+        display: grid;
+        place-items: center;
+        padding: 64px 24px;
+        color: var(--text-dim);
+      }
+      .empty-state-text {
+        font-size: 13px;
+        font-style: italic;
+        text-align: center;
+        max-width: 400px;
+        line-height: 1.6;
+      }
+      .empty-state-text strong {
+        color: var(--text);
+        font-weight: 500;
+        font-style: normal;
+      }
+
+      /* ===== Submenu ===== */
+      .submenu-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 20px 6px;
+      }
+      .submenu-back {
+        appearance: none;
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        width: 22px;
+        height: 22px;
+        border-radius: 5px;
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all var(--duration-fast) var(--ease-out-expo);
+      }
+      .submenu-back:hover {
+        color: var(--text);
+        background: var(--surface-raised);
+        border-color: var(--text-dim);
+      }
+      .submenu-title {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text-quiet);
+      }
+      .theme-row .row-icon {
+        background: oklch(60% 0.18 var(--theme-hue));
+        color: transparent;
+        width: 12px;
+        height: 12px;
+        margin-left: 4px;
+      }
+      .theme-row .row-meta {
+        font-family: var(--mono);
+      }
+
+      /* ===== Footer hint ===== */
+      .palette-footer {
+        display: flex;
+        gap: 18px;
+        padding: 10px 20px;
+        border-top: 1px solid var(--border);
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-dim);
+        letter-spacing: 0.04em;
+        flex: 0 0 auto;
+      }
+      .palette-footer .hint {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* ===== Output ===== */
+      .output {
+        padding: 14px 24px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+      }
+      .spec {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-dim);
+        white-space: pre-wrap;
+        line-height: 1.55;
+      }
+      .copy-btn {
+        appearance: none;
+        background: var(--accent);
+        color: white;
+        border: 0;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: filter var(--duration-fast) var(--ease-out-expo);
+      }
+      .copy-btn:hover { filter: brightness(1.1); }
+      .copy-btn:active { transform: translateY(1px); }
+      .copy-btn[data-state="copied"] { background: var(--success); }
+
+      /* prefers-reduced-motion */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      /* scrollbars */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: var(--surface-raised);
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+    </style>
+  </head>
+  <body data-theme="radar" data-mode="dark">
+    <header class="controls" aria-label="Playground controls">
+      <div class="control">
+        <span class="control-label">Theme</span>
+        <div class="seg" role="group" aria-label="Theme">
+          <button data-control="theme" data-value="warm">Warm</button>
+          <button data-control="theme" data-value="radar" aria-pressed="true">Radar</button>
+          <button data-control="theme" data-value="violet">Violet</button>
+          <button data-control="theme" data-value="pink">Pink</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Mode</span>
+        <div class="seg" role="group" aria-label="Mode">
+          <button data-control="mode" data-value="dark" aria-pressed="true">Dark</button>
+          <button data-control="mode" data-value="light">Light</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <span class="control-label">Query simulator</span>
+        <input type="text" id="ext-query" placeholder="type to filter & highlight" autocomplete="off" />
+      </div>
+
+      <div class="control">
+        <span class="control-label">Force focused pool row</span>
+        <select id="focused-pool">
+          <option value="">None</option>
+          <option value="0">ubuntu-24.04</option>
+          <option value="1">self-hosted · gpu</option>
+          <option value="2">ubuntu-latest · large · amd64 · …</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <span class="control-label">View</span>
+        <div class="seg" role="group" aria-label="View">
+          <button data-control="submenu" data-value="" aria-pressed="true">Main</button>
+          <button data-control="submenu" data-value="theme">Theme submenu</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="stage-bg"></div>
+      <div class="backdrop"></div>
+      <div class="palette" id="palette" role="dialog" aria-label="Command palette">
+        <div class="palette-input" id="palette-input">
+          <span class="palette-input-icon" aria-hidden="true">⌕</span>
+          <input
+            type="text"
+            id="palette-query"
+            placeholder="Search runs, jobs, pools, commands…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <span class="palette-input-hint"><kbd>Esc</kbd></span>
+        </div>
+
+        <div class="palette-body" id="palette-body" data-submenu="false">
+          <div class="palette-pane main" id="pane-main"></div>
+          <div class="palette-pane submenu" id="pane-submenu"></div>
+        </div>
+
+        <div class="palette-footer" aria-hidden="true">
+          <span class="hint"><kbd>↵</kbd> select</span>
+          <span class="hint"><kbd>↑↓</kbd> navigate</span>
+          <span class="hint"><kbd>Esc</kbd> close</span>
+        </div>
+      </div>
+    </main>
+
+    <footer class="output" aria-label="Spec output">
+      <div class="spec" id="spec"></div>
+      <button class="copy-btn" id="copy" type="button">Copy spec</button>
+    </footer>
+
+    <script>
+      // ===== Sample data =====
+      const RUNS = [
+        { id: 1, status: "Queued", title: "Add command palette and detail panel", repo: "atc", branch: "feat/cmd-palette" },
+        { id: 2, status: "InProgress", title: "Render kanban cards with status colors", repo: "atc", branch: "feat/run-cards" },
+        { id: 3, status: "Completed", title: "Release v0.5.0", repo: "atc", branch: "main" },
+        { id: 4, status: "Failed", title: "Generate TypeScript types", repo: "atc", branch: "feat/types" },
+      ];
+      const RECENT_IDS = [2, 3];
+
+      const JOBS = [
+        { id: 1, status: "InProgress", name: "test", runRepo: "atc", runBranch: "feat/run-cards" },
+        { id: 2, status: "Failed", name: "check", runRepo: "atc", runBranch: "feat/types" },
+        { id: 3, status: "Completed", name: "release", runRepo: "atc", runBranch: "main" },
+      ];
+
+      const POOLS = [
+        { idx: 0, labels: ["ubuntu-24.04"], running: 2, queued: 0 },
+        { idx: 1, labels: ["self-hosted", "gpu"], running: 1, queued: 3 },
+        { idx: 2, labels: ["ubuntu-latest", "large", "amd64", "intel", "ssd-nvme"], running: 0, queued: 0 },
+      ];
+
+      const COMMANDS = [
+        { id: "theme", icon: "☼", label: "Switch theme…", shortcut: null, isSubmenu: true },
+        { id: "mode", icon: "☾", label: "Toggle dark mode", shortcut: ["⌘", "D"] },
+        { id: "density", icon: "▤", label: "Toggle compact density", shortcut: ["⌘", "\\"] },
+        { id: "clear-pool", icon: "⊗", label: "Clear pool filter", shortcut: null },
+        { id: "close-panel", icon: "✕", label: "Close detail panel", shortcut: ["Esc"] },
+        { id: "reconnect", icon: "↻", label: "Reconnect", shortcut: null },
+      ];
+
+      const THEMES = [
+        { id: "warm", label: "Warm", hue: 70 },
+        { id: "radar", label: "Radar", hue: 155 },
+        { id: "violet", label: "Violet", hue: 280 },
+        { id: "pink", label: "Pink", hue: 310 },
+      ];
+
+      const STATUS = {
+        Queued: { symbol: "◐", color: "var(--queued)" },
+        InProgress: { symbol: "▶", color: "var(--running)" },
+        Completed: { symbol: "✓", color: "var(--success)" },
+        Failed: { symbol: "✗", color: "var(--failed)" },
+        TimedOut: { symbol: "⏱", color: "var(--timed-out)" },
+      };
+
+      const state = {
+        theme: "radar",
+        mode: "dark",
+        query: "",
+        focusedPool: null,
+        submenu: null,
+      };
+
+      // ===== Helpers =====
+      function escape(s) {
+        return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      }
+
+      function highlight(text, query) {
+        if (!query) return escape(text);
+        const lower = String(text).toLowerCase();
+        const q = query.toLowerCase();
+        let out = "";
+        let i = 0;
+        while (i < text.length) {
+          const idx = lower.indexOf(q, i);
+          if (idx === -1) {
+            out += escape(text.slice(i));
+            break;
+          }
+          out += escape(text.slice(i, idx));
+          out += `<mark>${escape(text.slice(idx, idx + q.length))}</mark>`;
+          i = idx + q.length;
+        }
+        return out;
+      }
+
+      function matches(haystack, query) {
+        if (!query) return true;
+        return String(haystack).toLowerCase().includes(query.toLowerCase());
+      }
+
+      // ===== Row renderers =====
+      function renderRunRow(run, q) {
+        const s = STATUS[run.status];
+        const halo = run.status === "InProgress" ? `data-status="InProgress"` : "";
+        return `
+          <div class="row" role="option" data-id="run-${run.id}">
+            <span class="row-icon" ${halo} style="--status-color: ${s.color}">${s.symbol}</span>
+            <span class="row-title">${highlight(run.title, q)}</span>
+            <span class="row-meta">${highlight(`${run.repo} · ${run.branch}`, q)}</span>
+          </div>`;
+      }
+
+      function renderJobRow(job, q) {
+        const s = STATUS[job.status];
+        const halo = job.status === "InProgress" ? `data-status="InProgress"` : "";
+        return `
+          <div class="row" role="option" data-id="job-${job.id}">
+            <span class="row-icon" ${halo} style="--status-color: ${s.color}">${s.symbol}</span>
+            <span class="row-title">${highlight(job.name, q)}</span>
+            <span class="row-meta"><span class="in-prefix">in </span>${highlight(`${job.runRepo} · ${job.runBranch}`, q)}</span>
+          </div>`;
+      }
+
+      function renderPoolRow(pool, q, isFocused) {
+        const labelsHTML = pool.labels.map((l) => highlight(l, q)).join(" · ");
+        const expanded = isFocused || (q && q.length > 0);
+        return `
+          <div class="row pool-row ${isFocused ? "focused" : ""} ${expanded ? "expanded" : ""}" role="option" data-id="pool-${pool.idx}">
+            <span class="row-icon pool-icon" aria-hidden="true">⊞</span>
+            <span class="pool-labels">${labelsHTML}</span>
+            <span class="row-meta">${pool.running} running · ${pool.queued} queued</span>
+          </div>`;
+      }
+
+      function renderCommandRow(cmd, q) {
+        const shortcut = cmd.shortcut
+          ? cmd.shortcut.map((k) => `<kbd>${escape(k)}</kbd>`).join("")
+          : "";
+        return `
+          <div class="row" role="option" data-id="cmd-${cmd.id}">
+            <span class="row-icon command-icon" aria-hidden="true">${cmd.icon}</span>
+            <span class="row-title">${highlight(cmd.label, q)}</span>
+            <span class="row-meta">${shortcut}</span>
+          </div>`;
+      }
+
+      function renderSection(title, glyph, body) {
+        return `
+          <section class="section">
+            <h3 class="section-heading">
+              ${glyph ? `<span class="glyph" aria-hidden="true">${glyph}</span>` : ""}
+              ${title}
+            </h3>
+            ${body}
+          </section>`;
+      }
+
+      // ===== Main pane =====
+      function renderMain() {
+        const q = state.query.trim();
+
+        const recentRuns = RECENT_IDS
+          .map((id) => RUNS.find((r) => r.id === id))
+          .filter((r) => r && (matches(r.title, q) || matches(`${r.repo} · ${r.branch}`, q)));
+
+        const filteredRuns = RUNS.filter((r) => matches(r.title, q) || matches(`${r.repo} · ${r.branch}`, q));
+        const filteredJobs = JOBS.filter((j) => matches(j.name, q) || matches(`${j.runRepo} · ${j.runBranch}`, q));
+        const filteredPools = POOLS.filter((p) => matches(p.labels.join(" · "), q));
+        const filteredCommands = COMMANDS.filter((c) => matches(c.label, q));
+
+        const total =
+          recentRuns.length + filteredRuns.length + filteredJobs.length + filteredPools.length + filteredCommands.length;
+
+        if (total === 0) {
+          return `
+            <div class="empty-state">
+              <div class="empty-state-text">
+                Nothing in flight matching <strong>“${escape(q)}”</strong>.
+              </div>
+            </div>`;
+        }
+
+        let html = "";
+        if (recentRuns.length) {
+          html += renderSection(
+            "Recent",
+            "↻",
+            recentRuns.map((r) => renderRunRow(r, q)).join("")
+          );
+        }
+        if (filteredRuns.length) {
+          html += renderSection("Runs", null, filteredRuns.map((r) => renderRunRow(r, q)).join(""));
+        }
+        if (filteredJobs.length) {
+          html += renderSection("Jobs", null, filteredJobs.map((j) => renderJobRow(j, q)).join(""));
+        }
+        if (filteredPools.length) {
+          html += renderSection(
+            "Pools",
+            null,
+            filteredPools.map((p) => renderPoolRow(p, q, state.focusedPool === p.idx)).join("")
+          );
+        }
+        if (filteredCommands.length) {
+          html += renderSection("Commands", null, filteredCommands.map((c) => renderCommandRow(c, q)).join(""));
+        }
+        return html;
+      }
+
+      // ===== Submenu pane =====
+      function renderSubmenu() {
+        return `
+          <div class="submenu-header">
+            <button class="submenu-back" type="button" data-action="exit-submenu" aria-label="Back to palette">←</button>
+            <span class="submenu-title">Switch theme</span>
+          </div>
+          ${THEMES.map(
+            (t) => `
+              <div
+                class="row theme-row ${t.id === state.theme ? "focused" : ""}"
+                role="option"
+                data-action="set-theme"
+                data-theme="${t.id}"
+                style="--theme-hue: ${t.hue}"
+              >
+                <span class="row-icon" aria-hidden="true">●</span>
+                <span class="row-title">${t.label}</span>
+                <span class="row-meta">hue ${t.hue}°</span>
+              </div>`
+          ).join("")}`;
+      }
+
+      // ===== Spec output =====
+      function updateSpec() {
+        const text = `Cmd+K palette playground reviewed across ${state.theme} · ${state.mode}.
+Pool row 3-state behavior, section ordering, submenu, and empty state all visually confirmed.`;
+        document.getElementById("spec").textContent = text;
+      }
+
+      // ===== Render =====
+      function render() {
+        document.body.setAttribute("data-theme", state.theme);
+        document.body.setAttribute("data-mode", state.mode);
+
+        document.querySelectorAll("[data-control]").forEach((btn) => {
+          const ctrl = btn.dataset.control;
+          const val = btn.dataset.value;
+          if (ctrl === "submenu") {
+            const current = state.submenu || "";
+            btn.setAttribute("aria-pressed", current === val ? "true" : "false");
+          } else {
+            btn.setAttribute("aria-pressed", state[ctrl] === val ? "true" : "false");
+          }
+        });
+
+        const queryInputExt = document.getElementById("ext-query");
+        if (document.activeElement !== queryInputExt) queryInputExt.value = state.query;
+        const queryInputPalette = document.getElementById("palette-query");
+        if (document.activeElement !== queryInputPalette) queryInputPalette.value = state.query;
+        document.getElementById("focused-pool").value = state.focusedPool === null ? "" : String(state.focusedPool);
+
+        document.getElementById("pane-main").innerHTML = renderMain();
+        document.getElementById("pane-submenu").innerHTML = renderSubmenu();
+        document.getElementById("palette-body").setAttribute("data-submenu", state.submenu === "theme" ? "true" : "false");
+
+        updateSpec();
+      }
+
+      // ===== Event handlers =====
+      document.addEventListener("click", (e) => {
+        const ctrl = e.target.closest("[data-control]");
+        if (ctrl) {
+          if (ctrl.dataset.control === "submenu") {
+            state.submenu = ctrl.dataset.value === "" ? null : ctrl.dataset.value;
+          } else {
+            state[ctrl.dataset.control] = ctrl.dataset.value;
+          }
+          render();
+          return;
+        }
+
+        const action = e.target.closest("[data-action]");
+        if (action) {
+          if (action.dataset.action === "set-theme") {
+            state.theme = action.dataset.theme;
+            state.submenu = null;
+            render();
+          }
+          if (action.dataset.action === "exit-submenu") {
+            state.submenu = null;
+            render();
+          }
+          return;
+        }
+
+        // Click on a Switch theme command opens submenu
+        const themeCmd = e.target.closest('[data-id="cmd-theme"]');
+        if (themeCmd) {
+          state.submenu = "theme";
+          render();
+          return;
+        }
+      });
+
+      // External query box
+      document.getElementById("ext-query").addEventListener("input", (e) => {
+        state.query = e.target.value;
+        render();
+      });
+
+      // Palette internal query input
+      document.getElementById("palette-query").addEventListener("input", (e) => {
+        state.query = e.target.value;
+        render();
+      });
+      document.getElementById("palette-input").addEventListener("focusin", () => {
+        document.getElementById("palette-input").classList.add("focused");
+      });
+      document.getElementById("palette-input").addEventListener("focusout", () => {
+        document.getElementById("palette-input").classList.remove("focused");
+      });
+
+      // Focused pool dropdown
+      document.getElementById("focused-pool").addEventListener("change", (e) => {
+        state.focusedPool = e.target.value === "" ? null : Number(e.target.value);
+        render();
+      });
+
+      // Esc clears query
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          if (state.submenu) {
+            state.submenu = null;
+            render();
+          } else if (state.query) {
+            state.query = "";
+            render();
+          }
+        }
+      });
+
+      // Copy
+      document.getElementById("copy").addEventListener("click", async () => {
+        const text = document.getElementById("spec").textContent;
+        try { await navigator.clipboard.writeText(text); } catch {}
+        const btn = document.getElementById("copy");
+        btn.dataset.state = "copied";
+        btn.textContent = "Copied!";
+        setTimeout(() => {
+          btn.dataset.state = "";
+          btn.textContent = "Copy spec";
+        }, 1400);
+      });
+
+      // Auto-focus the palette input on load
+      window.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("palette-query").focus();
+      });
+
+      render();
+    </script>
+  </body>
+</html>

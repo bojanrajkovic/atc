@@ -1,0 +1,327 @@
+# -- Number of replicas.
+# NOTE: replicaCount > 1 requires an external PostgreSQL connection string via
+# config.databaseUrl or existingSecret. The chart enforces this at template-render
+# time via a {{ fail }} guard in templates/deployment.yaml. The ephemeral
+# in-memory mode is single-replica only.
+replicaCount: 1
+
+image:
+  # -- Container image repository.
+  repository: ghcr.io/bojanrajkovic/atc
+  # -- Container image tag. Defaults to the chart's appVersion when left empty.
+  tag: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- List of image pull secret names for private registries.
+imagePullSecrets: []
+
+# -- Override the chart name component of generated resource names.
+nameOverride: ""
+
+# -- Override the full generated resource name (release-name + chart-name).
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Whether to create a dedicated ServiceAccount for ATC.
+  create: true
+  # -- Annotations to apply to the ServiceAccount (e.g., for IRSA / Workload Identity).
+  annotations: {}
+  # -- Name of the ServiceAccount. If empty and create=true, defaults to the fullname.
+  name: ""
+
+# -- Annotations to apply to the Pod.
+podAnnotations: {}
+
+# -- Extra labels to apply to the Pod (merged with the standard selector labels).
+podLabels: {}
+
+# -- Pod-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
+# These values match the distroless :nonroot image's baked-in UID/GID (65532).
+# Operators may override these values for legitimate edge cases (e.g., storage CSI drivers with
+# UID constraints, sidecars needing elevated privileges). Organizations wanting to enforce the
+# restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
+# cluster level, not chart-level immutability.
+# NOTE: Setting this to null omits the pod-level securityContext entirely (not the same as
+# "reset to Kubernetes defaults"). To keep restricted PSS, override individual fields instead.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. Defaults satisfy Kubernetes restricted Pod Security Standards.
+# Operators may override these values for legitimate edge cases (e.g., sidecars with writable
+# rootfs requirements, profilers needing elevated capabilities). Organizations wanting to enforce
+# the restricted profile cluster-wide should use ValidatingAdmissionPolicy or Kyverno at the
+# cluster level, not chart-level immutability.
+# NOTE: Setting this to null omits the container-level securityContext entirely (not the same
+# as "reset to Kubernetes defaults"). To keep restricted PSS, override individual fields instead.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  # -- Kubernetes Service type.
+  type: ClusterIP
+  # -- Service port for the HTTP listener.
+  port: 80
+
+# -- Resource requests and limits for the ATC container.
+# Not set by default — operators should tune for their environment.
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 64Mi
+
+# -- Node selector for pod scheduling.
+nodeSelector: {}
+
+# -- Tolerations for pod scheduling.
+tolerations: []
+
+# -- Affinity rules for pod scheduling. When non-empty, this value is rendered
+# verbatim and fully overrides the chart's default podAntiAffinity injection
+# (see podAntiAffinity below). Use this for compound affinity needs (mixing
+# nodeAffinity, podAffinity, custom weights/topologies, etc.).
+affinity: {}
+
+# Pod anti-affinity convenience knob. Convenience shortcut that the chart
+# expands into a full `affinity.podAntiAffinity` block keyed off the standard
+# selector labels (app.kubernetes.io/name + app.kubernetes.io/instance) at
+# topologyKey: kubernetes.io/hostname. Setting `affinity:` (above) to a
+# non-empty value fully overrides this.
+podAntiAffinity:
+  # -- Anti-affinity mode:
+  #  - "soft" (default): preferredDuringSchedulingIgnoredDuringExecution with weight 100.
+  #    The scheduler tries to spread replicas across nodes but does not refuse to schedule
+  #    when only one node is available (e.g., single-node homelab clusters, kind/k3d).
+  #  - "hard": requiredDuringSchedulingIgnoredDuringExecution. Replicas refuse to schedule
+  #    on a node that already runs another ATC replica from the same release. Only
+  #    appropriate when the cluster has at least replicaCount nodes available.
+  #  - "off": omit the chart-injected podAntiAffinity rule entirely.
+  type: soft
+
+# -- ATC application configuration. All values map to ATC_* environment variables.
+config:
+  # -- Address and port the HTTP listener binds to inside the container.
+  httpAddr: "0.0.0.0:8080"
+  # -- Database connection URL.
+  #
+  # Two storage modes are supported:
+  #
+  # Mode 1 — Ephemeral (in-memory, single replica):
+  #   Leave databaseUrl unset (the default).
+  #   ATC holds workflow run/job state in memory; pod restart loses state.
+  #   Required: replicaCount = 1. The chart enforces multi-replica
+  #   configurations to use external Postgres; see the {{ fail }} guard in
+  #   templates/deployment.yaml.
+  #   Use case: dev, CI, "I just want to see it run" homelabs.
+  #
+  # Mode 2 — External Postgres (any replica count):
+  #   Set databaseUrl: "postgres://user:pass@host:5432/atc"
+  #   OR provide existingSecret.name with existingSecret.databaseUrlKey.
+  #   ATC writes via the transactional outbox and reads from the live PG
+  #   state. Multi-replica: each replica runs its own LISTEN/NOTIFY listener
+  #   and drain task; symmetric, no leader.
+  #   Use case: production, multi-replica homelab/work clusters.
+  #
+  # See docs/architecture/deployment.md for the full multi-replica runbook
+  # and the storage-mode evolution history.
+  databaseUrl: null
+  # -- Listener database connection URL (optional).
+  #
+  # When set, the PG LISTEN/NOTIFY task connects using this URL instead of
+  # config.databaseUrl. Use this when the main pool (config.databaseUrl) runs
+  # through transaction-mode PgBouncer, which drops LISTEN registrations between
+  # transactions and breaks the listener task. Point this at a direct Postgres
+  # connection or a session-mode PgBouncer endpoint.
+  #
+  # When unset (empty string), the listener falls back to ATC_DATABASE_URL.
+  databaseListenerUrl: ""
+  # -- Tracing filter string (RUST_LOG syntax). Examples: "info", "atc=debug", "warn,atc=trace".
+  logFilter: "info"
+  # -- Log output format. Null means the binary decides based on build type
+  # (pretty in debug builds, JSON in release builds). Override with "pretty" or "json".
+  logFormat: null
+
+# -- Reference an existing Kubernetes Secret for the database URL instead of
+# providing it in plain text in values. When set, config.databaseUrl is ignored
+# and the connection string is sourced from the named Secret key.
+existingSecret:
+  # -- Name of the existing Secret. Set to use secret-based DB credential injection.
+  name: null
+  # -- Key inside the Secret whose value is the database URL.
+  databaseUrlKey: "database_url"
+  # -- Key inside the Secret whose value is the listener database URL (optional).
+  # When set (non-empty) and existingSecret.name is also set, the listener task
+  # uses this secret key for its connection. When empty, the listener falls back
+  # to ATC_DATABASE_URL (the main pool's connection string).
+  databaseListenerUrlKey: ""
+
+otel:
+  # -- Enable OpenTelemetry export. When false, no OTEL_* env vars are injected
+  # and atc-server runs with the SDK uninstalled (no provider/exporter overhead).
+  enabled: false
+  # -- OTLP endpoint URL. Required when enabled. Transport is HTTP/protobuf only
+  # (e.g., http://otel-collector.observability:4318).
+  endpoint: ""
+  # -- Service name reported via OTEL_SERVICE_NAME resource attribute.
+  serviceName: "atc"
+  # -- Comma-separated key=value pairs reported via OTEL_RESOURCE_ATTRIBUTES.
+  # E.g., "deployment.environment=production,service.namespace=ingest".
+  resourceAttributes: ""
+  # -- Trace sampler. Default ParentBased(root=AlwaysOn).
+  # Examples: "parentbased_traceidratio", "always_on", "always_off".
+  sampler: "parentbased_always_on"
+  # -- Sampler argument (e.g., "0.1" for 10% root sampling with traceidratio).
+  samplerArg: ""
+
+ingress:
+  # -- Whether to create an Ingress resource.
+  enabled: false
+  # -- Ingress class name (selects the ingress controller).
+  className: ""
+  # -- Annotations to apply to the Ingress.
+  annotations: {}
+  # -- Ingress host rules.
+  hosts:
+    - host: atc.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration for the Ingress.
+  tls: []
+  #  - secretName: atc-tls
+  #    hosts:
+  #      - atc.example.com
+
+gateway:
+  # -- Whether to create a Gateway API HTTPRoute resource.
+  enabled: false
+  # -- parentRefs pointing at the Gateway(s) that should serve this HTTPRoute.
+  parentRefs: []
+  #  - name: my-gateway
+  #    namespace: gateway-system
+  # -- Optional hostnames for the HTTPRoute.
+  hostnames: []
+  # -- Custom HTTPRoute rules. When empty, a default rule routing all traffic to the Service is generated.
+  rules: []
+
+# Optional NetworkPolicy. Defaults are intentionally permissive so the chart
+# installs cleanly into any cluster; operators are expected to harden these
+# rules in production by restricting `from`/`to` peers and ports. See
+# docs/architecture/deployment.md § NetworkPolicy.
+#
+# `policyTypes` mirrors which of `ingress` / `egress` keys are *present* under
+# `networkPolicy` (not whether the list has entries):
+#   - key omitted (e.g. `ingress: null`) → direction NOT in `policyTypes`,
+#     no constraint on that direction.
+#   - key present with empty list (e.g. `ingress: []`) → direction in
+#     `policyTypes`, `ingress: []` rendered literally — default-deny that
+#     direction (Kubernetes' canonical isolation idiom).
+#   - key present with rules → direction in `policyTypes`, rules rendered.
+networkPolicy:
+  # -- Whether to render the NetworkPolicy resource.
+  enabled: false
+  # -- Ingress rules (list of `networking.k8s.io/v1` NetworkPolicyIngressRule
+  # objects). Each rule passes through verbatim. The default permits inbound
+  # traffic to the chart's HTTP port from any namespace; restrict `from` to
+  # ingress-controller / monitoring namespaces in production. Set to `[]` to
+  # default-deny all ingress, or `null` to drop the direction from
+  # `policyTypes` entirely (no constraint on ingress).
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+  # -- Egress rules (list of `networking.k8s.io/v1` NetworkPolicyEgressRule
+  # objects). Each rule passes through verbatim. The default permits DNS
+  # lookups to the kube-system namespace and outbound HTTPS for the GitHub
+  # API; add a rule scoped to the PostgreSQL peer in production (the chart
+  # does not know your DB topology — namespace selector, IP block, or
+  # external CIDR are all valid options). Set to `[]` to default-deny all
+  # egress, or `null` to drop the direction from `policyTypes` entirely (no
+  # constraint on egress).
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+
+tests:
+  # -- Whether to include the helm test hook Pod (test-connection).
+  enabled: true
+
+# Horizontal pod autoscaling. When enabled, the chart renders a HorizontalPodAutoscaler
+# and omits spec.replicas from the Deployment so the HPA owns the replica count.
+# See docs/architecture/deployment.md § Autoscaling.
+autoscaling:
+  # -- Whether to render a HorizontalPodAutoscaler. When true, the Deployment's
+  # spec.replicas field is dropped (the HPA owns the count) and replicaCount is
+  # ignored. The multi-replica fail-guard still applies: if maxReplicas > 1, an
+  # external Postgres connection string is required.
+  enabled: false
+  # -- Minimum replicas the HPA may scale down to.
+  minReplicas: 1
+  # -- Maximum replicas the HPA may scale up to. When > 1, requires an external
+  # Postgres connection string (same multi-replica guard as replicaCount > 1).
+  maxReplicas: 5
+  # -- Target average CPU utilization (percentage of requested CPU). When set
+  # (default 80), requires resources.requests.cpu — utilization-based HPA metrics
+  # are non-functional without a CPU request (metrics-server reports
+  # FailedGetResourceMetric). Set to null to omit the CPU metric (e.g., for
+  # memory-only autoscaling). Enforced at template-render time via a {{ fail }}
+  # guard in templates/hpa.yaml.
+  targetCPUUtilizationPercentage: 80
+  # -- Target average memory utilization (percentage of requested memory). When null,
+  # the memory metric is omitted; when set to an integer, a memory Resource metric
+  # is appended alongside CPU. When set, requires resources.requests.memory (same
+  # render-time fail-guard as the CPU metric).
+  targetMemoryUtilizationPercentage: null
+
+# Pod lifecycle for graceful shutdown. Pairs with the in-process shutdown
+# orchestration in atc-server (~13 s aggregate budget). See
+# docs/architecture/deployment.md § Graceful shutdown.
+shutdown:
+  # -- Seconds the preStop hook sleeps before SIGTERM is delivered. Absorbs the
+  # propagation delay between the EndpointSlice flipping ready=false and
+  # kube-proxy / cloud-LB rule sync. Set to 0 to disable the hook.
+  # Implemented via the kubelet-native preStop sleep action (K8s 1.32+).
+  preStopSleepSeconds: 5
+
+  # -- Pod-spec terminationGracePeriodSeconds. Must be >= preStopSleepSeconds + 13
+  # (the worst-case in-process shutdown budget). Default 30 covers the default
+  # 5 s preStop with comfortable headroom.
+  terminationGracePeriodSeconds: 30
+
+# Optional PodDisruptionBudget for the ATC Deployment. Off by default —
+# single-replica deployments don't benefit from a PDB, and operators running
+# multi-replica should opt in explicitly. See docs/architecture/deployment.md
+# § PodDisruptionBudget for sizing guidance.
+podDisruptionBudget:
+  # -- Whether to render a PodDisruptionBudget for the ATC Deployment.
+  enabled: false
+
+  # -- minAvailable and maxUnavailable are mutually exclusive — set one, leave
+  # the other null. Both accept either an integer (pod count) or a percentage
+  # string like "50%". The chart fails template rendering when both are set.
+  minAvailable: 1
+  maxUnavailable: null

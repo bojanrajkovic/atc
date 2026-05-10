@@ -1,0 +1,51 @@
+{
+  "name": "atc-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "clsx": "catalog:",
+    "command-score": "catalog:",
+    "shadcn-svelte": "catalog:",
+    "svelte": "catalog:",
+    "tailwind-merge": "catalog:"
+  },
+  "devDependencies": {
+    "@bgotink/playwright-coverage": "^0.3.2",
+    "@biomejs/biome": "catalog:",
+    "@internationalized/date": "catalog:",
+    "@lucide/svelte": "catalog:",
+    "@playwright/test": "^1.59.1",
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@testing-library/svelte": "^5.3.1",
+    "@types/node": "^25.6.0",
+    "@typescript-eslint/parser": "catalog:",
+    "@vitest/browser": "catalog:",
+    "@vitest/browser-playwright": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "bits-ui": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-svelte": "catalog:",
+    "jsdom": "^29.0.2",
+    "msw": "^2.13.3",
+    "prettier": "catalog:",
+    "prettier-plugin-svelte": "catalog:",
+    "svelte-check": "catalog:",
+    "svelte-eslint-parser": "catalog:",
+    "tailwind-variants": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "^5.9.3",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

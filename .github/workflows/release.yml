@@ -1,0 +1,413 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+# Serialize Release pipelines targeting the same tag. Different tags run in
+# parallel (separate groups). cancel-in-progress: false because aborting a
+# release midway leaves orphaned partial state — e.g. binaries published to
+# the GitHub Release but the container image never pushed, or the Helm
+# chart published against a tag whose binaries failed to build.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/create-gh-release-action@f67cf7b2dadd83d36b981e674a6b08063997ce68 # v1.10.0
+        with:
+          changelog: backend/crates/atc-server/CHANGELOG.md
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Build the frontend once and share `frontend/dist` with every binary build
+  # in the matrix below. The atc-server binary embeds frontend/dist at compile
+  # time via rust-embed (see backend/crates/atc-server/src/assets.rs), so the
+  # binary build cannot run from a clean checkout — it would either fail to
+  # compile or ship an empty SPA. Doing this once and fanning out via artifact
+  # is cheaper than building the frontend three times in the matrix.
+  build-frontend:
+    name: Build Frontend
+    needs: create-release
+    runs-on: [self-hosted, linux, amd64]
+    permissions: {}
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+          cache: false
+
+      - name: Read Node version from mise.toml
+        id: versions
+        run: echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+          # Disable setup-node v6's automatic package-manager caching.
+          # In a tag-triggered release workflow, a poisoned cache from an earlier
+          # feature-branch run could end up baked into the published binary.
+          package-manager-cache: false
+
+      # Corepack reads the pnpm version from frontend/package.json's
+      # "packageManager" field and auto-downloads the pinned version on first
+      # invocation. No pnpm/action-setup needed.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm build
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-binaries:
+    name: Build Binary (${{ matrix.target }})
+    needs: [create-release, build-frontend]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: [self-hosted, linux, amd64]
+            rustflags: "-C target-feature=+crt-static"
+          # aarch64 Linux is cross-compiled from the amd64 self-hosted runner.
+          # Native code-gen via the gcc-aarch64-linux-gnu cross-toolchain;
+          # no QEMU emulation. CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
+          # is only consulted by cargo when building this target, so setting
+          # it unconditionally on every step in this matrix is harmless.
+          - target: aarch64-unknown-linux-musl
+            runner: [self-hosted, linux, amd64]
+            rustflags: "-C target-feature=+crt-static"
+          - target: aarch64-apple-darwin
+            runner: macos-26
+            rustflags: ""
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # rust-embed (in atc-server) reads ../../../frontend/dist at compile time
+      # in release mode. Pull the artifact built once by build-frontend so the
+      # cargo build below has real assets to embed.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - uses: taiki-e/upload-rust-binary-action@10c1cf6a3da113ad4e60018e386570529aa5f1d3 # v1.30.0
+        with:
+          bin: atc-server
+          target: ${{ matrix.target }}
+          manifest-path: backend/Cargo.toml
+          locked: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+      - name: Find archive
+        id: archive
+        run: |
+          ARCHIVE=$(ls atc-server-${{ matrix.target }}.* 2>/dev/null | head -1)
+          echo "path=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest binary
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ${{ steps.archive.outputs.path }}
+
+      # Hand the un-archived binary off to build-container via a workflow
+      # artifact. Linux-musl only — darwin doesn't feed a container build.
+      # retention-days: 1 so storage drops to zero next day; compression-level:
+      # 0 because the binary is already dense and zip overhead is wasted time.
+      - name: Upload binary artifact
+        if: contains(matrix.target, 'linux-musl')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: backend/target/${{ matrix.target }}/release/atc-server
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+
+  # Container builds run entirely on amd64 self-hosted — no QEMU emulation.
+  # Each matrix entry consumes the pre-built linux-musl binary uploaded by
+  # build-binaries (above) and packages it into a thin distroless image via
+  # Dockerfile.release (see that file's header for the rationale). Because
+  # the only `RUN` is non-existent (Dockerfile.release is FROM + COPY +
+  # ENTRYPOINT), buildx never executes foreign-arch code; cross-arch images
+  # come from the multi-arch distroless base manifest plus the pre-cross-
+  # compiled binary.
+  build-container:
+    name: Build Container (${{ matrix.platform }})
+    needs: build-binaries
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            target: x86_64-unknown-linux-musl
+          - platform: linux/arm64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download pre-built binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: binary-${{ matrix.target }}
+          path: .
+
+      - name: Make binary executable
+        run: chmod +x atc-server
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: Dockerfile.release
+          push: true
+          platforms: ${{ matrix.platform }}
+          tags: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  merge-manifest:
+    name: Merge Multi-Arch Manifest
+    needs: build-container
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Create multi-arch manifest
+        run: |
+          VERSION="${STEPS_META_OUTPUTS_VERSION}"
+          IMAGE="ghcr.io/${{ github.repository }}"
+
+          # Build --tag flags from metadata output (one per semver tag).
+          # Uses bash array to safely handle multi-line input without word-splitting fragility.
+          args=()
+          while IFS= read -r t; do [ -n "$t" ] && args+=(--tag "$t"); done <<< "${STEPS_META_OUTPUTS_TAGS}"
+
+          # Single invocation merges platform images into all semver tags
+          docker buildx imagetools create \
+            "${args[@]}" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+        env:
+          STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
+          STEPS_META_OUTPUTS_TAGS: ${{ steps.meta.outputs.tags }}
+
+      - name: Get manifest digest
+        id: digest
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}"
+          VERSION="${STEPS_META_OUTPUTS_VERSION}"
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{.Manifest.Digest}}')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+        env:
+          STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
+
+      - name: Attest container image
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
+
+  publish-helm-chart:
+    name: Publish Helm Chart
+    needs: [create-release, build-container, merge-manifest]
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      chart-version: ${{ steps.chart-version.outputs.chart-version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # install: false + explicit `mise install helm` — this job only needs
+      # helm; full `mise install` would drag in Rust/Node/cargo-tools.
+      # cache: false because publish-helm-chart runs once per release tag and
+      # the saved cache wouldn't help downstream.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+          cache: false
+
+      - name: Install helm via mise
+        run: mise install helm
+
+      - name: Read chart version
+        id: chart-version
+        run: |
+          if command -v yq &>/dev/null; then
+            CHART_VERSION=$(helm show chart deploy/helm/atc | yq '.version')
+          else
+            CHART_VERSION=$(grep '^version:' deploy/helm/atc/Chart.yaml | awk '{print $2}')
+          fi
+          echo "chart-version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io \
+                -u "${GITHUB_ACTOR}" \
+                --password-stdin
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+
+      - name: Package Helm chart
+        run: helm package deploy/helm/atc --destination ./dist
+
+      - name: Push Helm chart
+        run: |
+          helm push \
+            "./dist/atc-${CHART_VERSION}.tgz" \
+            "oci://ghcr.io/bojanrajkovic/charts"
+        env:
+          CHART_VERSION: ${{ steps.chart-version.outputs.chart-version }}
+
+      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: ./dist/atc-*.tgz
+
+  # Mirror the chart to a classic HTTP Helm repo on GitHub Pages so consumers
+  # without GHCR auth can `helm repo add` and `helm install` directly. Runs
+  # alongside (and after) the OCI publish in publish-helm-chart so both
+  # distribution channels stay in lockstep on the same tag. chart-releaser
+  # creates a per-chart GitHub Release (`atc-<version>`) with the .tgz
+  # attached, then refreshes index.yaml on the gh-pages branch.
+  #
+  # Manual prerequisite: GitHub Pages must be enabled with source = `gh-pages`
+  # branch in repo Settings → Pages. chart-releaser does not provision Pages.
+  publish-helm-pages:
+    name: Publish Helm Chart to GitHub Pages
+    needs: publish-helm-chart
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      # `contents: write` covers the gh-pages push and the per-chart GitHub
+      # Release. Pages serves passively from the branch — no `pages: write`.
+      contents: write
+    steps:
+      # fetch-depth: 0 — chart-releaser diffs the chart against prior tags to
+      # decide what's new. Shallow clones make it think nothing changed and
+      # silently no-op.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # chart-releaser-action commits the index update to gh-pages. Without
+      # a configured git identity the push fails. Use the actor identity so
+      # the commit is attributed to whoever triggered the release tag.
+      - name: Configure git identity
+        env:
+          GITHUB_ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+
+      # mark_as_latest: false — taiki-e/create-gh-release-action already
+      # creates the canonical `v<version>` release with binaries marked
+      # latest. Letting chart-releaser mark its `atc-<version>` per-chart
+      # release as latest would clobber that.
+      #
+      # version pinned to v1.8.1 to match the helm-cr tool pinned in
+      # .mise.toml — keeps local dry-runs and CI on the same `cr` binary.
+      - uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
+        with:
+          version: v1.8.1
+          charts_dir: deploy/helm
+          config: deploy/helm/cr.yaml
+          pages_branch: gh-pages
+          mark_as_latest: false
+          skip_existing: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

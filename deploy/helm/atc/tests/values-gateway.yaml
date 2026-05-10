@@ -1,0 +1,9 @@
+gateway:
+  enabled: true
+  parentRefs:
+    - name: atc-gateway
+      namespace: gateway-system
+  hostnames:
+    - atc.example.com
+  # rules is intentionally empty — the template must generate the default PathPrefix: / rule
+  rules: []

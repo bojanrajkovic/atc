@@ -32,37 +32,33 @@ if [ -z "$CHANGED_FILES" ]; then
     exit 0
 fi
 
-# Track which docs need updating
-declare -A docs_needed=()
-declare -A docs_found=()
-has_violations=false
-
+# Collect unique docs that need updating (one per line, deduplicated).
+# get_docs_for_file may echo multiple lines for files that legitimately span
+# two architecture docs — we add every line to the set.
+docs_needed=""
 while IFS= read -r file; do
-    doc=$(get_doc_for_file "$file")
-    if [ -n "$doc" ]; then
-        docs_needed["$doc"]=1
+    docs=$(get_docs_for_file "$file")
+    if [ -n "$docs" ]; then
+        docs_needed=$(printf '%s\n%s' "$docs_needed" "$docs" | sort -u)
     fi
 done <<< "$CHANGED_FILES"
 
+# Trim leading blank line from printf
+docs_needed=$(echo "$docs_needed" | sed '/^$/d')
+
 # If no mappings matched, nothing to enforce
-if [ ${#docs_needed[@]} -eq 0 ]; then
+if [ -z "$docs_needed" ]; then
     exit 0
 fi
 
-# Check if each required doc was also modified
-while IFS= read -r file; do
-    if [ -n "${docs_needed[$file]+_}" ]; then
-        docs_found["$file"]=1
-    fi
-done <<< "$CHANGED_FILES"
-
-# Report violations
-for doc in "${!docs_needed[@]}"; do
-    if [ -z "${docs_found[$doc]+_}" ]; then
+# Check which required docs were also modified
+has_violations=false
+while IFS= read -r doc; do
+    if ! grep -qxF "$doc" <<< "$CHANGED_FILES"; then
         echo "ERROR: Source files mapped to '$doc' were modified, but '$doc' was not updated."
         has_violations=true
     fi
-done
+done <<< "$docs_needed"
 
 if [ "$has_violations" = true ]; then
     echo ""
