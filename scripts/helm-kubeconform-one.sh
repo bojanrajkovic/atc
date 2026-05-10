@@ -17,7 +17,13 @@ chart_dir="deploy/helm/atc"
 schema_url='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
 echo "==> helm template + kubeconform (${values_file}, k8s ${kube_version})"
-helm template atc "${chart_dir}" --values "${values_file}" \
+# Pass --kube-version to `helm template` so Helm enforces the chart's own
+# kubeVersion constraint at render time (not just kubeconform's schema).
+# Without this, a chart declaring kubeVersion: ">=1.32.0-0" would still
+# render under k8s 1.29 here even though `helm install` would refuse it.
+helm template atc "${chart_dir}" \
+  --kube-version "${kube_version}" \
+  --values "${values_file}" \
   | kubeconform \
       -strict \
       -schema-location default \

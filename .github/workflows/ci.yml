@@ -290,7 +290,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        k8s: ["1.29.0", "1.32.0"]
+        k8s: ["1.32.0", "1.33.0"]
         values:
           - values-defaults.yaml
           - values-ingress.yaml
