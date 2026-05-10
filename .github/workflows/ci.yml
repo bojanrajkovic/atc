@@ -338,8 +338,8 @@ jobs:
         with:
           install: false
 
-      - name: Install helm + kind + chart-testing via mise
-        run: mise install helm kind helm-ct
+      - name: Install helm + kind + chart-testing + kubectl via mise
+        run: mise install helm kind helm-ct kubectl
 
       # Build the chart's image from this commit and load it into the
       # ephemeral kind cluster. `image.pullPolicy=Never` (set via the
