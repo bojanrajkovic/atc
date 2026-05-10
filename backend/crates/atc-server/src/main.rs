@@ -332,6 +332,7 @@ async fn main() {
         listener_handle,
         eviction_handle,
         metrics_handle,
+        otel_handles,
     )
     .await;
 

@@ -21,6 +21,8 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+use crate::otel::{self, OtelHandles};
+
 /// Per-task timeout budgets. Aggregate worst-case shutdown: ~13 seconds.
 /// K8s `terminationGracePeriodSeconds` defaults to 30; well within budget.
 pub const SHUTDOWN_TIMEOUT_DRAIN: Duration = Duration::from_secs(5);
@@ -136,6 +138,9 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// - `listener_handle`: `Some` in PG mode; `None` in in-memory mode.
 /// - `eviction_handle`: Always `Some`.
 /// - `metrics_handle`: Always `Some`.
+/// - `otel_handles`: `Some` when `init_otel` returned a configured pipeline
+///   (i.e., `OTEL_EXPORTER_OTLP_ENDPOINT` was set); `None` when OTel is
+///   disabled. Consumed so the providers cannot leak past the flush.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_shutdown_orchestration(
     shutdown: CancellationToken,
@@ -145,6 +150,7 @@ pub async fn run_shutdown_orchestration(
     listener_handle: Option<JoinHandle<()>>,
     eviction_handle: JoinHandle<()>,
     metrics_handle: JoinHandle<()>,
+    otel_handles: Option<OtelHandles>,
 ) -> bool {
     // Step 1: Wait for the shutdown trigger — signal handler OR an early
     // serve-task exit. Wrap the serve in `Option` so step 3 doesn't
@@ -210,6 +216,21 @@ pub async fn run_shutdown_orchestration(
     join_with_timeout(eviction_handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
     join_with_timeout(metrics_handle, SHUTDOWN_TIMEOUT_METRICS, "metrics").await;
 
+    // OTel pipeline tear-down. The shutdown flush exports any spans/metrics
+    // still buffered inside `BatchSpanProcessor` / `PeriodicReader`; running it
+    // here — after every emitter has joined — preserves the "no live emitter
+    // when shutdown fires" invariant. Emitters whose joins must precede this
+    // step:
+    //   1. Drain task           (`spawn_drain_task` JoinHandle)
+    //   2. Listener task        (`spawn_listener_task` JoinHandle)
+    //   3. Process collector    (`metrics::spawn_process_collector` JoinHandle)
+    //   4. axum graceful drain  (`main_serve_task` plus `axum-otel-metrics`)
+    // A new emitter category MUST be joined before this point and named here
+    // so the "no live emitter" property holds for it too.
+    if let Some(handles) = otel_handles {
+        otel::shutdown(handles);
+    }
+
     serve_failure
 }
 
@@ -274,6 +295,7 @@ mod tests {
                 None,
                 eviction_handle,
                 metrics_handle,
+                None,
             ),
         )
         .await;
@@ -317,6 +339,7 @@ mod tests {
                 None,
                 eviction_handle,
                 metrics_handle,
+                None,
             ),
         )
         .await;

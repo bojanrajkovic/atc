@@ -157,6 +157,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         Some(listener_handle),
         eviction_handle,
         metrics_handle,
+        None,
     ));
 
     FullServerFixture {

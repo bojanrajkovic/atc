@@ -120,6 +120,24 @@ fn build_meter_provider(
         .build())
 }
 
+/// Flush and tear down the OTel SDK providers carried in `handles`.
+///
+/// Consumes `handles` because both providers are unusable after `shutdown()`
+/// returns — keeping a reachable copy in scope would surface as silent noop
+/// emissions on any subsequent call. Errors from individual providers are
+/// logged and swallowed so a misbehaving exporter cannot block process exit:
+/// the orchestration that calls this helper has already crossed every other
+/// shutdown bound, and cooperative shutdown's contract is "exit, even if
+/// something refuses to flush."
+pub fn shutdown(handles: OtelHandles) {
+    if let Err(err) = handles.tracer_provider.shutdown() {
+        tracing::warn!(%err, "OTel tracer provider shutdown returned an error");
+    }
+    if let Err(err) = handles.meter_provider.shutdown() {
+        tracing::warn!(%err, "OTel meter provider shutdown returned an error");
+    }
+}
+
 /// Map every `Histogram` instrument to a base-2 exponential aggregation.
 ///
 /// Shared by production `init_otel` and the test harness so tests observe the
