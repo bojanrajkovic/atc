@@ -29,7 +29,7 @@ The `renovate/configure` branch contains:
    - Treats security advisories (OSV + Dependabot) with bypassed schedule and zero release-age delay; non-major security PRs auto-merge, major security PRs require manual review
    - Groups monorepos that lack auto-detect coverage (Svelte ecosystem, tokio + tokio-util, tower + tower-http) and cross-manager pnpm/rust-toolchain pins
    - Special-cases `ts-rs` (no automerge, type-bridge with frontend), `sqlx` family (no automerge, compile-time SQL checking), opentelemetry-rust (no automerge, breaking 0.x minor bumps)
-   - Suppresses the four stale `@radix-ui/*` lookup failures via `enabled: false` rules in case any catalog edit lags (defensive — the same PR removes them from the catalog)
+   - The four stale `@radix-ui/*` entries are removed from the catalog in the same PR (no defensive packageRule needed — the entries disappear with the catalog edit)
 2. The cleanup edits, all on the same branch:
    - `frontend/pnpm-workspace.yaml`: remove four `@radix-ui/*` entries; replace dead `typescript: ^6.0.2` with `typescript: 5.9.3`; add catalog entries for `msw`, `@types/node`, `@playwright/test`, `@bgotink/playwright-coverage` at versions matching what the lockfile currently resolves
    - `frontend/package.json`: replace direct version ranges with `"catalog:"` for the deps already in or being added to the catalog
@@ -63,13 +63,11 @@ The `renovate/configure` branch contains:
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
-    "docker:pinDigests"
+    "config:best-practices"
   ],
   "timezone": "America/New_York",
-  "schedule": ["before 9am on weekdays"],
-  "automergeSchedule": ["before 9am on weekdays"],
+  "schedule": ["before 9am every weekday"],
+  "automergeSchedule": ["before 9am every weekday"],
   "prHourlyLimit": 3,
   "prConcurrentLimit": 6,
   "branchConcurrentLimit": 0,
@@ -90,7 +88,7 @@ The `renovate/configure` branch contains:
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true,
-    "schedule": ["before 5am on sunday"]
+    "schedule": ["before 5am every sunday"]
   },
   "packageRules": [/* see below */]
 }
@@ -98,7 +96,7 @@ The `renovate/configure` branch contains:
 
 Non-default-choice rationale (Renovate doc cites embedded for verification):
 
-- `extends`: `helpers:pinGitHubActionDigests` and `docker:pinDigests` are added explicitly — `config:recommended` does not include them. Switching to `config:best-practices` would bundle them along with `abandonments:recommended` and other policies; selection is kept explicit for visibility. (https://docs.renovatebot.com/presets-config/)
+- `extends: ["config:best-practices"]` — this preset bundles `config:recommended` plus `docker:pinDigests`, `helpers:pinGitHubActionDigests`, `:pinDevDependencies`, `abandonments:recommended`, `security:minimumReleaseAgeNpm`, and `:maintainLockFilesWeekly`. Our explicit `lockFileMaintenance` override sets the schedule to Sunday 5am (Monday morning triage) and `automerge: true` (mechanical safe regen); these merge with the preset's defaults. `abandonments:recommended` surfaces packages with no release for 12+ months on the dependency dashboard — useful visibility, not noisy on PRs. (https://docs.renovatebot.com/presets-config/)
 - `platformAutomerge: false` makes `automergeSchedule` meaningful. (https://docs.renovatebot.com/key-concepts/automerge/)
 - `branchConcurrentLimit: 0` — unlimited branches with limited PRs lets Renovate keep work in flight while throttling visible PRs.
 - `assignees` only, no `reviewers` — Bojan is the only reviewer; requesting self-review is noise.
@@ -124,7 +122,6 @@ A consequence: the `rust-toolchain` cross-manager group below uses `matchManager
    - `tokio` + `tokio-util` custom group "tokio ecosystem", patch automerged.
    - `tower` + `tower-http` custom group "tower ecosystem".
 7. **Frontend / npm specifics:**
-   - Four `@radix-ui/*` stale entries: `enabled: false` (defensive — the same PR removes them from the catalog, but a transient race could leave them visible to one Renovate run).
    - Svelte ecosystem custom group (svelte, svelte-check, svelte-eslint-parser, eslint-plugin-svelte, prettier-plugin-svelte, @sveltejs/vite-plugin-svelte, @testing-library/svelte) — automerge minor + patch. No Renovate auto-group preset exists for these. **No forced `commitMessagePrefix`** — Renovate uses `fix(deps):` only when the group's update set includes a runtime member (`svelte`), and `chore(deps):` otherwise. This avoids a release-please patch release for dev-tooling-only updates inside the group.
    - Svelte ecosystem major: no automerge.
    - `tailwind-merge` major: no automerge (separate org from `tailwindcssMonorepo` preset).
@@ -266,7 +263,7 @@ AC6b. `.github/workflows/ci.yml` helm-install job extracts `tools.rust` and `too
 AC7. `renovate.json` matches `https://docs.renovatebot.com/renovate-schema.json` shape (no `_comment` fields, all keys are valid Renovate config). Mend's hosted Renovate does NOT run a config-validation CI check on the `renovate/configure` onboarding branch (that flow uses `renovate/reconfigure`), so schema verification is deferred to Renovate's first run after merge — the dependency dashboard issue Renovate creates will surface any config parse errors. Local pre-push schema sanity is via visual inspection against the schema URL plus the editor's JSON-schema validation (VS Code etc.). If a config syntax error is found post-merge, it's a one-line fix-up PR.
 
 AC8. `renovate.json` contains:
-- `extends` includes `config:recommended`, `helpers:pinGitHubActionDigests`, `docker:pinDigests`
+- `extends: ["config:best-practices"]` (bundles `config:recommended`, `docker:pinDigests`, `helpers:pinGitHubActionDigests`, `:pinDevDependencies`, `abandonments:recommended`, `security:minimumReleaseAgeNpm`, `:maintainLockFilesWeekly`)
 - `platformAutomerge: false`, `automerge: false` at top level (per-rule overrides)
 - `rangeStrategy: "pin"`
 - `automergeSchedule` matches `schedule`

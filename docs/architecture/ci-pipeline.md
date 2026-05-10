@@ -77,7 +77,7 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 
 ## Dependency updates
 
-Mend Renovate manages every dependency surface (Cargo, npm/pnpm, Dockerfile, docker-compose, GitHub Actions, mise) under one configuration at `renovate.json`. Manifests are pinned exactly (`=X.Y.Z` for Cargo, caret stripped for npm/pnpm), Docker `FROM` lines and GitHub Action `uses:` references are SHA-pinned via the `helpers:pinGitHubActionDigests` and `docker:pinDigests` presets, and a weekly `lockFileMaintenance` run on Sunday morning regenerates `Cargo.lock` and `pnpm-lock.yaml` to absorb transitive bumps.
+Mend Renovate manages every dependency surface (Cargo, npm/pnpm, Dockerfile, docker-compose, GitHub Actions, mise) under one configuration at `renovate.json`. It extends `config:best-practices`, which bundles digest pinning for Docker FROMs and GitHub Action `uses:` references, dev-dependency pinning, weekly lockfile maintenance, the npm security minimum-release-age, and abandoned-package surfacing on the dependency dashboard. Manifests are pinned exactly (`=X.Y.Z` for Cargo, caret stripped for npm/pnpm), and `lockFileMaintenance` is scheduled weekly on Sunday morning to regenerate `Cargo.lock` and `pnpm-lock.yaml` and absorb transitive bumps.
 
 Auto-merge gating combines four mechanisms:
 

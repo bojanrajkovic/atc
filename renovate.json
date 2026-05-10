@@ -1,13 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
-    "docker:pinDigests"
+    "config:best-practices"
   ],
   "timezone": "America/New_York",
-  "schedule": ["before 9am on weekdays"],
-  "automergeSchedule": ["before 9am on weekdays"],
+  "schedule": ["before 9am every weekday"],
+  "automergeSchedule": ["before 9am every weekday"],
   "prHourlyLimit": 3,
   "prConcurrentLimit": 6,
   "branchConcurrentLimit": 0,
@@ -28,7 +26,7 @@
   "lockFileMaintenance": {
     "enabled": true,
     "automerge": true,
-    "schedule": ["before 5am on sunday"]
+    "schedule": ["before 5am every sunday"]
   },
   "packageRules": [
     {
@@ -96,16 +94,6 @@
       "matchManagers": ["cargo"],
       "matchPackageNames": ["tower", "tower-http"],
       "groupName": "tower ecosystem"
-    },
-    {
-      "description": "Suppress stale @radix-ui/* lookup failures (defensive — same PR removes them from the catalog, but a transient race could leave them visible to one Renovate run).",
-      "matchPackageNames": [
-        "@radix-ui/dialog",
-        "@radix-ui/primitive",
-        "@radix-ui/react-progress",
-        "@radix-ui/react-toggle"
-      ],
-      "enabled": false
     },
     {
       "description": "Svelte ecosystem custom group: minor + patch automerged. No forced commitMessagePrefix — Renovate uses fix(deps): only when the group includes a runtime member (svelte), and chore(deps): otherwise.",
