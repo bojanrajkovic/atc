@@ -43,14 +43,22 @@ jobs:
 
       # The Dockerfile takes PLAYWRIGHT_VERSION as a build arg so the
       # image's chromium dep set always matches what the project's tests
-      # will need. Source of truth is frontend/package.json.
-      - name: Extract Playwright version from frontend/package.json
+      # will need. `@playwright/test` is referenced via `catalog:` in
+      # frontend/package.json, so the canonical version lives in
+      # frontend/pnpm-workspace.yaml under the `catalog:` block.
+      - name: Extract Playwright version from pnpm catalog
         id: pw
         run: |
           set -euo pipefail
-          PW=$(jq -r '.devDependencies["@playwright/test"]' frontend/package.json | sed -E 's/^[\^~]//')
+          # Catalog entry looks like:   '@playwright/test': 1.59.1
+          # (or with a leading caret if not yet pinned; strip it).
+          PW=$(grep -m 1 "^[[:space:]]*['\"]\?@playwright/test['\"]\?:" frontend/pnpm-workspace.yaml \
+            | awk -F': ' '{print $2}' \
+            | tr -d "'\"" \
+            | sed -E 's/^[[:space:]]*[\^~]?//' \
+            | sed -E 's/[[:space:]]*$//')
           if [ -z "${PW}" ] || [ "${PW}" = "null" ]; then
-            echo "::error::Could not extract @playwright/test version from frontend/package.json"
+            echo "::error::Could not extract @playwright/test version from frontend/pnpm-workspace.yaml catalog"
             exit 1
           fi
           echo "Playwright version: ${PW}"
