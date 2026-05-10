@@ -318,6 +318,84 @@ jobs:
           KUBE_VERSION: ${{ matrix.k8s }}
         run: scripts/helm-kubeconform-one.sh "${KUBE_VERSION}" "${VALUES_FILE}"
 
+  helm-install:
+    name: Helm Install (kind + ct)
+    if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
+    needs: changes
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # mise install: false + explicit subset so this job doesn't drag in
+      # Rust/Node/cargo-tools (Rust comes from the inline image build via
+      # the Dockerfile's own toolchain). See the helm-lint job above for
+      # the broader rationale.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        with:
+          install: false
+
+      - name: Install helm + kind + chart-testing + kubectl via mise
+        run: mise install helm kind helm-ct kubectl
+
+      # Build the chart's image from this commit and load it into the
+      # ephemeral kind cluster. `image.pullPolicy=Never` (set via the
+      # ci/test-values.yaml fixture) tells the kubelet to use the loaded
+      # image instead of trying to pull from the private GHCR repository.
+      - name: Build atc image for kind
+        run: docker build -t atc:ct -f Dockerfile .
+
+      - name: Create kind cluster
+        # `--wait` blocks until the control-plane Node is Ready. 120 s gives
+        # cold-runner headroom for the kindest/node image pull (~30-60 s)
+        # plus control-plane init (~20-40 s) without wedging on a flake.
+        run: kind create cluster --name atc-ct --wait 120s
+
+      - name: Load atc image into kind
+        run: kind load docker-image atc:ct --name atc-ct
+
+      # `ct install` reads `deploy/helm/atc/ci/*-values.yaml` automatically
+      # — that fixture pins image.repository=atc, image.tag=ct, and
+      # image.pullPolicy=Never to match the kind-loaded build above. The
+      # job validates admission, controller acceptance, Pod readiness, and
+      # the in-cluster `helm test` (test-connection Pod) on top of the
+      # template-only kubeconform matrix in the `helm` job.
+      - name: ct install
+        run: ct install --config deploy/helm/ct.yaml --charts deploy/helm/atc
+
+      - name: Delete kind cluster
+        # Self-healing cleanup. The kind cluster lives inside this pod's
+        # DinD sidecar; if dockerd inside dind hangs reaping the
+        # control-plane container, `kind delete` returns non-zero. Since
+        # the runner pod is ephemeral (ARC reaps it when the workflow
+        # finishes), any half-cleaned state dies with the pod — so
+        # cleanup flakes should not turn an otherwise-green `ct install`
+        # into a red job. Surface them as `::warning::` annotations for
+        # visibility instead of failing the step.
+        if: always()
+        run: |
+          set +e
+          kind delete cluster --name atc-ct
+          kind_rc=$?
+          if [ $kind_rc -eq 0 ]; then
+            exit 0
+          fi
+          echo "::warning title=kind cleanup::kind delete cluster exited $kind_rc; falling back to defensive docker cleanup"
+          # kind names containers <cluster>-control-plane (and -worker-N for HA topologies).
+          docker ps -a --filter "name=^atc-ct-" --format '{{.Names}}' | while read -r container; do
+            docker kill "$container" >/dev/null 2>&1
+            if docker rm -f -v "$container" >/dev/null 2>&1; then
+              echo "  cleaned: $container"
+            else
+              echo "::warning title=kind cleanup::could not remove $container; runner pod teardown will reap it"
+            fi
+          done
+          docker network rm kind >/dev/null 2>&1 || true
+          exit 0
+
   pr-checks:
     name: PR Checks
     if: github.event_name == 'pull_request'
@@ -388,7 +466,7 @@ jobs:
 
   helm-result:
     name: Helm Result
-    needs: [changes, helm-lint, helm]
+    needs: [changes, helm-lint, helm, helm-install]
     if: always()
     runs-on: [self-hosted, linux, amd64]
     steps:
@@ -398,6 +476,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HELM_LINT_RESULT: ${{ needs.helm-lint.result }}
           HELM_RESULT: ${{ needs.helm.result }}
+          HELM_INSTALL_RESULT: ${{ needs.helm-install.result }}
         run: |
           if [[ "$HELM_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
             echo "No helm changes, skipping"
@@ -409,6 +488,10 @@ jobs:
           fi
           if [[ "$HELM_RESULT" != "success" ]]; then
             echo "Helm validate checks failed: $HELM_RESULT"
+            exit 1
+          fi
+          if [[ "$HELM_INSTALL_RESULT" != "success" ]]; then
+            echo "Helm install checks failed: $HELM_INSTALL_RESULT"
             exit 1
           fi
           echo "All helm checks passed"

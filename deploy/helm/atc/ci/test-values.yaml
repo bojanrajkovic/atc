@@ -1,0 +1,18 @@
+# ct install fixture — pulled in automatically by `ct install` (see
+# `deploy/helm/ct.yaml`). This file installs the chart with its real
+# image into an ephemeral kind cluster; the workflow builds the image
+# locally and `kind load`s it under the tag `atc:ct` before invoking ct.
+#
+# pullPolicy=Never tells the kubelet to use the loaded image instead of
+# trying to pull from ghcr.io (which is private and unreachable from a
+# fresh kind cluster without registry auth).
+image:
+  repository: atc
+  tag: ct
+  pullPolicy: Never
+
+# Keep the helm test hook Pod (test-connection) enabled so `ct install`
+# exercises both the Deployment readiness path and the in-cluster smoke
+# test that wgets `/healthz` against the Service.
+tests:
+  enabled: true
