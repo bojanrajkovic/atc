@@ -251,6 +251,75 @@ async fn no_pg_always_200() {
 
 // ─── shutdown token cancelled ─────────────────────────────────────────────
 
+/// With PG configured AND a fresh heartbeat — i.e. the path that would
+/// otherwise return 200 — a cancelled shutdown token must still drive
+/// `/readyz` to 503 `{"status":"shutting_down"}`. This is what locks the
+/// "check shutdown before doing PG work" invariant: were the shutdown
+/// short-circuit ever moved below the PG `SELECT 1`, this test would
+/// observe a successful PG query and fall through to 200.
+#[tokio::test]
+#[serial]
+async fn shutdown_cancelled_returns_503_with_pg() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+
+    let layer = common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0
+        .clone();
+    let state_machine = Arc::new(RunStateMachine::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
+        as Arc<dyn atc_server::persist::PersistentStore>;
+    let shutdown = CancellationToken::new();
+    let app_state = Arc::new(AppState {
+        state_machine,
+        webhook_tx,
+        webhook_secret: None,
+        seq,
+        pg_pool: Some(pool),
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        // Fresh heartbeat so the drain-staleness path would otherwise return 200.
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
+        shutdown: shutdown.clone(),
+        ws_tracker: TaskTracker::new(),
+    });
+
+    shutdown.cancel();
+
+    let app = atc_server::routes::api_routes(layer)
+        .with_state(app_state)
+        .fallback(atc_server::assets::fallback_handler());
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/readyz")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "cancelled shutdown must beat PG check + fresh heartbeat"
+    );
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["status"], "shutting_down",
+        "body must indicate shutting_down, not ok or drain_stale"
+    );
+}
+
 /// When state.shutdown is cancelled, GET /readyz returns 503 with
 ///     `{"status":"shutting_down"}` — even without PG.
 #[tokio::test]
