@@ -40,6 +40,11 @@ pub fn install_test_recorder() -> (PrometheusMetricLayer<'static>, PrometheusHan
         )
         .expect("valid drain-startup bucket spec")
         .set_buckets_for_metric(
+            Matcher::Full("atc_pg_drain_shutdown_remaining_rows".to_string()),
+            &[0.0, 1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0],
+        )
+        .expect("valid drain-shutdown-remaining bucket spec")
+        .set_buckets_for_metric(
             Matcher::Suffix("_seconds".to_string()),
             SECONDS_DURATION_BUCKETS,
         )

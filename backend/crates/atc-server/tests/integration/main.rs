@@ -22,6 +22,7 @@ mod graceful_shutdown;
 mod metrics;
 mod metrics_broadcast_watermark_test;
 mod metrics_drain_pass_duration_test;
+mod metrics_drain_shutdown_remaining_test;
 mod metrics_drain_startup_test;
 mod metrics_min_pending_seq_test;
 mod metrics_outbox_lag_test;

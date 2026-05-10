@@ -36,6 +36,14 @@ const DRAIN_BATCH_SIZE: i64 = 500;
 /// 6× margin under the 30 s staleness threshold.
 const HEARTBEAT_TICK: Duration = Duration::from_secs(5);
 
+/// Bound on the post-shutdown `COUNT(*)` query that records
+/// `atc_pg_drain_shutdown_remaining_rows`. A hung database at shutdown must
+/// not eat the entire `SHUTDOWN_TIMEOUT_DRAIN` budget — the count is
+/// observability, not correctness, so we'd rather skip the observation than
+/// delay process exit. 1 second leaves the rest of the 5 s drain shutdown
+/// budget for in-flight pass cleanup.
+const SHUTDOWN_REMAINING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Capacity of the recently-broadcast seq ring buffer.
 ///
 /// At 100 webhooks/sec peak, 2048 entries cover ~20 s of drain history — orders
@@ -163,6 +171,7 @@ pub fn spawn_drain_task(
     drain_delay: Option<Duration>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let shutdown_pool = pool.clone();
         let mut watermark: i64 = initial_watermark;
         let mut recent_ring: VecDeque<i64> = VecDeque::with_capacity(DEDUP_CAP);
         let mut recent_set: HashSet<i64> = HashSet::with_capacity(DEDUP_CAP);
@@ -297,7 +306,55 @@ pub fn spawn_drain_task(
                 }
             }
         }
+
+        // Drain task is exiting. Record one shutdown observation: outbox rows
+        // committed past this replica's local watermark. Validates the issue
+        // #60 / #80 assumption that the outbox is unlikely to grow beyond a
+        // single drain pass (DRAIN_BATCH_SIZE = 500) by the time shutdown
+        // fires. Bounded by SHUTDOWN_REMAINING_QUERY_TIMEOUT so a hung DB
+        // cannot stall process exit; on timeout or query error we log and
+        // skip the observation rather than recording 0 (which would silently
+        // mask the problem).
+        record_shutdown_remaining(&shutdown_pool, watermark).await;
     })
+}
+
+/// Query and record the outbox lag remaining at drain task exit.
+///
+/// Runs `SELECT COUNT(*) FROM outbox WHERE seq > $watermark` against the
+/// drain task's own pool with a bounded timeout, observing the result into
+/// `atc_pg_drain_shutdown_remaining_rows`. The observation captures rows
+/// committed past `watermark` *at drain task exit time*, which is later than
+/// signal arrival — the webhook handler keeps writing until axum's graceful
+/// shutdown drains in-flight requests, so the count includes anything
+/// committed during that window.
+async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64) {
+    let query = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) AS "count!: i64" FROM outbox WHERE seq > $1"#,
+        watermark,
+    )
+    .fetch_one(pool);
+
+    match tokio::time::timeout(SHUTDOWN_REMAINING_QUERY_TIMEOUT, query).await {
+        Ok(Ok(remaining)) => {
+            #[allow(clippy::cast_precision_loss)]
+            metrics::histogram!("atc_pg_drain_shutdown_remaining_rows").record(remaining as f64);
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                error = %e,
+                watermark,
+                "drain shutdown remaining-rows query failed; skipping observation",
+            );
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                watermark,
+                timeout_ms = SHUTDOWN_REMAINING_QUERY_TIMEOUT.as_millis() as u64,
+                "drain shutdown remaining-rows query timed out; skipping observation",
+            );
+        }
+    }
 }
 
 /// Page through outbox rows from `pass_start_floor` upward, decoding payload,
