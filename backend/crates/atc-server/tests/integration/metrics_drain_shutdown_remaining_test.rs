@@ -1,10 +1,8 @@
 //! `atc_pg_drain_shutdown_remaining_rows` histogram.
 //!
 //! Asserts that exiting the drain task records exactly one observation per
-//! drain task lifetime, that the recorded value reflects rows committed past
-//! the replica's watermark at exit time, and that the metric emits histogram
-//! `_bucket` lines (i.e. the custom bucket override is wired so that
-//! `metrics-exporter-prometheus` does not fall back to Summary representation).
+//! drain task lifetime and that the recorded value reflects rows committed
+//! past the replica's watermark at exit time.
 //!
 //! Docker/OrbStack required.
 
@@ -12,9 +10,7 @@ use crate::common;
 
 use serial_test::serial;
 
-const METRIC_COUNT: &str = "atc_pg_drain_shutdown_remaining_rows_count";
-const METRIC_SUM: &str = "atc_pg_drain_shutdown_remaining_rows_sum";
-const METRIC_BUCKET_PREFIX: &str = "atc_pg_drain_shutdown_remaining_rows_bucket";
+const METRIC: &str = "atc_pg_drain_shutdown_remaining_rows";
 
 /// Insert a minimal stub runs row to satisfy the outbox FK constraint. Uses
 /// the untyped sqlx API so the new query does not require regenerating
@@ -46,17 +42,13 @@ async fn insert_outbox_row_silent(pool: &sqlx::PgPool, run_id: i64) {
         .unwrap();
 }
 
-/// Drain task records exactly one shutdown observation per lifetime, the
-/// observation reflects the lag at exit time, and the histogram emits
-/// `_bucket` lines (proves the bucket override is wired).
+/// Drain task records exactly one shutdown observation per lifetime, and the
+/// observation reflects the lag at exit time.
 #[tokio::test]
 #[serial]
 async fn drain_shutdown_records_remaining_rows_at_task_exit() {
     common::ensure_recorder_installed();
-
-    let baseline = common::render_metrics();
-    let baseline_count = common::parse_unlabeled_counter(&baseline, METRIC_COUNT);
-    let baseline_sum = common::parse_unlabeled_gauge(&baseline, METRIC_SUM).unwrap_or(0.0);
+    common::reset_metrics();
 
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
@@ -73,39 +65,26 @@ async fn drain_shutdown_records_remaining_rows_at_task_exit() {
     // Trigger shutdown and join the drain handle. The shutdown observation is
     // recorded after the loop exits and before the spawned task returns;
     // joining the handle guarantees the recorder has seen it before we
-    // scrape.
+    // snapshot.
     fixture.shutdown.cancel();
     fixture
         .drain_handle
         .await
         .expect("drain task should join cleanly");
 
-    let after = common::render_metrics();
-    let after_count = common::parse_unlabeled_counter(&after, METRIC_COUNT);
-    let after_sum = common::parse_unlabeled_gauge(&after, METRIC_SUM).unwrap_or(0.0);
+    let snapshot = common::snapshot_metrics();
+    let count = common::histogram_count(&snapshot, METRIC, &[]);
+    let sum = common::histogram_sum(&snapshot, METRIC, &[]);
 
     assert_eq!(
-        after_count - baseline_count,
-        1,
-        "expected exactly one shutdown observation; baseline={baseline_count} after={after_count}",
+        count, 1,
+        "expected exactly one shutdown observation; got {count}",
     );
 
-    let observed_value = after_sum - baseline_sum;
     let expected = run_ids.len() as f64;
     let epsilon = 1e-6;
     assert!(
-        (observed_value - expected).abs() < epsilon,
-        "shutdown observation should record {expected} rows past watermark; got {observed_value} \
-         (after_sum={after_sum} baseline_sum={baseline_sum})",
-    );
-
-    // Confirm the histogram emits `_bucket` lines. Without the
-    // `Matcher::Full` bucket override in `install_recorder`, an unmatched
-    // histogram would render as Summary and this assertion would fail —
-    // catching a silent regression in the bucket configuration.
-    assert!(
-        after.lines().any(|l| l.starts_with(METRIC_BUCKET_PREFIX)),
-        "expected histogram `_bucket` lines for {METRIC_BUCKET_PREFIX}; \
-         metric likely fell back to Summary representation",
+        (sum - expected).abs() < epsilon,
+        "shutdown observation should record {expected} rows past watermark; got {sum}",
     );
 }

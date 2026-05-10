@@ -7,11 +7,21 @@ use std::time::Duration;
 
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::listener;
+use atc_server::otel::exponential_histogram_view;
 use atc_server::persist::{InMemoryStore, PgStore};
 use atc_server::state::AppState;
-use axum_prometheus::PrometheusMetricLayer;
-use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
-use axum_prometheus::utils::SECONDS_DURATION_BUCKETS;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::MeterProvider as _;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::metrics::data::{
+    AggregatedMetrics, MetricData, ResourceMetrics, ScopeMetrics,
+};
+use opentelemetry_sdk::metrics::{
+    InMemoryMetricExporter, InMemoryMetricExporterBuilder, PeriodicReader, SdkMeterProvider,
+    Temporality,
+};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -23,213 +33,294 @@ fn now_millis_for_test() -> i64 {
         .unwrap_or(0)
 }
 
-/// Mirror of the production `metrics::build()` install path so test fixtures
-/// validate the same custom-bucket configuration as production. Without this
-/// mirror, tests would exercise the default-recorder path while production
-/// uses the install-recorder path, masking real divergence.
-///
-/// All test binaries that share [`PROMETHEUS_INIT`] must use this initializer
-/// (instead of `PrometheusMetricLayer::pair`) so the global recorder for the
-/// binary has consistent bucket configuration regardless of which test fires
-/// first.
-pub fn install_test_recorder() -> (PrometheusMetricLayer<'static>, PrometheusHandle) {
-    let handle = PrometheusBuilder::new()
-        .set_buckets_for_metric(
-            Matcher::Full("atc_pg_drain_startup_seconds".to_string()),
-            &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
-        )
-        .expect("valid drain-startup bucket spec")
-        .set_buckets_for_metric(
-            Matcher::Full("atc_pg_drain_shutdown_remaining_rows".to_string()),
-            &[0.0, 1.0, 10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0],
-        )
-        .expect("valid drain-shutdown-remaining bucket spec")
-        .set_buckets_for_metric(
-            Matcher::Suffix("_seconds".to_string()),
-            SECONDS_DURATION_BUCKETS,
-        )
-        .expect("valid _seconds suffix bucket spec")
-        .install_recorder()
-        .expect("install global Prometheus recorder");
-
-    let upkeep_handle = handle.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-        loop {
-            interval.tick().await;
-            upkeep_handle.run_upkeep();
-        }
-    });
-
-    (PrometheusMetricLayer::new(), handle)
-}
-
-// Guard: install_test_recorder() is called only once per test binary.
-// Tests that use this must be marked with #[serial_test::serial] to avoid concurrent execution.
-// Stores both the layer (for routing) and the handle (for metric assertions via render_metrics()).
-pub static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, PrometheusHandle)> =
-    OnceLock::new();
-
 // ---------------------------------------------------------------------------
-// Span-side test harness (OTel InMemorySpanExporter)
+// OTel test harness — single shared install per test binary
 // ---------------------------------------------------------------------------
 
-/// In-memory span exporter wired through a `SimpleSpanProcessor` so tests can
-/// inspect every span emitted via `#[tracing::instrument]` or `info_span!`.
+/// Shared in-memory OTel pipeline for the test binary.
 ///
-/// The exporter is installed once per test binary as the global tracer
-/// provider, paired with a tracing-opentelemetry layer composed onto a
-/// `tracing_subscriber::registry()`. The layer wraps a tracer captured from
-/// our local provider — even if a later test (e.g. `otel_init_test::*`)
-/// overwrites the global tracer provider via `set_tracer_provider`, this
-/// subscriber's layer still routes spans into our exporter.
+/// One install per process: the OTel global tracer/meter provider and the
+/// `metrics-rs` global recorder are all process-singletons. Tests that read
+/// snapshots must be marked `#[serial_test::serial]` because the buffers and
+/// the recorder accumulators are shared across every test.
 ///
-/// Tests that read spans must be marked `#[serial_test::serial]` because the
-/// exporter is shared across all tests in the binary; concurrent reads/resets
-/// would interleave each others' span batches.
-static OTEL_SPAN_TEST_INIT: OnceLock<opentelemetry_sdk::trace::InMemorySpanExporter> =
-    OnceLock::new();
-
-/// Install the global span exporter + matching tracing subscriber on first
-/// call; return a clonable handle on every call.
-///
-/// Idempotent: subsequent calls return the same exporter without re-installing
-/// the subscriber. Safe to call from any test that emits spans, including the
-/// implicit `tokio::spawn` paths inside `build_app_with_pg_and_listener`.
-pub fn ensure_span_exporter_installed() -> opentelemetry_sdk::trace::InMemorySpanExporter {
-    OTEL_SPAN_TEST_INIT
-        .get_or_init(install_span_exporter)
-        .clone()
+/// Histograms use the same exponential aggregation view as production (via
+/// `atc_server::otel::exponential_histogram_view`) so tests observe the same
+/// data shape as deployed pods.
+pub struct OtelTestHarness {
+    pub span_exporter: InMemorySpanExporter,
+    pub metric_exporter: InMemoryMetricExporter,
+    pub meter_provider: SdkMeterProvider,
+    pub tracer_provider: SdkTracerProvider,
 }
 
-fn install_span_exporter() -> opentelemetry_sdk::trace::InMemorySpanExporter {
-    use opentelemetry::trace::TracerProvider as _;
-    use opentelemetry_sdk::trace::{SdkTracerProvider, SimpleSpanProcessor};
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+static OTEL_TEST_INIT: OnceLock<OtelTestHarness> = OnceLock::new();
 
-    let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
-    let provider = SdkTracerProvider::builder()
-        .with_span_processor(SimpleSpanProcessor::new(exporter.clone()))
+/// Idempotent installer. First caller installs; subsequent callers receive the
+/// existing harness. Safe to call from any test that emits metrics or spans.
+pub fn ensure_recorder_installed() -> &'static OtelTestHarness {
+    OTEL_TEST_INIT.get_or_init(install_test_otel)
+}
+
+fn install_test_otel() -> OtelTestHarness {
+    // Spans: simple processor exports synchronously on `on_end` so finished
+    // spans are visible immediately. The InMemoryMetricExporter requires a
+    // PeriodicReader (it's a PushMetricExporter); we trigger collection in
+    // tests via `meter_provider.force_flush()`.
+    let span_exporter = InMemorySpanExporter::default();
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_span_processor(SimpleSpanProcessor::new(span_exporter.clone()))
         .build();
 
-    let tracer = provider.tracer("atc-test");
+    // Delta temporality so each test's `force_flush()` reports only the
+    // emissions made since the last flush. Cumulative would carry every test's
+    // emissions forward, defeating per-test reset semantics.
+    let metric_exporter = InMemoryMetricExporterBuilder::new()
+        .with_temporality(Temporality::Delta)
+        .build();
+    let reader = PeriodicReader::builder(metric_exporter.clone()).build();
+    let meter_provider = SdkMeterProvider::builder()
+        .with_reader(reader)
+        .with_view(exponential_histogram_view)
+        .build();
 
-    opentelemetry::global::set_tracer_provider(provider);
-    opentelemetry::global::set_text_map_propagator(
-        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-    );
+    // The tracing-opentelemetry layer captures a tracer from this provider so
+    // `tracing::info_span!` / `#[tracing::instrument]` route into the in-memory
+    // span exporter. axum-otel-metrics reads from the global meter provider at
+    // layer-build time, so the global meter provider must be set before the
+    // first call to `routes::api_routes()` in any test.
+    let tracer = tracer_provider.tracer("atc-test");
+    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+    opentelemetry::global::set_meter_provider(meter_provider.clone());
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
+    let meter = meter_provider.meter("atc");
+    let recorder = metrics_exporter_otel::OpenTelemetryRecorder::new(meter);
+    if metrics::set_global_recorder(recorder).is_err() {
+        // Another test (e.g. otel_init_test::init_otel_returns_some_with_endpoint)
+        // installed a recorder first. The first installer wins; our metric
+        // emissions still resolve through it but won't reach this exporter.
+        // Tests that depend on the metric exporter must call
+        // `ensure_recorder_installed` early so this branch is not taken.
+    }
+
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     let _ = tracing_subscriber::registry()
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init();
 
-    exporter
+    // Register descriptions for every metric the production server emits. The
+    // first emission of a metric without a prior `describe_*!` would otherwise
+    // create the OTel instrument with an empty description, which is fine in
+    // production but defeats AC test inspection.
+    atc_server::metrics::register_build_info();
+    atc_server::metrics::register_pg_write_counters();
+    atc_server::metrics::register_listener_metrics();
+
+    OtelTestHarness {
+        span_exporter,
+        metric_exporter,
+        meter_provider,
+        tracer_provider,
+    }
 }
 
-/// Snapshot of every span exported so far in the current test binary. The
-/// `SimpleSpanProcessor` exports synchronously on each `on_end`, so finished
-/// spans are visible immediately; spans whose owning future is still in
-/// flight (e.g. `drain.task`) will not appear until the task ends.
+// ---------------------------------------------------------------------------
+// Snapshot accessors
+// ---------------------------------------------------------------------------
+
+/// Drain the meter provider and return every `ResourceMetrics` batch produced
+/// since the previous snapshot or `reset_metrics()` call.
+///
+/// This call drains the exporter buffer after reading it, so the next
+/// `snapshot_metrics()` reflects only deltas produced after this call —
+/// matching the natural per-test isolation pattern. To start from a clean
+/// slate without consuming a snapshot, call `reset_metrics()`.
+pub fn snapshot_metrics() -> Vec<ResourceMetrics> {
+    let h = ensure_recorder_installed();
+    h.meter_provider
+        .force_flush()
+        .expect("meter_provider.force_flush()");
+    let snapshot = h
+        .metric_exporter
+        .get_finished_metrics()
+        .expect("InMemoryMetricExporter::get_finished_metrics");
+    h.metric_exporter.reset();
+    snapshot
+}
+
+/// Snapshot of every span exported so far in the current test binary.
 pub fn read_finished_spans() -> Vec<opentelemetry_sdk::trace::SpanData> {
-    ensure_span_exporter_installed()
+    let h = ensure_recorder_installed();
+    h.span_exporter
         .get_finished_spans()
         .expect("InMemorySpanExporter::get_finished_spans")
 }
 
-/// Clear the in-memory span buffer. Call at the start of any test that
-/// computes span counts so observations from earlier tests in the binary
-/// are not folded into the assertion.
+/// Clear the in-memory metric buffer AND advance the SDK's
+/// last-flush watermark so subsequent snapshots only report observations made
+/// after this call.
+///
+/// With `Temporality::Delta`, the SDK reports the delta since the last
+/// `force_flush()`. Just clearing the exporter buffer would leave prior
+/// observations in the SDK accumulator; the next `snapshot_metrics()` would
+/// then report them as new. We force a flush first to advance the watermark,
+/// then clear the buffer so the cumulative state since process start is
+/// dropped.
+pub fn reset_metrics() {
+    let h = ensure_recorder_installed();
+    let _ = h.meter_provider.force_flush();
+    h.metric_exporter.reset();
+}
+
+/// Clear the in-memory span buffer.
 pub fn reset_spans() {
-    ensure_span_exporter_installed().reset();
+    let h = ensure_recorder_installed();
+    h.span_exporter.reset();
 }
 
-/// Render current Prometheus metrics as text.
-///
-/// Panics if `PROMETHEUS_INIT` has not been initialized yet. Call after any
-/// call to `build_app_with_secret`, `build_app_no_secret`,
-/// `build_app_with_pg_and_listener`, or [`ensure_recorder_installed`].
-pub fn render_metrics() -> String {
-    PROMETHEUS_INIT
-        .get()
-        .expect("PROMETHEUS_INIT not yet initialized — call a build_app_* helper first")
-        .1
-        .render()
+/// Backwards-compatible alias for tests that still use the span-only helper.
+pub fn ensure_span_exporter_installed() -> InMemorySpanExporter {
+    ensure_recorder_installed().span_exporter.clone()
 }
 
-/// Ensure the global Prometheus recorder is installed without constructing a
-/// full `TestApp`. Useful for tests that need to capture a baseline scrape
-/// before they exercise the code under test.
-pub fn ensure_recorder_installed() {
-    PROMETHEUS_INIT.get_or_init(install_test_recorder);
+// ---------------------------------------------------------------------------
+// Typed lookup helpers over `ResourceMetrics` snapshots
+// ---------------------------------------------------------------------------
+
+fn attrs_match(actual: &[KeyValue], expected: &[KeyValue]) -> bool {
+    if actual.len() != expected.len() {
+        return false;
+    }
+    expected.iter().all(|e| {
+        actual
+            .iter()
+            .any(|a| a.key == e.key && a.value.as_str() == e.value.as_str())
+    })
 }
 
-/// Build a metrics-side-port `axum::Router` that exposes `/metrics` against
-/// the shared test [`PrometheusHandle`]. Mirrors `atc_server::metrics::build()`'s
-/// router construction without re-attempting the global recorder install
-/// (which `install_test_recorder` already did via `PROMETHEUS_INIT`). Tests
-/// that need the metrics router should call this helper instead of
-/// `metrics::build()` directly to avoid `SetRecorderError` panics now that
-/// all integration tests share a single binary.
-pub fn build_metrics_router() -> axum::Router {
-    let handle = PROMETHEUS_INIT.get_or_init(install_test_recorder).1.clone();
-    axum::Router::new().route(
-        "/metrics",
-        axum::routing::get(move || async move {
-            (
-                [(
-                    axum::http::header::CONTENT_TYPE,
-                    "text/plain; version=0.0.4; charset=utf-8",
-                )],
-                handle.render(),
-            )
-        }),
-    )
-}
-
-/// Locate an unlabeled metric line in a Prometheus exposition body and return
-/// the value as a string slice.
-///
-/// The Prometheus text format is one metric per line: `<name>[{labels}] <value>`.
-/// This helper scans for a line whose name part is exactly `name` (no labels
-/// allowed), skipping `# HELP`/`# TYPE` comments. Returns `None` if no such
-/// line is found.
-fn unlabeled_metric_value<'a>(body: &'a str, name: &str) -> Option<&'a str> {
-    for line in body.lines() {
-        if line.starts_with('#') {
-            continue;
-        }
-        let Some(rest) = line.strip_prefix(name) else {
-            continue;
-        };
-        // The next character must be whitespace (no labels, no extra suffix).
-        if !rest.starts_with(char::is_whitespace) {
-            continue;
-        }
-        if let Some(value) = line.split_whitespace().last() {
-            return Some(value);
+fn for_each_metric<'a>(
+    snapshot: &'a [ResourceMetrics],
+    name: &str,
+    mut f: impl FnMut(&'a AggregatedMetrics),
+) {
+    for resource in snapshot {
+        for scope in resource.scope_metrics() {
+            scope_metrics_for_name(scope, name, &mut f);
         }
     }
-    None
 }
 
-/// Parse an unlabeled counter or histogram `_count` value. Returns 0 if the
-/// metric is absent — convenient for delta computations against a baseline
-/// scrape captured before the metric had any observations.
-pub fn parse_unlabeled_counter(body: &str, name: &str) -> u64 {
-    unlabeled_metric_value(body, name)
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0)
+fn scope_metrics_for_name<'a>(
+    scope: &'a ScopeMetrics,
+    name: &str,
+    f: &mut impl FnMut(&'a AggregatedMetrics),
+) {
+    for metric in scope.metrics() {
+        if metric.name() == name {
+            f(metric.data());
+        }
+    }
 }
 
-/// Parse an unlabeled gauge or histogram `_sum` value. Returns `None` if the
-/// metric is absent so callers can distinguish "missing" from "present and
-/// equal to zero". Returned `f64` may be `NaN` (gauges that emit `f64::NAN`
-/// — e.g., `atc_pg_min_pending_seq` at its sentinel state — render as `NaN`
-/// in the exposition body and parse back into `f64::NAN`).
-pub fn parse_unlabeled_gauge(body: &str, name: &str) -> Option<f64> {
-    unlabeled_metric_value(body, name).and_then(|v| v.parse::<f64>().ok())
+/// Counter value for `name` with the given attribute set, summed across every
+/// `ResourceMetrics` batch in the snapshot. Returns 0 when absent so deltas
+/// against a fresh `reset_metrics()` baseline are well-defined.
+pub fn counter_value(snapshot: &[ResourceMetrics], name: &str, attrs: &[KeyValue]) -> u64 {
+    let mut total: u64 = 0;
+    for_each_metric(snapshot, name, |data| {
+        if let AggregatedMetrics::U64(MetricData::Sum(sum)) = data {
+            for dp in sum.data_points() {
+                let dp_attrs: Vec<KeyValue> = dp.attributes().cloned().collect();
+                if attrs_match(&dp_attrs, attrs) {
+                    total = total.saturating_add(dp.value());
+                }
+            }
+        }
+    });
+    total
 }
+
+/// Gauge value for `name`. Returns the most recent observation across batches
+/// (the SDK reports one observation per collection cycle for an
+/// `ObservableGauge`). `Some(NaN)` when the gauge was set to NaN; `None` when
+/// the gauge was never recorded.
+pub fn gauge_value(snapshot: &[ResourceMetrics], name: &str, attrs: &[KeyValue]) -> Option<f64> {
+    let mut last: Option<f64> = None;
+    for_each_metric(snapshot, name, |data| {
+        if let AggregatedMetrics::F64(MetricData::Gauge(gauge)) = data {
+            for dp in gauge.data_points() {
+                let dp_attrs: Vec<KeyValue> = dp.attributes().cloned().collect();
+                if attrs_match(&dp_attrs, attrs) {
+                    last = Some(dp.value());
+                }
+            }
+        }
+    });
+    last
+}
+
+/// Histogram observation count for `name` summed across batches. Returns 0
+/// when absent.
+pub fn histogram_count(snapshot: &[ResourceMetrics], name: &str, attrs: &[KeyValue]) -> u64 {
+    let mut total: u64 = 0;
+    for_each_metric(snapshot, name, |data| {
+        if let AggregatedMetrics::F64(MetricData::ExponentialHistogram(hist)) = data {
+            for dp in hist.data_points() {
+                let dp_attrs: Vec<KeyValue> = dp.attributes().cloned().collect();
+                if attrs_match(&dp_attrs, attrs) {
+                    total = total.saturating_add(dp.count() as u64);
+                }
+            }
+        } else if let AggregatedMetrics::F64(MetricData::Histogram(hist)) = data {
+            for dp in hist.data_points() {
+                let dp_attrs: Vec<KeyValue> = dp.attributes().cloned().collect();
+                if attrs_match(&dp_attrs, attrs) {
+                    total = total.saturating_add(dp.count());
+                }
+            }
+        }
+    });
+    total
+}
+
+/// Histogram sum-of-observations for `name` across batches. Returns 0.0 when
+/// absent.
+pub fn histogram_sum(snapshot: &[ResourceMetrics], name: &str, attrs: &[KeyValue]) -> f64 {
+    let mut total: f64 = 0.0;
+    for_each_metric(snapshot, name, |data| {
+        if let AggregatedMetrics::F64(MetricData::ExponentialHistogram(hist)) = data {
+            for dp in hist.data_points() {
+                let dp_attrs: Vec<KeyValue> = dp.attributes().cloned().collect();
+                if attrs_match(&dp_attrs, attrs) {
+                    total += dp.sum();
+                }
+            }
+        } else if let AggregatedMetrics::F64(MetricData::Histogram(hist)) = data {
+            for dp in hist.data_points() {
+                let dp_attrs: Vec<KeyValue> = dp.attributes().cloned().collect();
+                if attrs_match(&dp_attrs, attrs) {
+                    total += dp.sum();
+                }
+            }
+        }
+    });
+    total
+}
+
+/// Whether any data point exists for `name` in the snapshot, regardless of
+/// kind. Useful for "the metric was registered and emitted" assertions
+/// without committing to a specific aggregation type.
+pub fn metric_present(snapshot: &[ResourceMetrics], name: &str) -> bool {
+    let mut found = false;
+    for_each_metric(snapshot, name, |_| found = true);
+    found
+}
+
+// ---------------------------------------------------------------------------
+// HTTP webhook signature helper (unchanged from the prior recorder)
+// ---------------------------------------------------------------------------
 
 /// Compute HMAC-SHA256 signature in the format GitHub expects: sha256=<hex>
 pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
@@ -244,7 +335,7 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 
 /// Build app with a specific webhook secret
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
+    ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -269,7 +360,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let app = atc_server::routes::api_routes(layer.clone())
+    let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state)
@@ -277,7 +368,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 
 /// Build app with no webhook secret (verification bypassed)
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
-    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
+    ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -302,7 +393,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let app = atc_server::routes::api_routes(layer.clone())
+    let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state)
@@ -499,7 +590,7 @@ async fn build_app_inner(
     use std::sync::atomic::Ordering;
     use std::time::Instant;
 
-    let layer = PROMETHEUS_INIT.get_or_init(install_test_recorder).0.clone();
+    ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -542,7 +633,7 @@ async fn build_app_inner(
         ws_tracker: TaskTracker::new(),
     });
 
-    let router = atc_server::routes::api_routes(layer)
+    let router = atc_server::routes::api_routes()
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 

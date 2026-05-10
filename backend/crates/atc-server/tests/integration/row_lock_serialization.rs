@@ -19,26 +19,12 @@ use serial_test::serial;
 use tokio::time::timeout;
 
 // ---------------------------------------------------------------------------
-// Local metric-parsing helpers (copied from outbox_tests.rs to avoid coupling)
+// OTel snapshot helper.
 // ---------------------------------------------------------------------------
 
-fn render_metrics() -> String {
-    common::render_metrics()
-}
-
-fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
-    for line in metrics_body.lines() {
-        if line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with(name)
-            && line[name.len()..].starts_with(char::is_whitespace)
-            && let Some(value_str) = line.split_whitespace().last()
-        {
-            return value_str.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
+fn counter_unlabeled(name: &str) -> u64 {
+    let snapshot = common::snapshot_metrics();
+    common::counter_value(&snapshot, name, &[])
 }
 
 /// Two concurrent `workflow_run.requested` webhooks for the SAME run_id are
@@ -60,9 +46,8 @@ async fn concurrent_same_entity_commits_in_seq_order() {
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
     let mut rx = fixture.state.webhook_tx.subscribe();
 
-    // Baseline dedup counter before any webhooks.
-    let baseline_dup =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+    common::ensure_recorder_installed();
+    common::reset_metrics();
 
     let router_a = fixture.router.clone();
     let router_b = fixture.router.clone();
@@ -139,12 +124,10 @@ async fn concurrent_same_entity_commits_in_seq_order() {
 
     // Dedup counter must NOT have incremented — same-entity row-lock means no
     // out-of-order commits, so no backstop-driven rescan and no dedup activity.
-    let after_dup =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
     assert_eq!(
-        after_dup, baseline_dup,
-        "dedup counter must stay at baseline (no rescan expected with row-lock serialization); \
-         baseline={baseline_dup} after={after_dup}"
+        counter_unlabeled("atc_pg_drain_duplicate_skipped_total"),
+        0,
+        "dedup counter must stay at zero (no rescan expected with row-lock serialization)",
     );
 
     // In PG mode the in-memory seq counter is never incremented.

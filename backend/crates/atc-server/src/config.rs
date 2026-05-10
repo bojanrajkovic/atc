@@ -31,7 +31,6 @@ pub struct GitHubConfig {
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Config {
     pub http_addr: SocketAddr,
-    pub metrics_addr: SocketAddr,
     pub database_url: Option<String>,
     pub database_listener_url: Option<String>,
     pub log_filter: String,
@@ -43,7 +42,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             http_addr: "0.0.0.0:8080".parse().unwrap(),
-            metrics_addr: "0.0.0.0:9090".parse().unwrap(),
             database_url: None,
             database_listener_url: None,
             log_filter: "info".to_string(),

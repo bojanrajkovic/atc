@@ -1,11 +1,11 @@
 //! Cooperative shutdown orchestration.
 //!
 //! On trigger (signal handler OR an unexpected serve-task exit), the single
-//! `shutdown` token cancels every supervised surface — axum × 2
+//! `shutdown` token cancels every supervised surface — axum
 //! (`with_graceful_shutdown`), listener, drain, eviction, process metrics
 //! collector, and every WS handler. The orchestration then waits for tracked
 //! WS handlers to flush `Close(1001 "going away")` frames, joins the spawned
-//! serve tasks, and joins the remaining background-task handles, each within
+//! serve task, and joins the remaining background-task handles, each within
 //! a bounded timeout.
 //!
 //! Catch-up after a client reconnects is handled by `/v1/state` snapshot on a
@@ -103,19 +103,19 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 ///
 /// **Trigger** (begins on either of two events):
 /// - The signal handler cancels `shutdown` (SIGTERM / SIGINT path), OR
-/// - One of the spawned serve tasks exits unexpectedly before any signal
-///   arrives (e.g., an accept-loop failure). In that case we cancel
-///   `shutdown` ourselves so the remaining tasks shut down cooperatively
-///   rather than getting orphaned.
+/// - The spawned serve task exits unexpectedly before any signal arrives
+///   (e.g., an accept-loop failure). In that case we cancel `shutdown`
+///   ourselves so the remaining tasks shut down cooperatively rather than
+///   getting orphaned.
 ///
-/// Once `shutdown` is cancelled, every supervised surface — axum × 2,
-/// listener, drain, eviction, process metrics collector, and every WS
-/// handler — observes the same token and exits at its own next opportunity.
-/// The orchestration:
+/// Once `shutdown` is cancelled, every supervised surface — axum, listener,
+/// drain, eviction, process metrics collector, and every WS handler —
+/// observes the same token and exits at its own next opportunity. The
+/// orchestration:
 ///
 /// 1. Wait for the trigger.
 /// 2. Wait for tracked WS handlers to drain (bounded by `SHUTDOWN_TIMEOUT_WS`).
-/// 3. Join the spawned serve tasks (bounded by `SHUTDOWN_TIMEOUT_SERVES`).
+/// 3. Join the spawned serve task (bounded by `SHUTDOWN_TIMEOUT_SERVES`).
 /// 4. Join drain / listener / eviction / metrics handles (each bounded).
 ///
 /// # Returns
@@ -132,7 +132,6 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// - `ws_tracker`: TaskTracker wrapping WS handler futures; `close()` +
 ///   `wait()` called by this function.
 /// - `main_serve_task`: Spawned `JoinHandle<io::Result<()>>` from main axum serve.
-/// - `metrics_serve_task`: Spawned `JoinHandle<io::Result<()>>` from metrics serve.
 /// - `drain_handle`: `Some` in PG mode; `None` in in-memory mode.
 /// - `listener_handle`: `Some` in PG mode; `None` in in-memory mode.
 /// - `eviction_handle`: Always `Some`.
@@ -142,23 +141,21 @@ pub async fn run_shutdown_orchestration(
     shutdown: CancellationToken,
     ws_tracker: TaskTracker,
     main_serve_task: JoinHandle<io::Result<()>>,
-    metrics_serve_task: JoinHandle<io::Result<()>>,
     drain_handle: Option<JoinHandle<()>>,
     listener_handle: Option<JoinHandle<()>>,
     eviction_handle: JoinHandle<()>,
     metrics_handle: JoinHandle<()>,
 ) -> bool {
     // Step 1: Wait for the shutdown trigger — signal handler OR an early
-    // serve-task exit. Wrap each serve in `Option` so step 3 doesn't
-    // double-await whichever one (if any) already resolved here.
+    // serve-task exit. Wrap the serve in `Option` so step 3 doesn't
+    // double-await it if it already resolved here.
     let mut main_serve_task = Some(main_serve_task);
-    let mut metrics_serve_task = Some(metrics_serve_task);
     let mut serve_failure = false;
 
-    // `biased;` prefers `shutdown.cancelled()` over the serve-task arms when
-    // multiple are ready, so a SIGTERM-driven shutdown that races serve-task
+    // `biased;` prefers `shutdown.cancelled()` over the serve-task arm when
+    // both are ready, so a SIGTERM-driven shutdown that races serve-task
     // resolution is consistently classified as a normal shutdown rather than
-    // an early serve exit. Even with biased ordering, if a serve arm wins the
+    // an early serve exit. Even with biased ordering, if the serve arm wins the
     // select, `log_early_serve_exit` returns `false` for clean Ok(Ok(()))
     // exits (no false-positive failure exits).
     tokio::select! {
@@ -169,11 +166,6 @@ pub async fn run_shutdown_orchestration(
         res = main_serve_task.as_mut().expect("just constructed as Some") => {
             serve_failure = log_early_serve_exit("main", res);
             main_serve_task = None;
-            shutdown.cancel();
-        }
-        res = metrics_serve_task.as_mut().expect("just constructed as Some") => {
-            serve_failure = log_early_serve_exit("metrics", res);
-            metrics_serve_task = None;
             shutdown.cancel();
         }
     }
@@ -192,20 +184,17 @@ pub async fn run_shutdown_orchestration(
         );
     }
 
-    // Step 3: Join the spawned serve tasks. Whichever already resolved at
-    // step 1 is None and skipped. The other(s) should already be resolving
-    // since shutdown was cancelled. Bounded by SHUTDOWN_TIMEOUT_SERVES.
-    let serves_future = async {
-        tokio::join!(
-            await_optional_serve("main", main_serve_task.take()),
-            await_optional_serve("metrics", metrics_serve_task.take()),
-        );
-    };
-    if tokio::time::timeout(SHUTDOWN_TIMEOUT_SERVES, serves_future)
-        .await
-        .is_err()
+    // Step 3: Join the spawned serve task. If it already resolved at step 1
+    // it's `None` and skipped. Otherwise it should already be resolving since
+    // shutdown was cancelled. Bounded by SHUTDOWN_TIMEOUT_SERVES.
+    if tokio::time::timeout(
+        SHUTDOWN_TIMEOUT_SERVES,
+        await_optional_serve("main", main_serve_task.take()),
+    )
+    .await
+    .is_err()
     {
-        tracing::error!("axum serves did not resolve within timeout; runtime drop will reap");
+        tracing::error!("axum serve did not resolve within timeout; runtime drop will reap");
     }
 
     // Step 4: Join the remaining background-task handles. The drain task
@@ -254,7 +243,7 @@ mod tests {
         // (abort is asynchronous), but the orchestration function proceeded.
     }
 
-    /// If a spawned serve task exits unexpectedly before any signal arrives,
+    /// If the spawned serve task exits unexpectedly before any signal arrives,
     /// the orchestration must trigger `shutdown.cancel()` itself rather than
     /// hanging on the bare `shutdown.cancelled()` await — otherwise the
     /// process sits indefinitely while the HTTP service is already down.
@@ -267,11 +256,6 @@ mod tests {
         // accept-loop failure shortly after startup).
         let main_serve_task: JoinHandle<io::Result<()>> =
             tokio::spawn(async { Err(io::Error::other("simulated accept-loop failure")) });
-
-        // Metrics serve hangs forever — the SHUTDOWN_TIMEOUT_SERVES backstop
-        // catches it; this verifies we don't deadlock waiting for it.
-        let metrics_serve_task: JoinHandle<io::Result<()>> =
-            tokio::spawn(async { std::future::pending::<io::Result<()>>().await });
 
         // Stub eviction/metrics handles that exit immediately.
         let eviction_handle: JoinHandle<()> = tokio::spawn(async {});
@@ -286,7 +270,6 @@ mod tests {
                 shutdown.clone(),
                 ws_tracker,
                 main_serve_task,
-                metrics_serve_task,
                 None,
                 None,
                 eviction_handle,
@@ -320,9 +303,6 @@ mod tests {
 
         // Main serve completes cleanly with Ok(()) immediately.
         let main_serve_task: JoinHandle<io::Result<()>> = tokio::spawn(async { Ok(()) });
-        // Metrics serve hangs forever — bounded by SHUTDOWN_TIMEOUT_SERVES.
-        let metrics_serve_task: JoinHandle<io::Result<()>> =
-            tokio::spawn(async { std::future::pending::<io::Result<()>>().await });
 
         let eviction_handle: JoinHandle<()> = tokio::spawn(async {});
         let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
@@ -333,7 +313,6 @@ mod tests {
                 shutdown.clone(),
                 ws_tracker,
                 main_serve_task,
-                metrics_serve_task,
                 None,
                 None,
                 eviction_handle,

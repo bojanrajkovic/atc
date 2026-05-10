@@ -10,7 +10,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use axum_prometheus::PrometheusMetricLayer;
+use axum_otel_metrics::HttpMetricsLayerBuilder;
 use opentelemetry_http::HeaderExtractor;
 use serde::{Deserialize, Serialize};
 use tracing::{Instrument, Span, field, info_span};
@@ -209,12 +209,15 @@ async fn removed_endpoint_404() -> StatusCode {
 
 /// API routes. Mount these before the asset fallback.
 ///
-/// `prometheus_layer` is applied here so that every request to the main router
-/// is counted in `axum_http_requests_total`.
+/// The HTTP metrics layer (`axum-otel-metrics::HttpMetricsLayer`) reads from
+/// the global meter provider configured by `otel::init_otel`. When OTel is
+/// disabled the layer captures the SDK's no-op meter and emissions never reach
+/// an exporter — request handling itself is unaffected.
 ///
 /// Returns a `Router<Arc<AppState>>` that will be attached to application state
 /// in `main.rs` via `.with_state()`.
-pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Arc<AppState>> {
+pub fn api_routes() -> Router<Arc<AppState>> {
+    let http_metrics = HttpMetricsLayerBuilder::new().build();
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -223,7 +226,7 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
         .route("/v1/ws", get(ws::ws_handler))
         // Removed endpoints: explicitly return 404 instead of falling through to SPA
         .route("/health", get(removed_endpoint_404))
-        .layer(prometheus_layer)
+        .layer(http_metrics)
 }
 
 /// Handle incoming GitHub webhook payloads.

@@ -35,12 +35,13 @@ async fn fire_run_webhook(fixture: &common::AppFixture) -> StatusCode {
 #[tokio::test]
 #[serial]
 async fn metrics_wake_coalesced_does_not_over_count_during_slow_drain() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture =
         common::build_app_with_pg_and_slow_drain(pool, db_url, Duration::from_millis(200)).await;
 
-    let baseline = common::render_metrics();
-    let baseline_count = common::parse_unlabeled_counter(&baseline, METRIC);
     let baseline_recv = fixture.observed_recv.load(Ordering::Relaxed);
 
     for _ in 0..5u8 {
@@ -58,25 +59,12 @@ async fn metrics_wake_coalesced_does_not_over_count_during_slow_drain() {
     .await
     .expect("listener did not receive all 5 NOTIFYs within 10s");
 
-    let body = common::render_metrics();
-    // Presence check: the family must be registered.
-    // parse_unlabeled_counter returns 0 for both "registered but never
-    // incremented" and "completely missing", so without this check a
-    // regression that drops the describe_counter! call or the increment site
-    // would still pass the delta-bound assertions below.
-    assert!(
-        body.lines()
-            .any(|l| !l.starts_with('#') && l.starts_with(&format!("{METRIC} "))),
-        "{METRIC} must appear in /metrics body (registered + emittable)"
-    );
-
-    let after_count = common::parse_unlabeled_counter(&body, METRIC);
-    let delta = after_count - baseline_count;
+    let snapshot = common::snapshot_metrics();
+    let count = common::counter_value(&snapshot, METRIC, &[]);
 
     assert!(
-        delta <= 5,
-        "wake-coalesced counter must not over-count beyond NOTIFY arrivals; \
-         baseline={baseline_count} after={after_count} delta={delta}"
+        count <= 5,
+        "wake-coalesced counter must not over-count beyond NOTIFY arrivals; got {count}",
     );
 
     fixture.shutdown.cancel();
@@ -90,10 +78,11 @@ async fn metrics_wake_coalesced_does_not_over_count_during_slow_drain() {
 #[tokio::test]
 #[serial]
 async fn metrics_wake_coalesced_unchanged_when_drain_idle_between_notifies() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
-
-    let baseline_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC);
 
     for _ in 0..3u8 {
         let passes_before = fixture.observed_passes.load(Ordering::Relaxed);
@@ -111,12 +100,13 @@ async fn metrics_wake_coalesced_unchanged_when_drain_idle_between_notifies() {
         .expect("drain pass did not complete between webhooks");
     }
 
-    let after_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC);
+    let snapshot = common::snapshot_metrics();
+    let count = common::counter_value(&snapshot, METRIC, &[]);
 
     assert_eq!(
-        after_count, baseline_count,
+        count, 0,
         "wake-coalesced counter must stay flat when no NOTIFY overlaps an \
-         in-flight pass; baseline={baseline_count} after={after_count}"
+         in-flight pass; got {count}",
     );
 
     fixture.shutdown.cancel();

@@ -15,8 +15,7 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-const METRIC_COUNT: &str = "atc_pg_drain_startup_seconds_count";
-const METRIC_SUM: &str = "atc_pg_drain_startup_seconds_sum";
+const METRIC: &str = "atc_pg_drain_startup_seconds";
 
 /// A fresh fixture (which spawns a new drain task and runs one startup pass)
 /// records exactly one startup observation with a positive duration value.
@@ -27,28 +26,26 @@ const METRIC_SUM: &str = "atc_pg_drain_startup_seconds_sum";
 async fn metrics_drain_startup_records_once_per_process() {
     common::ensure_recorder_installed();
 
-    let baseline = common::render_metrics();
-    let baseline_count = common::parse_unlabeled_counter(&baseline, METRIC_COUNT);
-    let baseline_sum = common::parse_unlabeled_gauge(&baseline, METRIC_SUM).unwrap_or(0.0);
+    // Reset BEFORE fixture init: the test's contract is that fixture init
+    // (which spawns the drain task and runs one startup pass) records exactly
+    // one startup observation. Resetting after init would erase the observation
+    // before the snapshot can see it.
+    common::reset_metrics();
 
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    let after_startup = common::render_metrics();
-    let after_startup_count = common::parse_unlabeled_counter(&after_startup, METRIC_COUNT);
-    let after_startup_sum =
-        common::parse_unlabeled_gauge(&after_startup, METRIC_SUM).unwrap_or(0.0);
+    let snapshot = common::snapshot_metrics();
+    let startup_count = common::histogram_count(&snapshot, METRIC, &[]);
+    let startup_sum = common::histogram_sum(&snapshot, METRIC, &[]);
 
     assert_eq!(
-        after_startup_count - baseline_count,
-        1,
-        "expected exactly one startup observation after fixture init; \
-         baseline={baseline_count} after={after_startup_count}"
+        startup_count, 1,
+        "expected exactly one startup observation after fixture init; got {startup_count}",
     );
     assert!(
-        after_startup_sum > baseline_sum,
-        "startup _sum must increase by a positive value; \
-         baseline={baseline_sum} after={after_startup_sum}"
+        startup_sum > 0.0,
+        "startup sum must be a positive duration; got {startup_sum}"
     );
 
     // Drive a webhook through the same fixture; subsequent drain
@@ -70,15 +67,12 @@ async fn metrics_drain_startup_records_once_per_process() {
     .await
     .expect("post-startup drain pass did not complete within 5s");
 
-    let after_nth = common::render_metrics();
-    let after_nth_count = common::parse_unlabeled_counter(&after_nth, METRIC_COUNT);
-
+    let snapshot = common::snapshot_metrics();
+    let after_count = common::histogram_count(&snapshot, METRIC, &[]);
     assert_eq!(
-        after_nth_count - after_startup_count,
-        0,
-        "startup observation must fire once per process; subsequent drain \
-         passes added {} more observations",
-        after_nth_count - after_startup_count
+        after_count, 0,
+        "startup observation must fire once per process; \
+         second snapshot recorded {after_count} additional observations (must be 0)",
     );
 
     fixture.shutdown.cancel();

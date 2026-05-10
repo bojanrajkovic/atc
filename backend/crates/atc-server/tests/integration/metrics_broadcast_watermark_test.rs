@@ -22,6 +22,9 @@ const METRIC: &str = "atc_pg_broadcast_watermark";
 #[tokio::test]
 #[serial]
 async fn metrics_broadcast_watermark_tracks_max_outbox_seq() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
@@ -55,8 +58,8 @@ async fn metrics_broadcast_watermark_tracks_max_outbox_seq() {
     // last broadcast (the gauge mirror runs alongside the atomic store).
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let body = common::render_metrics();
-    let gauge = common::parse_unlabeled_gauge(&body, METRIC)
+    let snapshot = common::snapshot_metrics();
+    let gauge = common::gauge_value(&snapshot, METRIC, &[])
         .expect("atc_pg_broadcast_watermark must be present after 3 webhooks");
 
     let max_seq: i64 = sqlx::query_scalar::<_, i64>("SELECT MAX(seq) FROM outbox")
@@ -81,11 +84,14 @@ async fn metrics_broadcast_watermark_tracks_max_outbox_seq() {
 #[tokio::test]
 #[serial]
 async fn metrics_broadcast_watermark_seeded_at_startup() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    let body = common::render_metrics();
-    let gauge = common::parse_unlabeled_gauge(&body, METRIC)
+    let snapshot = common::snapshot_metrics();
+    let gauge = common::gauge_value(&snapshot, METRIC, &[])
         .expect("atc_pg_broadcast_watermark must be seeded at startup");
 
     assert!(

@@ -26,57 +26,9 @@ fn now_millis_for_test() -> i64 {
 }
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use axum_prometheus::PrometheusMetricLayer;
 use futures_util::future::join_all;
+use opentelemetry::KeyValue;
 use tower::ServiceExt;
-
-// ---------------------------------------------------------------------------
-// Prometheus singleton for tests that check /metrics counters
-// ---------------------------------------------------------------------------
-
-/// Use the shared `common::PROMETHEUS_INIT` so this test binary installs the
-/// global `metrics` recorder exactly once. Two separate OnceLocks (one local,
-/// one common) would each install the recorder, and the second installation
-/// panics with `SetRecorderError` because the global recorder is already in
-/// place. The concurrent broadcast tests use the common fixture, so all tests
-/// in this binary must agree on a single OnceLock and a single initializer.
-fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone()
-}
-
-/// Parse `atc_pg_write_failures_total{kind="<kind>"}` from Prometheus text output.
-fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
-    let needle = format!("kind=\"{kind}\"");
-    for line in metrics_body.lines() {
-        if line.starts_with("atc_pg_write_failures_total")
-            && line.contains(&needle)
-            && let Some(value_str) = line.split_whitespace().last()
-        {
-            return value_str.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
-}
-
-/// Parse an unlabeled counter (no `{...}` label set) from Prometheus text output.
-/// Matches lines where the metric name is followed immediately by whitespace.
-fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
-    for line in metrics_body.lines() {
-        if line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with(name)
-            && line[name.len()..].starts_with(char::is_whitespace)
-            && let Some(value_str) = line.split_whitespace().last()
-        {
-            return value_str.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
-}
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -90,7 +42,7 @@ fn build_app_with_pg(
     Arc<AppState>,
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
-    let layer = prometheus_layer();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -112,7 +64,7 @@ fn build_app_with_pg(
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state, rx)
@@ -140,12 +92,8 @@ async fn post_webhook(
     (status, json)
 }
 
-/// Render Prometheus metrics text. Thin wrapper over `common::render_metrics`
-/// kept async so existing `render_metrics().await` call sites compile unchanged.
-async fn render_metrics() -> String {
-    // Ensure the OnceLock is initialized before calling the common helper.
-    let _ = prometheus_layer();
-    common::render_metrics()
+fn write_failure_attrs(kind: &'static str) -> Vec<KeyValue> {
+    vec![KeyValue::new("kind", kind)]
 }
 
 /// Insert a minimal stub runs row for FK satisfaction. Uses untyped sqlx API.
@@ -542,11 +490,11 @@ async fn job_upsert_rejection_rolls_back_stub_run() {
 #[tokio::test]
 #[serial_test::serial]
 async fn parity_rejection_returns_200_rejected() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
-
-    let before = render_metrics().await;
-    let baseline_parity = parse_counter_value(&before, "parity");
 
     // Pre-insert Completed run to force parity rejection on Requested
     let run_id = 24290980517i64;
@@ -562,12 +510,15 @@ async fn parity_rejection_returns_200_rejected() {
     assert_eq!(status, StatusCode::OK, "parity rejection must return 200");
     assert_eq!(json["status"], "rejected", "body status must be 'rejected'");
 
-    let after = render_metrics().await;
-    let after_parity = parse_counter_value(&after, "parity");
+    let snapshot = common::snapshot_metrics();
+    let parity = common::counter_value(
+        &snapshot,
+        "atc_pg_write_failures_total",
+        &write_failure_attrs("parity"),
+    );
     assert_eq!(
-        after_parity,
-        baseline_parity + 1,
-        "parity counter must increment by 1; metrics:\n{after}"
+        parity, 1,
+        "parity counter must increment by 1; got parity={parity}",
     );
 }
 
@@ -577,12 +528,11 @@ async fn parity_rejection_returns_200_rejected() {
 #[tokio::test]
 #[serial_test::serial]
 async fn success_returns_200_accepted() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
-
-    let before = render_metrics().await;
-    let baseline_parity = parse_counter_value(&before, "parity");
-    let baseline_transient = parse_counter_value(&before, "transient");
 
     let (status, json) = post_webhook(
         app,
@@ -601,15 +551,23 @@ async fn success_returns_200_accepted() {
         "PG-mode handler must include outbox seq in response, got: {json}"
     );
 
-    let after = render_metrics().await;
+    let snapshot = common::snapshot_metrics();
     assert_eq!(
-        parse_counter_value(&after, "parity"),
-        baseline_parity,
+        common::counter_value(
+            &snapshot,
+            "atc_pg_write_failures_total",
+            &write_failure_attrs("parity"),
+        ),
+        0,
         "parity counter must not increment on success"
     );
     assert_eq!(
-        parse_counter_value(&after, "transient"),
-        baseline_transient,
+        common::counter_value(
+            &snapshot,
+            "atc_pg_write_failures_total",
+            &write_failure_attrs("transient"),
+        ),
+        0,
         "transient counter must not increment on success"
     );
 }
@@ -619,8 +577,7 @@ async fn success_returns_200_accepted() {
 #[tokio::test]
 #[serial_test::serial]
 async fn no_pg_pool_uses_in_memory_path() {
-    // Build app inline using the local prometheus_layer() to reuse the OnceLock recorder.
-    let layer = prometheus_layer();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -645,7 +602,7 @@ async fn no_pg_pool_uses_in_memory_path() {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
@@ -851,15 +808,11 @@ async fn payload_is_envelope_not_seq_event() {
 #[tokio::test]
 #[serial_test::serial]
 async fn no_in_memory_drift_in_pg_mode() {
-    atc_server::metrics::register_pg_write_counters();
+    common::ensure_recorder_installed();
+    common::reset_metrics();
 
     let (pool, _c, _) = common::start_pg().await;
     let (app, app_state, _rx) = build_app_with_pg(pool.clone());
-
-    let before = render_metrics().await;
-    let baseline_drift = parse_unlabeled_counter(&before, "atc_pg_in_memory_drift_total");
-    let baseline_parity = parse_counter_value(&before, "parity");
-    let baseline_transient = parse_counter_value(&before, "transient");
 
     // Fire a webhook through the PG-mode handler.
     let (status, json) = post_webhook(
@@ -900,20 +853,28 @@ async fn no_in_memory_drift_in_pg_mode() {
     );
 
     // Drift counter is stuck at zero — no apply, no detection.
-    let after = render_metrics().await;
+    let snapshot = common::snapshot_metrics();
     assert_eq!(
-        parse_unlabeled_counter(&after, "atc_pg_in_memory_drift_total"),
-        baseline_drift,
+        common::counter_value(&snapshot, "atc_pg_in_memory_drift_total", &[]),
+        0,
         "drift counter must not increment in PG mode (handler doesn't write in-memory)"
     );
     assert_eq!(
-        parse_counter_value(&after, "parity"),
-        baseline_parity,
+        common::counter_value(
+            &snapshot,
+            "atc_pg_write_failures_total",
+            &write_failure_attrs("parity"),
+        ),
+        0,
         "parity counter must not increment on success"
     );
     assert_eq!(
-        parse_counter_value(&after, "transient"),
-        baseline_transient,
+        common::counter_value(
+            &snapshot,
+            "atc_pg_write_failures_total",
+            &write_failure_attrs("transient"),
+        ),
+        0,
         "transient counter must not increment on success"
     );
 }

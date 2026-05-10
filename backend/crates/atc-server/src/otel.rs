@@ -5,7 +5,7 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{MetricExporter, Protocol, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{
-    Aggregation, InstrumentKind, PeriodicReader, SdkMeterProvider, Stream,
+    Aggregation, Instrument, InstrumentKind, PeriodicReader, SdkMeterProvider, Stream,
 };
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{
@@ -19,6 +19,7 @@ const DEFAULT_SERVICE_NAME: &str = "atc";
 const HISTOGRAM_MAX_SIZE: u32 = 160;
 const HISTOGRAM_MAX_SCALE: i8 = 20;
 const TRACER_SCOPE_NAME: &str = "atc";
+const METER_SCOPE_NAME: &str = "atc";
 
 pub struct OtelHandles {
     pub tracer_provider: SdkTracerProvider,
@@ -56,6 +57,8 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     opentelemetry::global::set_meter_provider(meter_provider.clone());
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+
+    install_metrics_recorder(&meter_provider);
 
     Some(OtelHandles {
         tracer_provider,
@@ -110,26 +113,45 @@ fn build_meter_provider(
 
     let reader = PeriodicReader::builder(exporter).build();
 
-    let view = |inst: &opentelemetry_sdk::metrics::Instrument| -> Option<Stream> {
-        if matches!(inst.kind(), InstrumentKind::Histogram) {
-            Stream::builder()
-                .with_aggregation(Aggregation::Base2ExponentialHistogram {
-                    max_size: HISTOGRAM_MAX_SIZE,
-                    max_scale: HISTOGRAM_MAX_SCALE,
-                    record_min_max: true,
-                })
-                .build()
-                .ok()
-        } else {
-            None
-        }
-    };
-
     Ok(SdkMeterProvider::builder()
         .with_resource(resource)
         .with_reader(reader)
-        .with_view(view)
+        .with_view(exponential_histogram_view)
         .build())
+}
+
+/// Map every `Histogram` instrument to a base-2 exponential aggregation.
+///
+/// Shared by production `init_otel` and the test harness so tests observe the
+/// same aggregation shape as production. Requires the
+/// `spec_unstable_metrics_views` feature on `opentelemetry_sdk`.
+pub fn exponential_histogram_view(inst: &Instrument) -> Option<Stream> {
+    if matches!(inst.kind(), InstrumentKind::Histogram) {
+        Stream::builder()
+            .with_aggregation(Aggregation::Base2ExponentialHistogram {
+                max_size: HISTOGRAM_MAX_SIZE,
+                max_scale: HISTOGRAM_MAX_SCALE,
+                record_min_max: true,
+            })
+            .build()
+            .ok()
+    } else {
+        None
+    }
+}
+
+/// Install the `metrics-rs` global recorder backed by the OTel meter provider.
+///
+/// Tolerates `SetRecorderError` so that test binaries that install a recorder
+/// from `tests/integration/common/mod.rs` can also call `init_otel` from
+/// `otel_init_test::init_otel_returns_some_with_endpoint` without aborting.
+fn install_metrics_recorder(meter_provider: &SdkMeterProvider) {
+    use opentelemetry::metrics::MeterProvider as _;
+    let meter = meter_provider.meter(METER_SCOPE_NAME);
+    let recorder = metrics_exporter_otel::OpenTelemetryRecorder::new(meter);
+    if let Err(err) = metrics::set_global_recorder(recorder) {
+        tracing::debug!(%err, "global metrics recorder already installed; reusing existing");
+    }
 }
 
 fn load_sampler_from_env() -> Sampler {

@@ -34,16 +34,13 @@ use futures_util::stream::StreamExt;
 /// - `Arc<AppState>` with `webhook_secret: None` (HMAC tested separately)
 /// - `seq: Arc::new(Mutex::new(0))` (shared with `InMemoryStore`)
 /// - `persist: Arc<dyn PersistentStore>` (`InMemoryStore` for in-memory mode)
-/// - OnceLock `PrometheusMetricLayer` with `#[serial_test::serial]`
+/// - OTel test harness via `common::ensure_recorder_installed`, with `#[serial_test::serial]`
 /// - Ephemeral `TcpListener::bind("127.0.0.1:0")`
 /// - `tokio::spawn(axum::serve(...))`
 ///
 /// Returns `SocketAddr` for HTTP/WS clients to connect to.
 async fn start_test_server() -> SocketAddr {
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
 
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
@@ -70,7 +67,7 @@ async fn start_test_server() -> SocketAddr {
         ws_tracker: TaskTracker::new(),
     });
 
-    let main_router = routes::api_routes(layer.clone())
+    let main_router = routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 

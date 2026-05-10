@@ -46,10 +46,7 @@ fn now_millis() -> i64 {
 async fn stale_heartbeat_returns_503() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -76,7 +73,7 @@ async fn stale_heartbeat_returns_503() {
         ws_tracker: TaskTracker::new(),
     });
 
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state)
         .fallback(atc_server::assets::fallback_handler());
 
@@ -192,10 +189,7 @@ async fn drain_abort_drives_503() {
 #[tokio::test]
 #[serial]
 async fn no_pg_always_200() {
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -225,7 +219,7 @@ async fn no_pg_always_200() {
         ws_tracker: TaskTracker::new(),
     });
 
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state)
         .fallback(atc_server::assets::fallback_handler());
 

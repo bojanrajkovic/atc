@@ -208,12 +208,11 @@ async fn main() {
         ws_tracker: ws_tracker.clone(),
     });
 
-    // Build Prometheus layer + metrics side-port router. Must happen before
-    // register_build_info() and spawn_process_collector() because pair()
-    // installs the global metrics recorder. Also must happen before the
-    // listener/drain tasks spawn so background tasks never increment counters
-    // before the global recorder is installed.
-    let (prometheus_layer, metrics_router) = metrics::build();
+    // The OTel-backed `metrics-rs` recorder is installed inside `init_otel`
+    // when an OTLP endpoint is configured. With no endpoint the macros resolve
+    // through the no-op recorder, so describes/emits are cheap no-ops.
+    // `register_*` runs unconditionally so descriptions land before the first
+    // emission either way.
     metrics::register_build_info();
     metrics::register_pg_write_counters();
     metrics::register_listener_metrics();
@@ -296,22 +295,9 @@ async fn main() {
     // shutdown orchestration — WS handlers see `shutdown.cancelled()` and send
     // Close(1001) rather than racing against a `RecvError::Closed` from a
     // prematurely-dropped AppState.
-    let app = routes::api_routes(prometheus_layer)
+    let app = routes::api_routes()
         .with_state(app_state.clone())
         .fallback(assets::fallback_handler());
-
-    // Bind metrics listener first so a port-conflict failure is detected before
-    // the main listener opens.
-    let metrics_listener = tokio::net::TcpListener::bind(cfg.metrics_addr)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(
-                "failed to bind metrics listener to {}: {e}",
-                cfg.metrics_addr
-            );
-            process::exit(1);
-        });
-    tracing::info!("metrics listening on http://{}", cfg.metrics_addr);
 
     let main_listener = tokio::net::TcpListener::bind(cfg.http_addr)
         .await
@@ -324,16 +310,13 @@ async fn main() {
     // Spawn the signal handler task that will cancel the shutdown token.
     tokio::spawn(shutdown_signal(shutdown.clone()));
 
-    // Both servers observe the same cancellation token. axum::serve(...).with_graceful_shutdown(...)
-    // is IntoFuture (not Future), so spawn via .into_future() so the runtime
-    // drives them independently of main's shutdown choreography.
+    // axum::serve(...).with_graceful_shutdown(...) is IntoFuture (not Future),
+    // so spawn via .into_future() so the runtime drives it independently of
+    // main's shutdown choreography.
     let main_serve =
         axum::serve(main_listener, app).with_graceful_shutdown(shutdown.clone().cancelled_owned());
-    let metrics_serve = axum::serve(metrics_listener, metrics_router)
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
 
     let main_serve_task = tokio::spawn(main_serve.into_future());
-    let metrics_serve_task = tokio::spawn(metrics_serve.into_future());
 
     // Cooperative shutdown orchestration. Awaits the trigger (signal handler
     // or unexpected serve-task exit), waits for tracked WS handlers to flush
@@ -345,7 +328,6 @@ async fn main() {
         shutdown,
         ws_tracker,
         main_serve_task,
-        metrics_serve_task,
         drain_handle,
         listener_handle,
         eviction_handle,

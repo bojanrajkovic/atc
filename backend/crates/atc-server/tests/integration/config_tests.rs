@@ -8,7 +8,6 @@ fn config_load_defaults() {
     // Clean up any existing ATC_* env vars
     unsafe {
         std::env::remove_var("ATC_HTTP_ADDR");
-        std::env::remove_var("ATC_METRICS_ADDR");
         std::env::remove_var("ATC_DATABASE_URL");
         std::env::remove_var("ATC_LOG_FILTER");
         std::env::remove_var("ATC_LOG_FORMAT");
@@ -21,10 +20,6 @@ fn config_load_defaults() {
     assert_eq!(
         config.http_addr,
         "0.0.0.0:8080".parse::<SocketAddr>().unwrap()
-    );
-    assert_eq!(
-        config.metrics_addr,
-        "0.0.0.0:9090".parse::<SocketAddr>().unwrap()
     );
     assert_eq!(config.database_url, None);
     assert_eq!(config.log_filter, "info");
@@ -44,7 +39,6 @@ fn config_load_env_overrides() {
     // Set environment variables for override test
     unsafe {
         std::env::set_var("ATC_HTTP_ADDR", "127.0.0.1:9999");
-        std::env::set_var("ATC_METRICS_ADDR", "127.0.0.1:7777");
         std::env::set_var("ATC_DATABASE_URL", "sqlite::memory:");
     }
 
@@ -55,16 +49,11 @@ fn config_load_env_overrides() {
         config.http_addr,
         "127.0.0.1:9999".parse::<SocketAddr>().unwrap()
     );
-    assert_eq!(
-        config.metrics_addr,
-        "127.0.0.1:7777".parse::<SocketAddr>().unwrap()
-    );
     assert_eq!(config.database_url, Some("sqlite::memory:".to_string()));
 
     // Clean up
     unsafe {
         std::env::remove_var("ATC_HTTP_ADDR");
-        std::env::remove_var("ATC_METRICS_ADDR");
         std::env::remove_var("ATC_DATABASE_URL");
     }
 }

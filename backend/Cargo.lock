@@ -140,13 +140,14 @@ dependencies = [
  "atc-core",
  "atc-github",
  "axum",
- "axum-prometheus",
+ "axum-otel-metrics",
  "chrono",
  "const-hex",
  "figment",
  "futures-util",
  "hmac 0.13.0",
  "metrics",
+ "metrics-exporter-otel",
  "metrics-process",
  "opentelemetry",
  "opentelemetry-http",
@@ -282,23 +283,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "axum-prometheus"
-version = "0.10.0"
+name = "axum-otel-metrics"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd44522c72edf6a45dfdd73ea201937bdaa8610cdf473151f694900837ab3879"
+checksum = "82b6d12cc3a75242e592c1631a1ec518ce585586b67c921547e751a81c548c55"
 dependencies = [
  "axum",
- "bytes",
- "futures-core",
+ "futures-util",
  "http",
  "http-body",
- "matchit",
- "metrics",
- "metrics-exporter-prometheus",
+ "opentelemetry",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
  "pin-project-lite",
- "tokio",
  "tower",
- "tower-http",
 ]
 
 [[package]]
@@ -724,6 +722,12 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crossbeam-epoch"
@@ -2836,17 +2840,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "metrics-exporter-prometheus"
-version = "0.18.1"
+name = "metrics-exporter-otel"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3589659543c04c7dc5526ec858591015b87cd8746583b51b48ef4353f99dbcda"
+checksum = "58b8984fa38406b80c094943c0ba90e53d5fff0aea051ff9fac96cf6940993c8"
 dependencies = [
- "base64",
- "indexmap 2.13.1",
  "metrics",
  "metrics-util",
- "quanta",
- "thiserror 2.0.18",
+ "opentelemetry",
+ "portable-atomic",
+ "scc",
 ]
 
 [[package]]
@@ -2875,7 +2878,6 @@ dependencies = [
  "crossbeam-utils",
  "hashbrown 0.16.1",
  "metrics",
- "quanta",
  "rand 0.9.2",
  "rand_xoshiro",
  "sketches-ddsketch",
@@ -3310,6 +3312,9 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+dependencies = [
+ "critical-section",
+]
 
 [[package]]
 name = "portable-atomic-util"
@@ -3455,21 +3460,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8991c4cbdb8bc5b11f0b074ffe286c30e523de90fee5ba8132f1399f23cb3dd7"
 dependencies = [
  "prost",
-]
-
-[[package]]
-name = "quanta"
-version = "0.12.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3ab5a9d756f0d97bdc89019bd2e4ea098cf9cde50ee7564dde6b81ccc8f06c7"
-dependencies = [
- "crossbeam-utils",
- "libc",
- "once_cell",
- "raw-cpuid",
- "wasi",
- "web-sys",
- "winapi",
 ]
 
 [[package]]
@@ -3647,15 +3637,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f703f4665700daf5512dcca5f43afa6af89f09db47fb56be587f80636bda2d41"
 dependencies = [
  "rand_core 0.9.5",
-]
-
-[[package]]
-name = "raw-cpuid"
-version = "11.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
-dependencies = [
- "bitflags",
 ]
 
 [[package]]
