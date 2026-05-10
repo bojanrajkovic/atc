@@ -15,8 +15,27 @@ use crate::common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use opentelemetry::KeyValue;
+use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use serial_test::serial;
+use std::time::Duration;
 use tower::ServiceExt;
+
+/// Snapshot, retrying briefly for `metric_name` to surface. The OTel SDK's
+/// metric pipeline is synchronous on the call path, but under heavy CI load
+/// (llvm-cov + coverage instrumentation) the first force_flush after an HTTP
+/// middleware observation has occasionally returned an empty snapshot. Retry
+/// up to ~250 ms with a yield between attempts so the test reflects a real
+/// missing observation rather than a transient scheduling artifact.
+async fn poll_for_metric(metric_name: &str) -> Vec<ResourceMetrics> {
+    for _ in 0..50 {
+        let snapshot = common::snapshot_metrics();
+        if common::metric_present(&snapshot, metric_name) {
+            return snapshot;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    common::snapshot_metrics()
+}
 
 #[tokio::test]
 #[serial]
@@ -91,9 +110,13 @@ async fn http_middleware_records_request_duration_with_semconv_attributes() {
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let snapshot = common::snapshot_metrics();
-    // Presence check: the HTTP middleware must have emitted the request
-    // duration histogram.
+    // Yield once so any non-runtime-aware accumulator updates in the OTel SDK's
+    // metric pipeline complete before we force_flush. Observed on Linux CI
+    // under llvm-cov instrumentation: the histogram observation occasionally
+    // didn't surface in the next snapshot without this yield.
+    tokio::task::yield_now().await;
+
+    let snapshot = poll_for_metric("http.server.request.duration").await;
     assert!(
         common::metric_present(&snapshot, "http.server.request.duration"),
         "expected http.server.request.duration in snapshot",
