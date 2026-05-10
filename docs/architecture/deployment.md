@@ -105,7 +105,25 @@ The runtime invariants that make symmetric multi-replica safe (see [`state-exter
 
 Setting `affinity:` to a non-empty value (full operator override) takes precedence over `podAntiAffinity.type` — the chart renders the supplied value verbatim and skips the convenience injection. Use this for compound affinity needs that mix `nodeAffinity`, `podAffinity`, custom weights, or non-hostname topology keys.
 
-**PDB / HPA defaults are not provided.** Tracked as #9 / #8.
+**HPA defaults are not provided.** Tracked as #8.
+
+## PodDisruptionBudget
+
+The chart renders an optional `policy/v1` PodDisruptionBudget at `templates/pdb.yaml`, gated on `podDisruptionBudget.enabled` (default `false`). Single-replica deployments don't benefit from a PDB, and operators running multi-replica should opt in explicitly so the chart never silently blocks node drains for ephemeral-mode users.
+
+**Mutual-exclusion guard.** Kubernetes' PDB schema rejects setting both `minAvailable` and `maxUnavailable` on the same object. The chart enforces this at template-render time via a `{{ fail }}` guard at the top of `templates/pdb.yaml`: set one, leave the other `null`. Both fields accept either an integer (pod count) or a percentage string like `"50%"`.
+
+**Selector scope.** The PDB selector uses `atc.selectorLabels` (`app.kubernetes.io/name` + `app.kubernetes.io/instance`), matching the Deployment's pod template. The chart-version-bearing labels emitted by `atc.labels` are deliberately excluded so the selector remains immutable across chart upgrades.
+
+**Knobs.**
+
+| Values key | Default | Notes |
+|-----------|---------|-------|
+| `podDisruptionBudget.enabled` | `false` | Opt-in. Recommended for any multi-replica deployment. |
+| `podDisruptionBudget.minAvailable` | `1` | Integer or percentage string. Mutually exclusive with `maxUnavailable`. |
+| `podDisruptionBudget.maxUnavailable` | `null` | Integer or percentage string. Mutually exclusive with `minAvailable`. |
+
+**Operator guidance.** For production multi-replica deployments, the conservative default (`minAvailable: 1`) keeps at least one replica serving during voluntary disruptions (node drains, autoscaler scale-down). Operators running three or more replicas may prefer `maxUnavailable: 1` to allow concurrent drains across nodes without stalling cluster maintenance.
 
 ## Graceful shutdown
 

@@ -1,0 +1,25 @@
+{{- if .Values.podDisruptionBudget.enabled -}}
+{{- $minAvailable := .Values.podDisruptionBudget.minAvailable -}}
+{{- $maxUnavailable := .Values.podDisruptionBudget.maxUnavailable -}}
+{{- $hasMin := not (kindIs "invalid" $minAvailable) -}}
+{{- $hasMax := not (kindIs "invalid" $maxUnavailable) -}}
+{{- if and $hasMin $hasMax -}}
+{{- fail "podDisruptionBudget.minAvailable and podDisruptionBudget.maxUnavailable are mutually exclusive — set one, leave the other null." -}}
+{{- end -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "atc.fullname" . }}
+  labels:
+    {{- include "atc.labels" . | nindent 4 }}
+spec:
+  {{- if $hasMin }}
+  minAvailable: {{ $minAvailable }}
+  {{- end }}
+  {{- if $hasMax }}
+  maxUnavailable: {{ $maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "atc.selectorLabels" . | nindent 6 }}
+{{- end }}

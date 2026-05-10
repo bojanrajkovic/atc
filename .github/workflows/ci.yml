@@ -297,6 +297,7 @@ jobs:
           - values-gateway.yaml
           - values-multi-replica.yaml
           - values-metrics.yaml
+          - values-pdb.yaml
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

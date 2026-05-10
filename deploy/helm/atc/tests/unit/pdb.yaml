@@ -1,0 +1,66 @@
+suite: PodDisruptionBudget — opt-in gate, mutual-exclusion guard, percentage rendering
+
+templates:
+  - pdb.yaml
+
+tests:
+  - it: omits the PDB document when podDisruptionBudget.enabled=false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a policy/v1 PodDisruptionBudget with minAvailable=1 when enabled
+    set:
+      podDisruptionBudget.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodDisruptionBudget
+      - isAPIVersion:
+          of: policy/v1
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - notExists:
+          path: spec.maxUnavailable
+
+  - it: flows maxUnavailable through when minAvailable is null
+    set:
+      podDisruptionBudget.enabled: true
+      podDisruptionBudget.minAvailable: null
+      podDisruptionBudget.maxUnavailable: 1
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+      - notExists:
+          path: spec.minAvailable
+
+  - it: preserves percentage-string values for maxUnavailable
+    set:
+      podDisruptionBudget.enabled: true
+      podDisruptionBudget.minAvailable: null
+      podDisruptionBudget.maxUnavailable: "50%"
+    asserts:
+      - equal:
+          path: spec.maxUnavailable
+          value: "50%"
+
+  - it: fails when both minAvailable and maxUnavailable are set
+    set:
+      podDisruptionBudget.enabled: true
+      podDisruptionBudget.minAvailable: 1
+      podDisruptionBudget.maxUnavailable: 1
+    asserts:
+      - failedTemplate:
+          errorPattern: "mutually exclusive"
+
+  - it: scopes the selector to the chart's selectorLabels
+    set:
+      podDisruptionBudget.enabled: true
+    asserts:
+      - isNotNullOrEmpty:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+      - isNotNullOrEmpty:
+          path: spec.selector.matchLabels["app.kubernetes.io/instance"]
