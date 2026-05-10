@@ -83,8 +83,7 @@ jobs:
         id: rust-version
         run: echo "version=$(mise config get tools.rust)" >> "$GITHUB_OUTPUT"
 
-      # zizmor: ignore[superfluous-actions]
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
 

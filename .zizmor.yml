@@ -1,3 +1,17 @@
 # Zizmor configuration
-# All suppressions use inline comments in workflow files.
+# Primary suppression is via inline `# zizmor: ignore[<audit>]` comments at the
+# end of audited lines. The config-file rules below are a Renovate-clobber
+# fallback: if Renovate ever rewrites a SHA-pin comment in a way that strips an
+# inline zizmor ignore, the audit still does not fire because the rule silences
+# it for the workflow file.
 # See: https://docs.zizmor.sh/configuration/
+
+rules:
+  superfluous-actions:
+    # `dtolnay/rust-toolchain` is intentionally used (over runner-installed Rust)
+    # to pin the toolchain version from `.mise.toml` and select components.
+    # Both workflows below carry an inline `# zizmor: ignore[superfluous-actions]`;
+    # these file-level rules are belt-and-braces in case Renovate clobbers them.
+    ignore:
+      - ci.yml
+      - release-please.yml

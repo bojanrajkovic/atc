@@ -74,8 +74,7 @@ jobs:
         id: rust-version
         run: echo "version=$(mise config get tools.rust)" >> "$GITHUB_OUTPUT"
 
-      # zizmor: ignore[superfluous-actions]
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: ${{ steps.rust-version.outputs.version }}
           components: rustfmt, clippy, llvm-tools-preview
@@ -360,10 +359,13 @@ jobs:
       # built image tracks `.mise.toml` rather than the Dockerfile's ARG
       # defaults (which remain as fallbacks for standalone `docker build`).
       - name: Build atc image for kind
+        env:
+          RUST_VERSION: ${{ steps.tool-versions.outputs.rust }}
+          NODE_VERSION: ${{ steps.tool-versions.outputs.node }}
         run: |
           docker build -t atc:ct -f Dockerfile \
-            --build-arg RUST_VERSION=${{ steps.tool-versions.outputs.rust }} \
-            --build-arg NODE_VERSION=${{ steps.tool-versions.outputs.node }} \
+            --build-arg "RUST_VERSION=${RUST_VERSION}" \
+            --build-arg "NODE_VERSION=${NODE_VERSION}" \
             .
 
       - name: Create kind cluster

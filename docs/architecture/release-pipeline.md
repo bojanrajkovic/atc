@@ -158,8 +158,6 @@ The Sigstore attestation lives only on the OCI channel — `actions/attest-build
 
 The regular `Dockerfile` is unchanged and remains the canonical entry point for `docker build .` in local development — it builds the frontend, cargo-chef-cooks deps, compiles the binary, and copies it into distroless. `Dockerfile.release` is release-pipeline-only and assumes the binary is already in the build context. `Dockerfile.release.dockerignore` (a Docker-23.0+ convention for per-Dockerfile ignore-lists) excludes everything except the `atc-server` binary, both for security (no source leakage into the image) and build-context speed.
 
-The `dtolnay/rust-toolchain` step in `release-please.yml` carries a `# zizmor: ignore[superfluous-actions]` directive on its own comment line directly above the `uses:` line. Renovate manages the action's SHA pin in place; placing the zizmor ignore on a separate line keeps it stable across automated bumps (Renovate preserves `# vX.Y.Z` and `# ratchet:*` comments adjacent to `uses:` references but is undocumented for arbitrary trailing comments). No behavior change.
-
 ## Boundaries
 
 **Owns:**
