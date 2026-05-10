@@ -1,0 +1,226 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices"
+  ],
+  "timezone": "America/New_York",
+  "schedule": ["before 9am every weekday"],
+  "automergeSchedule": ["before 9am every weekday"],
+  "prHourlyLimit": 3,
+  "prConcurrentLimit": 6,
+  "branchConcurrentLimit": 0,
+  "dependencyDashboard": true,
+  "assignees": ["bojanrajkovic"],
+  "semanticCommits": "enabled",
+  "rangeStrategy": "pin",
+  "automerge": false,
+  "platformAutomerge": false,
+  "automergeStrategy": "squash",
+  "minimumReleaseAge": "3 days",
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "labels": ["security"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["before 5am every sunday"]
+  },
+  "packageRules": [
+    {
+      "description": "Major updates (any manager): manual review.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "addLabels": ["update:major"]
+    },
+    {
+      "description": "Minor and patch updates (any manager): automerge after release-age delay.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "Pre-1.0 minor updates (cargo + npm): manual review. Belt-and-braces — Renovate's isBreaking() handles cargo, but npm classification of 0.x minor as breaking is less certain.",
+      "matchManagers": ["cargo", "npm"],
+      "matchCurrentVersion": "<1.0.0",
+      "matchUpdateTypes": ["minor"],
+      "automerge": false
+    },
+    {
+      "description": "Pin and digest updates: automerge with no release-age delay (mechanical changes).",
+      "matchUpdateTypes": ["pin", "digest", "pinDigest"],
+      "automerge": true,
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "devDependencies and pnpm catalog devDeps: automerge minor + patch.",
+      "matchDepTypes": ["devDependencies", "pnpm.catalog.default"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "sqlx family: manual review. Compile-time SQL checking; minor bumps may shift macro behavior.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["sqlx", "sqlx-core", "sqlx-macros"],
+      "automerge": false
+    },
+    {
+      "description": "axum family patch: explicit automerge for axum's high-stakes changelog history (already covered by rule 2).",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["axum", "axum-core", "axum-extra", "axum-macros"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "ts-rs: manual review. Type bridge to frontend; even minor/patch could regenerate types. CI's verify-types step catches drift.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["ts-rs"],
+      "automerge": false
+    },
+    {
+      "description": "opentelemetry-rust monorepo: manual review. 0.x ecosystem upgrades are coordinated breaking changes.",
+      "matchSourceUrls": ["https://github.com/open-telemetry/opentelemetry-rust"],
+      "automerge": false
+    },
+    {
+      "description": "tokio ecosystem custom group: tokio + tokio-util together; patch automerged.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["tokio", "tokio-util"],
+      "groupName": "tokio ecosystem"
+    },
+    {
+      "description": "tower ecosystem custom group: tower + tower-http together.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["tower", "tower-http"],
+      "groupName": "tower ecosystem"
+    },
+    {
+      "description": "Svelte ecosystem custom group: minor + patch automerged. No forced commitMessagePrefix — Renovate uses fix(deps): only when the group includes a runtime member (svelte), and chore(deps): otherwise.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "svelte",
+        "svelte-check",
+        "svelte-eslint-parser",
+        "eslint-plugin-svelte",
+        "prettier-plugin-svelte",
+        "@sveltejs/vite-plugin-svelte",
+        "@testing-library/svelte"
+      ],
+      "groupName": "svelte ecosystem",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "Svelte ecosystem major: manual review.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "svelte",
+        "svelte-check",
+        "svelte-eslint-parser",
+        "eslint-plugin-svelte",
+        "prettier-plugin-svelte",
+        "@sveltejs/vite-plugin-svelte",
+        "@testing-library/svelte"
+      ],
+      "groupName": "svelte ecosystem",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "tailwind-merge major: manual review (separate org from tailwindcssMonorepo preset).",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["tailwind-merge"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "typescript / vite / eslint major: manual review.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript", "vite", "eslint"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Playwright custom group: @playwright/test + @bgotink/playwright-coverage; minor + patch automerged.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@playwright/test", "@bgotink/playwright-coverage"],
+      "groupName": "playwright",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "github-actions major: manual review.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "github-actions minor / patch / digest: automerge.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "automerge": true
+    },
+    {
+      "description": "Dockerfile + docker-compose minor / patch / digest: automerge with pinDigests.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"],
+      "automerge": true
+    },
+    {
+      "description": "Dockerfile + docker-compose major: manual review.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "mise minor / patch: automerge.",
+      "matchManagers": ["mise"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "mise major: manual review.",
+      "matchManagers": ["mise"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Cross-manager rust-toolchain group: mise rust pin + dockerfile ARG default. Manual review (toolchain upgrades).",
+      "matchManagers": ["mise", "dockerfile"],
+      "matchDepNames": ["rust"],
+      "groupName": "rust-toolchain",
+      "automerge": false
+    },
+    {
+      "description": "Cross-manager pnpm-version group: mise pnpm pin + npm packageManager field; minor/patch automerged. Renovate regenerates pnpm-lock.yaml as part of the PR.",
+      "matchManagers": ["mise", "npm"],
+      "matchDepNames": ["pnpm"],
+      "groupName": "pnpm-version",
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    },
+    {
+      "description": "Cross-manager pnpm-version major: manual review (pnpm v10 -> v11 may need packageManager field migration).",
+      "matchManagers": ["mise", "npm"],
+      "matchDepNames": ["pnpm"],
+      "groupName": "pnpm-version",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Security advisories: bypass schedule and release-age; automerge non-major. Both schedule and automergeSchedule are needed: the former gates branch/PR creation, the latter gates Renovate's automerge poll.",
+      "matchCategories": ["security"],
+      "automerge": true,
+      "minimumReleaseAge": null,
+      "schedule": ["at any time"],
+      "automergeSchedule": ["at any time"]
+    },
+    {
+      "description": "Major security advisories: manual review. Overrides the catch-all security automerge above.",
+      "matchCategories": ["security"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    }
+  ]
+}

@@ -100,6 +100,15 @@ chore: bump rust to 1.94.0
 
 Commits are validated by commitlint via lefthook's commit-msg hook. Non-conventional commits are rejected automatically.
 
+### Dependency updates
+
+Renovate manages dependency updates with conventional-commit prefixes that cooperate with release-please:
+
+- `fix(deps):` — runtime dependency bump (release-please publishes a patch release).
+- `chore(deps):` — dev/tooling dependency bump (no release).
+
+Minor/patch updates auto-merge after a 3-day release-age delay; major updates require manual review. Security advisories bypass the delay. The full policy lives in `renovate.json`.
+
 ## Git Hooks
 
 Three tiers of git hooks are enforced via lefthook:

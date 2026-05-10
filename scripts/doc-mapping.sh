@@ -86,6 +86,10 @@ get_docs_for_file() {
             echo "docs/architecture/ci-pipeline.md"
             return
             ;;
+        renovate.json)
+            echo "docs/architecture/ci-pipeline.md"
+            return
+            ;;
     esac
 
     # No mapping found
