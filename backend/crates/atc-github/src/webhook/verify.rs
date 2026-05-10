@@ -54,7 +54,14 @@ pub enum VerifyError {
 ///
 /// This function never panics. The call to `expect()` on `new_from_slice`
 /// is safe because HMAC-SHA256 accepts keys of any length.
-#[tracing::instrument(skip(secret, body))]
+#[tracing::instrument(
+    name = "webhook.verify",
+    skip(secret, body, signature),
+    fields(
+        webhook.signature.present = !signature.is_empty(),
+        webhook.signature.algorithm = "sha256",
+    ),
+)]
 pub fn verify_signature(secret: &[u8], body: &[u8], signature: &str) -> Result<(), VerifyError> {
     // Split on first '=' to separate algorithm tag from hex digest.
     let (algorithm, hex_digest) = signature

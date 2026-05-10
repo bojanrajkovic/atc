@@ -11,7 +11,10 @@ use axum::{
     routing::{get, post},
 };
 use axum_prometheus::PrometheusMetricLayer;
+use opentelemetry_http::HeaderExtractor;
 use serde::{Deserialize, Serialize};
+use tracing::{Instrument, Span, field, info_span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use atc_core::PersistError;
 use atc_github::{ParseResult, parse_webhook, verify_signature};
@@ -235,106 +238,136 @@ pub fn api_routes(prometheus_layer: PrometheusMetricLayer<'static>) -> Router<Ar
 ///
 /// Metric counters (`atc_pg_write_failures_total`, `atc_pg_notify_emitted_total`)
 /// are emitted by the `PersistentStore` impl (not here).
-#[tracing::instrument(skip(state, body))]
 async fn webhook_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // 1. Extract X-GitHub-Event header
-    let event_type = match headers.get("x-github-event").and_then(|v| v.to_str().ok()) {
-        Some(et) => et,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "missing X-GitHub-Event header"})),
-            );
-        }
-    };
+    // Build the parent OTel context from incoming headers BEFORE the span
+    // exists. `set_parent` errors if called after the span has been entered;
+    // the only safe attachment point is between `info_span!` and the first
+    // poll of the instrumented future.
+    let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
+        prop.extract(&HeaderExtractor(&headers))
+    });
 
-    tracing::debug!(event_type, "webhook received");
+    let span = info_span!(
+        "webhook.handler",
+        http.route = "/v1/webhooks/github",
+        webhook.delivery_id = field::Empty,
+        webhook.event_type = field::Empty,
+    );
+    // Ignore `SetParentError`: the only reason this errors is when no OTel
+    // tracing layer is installed (default-disabled posture), in which case the
+    // request still runs as a no-op span.
+    let _ = span.set_parent(parent_cx);
 
-    // 2. Verify HMAC-SHA256 signature if secret is configured
-    if let Some(ref secret) = state.webhook_secret {
-        let signature = match headers
-            .get("x-hub-signature-256")
+    async move {
+        if let Some(delivery_id) = headers
+            .get("x-github-delivery")
             .and_then(|v| v.to_str().ok())
         {
-            Some(sig) => sig,
+            Span::current().record("webhook.delivery_id", delivery_id);
+        }
+
+        // 1. Extract X-GitHub-Event header
+        let event_type = match headers.get("x-github-event").and_then(|v| v.to_str().ok()) {
+            Some(et) => et,
             None => {
-                tracing::warn!("missing X-Hub-Signature-256 header");
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "missing X-GitHub-Event header"})),
+                );
+            }
+        };
+        Span::current().record("webhook.event_type", event_type);
+
+        tracing::debug!(event_type, "webhook received");
+
+        // 2. Verify HMAC-SHA256 signature if secret is configured
+        if let Some(ref secret) = state.webhook_secret {
+            let signature = match headers
+                .get("x-hub-signature-256")
+                .and_then(|v| v.to_str().ok())
+            {
+                Some(sig) => sig,
+                None => {
+                    tracing::warn!("missing X-Hub-Signature-256 header");
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({"error": "missing X-Hub-Signature-256 header"})),
+                    );
+                }
+            };
+
+            if let Err(_e) = verify_signature(secret.as_bytes(), &body, signature) {
+                tracing::warn!("HMAC verification failed");
                 return (
                     StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"error": "missing X-Hub-Signature-256 header"})),
+                    Json(serde_json::json!({"error": "invalid signature"})),
+                );
+            }
+        }
+
+        // 3. Parse webhook payload
+        let result = match parse_webhook(event_type, &body) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, event_type, "webhook parse error");
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(serde_json::json!({"error": e.to_string()})),
                 );
             }
         };
 
-        if let Err(_e) = verify_signature(secret.as_bytes(), &body, signature) {
-            tracing::warn!("HMAC verification failed");
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "invalid signature"})),
-            );
-        }
-    }
+        // 4. Handle parse result
+        match result {
+            ParseResult::Parsed(boxed_event) => {
+                let event = *boxed_event;
 
-    // 3. Parse webhook payload
-    let result = match parse_webhook(event_type, &body) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, event_type, "webhook parse error");
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(serde_json::json!({"error": e.to_string()})),
-            );
-        }
-    };
+                let persist_result = match &event {
+                    atc_github::WebhookEvent::Run(env) => {
+                        state.persist.apply_run_event(env.clone()).await
+                    }
+                    atc_github::WebhookEvent::Job(env) => {
+                        state.persist.apply_job_event(env.clone()).await
+                    }
+                };
 
-    // 4. Handle parse result
-    match result {
-        ParseResult::Parsed(boxed_event) => {
-            let event = *boxed_event;
-
-            let persist_result = match &event {
-                atc_github::WebhookEvent::Run(env) => {
-                    state.persist.apply_run_event(env.clone()).await
-                }
-                atc_github::WebhookEvent::Job(env) => {
-                    state.persist.apply_job_event(env.clone()).await
-                }
-            };
-
-            match persist_result {
-                Ok(seq) => {
-                    tracing::info!(event_type, seq, "event accepted");
-                    (
-                        StatusCode::OK,
-                        Json(serde_json::json!({"status": "accepted", "seq": seq})),
-                    )
-                }
-                Err(PersistError::InvalidTransition) => {
-                    tracing::warn!("transition invalid; rejecting");
-                    (
-                        StatusCode::OK,
-                        Json(serde_json::json!({"status": "rejected"})),
-                    )
-                }
-                Err(PersistError::Backend(e)) => {
-                    tracing::error!(error = %e, "persistence write failed");
-                    (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        Json(serde_json::json!({"status": "error"})),
-                    )
+                match persist_result {
+                    Ok(seq) => {
+                        tracing::info!(event_type, seq, "event accepted");
+                        (
+                            StatusCode::OK,
+                            Json(serde_json::json!({"status": "accepted", "seq": seq})),
+                        )
+                    }
+                    Err(PersistError::InvalidTransition) => {
+                        tracing::warn!("transition invalid; rejecting");
+                        (
+                            StatusCode::OK,
+                            Json(serde_json::json!({"status": "rejected"})),
+                        )
+                    }
+                    Err(PersistError::Backend(e)) => {
+                        tracing::error!(error = %e, "persistence write failed");
+                        (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(serde_json::json!({"status": "error"})),
+                        )
+                    }
                 }
             }
-        }
-        ParseResult::Skipped { ref event_type } => {
-            tracing::debug!(event_type, "event skipped");
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({"status": "skipped"})),
-            )
+            ParseResult::Skipped { ref event_type } => {
+                tracing::debug!(event_type, "event skipped");
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({"status": "skipped"})),
+                )
+            }
         }
     }
+    .instrument(span)
+    .await
 }

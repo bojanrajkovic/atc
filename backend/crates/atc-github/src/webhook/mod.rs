@@ -90,13 +90,21 @@ pub enum WebhookEvent {
 ///
 /// Returns [`ParseError`] if JSON deserialization fails or if the payload
 /// contains unrecognized action/conclusion/status values.
-#[tracing::instrument(skip(body))]
+#[tracing::instrument(
+    name = "webhook.parse",
+    skip(body),
+    fields(
+        webhook.event_type = event_type,
+        webhook.action = tracing::field::Empty,
+    ),
+)]
 pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, ParseError> {
     match event_type {
         "workflow_run" => {
             let webhook: types::WorkflowRunWebhook = serde_json::from_slice(body)?;
             let envelope = translate::translate_run(webhook)?;
             let action_str = format!("{:?}", envelope.action);
+            tracing::Span::current().record("webhook.action", action_str.as_str());
             tracing::debug!(
                 event_type = "workflow_run",
                 action = action_str,
@@ -108,6 +116,7 @@ pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, Parse
             let webhook: types::WorkflowJobWebhook = serde_json::from_slice(body)?;
             let envelope = translate::translate_job(webhook)?;
             let action_str = format!("{:?}", envelope.action);
+            tracing::Span::current().record("webhook.action", action_str.as_str());
             tracing::debug!(
                 event_type = "workflow_job",
                 action = action_str,

@@ -70,6 +70,80 @@ pub fn install_test_recorder() -> (PrometheusMetricLayer<'static>, PrometheusHan
 pub static PROMETHEUS_INIT: OnceLock<(PrometheusMetricLayer<'static>, PrometheusHandle)> =
     OnceLock::new();
 
+// ---------------------------------------------------------------------------
+// Span-side test harness (OTel InMemorySpanExporter)
+// ---------------------------------------------------------------------------
+
+/// In-memory span exporter wired through a `SimpleSpanProcessor` so tests can
+/// inspect every span emitted via `#[tracing::instrument]` or `info_span!`.
+///
+/// The exporter is installed once per test binary as the global tracer
+/// provider, paired with a tracing-opentelemetry layer composed onto a
+/// `tracing_subscriber::registry()`. The layer wraps a tracer captured from
+/// our local provider — even if a later test (e.g. `otel_init_test::*`)
+/// overwrites the global tracer provider via `set_tracer_provider`, this
+/// subscriber's layer still routes spans into our exporter.
+///
+/// Tests that read spans must be marked `#[serial_test::serial]` because the
+/// exporter is shared across all tests in the binary; concurrent reads/resets
+/// would interleave each others' span batches.
+static OTEL_SPAN_TEST_INIT: OnceLock<opentelemetry_sdk::trace::InMemorySpanExporter> =
+    OnceLock::new();
+
+/// Install the global span exporter + matching tracing subscriber on first
+/// call; return a clonable handle on every call.
+///
+/// Idempotent: subsequent calls return the same exporter without re-installing
+/// the subscriber. Safe to call from any test that emits spans, including the
+/// implicit `tokio::spawn` paths inside `build_app_with_pg_and_listener`.
+pub fn ensure_span_exporter_installed() -> opentelemetry_sdk::trace::InMemorySpanExporter {
+    OTEL_SPAN_TEST_INIT
+        .get_or_init(install_span_exporter)
+        .clone()
+}
+
+fn install_span_exporter() -> opentelemetry_sdk::trace::InMemorySpanExporter {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::{SdkTracerProvider, SimpleSpanProcessor};
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let exporter = opentelemetry_sdk::trace::InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_span_processor(SimpleSpanProcessor::new(exporter.clone()))
+        .build();
+
+    let tracer = provider.tracer("atc-test");
+
+    opentelemetry::global::set_tracer_provider(provider);
+    opentelemetry::global::set_text_map_propagator(
+        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+    );
+
+    let _ = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+        .try_init();
+
+    exporter
+}
+
+/// Snapshot of every span exported so far in the current test binary. The
+/// `SimpleSpanProcessor` exports synchronously on each `on_end`, so finished
+/// spans are visible immediately; spans whose owning future is still in
+/// flight (e.g. `drain.task`) will not appear until the task ends.
+pub fn read_finished_spans() -> Vec<opentelemetry_sdk::trace::SpanData> {
+    ensure_span_exporter_installed()
+        .get_finished_spans()
+        .expect("InMemorySpanExporter::get_finished_spans")
+}
+
+/// Clear the in-memory span buffer. Call at the start of any test that
+/// computes span counts so observations from earlier tests in the binary
+/// are not folded into the assertion.
+pub fn reset_spans() {
+    ensure_span_exporter_installed().reset();
+}
+
 /// Render current Prometheus metrics as text.
 ///
 /// Panics if `PROMETHEUS_INIT` has not been initialized yet. Call after any
