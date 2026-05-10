@@ -7,7 +7,7 @@
 # bump intentionally alongside the upstream actions/runner release. The
 # weekly rebuild workflow picks up Ubuntu 24.04 base image security
 # updates and Playwright dep changes without touching this pin.
-FROM ghcr.io/actions/actions-runner:2.333.0
+FROM ghcr.io/actions/actions-runner:2.333.0@sha256:1ad983536759ceec39ed75a2c8f007ca8c37b66eee35ed86f13623b29a4db97d
 
 # Project-side Playwright version, passed by the build workflow which
 # extracts it from frontend/package.json. Keeping the pin in
