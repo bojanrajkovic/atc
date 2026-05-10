@@ -150,14 +150,25 @@ async fn drain_pass_span_is_child_of_drain_task() {
         .await
         .expect("timed out waiting for drain broadcast");
 
-    // Give the SimpleSpanProcessor a brief moment to flush ended children.
-    // `drain.task` itself only ends when the spawned task exits (after
-    // `fixture.shutdown.cancel()` below + record_shutdown_remaining), so we
-    // assert the parent linkage via parent_span_id (set at child creation
-    // time) rather than by lookup against the not-yet-exported parent.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = common::read_finished_spans();
+    // Poll up to ~500 ms for the SimpleSpanProcessor to flush the ended
+    // drain.pass child. `drain.task` itself only ends when the spawned task
+    // exits (after `fixture.shutdown.cancel()` below + record_shutdown_remaining),
+    // so we assert the parent linkage via parent_span_id (set at child
+    // creation time) rather than by lookup against the not-yet-exported
+    // parent. Polling absorbs scheduler jitter under heavy concurrent test
+    // load (testcontainers PG shared, axum-otel pipeline shared) without
+    // committing to a fixed-budget sleep that can underprovision in CI.
+    let spans = {
+        let mut spans = Vec::new();
+        for _ in 0..50 {
+            spans = common::read_finished_spans();
+            if span_named(&spans, "drain.pass").is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        spans
+    };
 
     let pass = span_named(&spans, "drain.pass")
         .expect("drain.pass span must be exported after a drain pass runs");
