@@ -98,7 +98,7 @@ The deployment template injects five spec-standard env vars when `otel.enabled: 
 | `OTEL_SERVICE_NAME` | `otel.serviceName` | Resource attribute identifying the service. Defaults to `"atc"`. |
 | `OTEL_RESOURCE_ATTRIBUTES` | `otel.resourceAttributes` | Comma-separated `key=value` pairs appended after auto-injected `k8s.*` identifiers (see below). E.g. `deployment.environment=production,service.namespace=ingest`. |
 | `OTEL_TRACES_SAMPLER` | `otel.sampler` | Trace sampler. Defaults to `parentbased_always_on`. |
-| `OTEL_TRACES_SAMPLER_ARG` | `otel.samplerArg` | Sampler argument (e.g. `"0.1"` for 10% root sampling with `parentbased_traceidratio`). |
+| `OTEL_TRACES_SAMPLER_ARG` | `otel.samplerArg` | Sampler argument (e.g. `"0.1"` for 10% root sampling with `parentbased_traceidratio`). REQUIRED non-empty when `otel.sampler` is a ratio sampler — render-time guard fails otherwise. |
 
 The `otel.*` values block in `deploy/helm/atc/values.yaml` is the operator's contract for these envs — refer to that file for inline default values, comments, and any future additions. Transport is HTTP/protobuf only; there is no `protocol:` key, and `OTEL_EXPORTER_OTLP_PROTOCOL` is not injected. gRPC is out of scope and would require an opt-in build of `atc-server`.
 

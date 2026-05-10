@@ -156,3 +156,52 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "otel.enabled=true requires a non-empty otel.endpoint"
+
+  - it: rejects otel.sampler=traceidratio with empty otel.samplerArg
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+      otel.sampler: "traceidratio"
+      otel.samplerArg: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "otel.sampler=\"traceidratio\" requires a non-empty otel.samplerArg"
+
+  - it: rejects otel.sampler=parentbased_traceidratio with empty otel.samplerArg
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+      otel.sampler: "parentbased_traceidratio"
+    asserts:
+      - failedTemplate:
+          errorPattern: "otel.sampler=\"parentbased_traceidratio\" requires a non-empty otel.samplerArg"
+
+  - it: accepts ratio sampler when otel.samplerArg is provided
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+      otel.sampler: "parentbased_traceidratio"
+      otel.samplerArg: "0.1"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER
+            value: "parentbased_traceidratio"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER_ARG
+            value: "0.1"
+
+  - it: allows always-style samplers without samplerArg
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+      otel.sampler: "always_on"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER
+            value: "always_on"

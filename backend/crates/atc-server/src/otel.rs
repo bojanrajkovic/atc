@@ -203,13 +203,13 @@ fn load_sampler_from_env() -> Sampler {
     match normalized.as_str() {
         "always_on" => Sampler::AlwaysOn,
         "always_off" => Sampler::AlwaysOff,
-        "traceidratio" => match parse_ratio(arg.as_deref()) {
+        "traceidratio" => match parse_ratio_with_spec_default(arg.as_deref()) {
             Some(ratio) => Sampler::TraceIdRatioBased(ratio),
             None => default_sampler(),
         },
         "parentbased_always_on" => default_sampler(),
         "parentbased_always_off" => Sampler::ParentBased(box_sampler(Sampler::AlwaysOff)),
-        "parentbased_traceidratio" => match parse_ratio(arg.as_deref()) {
+        "parentbased_traceidratio" => match parse_ratio_with_spec_default(arg.as_deref()) {
             Some(ratio) => Sampler::ParentBased(box_sampler(Sampler::TraceIdRatioBased(ratio))),
             None => default_sampler(),
         },
@@ -230,8 +230,21 @@ fn box_sampler<S: ShouldSample + 'static>(sampler: S) -> Box<dyn ShouldSample> {
     Box::new(sampler)
 }
 
-fn parse_ratio(raw: Option<&str>) -> Option<f64> {
-    let raw = raw?;
+/// Parse the ratio argument for `traceidratio` / `parentbased_traceidratio`,
+/// honoring the OTel spec default of `1.0` when the argument is missing or
+/// empty. Returns `None` only for an explicitly-present-but-invalid argument
+/// (out of range, unparseable), in which case the caller falls back to the
+/// default sampler. Without this distinction, a `traceidratio` selection with
+/// no arg would silently switch to `parentbased_always_on` — surprising and
+/// inconsistent with both the spec and the operator's stated intent.
+fn parse_ratio_with_spec_default(raw: Option<&str>) -> Option<f64> {
+    match raw {
+        None | Some("") => Some(1.0),
+        Some(value) => parse_ratio(value),
+    }
+}
+
+fn parse_ratio(raw: &str) -> Option<f64> {
     match raw.parse::<f64>() {
         Ok(value) if (0.0..=1.0).contains(&value) => Some(value),
         Ok(value) => {
@@ -246,5 +259,211 @@ fn parse_ratio(raw: Option<&str>) -> Option<f64> {
             );
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    fn sampler_kind(s: &Sampler) -> &'static str {
+        // Discriminate variants without depending on PartialEq for trait
+        // objects. ParentBased uses inner discriminant matching since the
+        // boxed inner sampler is the load-bearing variant for this code.
+        match s {
+            Sampler::AlwaysOn => "AlwaysOn",
+            Sampler::AlwaysOff => "AlwaysOff",
+            Sampler::TraceIdRatioBased(_) => "TraceIdRatioBased",
+            Sampler::ParentBased(inner) => match format!("{inner:?}").as_str() {
+                d if d.starts_with("AlwaysOn") => "ParentBased(AlwaysOn)",
+                d if d.starts_with("AlwaysOff") => "ParentBased(AlwaysOff)",
+                d if d.starts_with("TraceIdRatioBased") => "ParentBased(TraceIdRatioBased)",
+                _ => "ParentBased(other)",
+            },
+            _ => "other",
+        }
+    }
+
+    fn ratio_value(s: &Sampler) -> Option<f64> {
+        match s {
+            Sampler::TraceIdRatioBased(r) => Some(*r),
+            Sampler::ParentBased(inner) => {
+                let dbg = format!("{inner:?}");
+                // Inner Debug looks like `TraceIdRatioBased(0.1)`; pull the
+                // numeric tail. Returns None for any other variant.
+                let lhs = dbg.strip_prefix("TraceIdRatioBased(")?;
+                let raw = lhs.strip_suffix(')')?;
+                raw.parse::<f64>().ok()
+            }
+            _ => None,
+        }
+    }
+
+    fn clear_sampler_env() {
+        unsafe {
+            std::env::remove_var("OTEL_TRACES_SAMPLER");
+            std::env::remove_var("OTEL_TRACES_SAMPLER_ARG");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn parse_ratio_with_spec_default_returns_one_when_arg_missing() {
+        assert_eq!(parse_ratio_with_spec_default(None), Some(1.0));
+    }
+
+    #[test]
+    #[serial]
+    fn parse_ratio_with_spec_default_returns_one_when_arg_empty() {
+        assert_eq!(parse_ratio_with_spec_default(Some("")), Some(1.0));
+    }
+
+    #[test]
+    #[serial]
+    fn parse_ratio_with_spec_default_round_trips_valid_value() {
+        assert_eq!(parse_ratio_with_spec_default(Some("0.25")), Some(0.25));
+        assert_eq!(parse_ratio_with_spec_default(Some("0")), Some(0.0));
+        assert_eq!(parse_ratio_with_spec_default(Some("1")), Some(1.0));
+    }
+
+    #[test]
+    #[serial]
+    fn parse_ratio_returns_none_for_out_of_range() {
+        assert_eq!(parse_ratio("1.5"), None);
+        assert_eq!(parse_ratio("-0.1"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn parse_ratio_returns_none_for_unparseable() {
+        assert_eq!(parse_ratio("not-a-number"), None);
+        assert_eq!(parse_ratio("0.5x"), None);
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_unset_returns_default() {
+        clear_sampler_env();
+        assert_eq!(
+            sampler_kind(&load_sampler_from_env()),
+            "ParentBased(AlwaysOn)"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_always_on() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "always_on");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "AlwaysOn");
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_always_off() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "always_off");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "AlwaysOff");
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_parentbased_always_off() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "parentbased_always_off");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "ParentBased(AlwaysOff)");
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_traceidratio_with_arg() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "traceidratio");
+            std::env::set_var("OTEL_TRACES_SAMPLER_ARG", "0.1");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "TraceIdRatioBased");
+        assert_eq!(ratio_value(&s), Some(0.1));
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_traceidratio_without_arg_defaults_to_one() {
+        // Per OTel spec, OTEL_TRACES_SAMPLER_ARG default is 1.0 when unset
+        // for ratio samplers. Operators selecting traceidratio with no arg
+        // should sample everything, NOT silently fall back to parentbased.
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "traceidratio");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "TraceIdRatioBased");
+        assert_eq!(ratio_value(&s), Some(1.0));
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_parentbased_traceidratio_without_arg_defaults_to_one() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "parentbased_traceidratio");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "ParentBased(TraceIdRatioBased)");
+        assert_eq!(ratio_value(&s), Some(1.0));
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_traceidratio_with_invalid_arg_falls_back_to_default() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "traceidratio");
+            std::env::set_var("OTEL_TRACES_SAMPLER_ARG", "1.5");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "ParentBased(AlwaysOn)");
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_unknown_value_falls_back_to_default() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "tail_based_or_something");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "ParentBased(AlwaysOn)");
+    }
+
+    #[test]
+    #[serial]
+    fn load_sampler_case_insensitive() {
+        clear_sampler_env();
+        unsafe {
+            std::env::set_var("OTEL_TRACES_SAMPLER", "ALWAYS_OFF");
+        }
+        let s = load_sampler_from_env();
+        clear_sampler_env();
+        assert_eq!(sampler_kind(&s), "AlwaysOff");
     }
 }
