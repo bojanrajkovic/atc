@@ -171,6 +171,11 @@ impl PersistentStore for PgStore {
     /// Emits `atc_pg_write_failures_total{kind="transient"}` on pool/commit failures,
     /// `atc_pg_write_failures_total{kind="parity"}` on predicate rejections, and
     /// `atc_pg_notify_emitted_total{kind="run"}` after a successful commit.
+    #[tracing::instrument(
+        name = "persist.apply.run_event",
+        skip_all,
+        fields(run_id = env.run_id.0, seq = tracing::field::Empty),
+    )]
     async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<u64, PersistError> {
         let mut tx = self.pool.begin().await.map_err(|e| {
             metrics::counter!("atc_pg_write_failures_total", "kind" => "transient").increment(1);
@@ -194,7 +199,8 @@ impl PersistentStore for PgStore {
                 metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
                     .increment(1);
             })?;
-        notify_outbox_seq_in_txn(&mut tx, seq_i64)
+        tracing::Span::current().record("seq", seq_i64);
+        notify_outbox_seq_in_txn(&mut tx, "run", seq_i64)
             .await
             .inspect_err(|_| {
                 metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
@@ -217,6 +223,11 @@ impl PersistentStore for PgStore {
     /// Emits `atc_pg_write_failures_total{kind="transient"}` on pool/commit failures,
     /// `atc_pg_write_failures_total{kind="parity"}` on predicate rejections, and
     /// `atc_pg_notify_emitted_total{kind="job"}` after a successful commit.
+    #[tracing::instrument(
+        name = "persist.apply.job_event",
+        skip_all,
+        fields(run_id = env.run_id.0, job_id = env.job_id.0, seq = tracing::field::Empty),
+    )]
     async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError> {
         let mut tx = self.pool.begin().await.map_err(|e| {
             metrics::counter!("atc_pg_write_failures_total", "kind" => "transient").increment(1);
@@ -240,7 +251,8 @@ impl PersistentStore for PgStore {
                 metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
                     .increment(1);
             })?;
-        notify_outbox_seq_in_txn(&mut tx, seq_i64)
+        tracing::Span::current().record("seq", seq_i64);
+        notify_outbox_seq_in_txn(&mut tx, "job", seq_i64)
             .await
             .inspect_err(|_| {
                 metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
@@ -298,6 +310,11 @@ impl PersistentStore for InMemoryStore {
     /// Acquires the seq mutex before the apply so that WS event order matches
     /// ingestion order. On invalid transition returns `Err(PersistError::InvalidTransition)`
     /// without incrementing seq or emitting a broadcast.
+    #[tracing::instrument(
+        name = "persist.apply.run_event",
+        skip_all,
+        fields(run_id = env.run_id.0, seq = tracing::field::Empty),
+    )]
     async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<u64, PersistError> {
         let mut guard = self.seq.lock().await;
         // `?` auto-converts StateMachineError → PersistError::InvalidTransition via From impl.
@@ -307,6 +324,7 @@ impl PersistentStore for InMemoryStore {
             .map_err(atc_core::PersistError::from)?;
         *guard += 1;
         let allocated = *guard;
+        tracing::Span::current().record("seq", allocated);
         let _ = self.broadcast_tx.send(SeqEvent {
             seq: allocated,
             event: WebhookEvent::Run(env),
@@ -318,6 +336,11 @@ impl PersistentStore for InMemoryStore {
     ///
     /// Same locking semantics as [`apply_run_event`]. Invalid transitions return
     /// `Err(PersistError::InvalidTransition)` without side effects.
+    #[tracing::instrument(
+        name = "persist.apply.job_event",
+        skip_all,
+        fields(run_id = env.run_id.0, job_id = env.job_id.0, seq = tracing::field::Empty),
+    )]
     async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError> {
         let mut guard = self.seq.lock().await;
         self.state_machine
@@ -326,6 +349,7 @@ impl PersistentStore for InMemoryStore {
             .map_err(atc_core::PersistError::from)?;
         *guard += 1;
         let allocated = *guard;
+        tracing::Span::current().record("seq", allocated);
         let _ = self.broadcast_tx.send(SeqEvent {
             seq: allocated,
             event: WebhookEvent::Job(env),
@@ -347,6 +371,7 @@ impl PersistentStore for InMemoryStore {
 /// Uses `&mut **tx` (double-deref through `Transaction<Postgres>` →
 /// `PgConnection`) as required by sqlx 0.8's `Executor` bound.
 #[allow(dead_code)]
+#[tracing::instrument(skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn upsert_run_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
@@ -427,6 +452,7 @@ pub(crate) async fn upsert_run_in_txn(
 /// stub-row and the job row are written in the same transaction, so PostgreSQL
 /// same-transaction visibility satisfies the FK check.
 #[allow(dead_code)]
+#[tracing::instrument(skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn upsert_job_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
@@ -542,6 +568,7 @@ pub(crate) async fn upsert_job_in_txn(
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.
 #[allow(dead_code)]
+#[tracing::instrument(skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn insert_outbox_run_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
@@ -568,8 +595,14 @@ pub(crate) async fn insert_outbox_run_in_txn(
 /// PG queues NOTIFYs during a transaction and delivers them only on COMMIT.
 /// Aborted transactions silently drop the NOTIFY — no notification if no row was written.
 #[allow(dead_code)]
+#[tracing::instrument(
+    name = "persist.notify.emit",
+    skip(tx),
+    fields(notify.kind = kind, notify.seq = seq),
+)]
 pub(crate) async fn notify_outbox_seq_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    kind: &'static str,
     seq: i64,
 ) -> Result<(), atc_core::PersistError> {
     sqlx::query!(
@@ -587,6 +620,7 @@ pub(crate) async fn notify_outbox_seq_in_txn(
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.
 #[allow(dead_code)]
+#[tracing::instrument(skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn insert_outbox_job_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,

@@ -7,8 +7,10 @@ Last verified: 2026-05-10
 The ATC Helm chart (`deploy/helm/atc/`) packages the ATC server for deployment to any
 conformant Kubernetes cluster. It produces a single mandatory Deployment backed by a
 ClusterIP Service and a dedicated ServiceAccount. Optional resources (Ingress, HTTPRoute,
-ServiceMonitor, NetworkPolicy, `helm test` hook) are each gated behind independent values flags
-that default to `false`.
+NetworkPolicy, `helm test` hook) are each gated behind independent values flags that
+default to `false`. OpenTelemetry export is configured via the `otel.*` values block —
+also default-disabled — which injects spec-standard `OTEL_*` env vars into the container
+when enabled.
 
 The chart is published via two parallel channels on the tag-triggered release workflow,
 alongside the container image and binary artifacts: an OCI artifact at
@@ -51,9 +53,9 @@ seccompProfile:
 **Alternatives considered:** Conditional `Recreate` (rejected — was tied to `persistence.enabled`, now removed); operator-selectable `strategy` (rejected — adds surface without observed need); document-only approach with no enforcement
 **Rationale:** Both supported storage modes are RWO-volume-free at the application layer. Ephemeral mode keeps state process-local and tolerates rolling pod handoff (state loss is implicit at restart). External Postgres mode keeps state in PG; replicas are symmetric and tolerate rolling handoff (per ADR 0002 D5). Neither mode can suffer the ReadWriteOnce-volume foot-gun that drove the previous conditional `Recreate`. A single constant `RollingUpdate` block (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both modes.
 
-**Decision:** Metrics port always bound in the container; `metrics.enabled` gates only Service-level exposure
-**Alternatives considered:** Conditional metrics listener based on chart flag; separate metrics Deployment
-**Rationale:** The metrics listener is a backend concern — the binary always binds both ports. Gating the Service port exposure keeps Prometheus scraping optional without requiring chart-level changes to the container runtime behavior. This matches how CNCF projects (cert-manager, Linkerd) handle the same pattern.
+**Decision:** Push observability via OTLP to an operator-run collector; the chart documents the dependency, it does not bundle one
+**Alternatives considered:** Bundled OTel collector sidecar; in-chart Prometheus scrape endpoint with optional ServiceMonitor (the prior shape — removed); chart-managed collector Deployment
+**Rationale:** Operators already run their own observability stack — the author's homelab uses Grafana Alloy, work clusters typically run an opentelemetry-collector deployment or DaemonSet. Bundling a collector inside the chart would either duplicate infrastructure that already exists or force operators to disable a sidecar they cannot use. Pushing OTLP to a configurable endpoint keeps the chart focused on the application and lets operators decide whether the collector receives traces, metrics, or both, and what backends they fan out to (Tempo/Mimir/Loki, Jaeger, vendor APMs, etc.). The previous `metrics.*` block, the ServiceMonitor template, the dedicated metrics Service port, and the `/metrics` endpoint on `atc-server` are all gone — operators scrape the collector, not the application.
 
 **Decision:** Dual chart publishing channels — OCI (`oci://ghcr.io/bojanrajkovic/charts/atc`) and a classic HTTP repo on GitHub Pages (`https://bojanrajkovic.github.io/atc/charts`)
 **Alternatives considered:** OCI only; GitHub Pages only
@@ -67,9 +69,9 @@ seccompProfile:
 **Alternatives considered:** Ingress only; Gateway API only; neither (document port-forward)
 **Rationale:** Ingress covers clusters with a classic ingress controller (nginx, traefik). HTTPRoute covers clusters running a Gateway API controller (Envoy Gateway, Cilium). Providing both optional templates at the same chart version avoids forking. The default is neither — port-forward instructions in NOTES.txt cover the zero-dependency case.
 
-## Environment Variables (ATC_* surface)
+## Environment Variables
 
-The chart wires Helm values to ATC_* environment variables. The canonical list is in `backend/crates/atc-server/src/config.rs`. One optional variable is available beyond the core set:
+The chart wires Helm values to two distinct env-var surfaces: the application's `ATC_*` config (canonical list in `backend/crates/atc-server/src/config.rs`) and the spec-standard `OTEL_*` envs read by the OpenTelemetry SDK.
 
 ### `ATC_DATABASE_LISTENER_URL`
 
@@ -85,6 +87,34 @@ The chart wires Helm values to ATC_* environment variables. The canonical list i
 - `existingSecret.databaseListenerUrlKey` (secret key reference; wins over `config.databaseListenerUrl` when both are set)
 
 When neither is set, the listener falls back to `ATC_DATABASE_URL` and no `ATC_DATABASE_LISTENER_URL` env entry is injected into the pod.
+
+### OpenTelemetry (`OTEL_*`)
+
+The deployment template injects five spec-standard env vars when `otel.enabled: true`:
+
+| Env var | Helm key | Purpose |
+|---------|----------|---------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `otel.endpoint` | OTLP/HTTP collector URL (e.g. `http://otel-collector.observability:4318`). Required when enabled. |
+| `OTEL_SERVICE_NAME` | `otel.serviceName` | Resource attribute identifying the service. Defaults to `"atc"`. |
+| `OTEL_RESOURCE_ATTRIBUTES` | `otel.resourceAttributes` | Comma-separated `key=value` pairs appended after auto-injected `k8s.*` identifiers (see below). E.g. `deployment.environment=production,service.namespace=ingest`. |
+| `OTEL_TRACES_SAMPLER` | `otel.sampler` | Trace sampler. Defaults to `parentbased_always_on`. |
+| `OTEL_TRACES_SAMPLER_ARG` | `otel.samplerArg` | Sampler argument (e.g. `"0.1"` for 10% root sampling with `parentbased_traceidratio`). REQUIRED non-empty when `otel.sampler` is a ratio sampler — render-time guard fails otherwise. |
+
+The `otel.*` values block in `deploy/helm/atc/values.yaml` is the operator's contract for these envs — refer to that file for inline default values, comments, and any future additions. Transport is HTTP/protobuf only; there is no `protocol:` key, and `OTEL_EXPORTER_OTLP_PROTOCOL` is not injected. gRPC is out of scope and would require an opt-in build of `atc-server`.
+
+**Pod-identity attributes auto-injected.** When `otel.enabled: true`, the deployment template also wires four downward-API env vars (`OTEL_K8S_POD_NAME`, `OTEL_K8S_POD_NAMESPACE`, `OTEL_K8S_POD_UID`, `OTEL_K8S_NODE_NAME`) and prepends them as OTel resource attributes to `OTEL_RESOURCE_ATTRIBUTES`:
+
+```
+k8s.pod.name=$(OTEL_K8S_POD_NAME),k8s.namespace.name=$(OTEL_K8S_POD_NAMESPACE),k8s.pod.uid=$(OTEL_K8S_POD_UID),k8s.node.name=$(OTEL_K8S_NODE_NAME),k8s.deployment.name=<release>-atc[,<otel.resourceAttributes>]
+```
+
+Operator-supplied `otel.resourceAttributes` are appended after this prefix, so any explicit `k8s.*` override in values WINS by virtue of coming later in the comma-separated list (the OTel SDK takes the last value for duplicate keys). The deployment name is computed from the chart's `atc.fullname` template at render time (downward API does not expose the owner workload's name). This matches the canonical OTel k8s semantic-conventions surface and removes per-environment values overrides for pod/node identity.
+
+When `otel.enabled: false` (the default), none of the `OTEL_*` env vars are injected and the OTel SDK is never initialized inside the container — there is no provider, no exporter, no background-task overhead, and `metrics::*` macros resolve through the no-op recorder.
+
+**Operator dependency.** Setting `otel.enabled: true` assumes an OTel collector is reachable at the configured endpoint. Operators bring their own collector (Grafana Alloy, opentelemetry-collector-contrib, vendor distributions, etc.) — the chart documents the dependency, it does not bundle one. The collector decides which downstream backends consume the OTLP stream.
+
+**Breaking change vs prior chart versions.** Charts before 0.2 carried a `metrics.*` values block, a `config.metricsAddr` field, a dedicated `metrics` Service port, and a `templates/servicemonitor.yaml`. All of these are gone. `values.schema.json` rejects unknown properties (`additionalProperties: false`), so any operator overriding `metrics.*` or `config.metricsAddr` will see schema validation failures at install/upgrade time. Migration: remove those overrides; configure your collector to receive OTLP at `otel.endpoint`; if your monitoring stack still scrapes Prometheus exposition, configure the collector to re-expose it.
 
 ## Multi-replica
 
@@ -329,7 +359,7 @@ Pass criteria:
 - Each WS-tap logfile shows exactly one `SeqEvent` for the webhook.
 - Both `/readyz` endpoints return 200 throughout the test.
 
-`kubectl logs -l app.kubernetes.io/name=atc -f --prefix` tags each line with the pod name — sufficient for "which replica did what" attribution during inspection. Per-process replica identification at the metrics layer is provided by Prometheus's standard scrape-injected target labels (`pod`, `instance`) — the `atc_pg_*` metrics ship unlabeled per-process and dashboards aggregate `by (pod)`. See `docs/architecture/metrics.md` § Operational metrics for the per-metric scoping rules.
+`kubectl logs -l app.kubernetes.io/name=atc -f --prefix` tags each line with the pod name — sufficient for "which replica did what" attribution during inspection. Per-process replica identification at the metrics layer is added at the collector by the standard target attributes (`pod`, `instance`) — the `atc_pg_*` metrics ship unlabeled per-process and dashboards aggregate `by (pod)`. See `docs/architecture/metrics.md` § Operational metrics for the per-metric scoping rules.
 
 ### Re-running the smoke test against the same cluster
 
@@ -350,7 +380,7 @@ kubectl -n atc-smoke rollout status deploy/atc
 
 ## Boundaries
 
-**Owns:** Kubernetes resource templates (Deployment, Service, ServiceAccount, and optional Ingress/HTTPRoute/ServiceMonitor/NetworkPolicy), values schema validation, post-install operator guidance (NOTES.txt), chart packaging, and chart publishing on the OCI and GitHub Pages channels
+**Owns:** Kubernetes resource templates (Deployment, Service, ServiceAccount, and optional Ingress/HTTPRoute/HPA/PodDisruptionBudget/NetworkPolicy), values schema validation, post-install operator guidance (NOTES.txt), chart packaging, and chart publishing on the OCI and GitHub Pages channels
 **Does not own:** Container image build (Dockerfile, release.yml), backend configuration (ATC_* env vars are the interface), Kubernetes cluster provisioning, Ingress controller or Gateway controller installation, PostgreSQL provisioning
 **Prohibitions:** Do not embed secrets in chart templates — operators must use `existingSecret` or provide values at install time.
 
@@ -363,16 +393,16 @@ kubectl -n atc-smoke rollout status deploy/atc
 - `deploy/helm/atc/.helmignore` — Excludes CI test fixtures and helm-docs source template from the chart tarball
 - `deploy/helm/atc/templates/_helpers.tpl` — Named template helpers: `atc.name`, `atc.fullname`, `atc.chart`, `atc.labels`, `atc.selectorLabels`, `atc.serviceAccountName`
 - `deploy/helm/atc/templates/deployment.yaml` — Mandatory workload with constant `RollingUpdate` strategy, restricted PSS security contexts, multi-replica `{{ fail }}` guard, env var wiring, and a `tmp` `emptyDir` volume mount
-- `deploy/helm/atc/templates/service.yaml` — ClusterIP Service with `http` port always present and `metrics` port gated on `metrics.enabled`
+- `deploy/helm/atc/templates/service.yaml` — ClusterIP Service exposing the `http` port
 - `deploy/helm/atc/templates/serviceaccount.yaml` — ServiceAccount gated on `serviceAccount.create`; `automountServiceAccountToken: false`
 - `deploy/helm/atc/templates/NOTES.txt` — Post-install guidance with conditional ingress/gateway/port-forward branches and plain-credentials warning
 - `deploy/helm/atc/templates/ingress.yaml` — Optional Ingress (`networking.k8s.io/v1`), gated on `ingress.enabled`; supports TLS, hosts, and custom annotations
 - `deploy/helm/atc/templates/httproute.yaml` — Optional HTTPRoute (`gateway.networking.k8s.io/v1`), gated on `gateway.enabled`; validates non-empty `parentRefs` via `{{ fail }}` guard
-- `deploy/helm/atc/templates/servicemonitor.yaml` — Optional ServiceMonitor (`monitoring.coreos.com/v1`), gated on `metrics.enabled && metrics.serviceMonitor.enabled`; includes label selector for Prometheus discovery
 - `deploy/helm/atc/templates/networkpolicy.yaml` — Optional NetworkPolicy (`networking.k8s.io/v1`), gated on `networkPolicy.enabled`; selectorLabels scope, `policyTypes` mirrors which of `ingress` / `egress` keys are present (so `ingress: []` renders as default-deny ingress; key omitted means no constraint on that direction), rule items pass through verbatim
 - `deploy/helm/atc/templates/hpa.yaml` — Optional HorizontalPodAutoscaler (`autoscaling/v2`), gated on `autoscaling.enabled`; targets the chart Deployment with CPU `Resource` metric (always) and an optional memory `Resource` metric
+- `deploy/helm/atc/templates/pdb.yaml` — Optional PodDisruptionBudget (`policy/v1`), gated on `podDisruptionBudget.enabled`; `minAvailable` and `maxUnavailable` are mutually exclusive (chart fails template rendering when both are set)
 - `deploy/helm/atc/templates/tests/test-connection.yaml` — Helm test hook Pod with restricted Pod Security Standards; validates Service connectivity; excluded from charts via `helm.sh/hook: test` annotation
-- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, metrics, networkpolicy, autoscaling) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
+- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, otel, existing-secret-listener, pdb, networkpolicy, autoscaling) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
 - `deploy/helm/atc/ci/test-values.yaml` — `ct install` fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for the kind-loaded local image). See `docs/architecture/ci-pipeline.md` for the job definition.
 
 ## Storage modes

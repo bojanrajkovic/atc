@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-server
 
-Last verified: 2026-05-09
+Last verified: 2026-05-10
 
 > Canonical documentation lives in `docs/architecture/backend-server.md`. This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -26,9 +26,11 @@ Two runtime modes. Only external Postgres is production-supported — see `docs/
 | `state` | `AppState` struct and broadcast types (`SeqEvent`, `StateSnapshot`) |
 | `ws` | WebSocket upgrade handler, broadcast subscription, event push |
 | `assets` | rust-embed static file serving with SPA fallback and dev proxy to Vite |
-| `metrics` | Prometheus layer: custom histogram buckets, `build_info` gauge, process collector, PG write counters, LISTEN/NOTIFY counters, drain operational metrics. See `docs/architecture/metrics.md` for the canonical surface and authoring contract. |
+| `otel` | OTel SDK initialization: tracer + meter providers (OTLP/HTTP), `TraceContextPropagator`, base-2 exponential histogram view, `metrics-exporter-otel` recorder install, sampler env-var parsing, provider shutdown helper. Wired at startup; flushed at shutdown. |
+| `metrics` | OTel-emitted metric registration helpers (`register_build_info`, `register_pg_write_counters`, `register_listener_metrics`); process metrics collector. The `metrics` crate facade emits through the OTel recorder installed by `otel::init_otel`. See `docs/architecture/metrics.md` for the canonical surface and authoring contract. |
 | `persist` | `PersistentStore` trait (ADR 0005) with `PgStore` and `InMemoryStore` impls; transaction helpers (`upsert_*`, `insert_outbox_*`, `notify_outbox_seq_in_txn`) and read helpers (`read_all_runs`, `read_all_jobs`) |
 | `listener` | PG LISTEN/NOTIFY background tasks: listener task plus drain task with ring-buffer dedup and gap-healing backstop |
+| `shutdown` | Cooperative shutdown orchestration: joins emitters (drain, listener, eviction, process collector, axum graceful-shutdown drain), then flushes the OTel providers via `otel::shutdown` |
 | `migrations/` | SQL migration files embedded via `sqlx::migrate!()` and run on startup when `ATC_DATABASE_URL` is set |
 
 ## TypeScript Generation
@@ -49,11 +51,15 @@ Enforced by implementation and verified by tests. Full detail in `docs/architect
 - **PG access:** `AppState.pg_pool: Option<sqlx::PgPool>`. Used by the state handler for REPEATABLE READ snapshots and by `/readyz`. `PgStore` holds its own pool internally for the write path. `atc_pg_write_failures_total{kind=parity|transient}` and `atc_pg_notify_emitted_total{kind}` are emitted from `PgStore::apply_*_event`.
 - **WebSocket:** Clean disconnection — no crash, no effect on other clients.
 - **Config:** `ATC_GITHUB__WEBHOOK_SECRET` loads `webhook_secret`. If `None`, HMAC verification is skipped.
+- **OTel pipeline gating:** When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, `init_otel` returns `None` and no provider, exporter, recorder, or background task is initialized — `metrics::*` macros resolve through the no-op recorder. When set, `init_otel` builds OTLP/HTTP tracer + meter providers, installs `TraceContextPropagator` globally, registers the shared `exponential_histogram_view` (so all histograms emit as base-2 exponential aggregations), and installs the `metrics-exporter-otel` recorder behind the `metrics` facade. All `register_*` description calls run unconditionally; under the no-op recorder they are cheap.
+- **Spans:** boundary instrumentation lives in `routes::webhook_handler` (`webhook.handler`, root, manually constructed so `traceparent` extraction can attach the parent context before entry), `atc_github::webhook` (`webhook.verify`, `webhook.parse`), `persist::PgStore` / `InMemoryStore` (`persist.apply.run_event`, `persist.apply.job_event`, `persist.notify.emit`), and `listener` (`listener.task`, `listener.recv`, `drain.task`, `drain.pass`, `drain.broadcast`). Spawned futures (`spawn_listener_task`, `spawn_drain_task`) construct a task-lifetime root at spawn time and attach via `.instrument(span)` because `tokio::spawn` does NOT propagate the calling task's parent span. Span names + attributes are documented in `docs/architecture/metrics.md` § "Span inventory".
+- **OTel SDK shutdown:** `OtelHandles` returned by `init_otel` flow into `run_shutdown_orchestration` (`shutdown.rs`) and are consumed by `otel::shutdown` AFTER every emitter handle (drain, listener, eviction, process collector, axum graceful-shutdown drain) has joined. The "no live emitter when shutdown fires" invariant is documented in a comment block in `shutdown.rs` enumerating the emitter join steps; new emitter categories MUST extend that comment so the join chain stays accurate.
+- **OTel env-var contract:** `init_otel` reads the spec-standard envs directly — `OTEL_EXPORTER_OTLP_ENDPOINT` (gates init; HTTP/protobuf only), `OTEL_SERVICE_NAME` (resource attribute, defaults to `"atc"`), `OTEL_RESOURCE_ATTRIBUTES` (auto-extracted by the SDK builder), `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` (parsed manually because the SDK's autoload is incomplete on the 0.31 line). Accepted samplers: `always_on`, `always_off`, `traceidratio`, `parentbased_always_on` (default), `parentbased_always_off`, `parentbased_traceidratio`. For ratio samplers (`traceidratio` / `parentbased_traceidratio`), a missing or empty `OTEL_TRACES_SAMPLER_ARG` defaults to `1.0` per OTel spec — selecting a ratio sampler with no arg samples everything, NOT silently falls back to the default sampler. An explicitly-present-but-invalid arg (out of range, unparseable) does fall back to the default with an `eprintln!` warning. Unknown sampler names also fall back; never aborts startup. (Pre-init failures use `eprintln!` rather than `tracing::*` because `init_otel` runs BEFORE `init_tracing_subscriber` — the subscriber is composed with the tracer returned from this call, so any tracing macro fired here would dispatch to the no-op global subscriber and silently disappear.) `OTEL_EXPORTER_OTLP_PROTOCOL` is NOT honored — gRPC is out of scope.
 
 ## Testing
 
 ```bash
-cargo test -p atc-server        # ~319 tests across three tiers (route-level oneshot, full-stack ephemeral, PG-backed)
+cargo nextest run -p atc-server # ~337 tests across three tiers (route-level oneshot, full-stack ephemeral, PG-backed)
 cargo clippy -p atc-server -- -D warnings
 ```
 
@@ -61,7 +67,7 @@ cargo clippy -p atc-server -- -D warnings
 
 macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` before running tests.
 
-Tests using `PrometheusMetricLayer::pair()` must be marked `#[serial_test::serial]` because the PrometheusBuilder global recorder can only be installed once per binary. The `PROMETHEUS_INIT` OnceLock in `tests/common/mod.rs` ensures this is called exactly once.
+Tests that read the in-memory metric or span exporter MUST be marked `#[serial_test::serial]`. The OTel global state — tracer provider, meter provider, propagator — is process-wide just like the prior Prometheus recorder was, and `force_flush()` + `get_finished_*()` is non-atomic across concurrent tests (one test's flush would surface another's emissions). A `OnceLock`-guarded harness in `tests/integration/common/mod.rs` installs an `InMemorySpanExporter` + `InMemoryMetricExporter` exactly once per test binary.
 
 Test tier organization is in `docs/architecture/backend-server.md` § Testing.
 

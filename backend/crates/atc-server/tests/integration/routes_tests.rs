@@ -23,9 +23,7 @@ use tower::ServiceExt;
 /// Must be used in tests marked with #[serial_test::serial] since the global
 /// recorder install can only happen once per binary.
 fn build_full_app() -> axum::Router {
-    let layer = &common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0;
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -50,7 +48,7 @@ fn build_full_app() -> axum::Router {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    atc_server::routes::api_routes(layer.clone())
+    atc_server::routes::api_routes()
         .with_state(app_state)
         .fallback(atc_server::assets::fallback_handler())
 }

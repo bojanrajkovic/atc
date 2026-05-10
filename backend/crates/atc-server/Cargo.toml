@@ -10,7 +10,6 @@ atc-core = { path = "../atc-core" }
 atc-github = { path = "../atc-github" }
 async-trait = "0.1"
 axum = { version = "0.8.8", features = ["ws"] }
-axum-prometheus = "0.10.0"
 figment = { version = "0.10.19", features = ["env", "toml"] }
 metrics = "0.24.3"
 metrics-process = "2.4.3"
@@ -26,6 +25,14 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
 chrono = "0.4"
+opentelemetry = { version = "0.31", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["http-proto", "reqwest-blocking-client", "metrics", "trace"] }
+tracing-opentelemetry = { version = "0.32", features = ["metrics"] }
+opentelemetry-http = "0.31"
+opentelemetry-semantic-conventions = "0.31"
+axum-otel-metrics = "0.13.0"
+metrics-exporter-otel = "0.3.1"
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }
@@ -33,6 +40,7 @@ chrono = { version = "0.4", features = ["serde"] }
 const-hex = "1.18.1"
 futures-util = "0.3.32"
 hmac = "0.13.0"
+opentelemetry_sdk = { version = "0.31", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
 reqwest = { version = "0.13.2", features = ["json"] }
 serial_test = "3.4.0"
 sha2 = "0.11.0"

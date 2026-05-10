@@ -16,8 +16,7 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-const METRIC_COUNT: &str = "atc_pg_outbox_lag_seconds_count";
-const METRIC_SUM: &str = "atc_pg_outbox_lag_seconds_sum";
+const METRIC: &str = "atc_pg_outbox_lag_seconds";
 
 /// A normal webhook drives one observation into the lag histogram.
 ///
@@ -28,12 +27,11 @@ const METRIC_SUM: &str = "atc_pg_outbox_lag_seconds_sum";
 #[tokio::test]
 #[serial]
 async fn metrics_outbox_lag_records_one_observation_per_broadcast() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
-
-    let baseline = common::render_metrics();
-    let baseline_count = common::parse_unlabeled_counter(&baseline, METRIC_COUNT);
-    let baseline_sum = common::parse_unlabeled_gauge(&baseline, METRIC_SUM).unwrap_or(0.0);
 
     let baseline_passes = fixture.observed_passes.load(Ordering::Relaxed);
 
@@ -53,21 +51,18 @@ async fn metrics_outbox_lag_records_one_observation_per_broadcast() {
     .await
     .expect("drain did not process the webhook within 5s");
 
-    let after = common::render_metrics();
-    let after_count = common::parse_unlabeled_counter(&after, METRIC_COUNT);
-    let after_sum = common::parse_unlabeled_gauge(&after, METRIC_SUM).unwrap_or(0.0);
+    let snapshot = common::snapshot_metrics();
+    let count = common::histogram_count(&snapshot, METRIC, &[]);
+    let sum = common::histogram_sum(&snapshot, METRIC, &[]);
 
     assert_eq!(
-        after_count - baseline_count,
-        1,
-        "expected exactly one outbox-lag observation per broadcast row; \
-         baseline={baseline_count} after={after_count}"
+        count, 1,
+        "expected exactly one outbox-lag observation per broadcast row; got {count}",
     );
 
-    let sum_delta = after_sum - baseline_sum;
     assert!(
-        (0.0..=5.0).contains(&sum_delta),
-        "outbox-lag _sum delta should be in [0.0, 5.0]s; got {sum_delta}"
+        (-1.0..=5.0).contains(&sum),
+        "outbox-lag _sum should be in [-1.0, 5.0]s; got {sum} (negative values indicate sub-ms clock skew between the Rust process and PG)"
     );
 
     fixture.shutdown.cancel();
@@ -83,11 +78,13 @@ async fn metrics_outbox_lag_records_one_observation_per_broadcast() {
 #[tokio::test]
 #[serial]
 async fn metrics_outbox_lag_records_observation_for_future_inserted_at() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
     let baseline_passes = fixture.observed_passes.load(Ordering::Relaxed);
-    let baseline_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC_COUNT);
 
     // Stub run row to satisfy the outbox FK pattern used in the PG drain integration tests.
     sqlx::query(
@@ -142,12 +139,11 @@ async fn metrics_outbox_lag_records_observation_for_future_inserted_at() {
     .await
     .expect("drain did not process the future-dated row within 5s");
 
-    let after_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC_COUNT);
+    let snapshot = common::snapshot_metrics();
+    let count = common::histogram_count(&snapshot, METRIC, &[]);
     assert_eq!(
-        after_count - baseline_count,
-        1,
-        "future-dated row must still record one lag observation; \
-         baseline={baseline_count} after={after_count}"
+        count, 1,
+        "future-dated row must still record one lag observation; got {count}",
     );
 
     fixture.shutdown.cancel();

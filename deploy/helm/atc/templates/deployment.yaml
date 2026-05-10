@@ -24,6 +24,13 @@
 {{- if and $multiReplica (not $hasDbUrl) -}}
 {{- fail "Multi-replica mode requires a PostgreSQL connection string. Set config.databaseUrl=postgres://... or existingSecret.name (with existingSecret.databaseUrlKey). This applies when replicaCount > 1 (autoscaling disabled) or when autoscaling.enabled with autoscaling.maxReplicas > 1. The chart's ephemeral in-memory mode is single-replica only." -}}
 {{- end -}}
+{{- if and .Values.otel.enabled (eq (.Values.otel.endpoint | default "") "") -}}
+{{- fail "otel.enabled=true requires a non-empty otel.endpoint (HTTP/protobuf OTLP URL, e.g. http://otel-collector.observability:4318). atc-server treats an empty endpoint as disabled, so leaving it blank silently turns telemetry off." -}}
+{{- end -}}
+{{- $ratioSampler := or (eq .Values.otel.sampler "traceidratio") (eq .Values.otel.sampler "parentbased_traceidratio") -}}
+{{- if and .Values.otel.enabled $ratioSampler (eq (.Values.otel.samplerArg | default "") "") -}}
+{{- fail (printf "otel.sampler=%q requires a non-empty otel.samplerArg (decimal in [0, 1], e.g. \"0.1\" for 10%% sampling). For unconditional sampling use otel.sampler=parentbased_always_on (default) or always_on instead." .Values.otel.sampler) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -74,8 +81,6 @@ spec:
           env:
             - name: ATC_HTTP_ADDR
               value: {{ .Values.config.httpAddr | quote }}
-            - name: ATC_METRICS_ADDR
-              value: {{ .Values.config.metricsAddr | quote }}
             - name: ATC_LOG_FILTER
               value: {{ .Values.config.logFilter | quote }}
             {{- if .Values.config.logFormat }}
@@ -102,12 +107,37 @@ spec:
             - name: ATC_DATABASE_LISTENER_URL
               value: {{ .Values.config.databaseListenerUrl | quote }}
             {{- end }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OTEL_K8S_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: OTEL_K8S_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otel.serviceName | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "k8s.pod.name=$(OTEL_K8S_POD_NAME),k8s.namespace.name=$(OTEL_K8S_POD_NAMESPACE),k8s.pod.uid=$(OTEL_K8S_POD_UID),k8s.node.name=$(OTEL_K8S_NODE_NAME),k8s.deployment.name=%s%s" (include "atc.fullname" .) (ternary (printf ",%s" .Values.otel.resourceAttributes) "" (ne .Values.otel.resourceAttributes "")) | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.otel.sampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.otel.samplerArg | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
-              protocol: TCP
-            - name: metrics
-              containerPort: 9090
               protocol: TCP
           livenessProbe:
             httpGet:

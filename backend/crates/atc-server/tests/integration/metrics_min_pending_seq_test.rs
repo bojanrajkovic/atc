@@ -31,6 +31,9 @@ const WATERMARK_METRIC: &str = "atc_pg_broadcast_watermark";
 #[tokio::test]
 #[serial]
 async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
@@ -107,10 +110,10 @@ async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
     // Allow the listener's gauge mirror to settle after the fetch_min.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let body = common::render_metrics();
-    let gauge = common::parse_unlabeled_gauge(&body, METRIC)
-        .expect("atc_pg_min_pending_seq must be present after fetch_min mirror");
-    let watermark_gauge = common::parse_unlabeled_gauge(&body, WATERMARK_METRIC)
+    let snapshot = common::snapshot_metrics();
+    let gauge = common::gauge_value(&snapshot, METRIC, &[])
+        .expect("atc_pg_min_pending_seq must be present after listener fetch_min");
+    let watermark_gauge = common::gauge_value(&snapshot, WATERMARK_METRIC, &[])
         .expect("atc_pg_broadcast_watermark must be present");
 
     assert!(
@@ -132,6 +135,9 @@ async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
 #[tokio::test]
 #[serial]
 async fn metrics_min_pending_seq_is_nan_in_steady_state() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
@@ -156,8 +162,8 @@ async fn metrics_min_pending_seq_is_nan_in_steady_state() {
             if fixture.observed_passes.load(Ordering::Relaxed) <= baseline_passes {
                 continue;
             }
-            let body = common::render_metrics();
-            let gauge = common::parse_unlabeled_gauge(&body, METRIC);
+            let snapshot = common::snapshot_metrics();
+            let gauge = common::gauge_value(&snapshot, METRIC, &[]);
             last_gauge = gauge;
             if gauge.map(f64::is_nan).unwrap_or(false) {
                 return;
@@ -171,8 +177,8 @@ async fn metrics_min_pending_seq_is_nan_in_steady_state() {
          last observed: {last_gauge:?}"
     );
 
-    let body = common::render_metrics();
-    let gauge = common::parse_unlabeled_gauge(&body, METRIC)
+    let snapshot = common::snapshot_metrics();
+    let gauge = common::gauge_value(&snapshot, METRIC, &[])
         .expect("atc_pg_min_pending_seq must be present (sentinel state)");
 
     assert!(

@@ -30,11 +30,7 @@ use tokio_tungstenite::tungstenite::Message;
 /// Build an ephemeral server with a custom broadcast capacity.
 /// Returns (server_address, AppState with broadcast channel).
 async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
-    // Use the shared PROMETHEUS_INIT to avoid multiple initializations
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
 
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
@@ -61,7 +57,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         ws_tracker: TaskTracker::new(),
     });
 
-    let main_router = routes::api_routes(layer.clone())
+    let main_router = routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 

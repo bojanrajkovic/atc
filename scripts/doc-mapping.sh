@@ -44,6 +44,16 @@ get_docs_for_file() {
             echo "docs/architecture/metrics.md"
             return
             ;;
+        backend/crates/atc-server/src/otel.rs)
+            # OTel SDK init: tracer/meter providers, sampler, propagator,
+            # exponential-histogram view. Trace authoring contract + sampler
+            # surface live in backend-server.md (§ Tracing); metric authoring
+            # contract + histogram aggregation choice live in metrics.md.
+            # Both docs must be updated when this file changes.
+            echo "docs/architecture/backend-server.md"
+            echo "docs/architecture/metrics.md"
+            return
+            ;;
         backend/crates/atc-server/src/*)
             echo "docs/architecture/backend-server.md"
             return

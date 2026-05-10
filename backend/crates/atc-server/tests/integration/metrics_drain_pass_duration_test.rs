@@ -15,20 +15,21 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-const METRIC_COUNT: &str = "atc_pg_drain_pass_duration_seconds_count";
-const METRIC_SUM: &str = "atc_pg_drain_pass_duration_seconds_sum";
+const METRIC: &str = "atc_pg_drain_pass_duration_seconds";
 
 /// A NOTIFY-driven drain pass adds one observation, with a positive duration value.
 #[tokio::test]
 #[serial]
 async fn metrics_drain_pass_duration_records_one_observation_per_pass() {
+    common::ensure_recorder_installed();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    let baseline = common::render_metrics();
-    let baseline_count = common::parse_unlabeled_counter(&baseline, METRIC_COUNT);
-    let baseline_sum = common::parse_unlabeled_gauge(&baseline, METRIC_SUM).unwrap_or(0.0);
-
+    // Reset AFTER fixture init so the snapshot only reflects passes that ran
+    // for the webhook fired below — fixture init itself runs an unconditional
+    // first pass which would otherwise inflate the count.
+    common::reset_metrics();
     let baseline_passes = fixture.observed_passes.load(Ordering::Relaxed);
 
     let body = common::fixture_workflow_run_requested();
@@ -47,21 +48,18 @@ async fn metrics_drain_pass_duration_records_one_observation_per_pass() {
     .await
     .expect("drain pass did not complete within 5s");
 
-    let after = common::render_metrics();
-    let after_count = common::parse_unlabeled_counter(&after, METRIC_COUNT);
-    let after_sum = common::parse_unlabeled_gauge(&after, METRIC_SUM).unwrap_or(0.0);
+    let snapshot = common::snapshot_metrics();
+    let count = common::histogram_count(&snapshot, METRIC, &[]);
+    let sum = common::histogram_sum(&snapshot, METRIC, &[]);
 
-    let count_delta = after_count - baseline_count;
     assert_eq!(
-        count_delta, 1,
-        "expected exactly one drain-pass duration observation per pass; \
-         baseline={baseline_count} after={after_count}"
+        count, 1,
+        "expected exactly one drain-pass duration observation per pass; got {count}",
     );
 
-    let sum_delta = after_sum - baseline_sum;
     assert!(
-        (0.0001..=1.0).contains(&sum_delta),
-        "drain-pass duration _sum delta should be in [0.0001, 1.0]s; got {sum_delta}"
+        (0.0001..=1.0).contains(&sum),
+        "drain-pass duration sum should be in [0.0001, 1.0]s; got {sum}"
     );
 
     fixture.shutdown.cancel();
@@ -76,19 +74,19 @@ async fn metrics_drain_pass_duration_records_one_observation_per_pass() {
 #[tokio::test]
 #[serial]
 async fn metrics_drain_pass_duration_unchanged_for_heartbeat_only_wakes() {
+    common::ensure_recorder_installed();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    let baseline_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC_COUNT);
-
+    common::reset_metrics();
     tokio::time::sleep(Duration::from_secs(11)).await;
 
-    let after_count = common::parse_unlabeled_counter(&common::render_metrics(), METRIC_COUNT);
-
+    let snapshot = common::snapshot_metrics();
     assert_eq!(
-        after_count, baseline_count,
-        "heartbeat-only wakes must not record drain-pass observations; \
-         baseline={baseline_count} after={after_count}"
+        common::histogram_count(&snapshot, METRIC, &[]),
+        0,
+        "heartbeat-only wakes must not record drain-pass observations",
     );
 
     fixture.shutdown.cancel();

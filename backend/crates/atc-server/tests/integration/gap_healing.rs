@@ -25,28 +25,13 @@ use serial_test::serial;
 use tokio::time::timeout;
 
 // ---------------------------------------------------------------------------
-// Local metric-parsing helpers (copied from outbox_tests.rs to avoid coupling)
+// Local snapshot helper that wraps the shared OTel test fixture.
 // ---------------------------------------------------------------------------
 
-/// Render Prometheus metrics as a string. Thin wrapper kept sync to match usage.
-fn render_metrics() -> String {
-    common::render_metrics()
-}
-
-/// Parse an unlabeled counter (no `{...}` label set) from Prometheus text output.
-fn parse_unlabeled_counter(metrics_body: &str, name: &str) -> u64 {
-    for line in metrics_body.lines() {
-        if line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with(name)
-            && line[name.len()..].starts_with(char::is_whitespace)
-            && let Some(value_str) = line.split_whitespace().last()
-        {
-            return value_str.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
+/// Counter value lookup for unlabeled metrics.
+fn counter_unlabeled(name: &str) -> u64 {
+    let snapshot = common::snapshot_metrics();
+    common::counter_value(&snapshot, name, &[])
 }
 
 // ─── pure unit test for min_pending_seq swap semantics ────────────────────
@@ -242,9 +227,8 @@ async fn dedup_suppresses_rescan_rebroadcast() {
     .await
     .expect("timed out waiting for seq_b broadcast (B committed first)");
 
-    // ── Capture dedup baseline BEFORE committing A ────────────────────────────
-    let baseline_dup =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+    // ── Reset dedup counter before committing A ──────────────────────────────
+    common::reset_metrics();
 
     // Record pass count before committing A.
     let passes_before = fixture.observed_passes.load(Ordering::Relaxed);
@@ -282,13 +266,10 @@ async fn dedup_suppresses_rescan_rebroadcast() {
 
     // ── Assertions ────────────────────────────────────────────────────────────
     // Dedup counter must have incremented by exactly 1 (seq_b suppressed once).
-    let after_dup =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
+    let dup = counter_unlabeled("atc_pg_drain_duplicate_skipped_total");
     assert_eq!(
-        after_dup,
-        baseline_dup + 1,
-        "dedup ring must suppress seq_b exactly once during rescan; \
-         baseline={baseline_dup} after={after_dup}"
+        dup, 1,
+        "dedup ring must suppress seq_b exactly once during rescan; got {dup}",
     );
 
     fixture.shutdown.cancel();
@@ -372,8 +353,8 @@ async fn drain_paginates_across_batch_boundary() {
         "at least one pass must have completed at startup (got {passes_after_startup})"
     );
 
-    // ── Step 3: Capture rows_total baseline ──────────────────────────────────
-    let baseline_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
+    // ── Step 3: Reset rows_total before triggering the rescan ────────────────
+    common::reset_metrics();
 
     // ── Step 4: Force backstop-driven rescan via manual NOTIFY ───────────────
     // NOTIFY '1' → listener fetch_min(1) → drain backstop=1 →
@@ -397,12 +378,10 @@ async fn drain_paginates_across_batch_boundary() {
     .expect("drain did not complete the rescan pass within 30s");
 
     // ── Step 6: Assert rows_total delta == 600 ────────────────────────────────
-    let after_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
+    let rows = counter_unlabeled("atc_pg_drain_rows_total");
     assert_eq!(
-        after_rows - baseline_rows,
-        600,
-        "rescan must process exactly 600 rows (2 batches: 500+100); \
-         baseline={baseline_rows} after={after_rows}"
+        rows, 600,
+        "rescan must process exactly 600 rows (2 batches: 500+100); got {rows}",
     );
 
     fixture.shutdown.cancel();
@@ -445,12 +424,8 @@ async fn drain_skips_bogus_payload_rows() {
     // Subscribe AFTER boot so the startup pass (0 rows) doesn't noise the receiver.
     let mut rx = fixture.state.webhook_tx.subscribe();
 
-    // ── Capture metric baselines ─────────────────────────────────────────────
-    let baseline_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
-    let baseline_dup =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
-    let baseline_unknown =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_unknown_kind_total");
+    // ── Reset metrics so the snapshot reflects only this test's drain pass ───
+    common::reset_metrics();
 
     // ── Insert stub run row to satisfy outbox FK ──────────────────────────────
     sqlx::query(
@@ -508,25 +483,22 @@ async fn drain_skips_bogus_payload_rows() {
     );
 
     // ── Assert metric counters ────────────────────────────────────────────────
-    let after_rows = parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_rows_total");
-    let after_dup =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_duplicate_skipped_total");
-    let after_unknown =
-        parse_unlabeled_counter(&render_metrics(), "atc_pg_drain_unknown_kind_total");
-
+    let snapshot = common::snapshot_metrics();
     assert_eq!(
-        after_rows - baseline_rows,
+        common::counter_value(&snapshot, "atc_pg_drain_rows_total", &[]),
         2,
-        "drain should have processed 2 bad rows; baseline={baseline_rows} after={after_rows}"
+        "drain should have processed 2 bad rows",
     );
     assert_eq!(
-        after_dup, baseline_dup,
-        "duplicate-skip counter must not advance for bogus-payload rows"
+        common::counter_value(&snapshot, "atc_pg_drain_duplicate_skipped_total", &[]),
+        0,
+        "duplicate-skip counter must not advance for bogus-payload rows",
     );
     assert_eq!(
-        after_unknown, baseline_unknown,
+        common::counter_value(&snapshot, "atc_pg_drain_unknown_kind_total", &[]),
+        0,
         "unknown-kind counter must not advance (no unknown-kind rows inserted; \
-         the CHECK constraint prevents kind outside 'run'/'job')"
+         the CHECK constraint prevents kind outside 'run'/'job')",
     );
 
     fixture.shutdown.cancel();

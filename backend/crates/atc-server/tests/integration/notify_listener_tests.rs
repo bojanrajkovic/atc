@@ -133,10 +133,7 @@ async fn no_notify_in_memory_mode() {
     use atc_core::{RunStateMachine, SystemClock};
     use atc_server::state::AppState;
 
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -166,7 +163,7 @@ async fn no_notify_in_memory_mode() {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let router = atc_server::routes::api_routes(layer)
+    let router = atc_server::routes::api_routes()
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 

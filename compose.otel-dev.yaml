@@ -1,0 +1,25 @@
+# All-in-one Grafana otel-lgtm stack for local OpenTelemetry development.
+#
+# Bundles an OpenTelemetry collector (OTLP receivers on :4317 gRPC and :4318
+# HTTP), Tempo (traces), Mimir/Prometheus (metrics), Loki (logs), and a Grafana
+# UI on :3000 with all four datasources pre-wired. Use this stack to inspect
+# spans, metrics, and logs emitted by `atc-server` during local development.
+#
+# Workflow:
+#   just otel-dev-stack                    # start the stack
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 just dev   # run ATC against it
+#   open http://localhost:3000             # Grafana UI (anonymous access)
+#   just otel-dev-stack-stop               # tear down
+#
+# This compose file is intentionally separate from `just dev`. The dev recipe
+# continues to start backend + frontend with no observability dependency;
+# operators / contributors who want OTel inspection opt in by running this
+# stack in a side terminal.
+services:
+  otel-dev-stack:
+    image: grafana/otel-lgtm:latest
+    container_name: atc-otel-dev-stack
+    ports:
+      - "4317:4317"   # OTLP gRPC (unused by atc-server, but exposed by the image)
+      - "4318:4318"   # OTLP HTTP (atc-server's target)
+      - "3000:3000"   # Grafana UI

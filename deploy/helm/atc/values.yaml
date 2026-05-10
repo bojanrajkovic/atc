@@ -116,8 +116,6 @@ podAntiAffinity:
 config:
   # -- Address and port the HTTP listener binds to inside the container.
   httpAddr: "0.0.0.0:8080"
-  # -- Address and port the Prometheus metrics listener binds to inside the container.
-  metricsAddr: "0.0.0.0:9090"
   # -- Database connection URL.
   #
   # Two storage modes are supported:
@@ -171,22 +169,23 @@ existingSecret:
   # to ATC_DATABASE_URL (the main pool's connection string).
   databaseListenerUrlKey: ""
 
-metrics:
-  # -- Whether to expose the metrics port on the Service (named port "metrics" targeting 9090).
-  # The container always binds the metrics listener regardless of this flag; this flag
-  # only controls Service-level exposure.
+otel:
+  # -- Enable OpenTelemetry export. When false, no OTEL_* env vars are injected
+  # and atc-server runs with the SDK uninstalled (no provider/exporter overhead).
   enabled: false
-  serviceMonitor:
-    # -- Set to true to create a Prometheus Operator ServiceMonitor.
-    # Requires both metrics.enabled=true AND metrics.serviceMonitor.enabled=true.
-    enabled: false
-    # -- interval: how often Prometheus scrapes the metrics endpoint.
-    interval: "30s"
-    # -- scrapeTimeout: how long Prometheus waits for a scrape to complete.
-    scrapeTimeout: "10s"
-    # -- additionalLabels: extra labels added to the ServiceMonitor metadata.
-    # Use these to match the label selector of your Prometheus Operator installation.
-    additionalLabels: {}
+  # -- OTLP endpoint URL. Required when enabled. Transport is HTTP/protobuf only
+  # (e.g., http://otel-collector.observability:4318).
+  endpoint: ""
+  # -- Service name reported via OTEL_SERVICE_NAME resource attribute.
+  serviceName: "atc"
+  # -- Comma-separated key=value pairs reported via OTEL_RESOURCE_ATTRIBUTES.
+  # E.g., "deployment.environment=production,service.namespace=ingest".
+  resourceAttributes: ""
+  # -- Trace sampler. Default ParentBased(root=AlwaysOn).
+  # Examples: "parentbased_traceidratio", "always_on", "always_off".
+  sampler: "parentbased_always_on"
+  # -- Sampler argument (e.g., "0.1" for 10% root sampling with traceidratio).
+  samplerArg: ""
 
 ingress:
   # -- Whether to create an Ingress resource.

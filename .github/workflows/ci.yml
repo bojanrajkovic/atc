@@ -296,7 +296,8 @@ jobs:
           - values-ingress.yaml
           - values-gateway.yaml
           - values-multi-replica.yaml
-          - values-metrics.yaml
+          - values-otel.yaml
+          - values-existing-secret-listener.yaml
           - values-pdb.yaml
           - values-networkpolicy.yaml
           - values-autoscaling.yaml

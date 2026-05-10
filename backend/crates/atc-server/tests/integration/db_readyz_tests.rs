@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
-use axum_prometheus::PrometheusMetricLayer;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -30,15 +29,8 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 
-fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone()
-}
-
 async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
-    let layer = prometheus_layer();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -60,7 +52,7 @@ async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    atc_server::routes::api_routes(layer).with_state(app_state)
+    atc_server::routes::api_routes().with_state(app_state)
 }
 
 #[tokio::test]

@@ -21,6 +21,7 @@ use atc_github::WebhookEvent;
 use tokio::sync::{Notify, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, info_span};
 
 use crate::state::SeqEvent;
 
@@ -83,54 +84,85 @@ pub fn spawn_listener_task(
     cancel: CancellationToken,
     received_counter: Option<Arc<AtomicU64>>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                () = cancel.cancelled() => break,
-                res = listener.recv() => match res {
-                    Ok(notification) => {
-                        metrics::counter!("atc_pg_notify_received_total").increment(1);
-                        if let Some(c) = received_counter.as_ref() {
-                            c.fetch_add(1, Ordering::Relaxed);
+    // Construct the task-lifetime span at spawn time. tokio::spawn does NOT
+    // propagate parent spans automatically — the future is wrapped with
+    // `.instrument(span)` so its descendants attach to this root.
+    let task_span = info_span!("listener.task");
+    tokio::spawn(
+        async move {
+            loop {
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    res = listener.recv() => match res {
+                        Ok(notification) => {
+                            handle_listener_notification(
+                                notification,
+                                drain_notify.as_ref(),
+                                min_pending_seq.as_ref(),
+                                drain_in_flight.as_ref(),
+                                received_counter.as_deref(),
+                            );
                         }
-                        // Wake-coalesce observation: if a drain pass is in
-                        // flight when this NOTIFY arrived, count it. Tokio's
-                        // Notify still collapses the permits — this counter
-                        // reports arrival rate vs. drain pass rate.
-                        if drain_in_flight.load(Ordering::Acquire) {
-                            metrics::counter!("atc_pg_wake_coalesced_total").increment(1);
+                        Err(e) => {
+                            metrics::counter!("atc_pg_listener_recv_errors_total").increment(1);
+                            tracing::warn!(error = %e, "pg listener recv error");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
-                        match notification.payload().parse::<i64>() {
-                            Ok(seq) => {
-                                let prev = min_pending_seq.fetch_min(seq, Ordering::Release);
-                                let new_min = prev.min(seq);
-                                #[allow(clippy::cast_precision_loss)]
-                                let gauge_value = if new_min == i64::MAX {
-                                    f64::NAN
-                                } else {
-                                    new_min as f64
-                                };
-                                metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    payload = notification.payload(),
-                                    error = %e,
-                                    "malformed NOTIFY payload (expected i64 seq)",
-                                );
-                            }
-                        }
-                        drain_notify.notify_one();
-                    }
-                    Err(e) => {
-                        metrics::counter!("atc_pg_listener_recv_errors_total").increment(1);
-                        tracing::warn!(error = %e, "pg listener recv error");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
             }
         }
-    })
+        .instrument(task_span),
+    )
+}
+
+/// Per-NOTIFY handler — extracted from `spawn_listener_task` so a `listener.recv`
+/// span attaches to a single function invocation rather than a `select!` arm.
+#[tracing::instrument(
+    name = "listener.recv",
+    skip_all,
+    fields(notify.payload.seq = tracing::field::Empty),
+)]
+fn handle_listener_notification(
+    notification: sqlx::postgres::PgNotification,
+    drain_notify: &Notify,
+    min_pending_seq: &AtomicI64,
+    drain_in_flight: &AtomicBool,
+    received_counter: Option<&AtomicU64>,
+) {
+    metrics::counter!("atc_pg_notify_received_total").increment(1);
+    if let Some(c) = received_counter {
+        c.fetch_add(1, Ordering::Relaxed);
+    }
+    // Wake-coalesce observation: if a drain pass is in
+    // flight when this NOTIFY arrived, count it. Tokio's
+    // Notify still collapses the permits — this counter
+    // reports arrival rate vs. drain pass rate.
+    if drain_in_flight.load(Ordering::Acquire) {
+        metrics::counter!("atc_pg_wake_coalesced_total").increment(1);
+    }
+    match notification.payload().parse::<i64>() {
+        Ok(seq) => {
+            tracing::Span::current().record("notify.payload.seq", seq);
+            let prev = min_pending_seq.fetch_min(seq, Ordering::Release);
+            let new_min = prev.min(seq);
+            #[allow(clippy::cast_precision_loss)]
+            let gauge_value = if new_min == i64::MAX {
+                f64::NAN
+            } else {
+                new_min as f64
+            };
+            metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
+        }
+        Err(e) => {
+            tracing::warn!(
+                payload = notification.payload(),
+                error = %e,
+                "malformed NOTIFY payload (expected i64 seq)",
+            );
+        }
+    }
+    drain_notify.notify_one();
 }
 
 /// Spawn the drain task that fetches outbox rows on each notification, decodes
@@ -170,153 +202,160 @@ pub fn spawn_drain_task(
     drain_started: Option<Arc<Notify>>,
     drain_delay: Option<Duration>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let shutdown_pool = pool.clone();
-        let mut watermark: i64 = initial_watermark;
-        let mut recent_ring: VecDeque<i64> = VecDeque::with_capacity(DEDUP_CAP);
-        let mut recent_set: HashSet<i64> = HashSet::with_capacity(DEDUP_CAP);
+    // Construct the task-lifetime span at spawn time so descendants
+    // (`drain.pass`, `drain.broadcast`) attach to this root rather than
+    // becoming fresh roots.
+    let task_span = info_span!("drain.task");
+    tokio::spawn(
+        async move {
+            let shutdown_pool = pool.clone();
+            let mut watermark: i64 = initial_watermark;
+            let mut recent_ring: VecDeque<i64> = VecDeque::with_capacity(DEDUP_CAP);
+            let mut recent_set: HashSet<i64> = HashSet::with_capacity(DEDUP_CAP);
 
-        // Run an unconditional first pass so observed_passes/drain_started
-        // fire once at startup. This preserves the test fixture invariant
-        // (build_app waits for drain_started before accepting requests).
-        let mut first_iter = true;
-        // Startup readiness latency is observed exactly once per process,
-        // after the first pass exits. See `atc_pg_drain_startup_seconds`.
-        let mut startup_recorded = false;
+            // Run an unconditional first pass so observed_passes/drain_started
+            // fire once at startup. This preserves the test fixture invariant
+            // (build_app waits for drain_started before accepting requests).
+            let mut first_iter = true;
+            // Startup readiness latency is observed exactly once per process,
+            // after the first pass exits. See `atc_pg_drain_startup_seconds`.
+            let mut startup_recorded = false;
 
-        loop {
-            let woken_by_notify = if first_iter {
-                first_iter = false;
-                true
-            } else {
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = drain_notify.notified() => true,
-                    () = tokio::time::sleep(HEARTBEAT_TICK) => false,
+            loop {
+                let woken_by_notify = if first_iter {
+                    first_iter = false;
+                    true
+                } else {
+                    tokio::select! {
+                        () = cancel.cancelled() => break,
+                        () = drain_notify.notified() => true,
+                        () = tokio::time::sleep(HEARTBEAT_TICK) => false,
+                    }
+                };
+
+                if !woken_by_notify {
+                    // Heartbeat-only wake: refresh /readyz and continue. No drain
+                    // work was attempted, so this is not a "drain succeeded" signal
+                    // — it's a "loop is alive". Updating the timestamp here is
+                    // correct because the alternative (only refresh on successful
+                    // drain) would 503 quiet replicas after 30 s.
+                    last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
+                    continue;
                 }
-            };
 
-            if !woken_by_notify {
-                // Heartbeat-only wake: refresh /readyz and continue. No drain
-                // work was attempted, so this is not a "drain succeeded" signal
-                // — it's a "loop is alive". Updating the timestamp here is
-                // correct because the alternative (only refresh on successful
-                // drain) would 503 quiet replicas after 30 s.
-                last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
-                continue;
-            }
+                // Capture the gap-healing backstop and reset the atomic. AcqRel
+                // pairs with the listener's Release fetch_min so any registration
+                // visible before this swap is observed here. Mirror the swap into
+                // the gauge: the post-swap value is i64::MAX (sentinel), rendered
+                // as NaN so dashboards distinguish "no pending NOTIFY below
+                // watermark" from "pending NOTIFY at seq 0".
+                let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);
+                metrics::gauge!("atc_pg_min_pending_seq").set(f64::NAN);
+                let pass_start_floor = watermark.min(backstop.saturating_sub(1));
 
-            // Capture the gap-healing backstop and reset the atomic. AcqRel
-            // pairs with the listener's Release fetch_min so any registration
-            // visible before this swap is observed here. Mirror the swap into
-            // the gauge: the post-swap value is i64::MAX (sentinel), rendered
-            // as NaN so dashboards distinguish "no pending NOTIFY below
-            // watermark" from "pending NOTIFY at seq 0".
-            let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);
-            metrics::gauge!("atc_pg_min_pending_seq").set(f64::NAN);
-            let pass_start_floor = watermark.min(backstop.saturating_sub(1));
+                // Wake-coalesce instrumentation bracket: the listener counts
+                // NOTIFYs that arrive between the `store(true)` and `store(false)`
+                // pair. The bracket is unconditional — if drain_pass panics,
+                // Tokio terminates the task and the AtomicBool stays `true`,
+                // operationally identical to "drain task is gone" so no scope
+                // guard is required.
+                drain_in_flight.store(true, Ordering::Release);
+                let pass_start = Instant::now();
+                let pass_ok = drain_pass(
+                    &pool,
+                    pass_start_floor,
+                    &mut watermark,
+                    &mut recent_ring,
+                    &mut recent_set,
+                    &webhook_tx,
+                    drain_delay,
+                )
+                .await;
+                drain_in_flight.store(false, Ordering::Release);
+                metrics::histogram!("atc_pg_drain_pass_duration_seconds")
+                    .record(pass_start.elapsed().as_secs_f64());
 
-            // Wake-coalesce instrumentation bracket: the listener counts
-            // NOTIFYs that arrive between the `store(true)` and `store(false)`
-            // pair. The bracket is unconditional — if drain_pass panics,
-            // Tokio terminates the task and the AtomicBool stays `true`,
-            // operationally identical to "drain task is gone" so no scope
-            // guard is required.
-            drain_in_flight.store(true, Ordering::Release);
-            let pass_start = Instant::now();
-            let pass_ok = drain_pass(
-                &pool,
-                pass_start_floor,
-                &mut watermark,
-                &mut recent_ring,
-                &mut recent_set,
-                &webhook_tx,
-                drain_delay,
-            )
-            .await;
-            drain_in_flight.store(false, Ordering::Release);
-            metrics::histogram!("atc_pg_drain_pass_duration_seconds")
-                .record(pass_start.elapsed().as_secs_f64());
+                if !startup_recorded {
+                    metrics::histogram!("atc_pg_drain_startup_seconds")
+                        .record(startup_at.elapsed().as_secs_f64());
+                    startup_recorded = true;
+                }
 
-            if !startup_recorded {
-                metrics::histogram!("atc_pg_drain_startup_seconds")
-                    .record(startup_at.elapsed().as_secs_f64());
-                startup_recorded = true;
-            }
+                metrics::counter!("atc_pg_drain_passes_total").increment(1);
+                if let Some(c) = observed_passes.as_deref() {
+                    c.fetch_add(1, Ordering::Relaxed);
+                }
+                if let Some(ref s) = drain_started {
+                    s.notify_one();
+                }
 
-            metrics::counter!("atc_pg_drain_passes_total").increment(1);
-            if let Some(c) = observed_passes.as_deref() {
-                c.fetch_add(1, Ordering::Relaxed);
-            }
-            if let Some(ref s) = drain_started {
-                s.notify_one();
-            }
-
-            if pass_ok {
-                // Refresh heartbeat ONLY on success. A failed drain pass must
-                // not advertise readiness — after 30 s of failures, /readyz
-                // will go stale and traffic gets routed away.
-                last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
-                // Publish the broadcast cursor. Read by `state_handler` as the
-                // PG-mode `lastSeq` (commit-order cursor — see ADR 0003
-                // implementation notes). Using `MAX(outbox.seq)` directly is unsafe:
-                // BIGSERIAL is allocated pre-commit and can commit out of
-                // order, which would let `MAX(seq)` advance past data that
-                // hasn't materialised in a concurrent snapshot view.
-                broadcast_watermark.store(watermark, Ordering::Release);
-                #[allow(clippy::cast_precision_loss)]
-                metrics::gauge!("atc_pg_broadcast_watermark").set(watermark as f64);
-            } else {
-                // Re-register the captured backstop so the next pass still has
-                // the gap-healing floor. Without this, a transient query
-                // failure between two NOTIFYs (one carrying the low seq) would
-                // permanently lose the rescan signal: the swap zeroed the
-                // atomic and the failed pass never delivered the floor to the
-                // SELECT. Mirror the gauge alongside the atomic — the swap at
-                // pass start cleared the gauge to NaN, so without this re-mirror
-                // the gauge would advertise "drain caught up" while a pending
-                // backstop is queued for the next attempt.
-                if backstop != i64::MAX {
-                    let prev = min_pending_seq.fetch_min(backstop, Ordering::Release);
-                    let new_min = prev.min(backstop);
+                if pass_ok {
+                    // Refresh heartbeat ONLY on success. A failed drain pass must
+                    // not advertise readiness — after 30 s of failures, /readyz
+                    // will go stale and traffic gets routed away.
+                    last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
+                    // Publish the broadcast cursor. Read by `state_handler` as the
+                    // PG-mode `lastSeq` (commit-order cursor — see ADR 0003
+                    // implementation notes). Using `MAX(outbox.seq)` directly is unsafe:
+                    // BIGSERIAL is allocated pre-commit and can commit out of
+                    // order, which would let `MAX(seq)` advance past data that
+                    // hasn't materialised in a concurrent snapshot view.
+                    broadcast_watermark.store(watermark, Ordering::Release);
                     #[allow(clippy::cast_precision_loss)]
-                    let gauge_value = if new_min == i64::MAX {
-                        f64::NAN
-                    } else {
-                        new_min as f64
-                    };
-                    metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
-                }
-                // Force the next iteration to attempt another drain pass.
-                // Without this, the loop would re-enter the `tokio::select!`
-                // and — if no new webhook arrives — wait on the 5 s heartbeat
-                // tick, take the heartbeat-only arm, refresh the timestamp,
-                // and `continue` without ever retrying the drain. A single
-                // committed row pending after a transient query failure could
-                // then sit undelivered indefinitely while `/readyz` stayed
-                // healthy via heartbeat ticks. `notify_one()` adds a permit
-                // so the next `drain_notify.notified()` resolves immediately
-                // and the next iteration runs as a NOTIFY-driven pass.
-                drain_notify.notify_one();
-                // Brief backoff before retry. Don't refresh heartbeat — that's
-                // the entire point of this branch.
-                tokio::select! {
-                    () = cancel.cancelled() => break,
-                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    metrics::gauge!("atc_pg_broadcast_watermark").set(watermark as f64);
+                } else {
+                    // Re-register the captured backstop so the next pass still has
+                    // the gap-healing floor. Without this, a transient query
+                    // failure between two NOTIFYs (one carrying the low seq) would
+                    // permanently lose the rescan signal: the swap zeroed the
+                    // atomic and the failed pass never delivered the floor to the
+                    // SELECT. Mirror the gauge alongside the atomic — the swap at
+                    // pass start cleared the gauge to NaN, so without this re-mirror
+                    // the gauge would advertise "drain caught up" while a pending
+                    // backstop is queued for the next attempt.
+                    if backstop != i64::MAX {
+                        let prev = min_pending_seq.fetch_min(backstop, Ordering::Release);
+                        let new_min = prev.min(backstop);
+                        #[allow(clippy::cast_precision_loss)]
+                        let gauge_value = if new_min == i64::MAX {
+                            f64::NAN
+                        } else {
+                            new_min as f64
+                        };
+                        metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
+                    }
+                    // Force the next iteration to attempt another drain pass.
+                    // Without this, the loop would re-enter the `tokio::select!`
+                    // and — if no new webhook arrives — wait on the 5 s heartbeat
+                    // tick, take the heartbeat-only arm, refresh the timestamp,
+                    // and `continue` without ever retrying the drain. A single
+                    // committed row pending after a transient query failure could
+                    // then sit undelivered indefinitely while `/readyz` stayed
+                    // healthy via heartbeat ticks. `notify_one()` adds a permit
+                    // so the next `drain_notify.notified()` resolves immediately
+                    // and the next iteration runs as a NOTIFY-driven pass.
+                    drain_notify.notify_one();
+                    // Brief backoff before retry. Don't refresh heartbeat — that's
+                    // the entire point of this branch.
+                    tokio::select! {
+                        () = cancel.cancelled() => break,
+                        () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
                 }
             }
-        }
 
-        // Drain task is exiting. Record one shutdown observation: outbox rows
-        // committed past this replica's local watermark. Validates the issue
-        // #60 / #80 assumption that the outbox is unlikely to grow beyond a
-        // single drain pass (DRAIN_BATCH_SIZE = 500) by the time shutdown
-        // fires. Bounded by SHUTDOWN_REMAINING_QUERY_TIMEOUT so a hung DB
-        // cannot stall process exit; on timeout or query error we log and
-        // skip the observation rather than recording 0 (which would silently
-        // mask the problem).
-        record_shutdown_remaining(&shutdown_pool, watermark).await;
-    })
+            // Drain task is exiting. Record one shutdown observation: outbox rows
+            // committed past this replica's local watermark. Validates the issue
+            // #60 / #80 assumption that the outbox is unlikely to grow beyond a
+            // single drain pass (DRAIN_BATCH_SIZE = 500) by the time shutdown
+            // fires. Bounded by SHUTDOWN_REMAINING_QUERY_TIMEOUT so a hung DB
+            // cannot stall process exit; on timeout or query error we log and
+            // skip the observation rather than recording 0 (which would silently
+            // mask the problem).
+            record_shutdown_remaining(&shutdown_pool, watermark).await;
+        }
+        .instrument(task_span),
+    )
 }
 
 /// Query and record the outbox lag remaining at drain task exit.
@@ -368,6 +407,15 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64) {
 /// a backstop-lowered rescan does not skip rows when the floor is below the
 /// pre-existing watermark.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(
+    name = "drain.pass",
+    skip_all,
+    fields(
+        pass.start_floor = pass_start_floor,
+        pass.rows_fetched = tracing::field::Empty,
+        pass.batches = tracing::field::Empty,
+    ),
+)]
 async fn drain_pass(
     pool: &sqlx::PgPool,
     pass_start_floor: i64,
@@ -382,6 +430,8 @@ async fn drain_pass(
     }
     let mut page_cursor: i64 = pass_start_floor;
     let mut max_seq_seen: Option<i64> = None;
+    let mut total_rows_fetched: usize = 0;
+    let mut batches: u64 = 0;
 
     loop {
         let rows = sqlx::query!(
@@ -406,6 +456,8 @@ async fn drain_pass(
         }
 
         let fetched = rows.len();
+        total_rows_fetched = total_rows_fetched.saturating_add(fetched);
+        batches = batches.saturating_add(1);
         for row in &rows {
             // Advance pagination state at the top of the loop so a `continue`
             // on decode/discriminator failures still moves the page cursor.
@@ -449,27 +501,37 @@ async fn drain_pass(
             if recent_set.contains(&row.seq) {
                 metrics::counter!("atc_pg_drain_duplicate_skipped_total").increment(1);
             } else {
-                // BIGSERIAL is positive; u64 always fits.
-                let seq_u64 = u64::try_from(row.seq).unwrap_or_else(|_| {
-                    tracing::error!(seq = row.seq, "negative outbox seq encountered");
-                    0
-                });
-                let _ = webhook_tx.send(SeqEvent {
-                    seq: seq_u64,
-                    event,
-                });
-
                 // Event age at broadcast: now() - inserted_at, recorded once
                 // per broadcast row. The metric over-reports by the writer's
                 // transaction duration because `inserted_at DEFAULT now()`
                 // evaluates `transaction_timestamp()` (transaction start),
                 // not commit. See `metrics.md` § Operational metrics.
                 #[allow(clippy::cast_precision_loss)]
-                let lag = (chrono::Utc::now() - row.inserted_at)
+                let lag_seconds = (chrono::Utc::now() - row.inserted_at)
                     .num_microseconds()
                     .unwrap_or(0) as f64
                     / 1_000_000.0;
-                metrics::histogram!("atc_pg_outbox_lag_seconds").record(lag);
+                #[allow(clippy::cast_possible_truncation)]
+                let outbox_lag_ms: i64 = (lag_seconds * 1_000.0) as i64;
+                let broadcast_span = info_span!(
+                    "drain.broadcast",
+                    seq = row.seq,
+                    kind = row.kind.as_str(),
+                    outbox_lag_ms,
+                );
+                broadcast_span.in_scope(|| {
+                    // BIGSERIAL is positive; u64 always fits.
+                    let seq_u64 = u64::try_from(row.seq).unwrap_or_else(|_| {
+                        tracing::error!(seq = row.seq, "negative outbox seq encountered");
+                        0
+                    });
+                    let _ = webhook_tx.send(SeqEvent {
+                        seq: seq_u64,
+                        event,
+                    });
+
+                    metrics::histogram!("atc_pg_outbox_lag_seconds").record(lag_seconds);
+                });
 
                 recent_ring.push_back(row.seq);
                 recent_set.insert(row.seq);
@@ -486,6 +548,10 @@ async fn drain_pass(
             break;
         }
     }
+
+    let pass_span = tracing::Span::current();
+    pass_span.record("pass.rows_fetched", total_rows_fetched);
+    pass_span.record("pass.batches", batches);
 
     if let Some(seen) = max_seq_seen {
         *watermark = (*watermark).max(seen);

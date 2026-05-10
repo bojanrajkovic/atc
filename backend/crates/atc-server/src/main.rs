@@ -16,11 +16,15 @@ use atc_server::config;
 use atc_server::db;
 use atc_server::listener;
 use atc_server::metrics;
+use atc_server::otel::{self, OtelHandles};
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
 /// Validates that a database URL uses a scheme ATC supports (postgres:// or
 /// postgresql://) and exits the process with an actionable log message if not.
@@ -52,6 +56,35 @@ fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+fn init_tracing_subscriber(cfg: &config::Config, otel_handles: Option<&OtelHandles>) {
+    let filter = EnvFilter::try_new(&cfg.log_filter).unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let otel_layer = otel_handles.map(|handles| {
+        tracing_opentelemetry::layer()
+            .with_tracer(handles.tracer.clone())
+            .boxed()
+    });
+
+    if matches!(cfg.log_format, config::LogFormat::Json) {
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_span_list(true)
+            .boxed();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+    } else {
+        let fmt_layer = tracing_subscriber::fmt::layer().pretty().boxed();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+    }
 }
 
 async fn shutdown_signal(shutdown: CancellationToken) {
@@ -86,21 +119,9 @@ async fn main() {
         process::exit(1);
     });
 
-    let filter = tracing_subscriber::EnvFilter::try_new(&cfg.log_filter)
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let otel_handles: Option<OtelHandles> = otel::init_otel(&cfg);
 
-    if matches!(cfg.log_format, config::LogFormat::Json) {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .with_span_list(true)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .pretty()
-            .init();
-    }
+    init_tracing_subscriber(&cfg, otel_handles.as_ref());
 
     if let Some(ref db_url) = cfg.database_url {
         ensure_pg_scheme("ATC_DATABASE_URL", db_url);
@@ -187,12 +208,11 @@ async fn main() {
         ws_tracker: ws_tracker.clone(),
     });
 
-    // Build Prometheus layer + metrics side-port router. Must happen before
-    // register_build_info() and spawn_process_collector() because pair()
-    // installs the global metrics recorder. Also must happen before the
-    // listener/drain tasks spawn so background tasks never increment counters
-    // before the global recorder is installed.
-    let (prometheus_layer, metrics_router) = metrics::build();
+    // The OTel-backed `metrics-rs` recorder is installed inside `init_otel`
+    // when an OTLP endpoint is configured. With no endpoint the macros resolve
+    // through the no-op recorder, so describes/emits are cheap no-ops.
+    // `register_*` runs unconditionally so descriptions land before the first
+    // emission either way.
     metrics::register_build_info();
     metrics::register_pg_write_counters();
     metrics::register_listener_metrics();
@@ -275,22 +295,9 @@ async fn main() {
     // shutdown orchestration — WS handlers see `shutdown.cancelled()` and send
     // Close(1001) rather than racing against a `RecvError::Closed` from a
     // prematurely-dropped AppState.
-    let app = routes::api_routes(prometheus_layer)
+    let app = routes::api_routes()
         .with_state(app_state.clone())
         .fallback(assets::fallback_handler());
-
-    // Bind metrics listener first so a port-conflict failure is detected before
-    // the main listener opens.
-    let metrics_listener = tokio::net::TcpListener::bind(cfg.metrics_addr)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(
-                "failed to bind metrics listener to {}: {e}",
-                cfg.metrics_addr
-            );
-            process::exit(1);
-        });
-    tracing::info!("metrics listening on http://{}", cfg.metrics_addr);
 
     let main_listener = tokio::net::TcpListener::bind(cfg.http_addr)
         .await
@@ -303,16 +310,13 @@ async fn main() {
     // Spawn the signal handler task that will cancel the shutdown token.
     tokio::spawn(shutdown_signal(shutdown.clone()));
 
-    // Both servers observe the same cancellation token. axum::serve(...).with_graceful_shutdown(...)
-    // is IntoFuture (not Future), so spawn via .into_future() so the runtime
-    // drives them independently of main's shutdown choreography.
+    // axum::serve(...).with_graceful_shutdown(...) is IntoFuture (not Future),
+    // so spawn via .into_future() so the runtime drives it independently of
+    // main's shutdown choreography.
     let main_serve =
         axum::serve(main_listener, app).with_graceful_shutdown(shutdown.clone().cancelled_owned());
-    let metrics_serve = axum::serve(metrics_listener, metrics_router)
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
 
     let main_serve_task = tokio::spawn(main_serve.into_future());
-    let metrics_serve_task = tokio::spawn(metrics_serve.into_future());
 
     // Cooperative shutdown orchestration. Awaits the trigger (signal handler
     // or unexpected serve-task exit), waits for tracked WS handlers to flush
@@ -324,11 +328,11 @@ async fn main() {
         shutdown,
         ws_tracker,
         main_serve_task,
-        metrics_serve_task,
         drain_handle,
         listener_handle,
         eviction_handle,
         metrics_handle,
+        otel_handles,
     )
     .await;
 

@@ -56,10 +56,7 @@ struct FullServerFixture {
 }
 
 async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixture {
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
 
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
@@ -137,7 +134,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
     // Mirror main.rs: clone the Arc into the router so `state` itself stays
     // in this scope, keeping AppState's webhook_tx clone alive through
     // shutdown orchestration.
-    let app = routes::api_routes(layer)
+    let app = routes::api_routes()
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
@@ -146,34 +143,21 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         .await
         .expect("failed to bind main listener");
     let main_addr = main_listener.local_addr().expect("local_addr");
-    // Bind a second ephemeral port for the metrics server. The global Prometheus
-    // recorder is already installed via PROMETHEUS_INIT; we use a minimal stub
-    // router rather than calling metrics::build() which would panic on
-    // double-install.
-    let metrics_listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind metrics listener");
-    // Minimal stub: the metrics endpoint is not under test here; it just needs
-    // to be present so the orchestration's serves-join path has something to await.
-    let metrics_router = axum::Router::new();
 
     let main_serve =
         axum::serve(main_listener, app).with_graceful_shutdown(shutdown.clone().cancelled_owned());
-    let metrics_serve = axum::serve(metrics_listener, metrics_router)
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
 
     let main_serve_task = tokio::spawn(main_serve.into_future());
-    let metrics_serve_task = tokio::spawn(metrics_serve.into_future());
 
     let orchestration_handle = tokio::spawn(run_shutdown_orchestration(
         shutdown.clone(),
         ws_tracker,
         main_serve_task,
-        metrics_serve_task,
         Some(drain_handle),
         Some(listener_handle),
         eviction_handle,
         metrics_handle,
+        None,
     ));
 
     FullServerFixture {

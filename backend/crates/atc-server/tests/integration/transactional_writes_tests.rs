@@ -22,7 +22,7 @@ use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use axum_prometheus::PrometheusMetricLayer;
+use opentelemetry::KeyValue;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
@@ -34,52 +34,12 @@ fn now_millis_for_test() -> i64 {
         .unwrap_or(0)
 }
 
-/// Acquire the shared per-binary `PrometheusMetricLayer`, installing the test
-/// recorder via `common::PROMETHEUS_INIT` if it isn't already initialised.
-/// All integration modules share one process-global recorder; this routes
-/// through the same `OnceLock` as the rest so a second installer never
-/// attempts `set_global_recorder`.
-fn prometheus_layer() -> PrometheusMetricLayer<'static> {
-    common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone()
+fn write_failure_attrs(kind: &'static str) -> Vec<KeyValue> {
+    vec![KeyValue::new("kind", kind)]
 }
 
-/// Render the current Prometheus exposition text via the shared handle.
-fn render_metrics() -> String {
-    common::PROMETHEUS_INIT.get_or_init(common::install_test_recorder);
-    common::render_metrics()
-}
-
-/// Parse `atc_pg_write_failures_total{kind="<kind>"}` from the Prometheus
-/// text output. Returns the integer value, or 0 if the line is absent (counter
-/// has never been incremented for that label).
-fn parse_counter_value(metrics_body: &str, kind: &str) -> u64 {
-    let needle = format!("kind=\"{kind}\"");
-    for line in metrics_body.lines() {
-        if line.starts_with("atc_pg_write_failures_total")
-            && line.contains(&needle)
-            && let Some(value_str) = line.split_whitespace().last()
-        {
-            return value_str.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
-}
-
-/// Parse `atc_pg_notify_emitted_total{kind="<kind>"}` from the Prometheus text.
-fn parse_notify_counter(metrics_body: &str, kind: &str) -> u64 {
-    let needle = format!("kind=\"{kind}\"");
-    for line in metrics_body.lines() {
-        if line.starts_with("atc_pg_notify_emitted_total")
-            && line.contains(&needle)
-            && let Some(value_str) = line.split_whitespace().last()
-        {
-            return value_str.parse::<u64>().unwrap_or(0);
-        }
-    }
-    0
+fn notify_attrs(kind: &'static str) -> Vec<KeyValue> {
+    vec![KeyValue::new("kind", kind)]
 }
 
 /// Build a full router with a real PG pool mounted.
@@ -93,7 +53,7 @@ pub fn build_app_with_pg(
     Arc<AppState>,
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
-    let layer = prometheus_layer();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -115,7 +75,7 @@ pub fn build_app_with_pg(
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state, rx)
@@ -361,12 +321,11 @@ async fn transactional_write_idempotent_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn parity_metric_increments_when_pg_rejects() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
-
-    // Read the baseline counter value before this test runs.
-    let before = render_metrics();
-    let baseline_parity = parse_counter_value(&before, "parity");
 
     // 1. Insert run through normal flow (Queued)
     post_webhook(
@@ -415,12 +374,15 @@ async fn parity_metric_increments_when_pg_rejects() {
     );
 
     // Parity counter must have incremented by exactly 1
-    let after = render_metrics();
-    let after_parity = parse_counter_value(&after, "parity");
+    let snapshot = common::snapshot_metrics();
+    let parity = common::counter_value(
+        &snapshot,
+        "atc_pg_write_failures_total",
+        &write_failure_attrs("parity"),
+    );
     assert_eq!(
-        after_parity,
-        baseline_parity + 1,
-        "parity counter should increment by 1; metrics output:\n{after}"
+        parity, 1,
+        "parity counter should increment by 1; got {parity}"
     );
 }
 
@@ -435,12 +397,11 @@ async fn parity_metric_increments_when_pg_rejects() {
 #[tokio::test]
 #[serial_test::serial]
 async fn transient_metric_increments_on_db_outage() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _c, _) = common::start_pg().await;
     let (app, state, _rx) = build_app_with_pg(pool.clone());
-
-    // Read the baseline counter value before this test runs.
-    let before = render_metrics();
-    let baseline_transient = parse_counter_value(&before, "transient");
 
     // Close the pool BEFORE firing any webhook (simulate outage from the start).
     // This causes pool.begin() to fail immediately → 503 with transient counter.
@@ -469,21 +430,25 @@ async fn transient_metric_increments_on_db_outage() {
     );
 
     // Transient counter must have incremented by exactly 1
-    let after = render_metrics();
-    let after_transient = parse_counter_value(&after, "transient");
+    let snapshot = common::snapshot_metrics();
+    let transient = common::counter_value(
+        &snapshot,
+        "atc_pg_write_failures_total",
+        &write_failure_attrs("transient"),
+    );
     assert_eq!(
-        after_transient,
-        baseline_transient + 1,
-        "transient counter should increment by 1; metrics output:\n{after}"
+        transient, 1,
+        "transient counter should increment by 1; got {transient}"
     );
 }
 
-/// Verify that PG write failure counters are visible in /metrics output.
-/// Triggers a parity failure to confirm the counter appears in the text output.
+/// Verify that PG write failure counters are emitted via the OTel pipeline.
+/// Triggers a parity failure to confirm the counter shows up in the snapshot.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_write_failure_counters_are_registered() {
-    atc_server::metrics::register_pg_write_counters();
+    common::ensure_recorder_installed();
+    common::reset_metrics();
 
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
@@ -500,7 +465,7 @@ async fn pg_write_failure_counters_are_registered() {
         .unwrap();
 
     // Send InProgress: in-memory accepts (Queued→InProgress); PG rejects (Completed not a
-    // predecessor of InProgress) → parity counter increments → counter appears in /metrics.
+    // predecessor of InProgress) → parity counter increments → metric is observable.
     post_webhook(
         app.clone(),
         "workflow_run",
@@ -508,11 +473,10 @@ async fn pg_write_failure_counters_are_registered() {
     )
     .await;
 
-    // The counter must appear in /metrics now that it has been incremented.
-    let metrics_body = render_metrics();
+    let snapshot = common::snapshot_metrics();
     assert!(
-        metrics_body.contains("atc_pg_write_failures_total"),
-        "counter must appear in /metrics output after parity failure; got:\n{metrics_body}"
+        common::metric_present(&snapshot, "atc_pg_write_failures_total"),
+        "atc_pg_write_failures_total must appear in the metric snapshot after parity failure",
     );
 }
 
@@ -524,8 +488,7 @@ async fn pg_write_failure_counters_are_registered() {
 #[tokio::test]
 #[serial_test::serial]
 async fn in_memory_mode_behavioral_invariance() {
-    // Build app inline — avoid common::build_app_no_secret which uses a different OnceLock.
-    let layer = prometheus_layer();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -550,7 +513,7 @@ async fn in_memory_mode_behavioral_invariance() {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
@@ -645,14 +608,11 @@ async fn pg_invalid_transition_returns_rejected() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _c, _) = common::start_pg().await;
     let (app, _state, _rx) = build_app_with_pg(pool.clone());
-
-    // Capture baseline.
-    atc_server::metrics::register_pg_write_counters();
-    let before = render_metrics();
-    let baseline_notify_run = parse_notify_counter(&before, "run");
-    let baseline_parity = parse_counter_value(&before, "parity");
 
     // Successful run event — should increment atc_pg_notify_emitted_total{kind="run"}.
     let (status, json) = post_webhook_full(
@@ -668,12 +628,15 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
     );
     assert!(json["seq"].is_number(), "accepted response includes seq");
 
-    let after_success = render_metrics();
+    let snapshot = common::snapshot_metrics();
     assert_eq!(
-        parse_notify_counter(&after_success, "run"),
-        baseline_notify_run + 1,
-        "atc_pg_notify_emitted_total{{kind=run}} must increment after successful run commit; \
-         metrics:\n{after_success}"
+        common::counter_value(
+            &snapshot,
+            "atc_pg_notify_emitted_total",
+            &notify_attrs("run")
+        ),
+        1,
+        "atc_pg_notify_emitted_total{{kind=run}} must increment after successful run commit",
     );
 
     // Force parity rejection: manually advance PG to Completed, then send InProgress.
@@ -691,18 +654,28 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
     assert_eq!(status, StatusCode::OK, "parity rejection returns 200");
     assert_eq!(json["status"], "rejected", "parity rejection body");
 
-    let after_parity = render_metrics();
+    let snapshot = common::snapshot_metrics();
     assert_eq!(
-        parse_counter_value(&after_parity, "parity"),
-        baseline_parity + 1,
-        "atc_pg_write_failures_total{{kind=parity}} must increment after parity rejection; \
-         metrics:\n{after_parity}"
+        common::counter_value(
+            &snapshot,
+            "atc_pg_write_failures_total",
+            &write_failure_attrs("parity"),
+        ),
+        1,
+        "atc_pg_write_failures_total{{kind=parity}} must increment after parity rejection",
     );
 
-    // Notify counter must NOT have changed for the rejected write.
+    // Notify counter must NOT have changed for the rejected write — the second
+    // snapshot only contains emissions since the last force_flush (Delta
+    // temporality), so the notify counter's value here is the delta from the
+    // first flush onward; a rejected write must not increment it.
     assert_eq!(
-        parse_notify_counter(&after_parity, "run"),
-        baseline_notify_run + 1,
-        "atc_pg_notify_emitted_total{{kind=run}} must not increment for a rejected write"
+        common::counter_value(
+            &snapshot,
+            "atc_pg_notify_emitted_total",
+            &notify_attrs("run")
+        ),
+        0,
+        "atc_pg_notify_emitted_total{{kind=run}} must not increment for a rejected write",
     );
 }
