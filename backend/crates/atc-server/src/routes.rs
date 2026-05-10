@@ -224,8 +224,11 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/v1/state", get(state_handler))
         .route("/v1/webhooks/github", post(webhook_handler))
         .route("/v1/ws", get(ws::ws_handler))
-        // Removed endpoints: explicitly return 404 instead of falling through to SPA
+        // Removed endpoints: explicitly return 404 instead of falling through
+        // to the SPA fallback (which would serve index.html with status 200
+        // and silently mislead scrapers that still hit these paths).
         .route("/health", get(removed_endpoint_404))
+        .route("/metrics", get(removed_endpoint_404))
         .layer(http_metrics)
 }
 

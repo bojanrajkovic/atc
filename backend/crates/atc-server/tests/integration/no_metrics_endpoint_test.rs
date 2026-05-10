@@ -95,6 +95,34 @@ async fn metrics_endpoint_not_served_by_api_router() {
 
 #[tokio::test]
 #[serial]
+async fn metrics_endpoint_returns_404_through_full_app_with_spa_fallback() {
+    // Production wires the API router behind a SPA asset fallback. Without an
+    // explicit `/metrics` 404 route on the API side, the fallback would serve
+    // index.html with status 200 for any unknown path — silently misleading
+    // scrapers that still hit the legacy endpoint into parsing app HTML.
+    // This test exercises the full app shape (api routes + SPA fallback) to
+    // pin the contract.
+    common::ensure_recorder_installed();
+
+    let (app, _state) = common::build_app_no_secret();
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/metrics")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "/metrics must return 404 from the full app stack — SPA fallback must \
+         not catch the legacy metrics endpoint",
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn http_middleware_records_request_duration_with_semconv_attributes() {
     common::ensure_recorder_installed();
     common::reset_metrics();
