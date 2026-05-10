@@ -32,7 +32,7 @@ tests:
             name: OTEL_TRACES_SAMPLER_ARG
           any: true
 
-  - it: renders all five OTEL_* env vars from values when otel.enabled is true
+  - it: renders all OTEL_* env vars from values when otel.enabled is true, with k8s downward-API attributes folded into OTEL_RESOURCE_ATTRIBUTES
     set:
       otel.enabled: true
       otel.endpoint: "http://otel-collector.observability:4318"
@@ -54,8 +54,36 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
+            name: OTEL_K8S_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_K8S_POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_K8S_POD_UID
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.uid
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_K8S_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
             name: OTEL_RESOURCE_ATTRIBUTES
-            value: "deployment.environment=production"
+            value: "k8s.pod.name=$(OTEL_K8S_POD_NAME),k8s.namespace.name=$(OTEL_K8S_POD_NAMESPACE),k8s.pod.uid=$(OTEL_K8S_POD_UID),k8s.node.name=$(OTEL_K8S_NODE_NAME),k8s.deployment.name=RELEASE-NAME-atc,deployment.environment=production"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
@@ -66,6 +94,17 @@ tests:
           content:
             name: OTEL_TRACES_SAMPLER_ARG
             value: "0.1"
+
+  - it: omits the trailing user-provided attributes when otel.resourceAttributes is empty
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_RESOURCE_ATTRIBUTES
+            value: "k8s.pod.name=$(OTEL_K8S_POD_NAME),k8s.namespace.name=$(OTEL_K8S_POD_NAMESPACE),k8s.pod.uid=$(OTEL_K8S_POD_UID),k8s.node.name=$(OTEL_K8S_NODE_NAME),k8s.deployment.name=RELEASE-NAME-atc"
 
   - it: does not inject the (now-removed) OTEL_EXPORTER_OTLP_PROTOCOL env var
     set:

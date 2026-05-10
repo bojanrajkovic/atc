@@ -96,11 +96,19 @@ The deployment template injects five spec-standard env vars when `otel.enabled: 
 |---------|----------|---------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `otel.endpoint` | OTLP/HTTP collector URL (e.g. `http://otel-collector.observability:4318`). Required when enabled. |
 | `OTEL_SERVICE_NAME` | `otel.serviceName` | Resource attribute identifying the service. Defaults to `"atc"`. |
-| `OTEL_RESOURCE_ATTRIBUTES` | `otel.resourceAttributes` | Comma-separated `key=value` pairs (`deployment.environment=production,service.namespace=ingest`). |
+| `OTEL_RESOURCE_ATTRIBUTES` | `otel.resourceAttributes` | Comma-separated `key=value` pairs appended after auto-injected `k8s.*` identifiers (see below). E.g. `deployment.environment=production,service.namespace=ingest`. |
 | `OTEL_TRACES_SAMPLER` | `otel.sampler` | Trace sampler. Defaults to `parentbased_always_on`. |
 | `OTEL_TRACES_SAMPLER_ARG` | `otel.samplerArg` | Sampler argument (e.g. `"0.1"` for 10% root sampling with `parentbased_traceidratio`). |
 
 The `otel.*` values block in `deploy/helm/atc/values.yaml` is the operator's contract for these envs — refer to that file for inline default values, comments, and any future additions. Transport is HTTP/protobuf only; there is no `protocol:` key, and `OTEL_EXPORTER_OTLP_PROTOCOL` is not injected. gRPC is out of scope and would require an opt-in build of `atc-server`.
+
+**Pod-identity attributes auto-injected.** When `otel.enabled: true`, the deployment template also wires four downward-API env vars (`OTEL_K8S_POD_NAME`, `OTEL_K8S_POD_NAMESPACE`, `OTEL_K8S_POD_UID`, `OTEL_K8S_NODE_NAME`) and prepends them as OTel resource attributes to `OTEL_RESOURCE_ATTRIBUTES`:
+
+```
+k8s.pod.name=$(OTEL_K8S_POD_NAME),k8s.namespace.name=$(OTEL_K8S_POD_NAMESPACE),k8s.pod.uid=$(OTEL_K8S_POD_UID),k8s.node.name=$(OTEL_K8S_NODE_NAME),k8s.deployment.name=<release>-atc[,<otel.resourceAttributes>]
+```
+
+Operator-supplied `otel.resourceAttributes` are appended after this prefix, so any explicit `k8s.*` override in values WINS by virtue of coming later in the comma-separated list (the OTel SDK takes the last value for duplicate keys). The deployment name is computed from the chart's `atc.fullname` template at render time (downward API does not expose the owner workload's name). This matches the canonical OTel k8s semantic-conventions surface and removes per-environment values overrides for pod/node identity.
 
 When `otel.enabled: false` (the default), none of the `OTEL_*` env vars are injected and the OTel SDK is never initialized inside the container — there is no provider, no exporter, no background-task overhead, and `metrics::*` macros resolve through the no-op recorder.
 

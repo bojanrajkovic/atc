@@ -110,11 +110,15 @@ When `otel.enabled: true`, the chart injects the spec-standard `OTEL_*` env vars
 |------------|---------|---------|
 | `otel.endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector URL (e.g. `http://otel-collector.observability:4318`). Required when enabled. |
 | `otel.serviceName` | `OTEL_SERVICE_NAME` | Resource attribute identifying the service. Defaults to `"atc"`. |
-| `otel.resourceAttributes` | `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` pairs (e.g. `deployment.environment=production,service.namespace=ingest`). |
+| `otel.resourceAttributes` | `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` pairs appended after the auto-injected k8s identifiers. E.g. `deployment.environment=production,service.namespace=ingest`. |
 | `otel.sampler` | `OTEL_TRACES_SAMPLER` | Trace sampler. Defaults to `parentbased_always_on`. |
 | `otel.samplerArg` | `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (e.g. `"0.1"` for 10% root sampling with `parentbased_traceidratio`). |
 
+When `otel.enabled: true`, the chart also wires four downward-API env vars (`OTEL_K8S_POD_NAME`, `OTEL_K8S_POD_NAMESPACE`, `OTEL_K8S_POD_UID`, `OTEL_K8S_NODE_NAME`) and prepends `k8s.pod.name`, `k8s.namespace.name`, `k8s.pod.uid`, `k8s.node.name`, and `k8s.deployment.name` to `OTEL_RESOURCE_ATTRIBUTES` so per-pod identity surfaces in Tempo and Mimir without requiring per-environment values overrides. The operator-supplied `otel.resourceAttributes` value is appended after this prefix; an explicit `k8s.*` override wins because the OTel SDK takes the last value for duplicate keys.
+
 OTLP transport is HTTP/protobuf only. There is no `protocol` key — gRPC is out of scope and would require an opt-in build of `atc-server`.
+
+Setting `otel.enabled: true` with an empty `otel.endpoint` is rejected at template render time — `atc-server` treats an empty endpoint as disabled, so a blank value would silently turn telemetry off.
 
 When `otel.enabled: false` (the default) no `OTEL_*` env vars are injected and the OTel SDK is never initialized in the container.
 
