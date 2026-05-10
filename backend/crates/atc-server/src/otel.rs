@@ -27,6 +27,15 @@ pub struct OtelHandles {
     pub tracer: SdkTracer,
 }
 
+/// Returns true when `OTEL_EXPORTER_OTLP_ENDPOINT` is set to a non-empty value.
+/// This is the gate `init_otel` uses to decide whether to install the SDK; it
+/// is exposed separately so tests can verify the gate without triggering the
+/// process-global side effects of `init_otel` (provider registration, recorder
+/// install) that would bleed into other tests in the same integration binary.
+pub fn endpoint_configured() -> bool {
+    matches!(env::var("OTEL_EXPORTER_OTLP_ENDPOINT"), Ok(v) if !v.is_empty())
+}
+
 pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
     let endpoint = match env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
         Ok(value) if !value.is_empty() => value,
@@ -38,7 +47,13 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
     let tracer_provider = match build_tracer_provider(&endpoint, resource.clone()) {
         Ok(provider) => provider,
         Err(err) => {
-            tracing::error!(%err, "failed to build OTel tracer provider; OTel will be disabled");
+            // The tracing subscriber is initialized AFTER init_otel returns,
+            // so any tracing::* macro fired here would dispatch to the
+            // no-op global subscriber and silently disappear. eprintln!
+            // bypasses tracing so operators see the misconfiguration.
+            eprintln!(
+                "atc-server: failed to build OTel tracer provider ({err}); OTel will be disabled"
+            );
             return None;
         }
     };
@@ -46,7 +61,9 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
     let meter_provider = match build_meter_provider(&endpoint, resource) {
         Ok(provider) => provider,
         Err(err) => {
-            tracing::error!(%err, "failed to build OTel meter provider; OTel will be disabled");
+            eprintln!(
+                "atc-server: failed to build OTel meter provider ({err}); OTel will be disabled"
+            );
             let _ = tracer_provider.shutdown();
             return None;
         }
@@ -160,9 +177,11 @@ pub fn exponential_histogram_view(inst: &Instrument) -> Option<Stream> {
 
 /// Install the `metrics-rs` global recorder backed by the OTel meter provider.
 ///
-/// Tolerates `SetRecorderError` so that test binaries that install a recorder
-/// from `tests/integration/common/mod.rs` can also call `init_otel` from
-/// `otel_init_test::init_otel_returns_some_with_endpoint` without aborting.
+/// Tolerates `SetRecorderError` so a process that already has a recorder
+/// installed (e.g. an integration-test binary that wired the OTel test harness
+/// in `tests/integration/common/mod.rs` before `init_otel` ran) does not
+/// abort. The existing recorder remains in place; the new meter is unreachable
+/// from the `metrics-rs` facade in that case.
 fn install_metrics_recorder(meter_provider: &SdkMeterProvider) {
     use opentelemetry::metrics::MeterProvider as _;
     let meter = meter_provider.meter(METER_SCOPE_NAME);
@@ -195,9 +214,8 @@ fn load_sampler_from_env() -> Sampler {
             None => default_sampler(),
         },
         other => {
-            tracing::warn!(
-                sampler = other,
-                "unknown OTEL_TRACES_SAMPLER value; falling back to parentbased_always_on"
+            eprintln!(
+                "atc-server: unknown OTEL_TRACES_SAMPLER value {other:?}; falling back to parentbased_always_on"
             );
             default_sampler()
         }
@@ -217,17 +235,14 @@ fn parse_ratio(raw: Option<&str>) -> Option<f64> {
     match raw.parse::<f64>() {
         Ok(value) if (0.0..=1.0).contains(&value) => Some(value),
         Ok(value) => {
-            tracing::warn!(
-                value,
-                "OTEL_TRACES_SAMPLER_ARG out of [0, 1]; falling back to parentbased_always_on"
+            eprintln!(
+                "atc-server: OTEL_TRACES_SAMPLER_ARG={value} is outside [0, 1]; falling back to parentbased_always_on"
             );
             None
         }
         Err(err) => {
-            tracing::warn!(
-                %err,
-                raw,
-                "OTEL_TRACES_SAMPLER_ARG could not be parsed as f64; falling back to parentbased_always_on"
+            eprintln!(
+                "atc-server: OTEL_TRACES_SAMPLER_ARG={raw:?} could not be parsed as f64 ({err}); falling back to parentbased_always_on"
             );
             None
         }

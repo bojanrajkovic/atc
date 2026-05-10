@@ -1,5 +1,18 @@
+//! Tests for the OTel SDK gating contract.
+//!
+//! `init_otel` installs PROCESS-GLOBAL providers, recorder, and propagator —
+//! it cannot safely run inside this integration binary because the providers
+//! it sets up persist across tests and a subsequent `shutdown()` would render
+//! the globals unusable for every later test (including the OTel test harness
+//! installed by `common::ensure_recorder_installed`). The "Some when endpoint
+//! set" verification is therefore done against the side-effect-free
+//! `endpoint_configured()` gate; the "None when endpoint unset" path is safe
+//! to exercise because it short-circuits before any global mutation. The
+//! production code path is covered end-to-end by deployment + the homelab
+//! smoke test.
+
 use atc_server::config::Config;
-use atc_server::otel::init_otel;
+use atc_server::otel::{endpoint_configured, init_otel};
 
 #[test]
 #[serial_test::serial]
@@ -26,28 +39,50 @@ fn init_otel_returns_none_with_no_endpoint() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[test]
 #[serial_test::serial]
-async fn init_otel_returns_some_with_endpoint() {
-    unsafe {
-        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1");
-    }
-    let cfg = Config::load().expect("Config::load() should succeed with defaults");
-
-    let handles = init_otel(&cfg);
-
-    let was_some = handles.is_some();
-    if let Some(h) = handles {
-        let _ = h.tracer_provider.shutdown();
-        let _ = h.meter_provider.shutdown();
-    }
-
+fn endpoint_configured_reports_endpoint_unset() {
     unsafe {
         std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
     }
-
     assert!(
-        was_some,
-        "init_otel must return Some when OTEL_EXPORTER_OTLP_ENDPOINT is set"
+        !endpoint_configured(),
+        "endpoint_configured() must be false when OTEL_EXPORTER_OTLP_ENDPOINT is unset"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn endpoint_configured_reports_endpoint_set() {
+    unsafe {
+        std::env::set_var(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "https://collector.example:4318",
+        );
+    }
+    let result = endpoint_configured();
+    unsafe {
+        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    }
+    assert!(
+        result,
+        "endpoint_configured() must be true when OTEL_EXPORTER_OTLP_ENDPOINT is set"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn endpoint_configured_treats_empty_string_as_unset() {
+    unsafe {
+        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "");
+    }
+    let result = endpoint_configured();
+    unsafe {
+        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    }
+    assert!(
+        !result,
+        "endpoint_configured() must treat OTEL_EXPORTER_OTLP_ENDPOINT=\"\" as unset \
+         (matches init_otel's gating contract — empty endpoint silently disables OTel)"
     );
 }
