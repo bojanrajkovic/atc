@@ -26,6 +26,12 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
 chrono = "0.4"
+opentelemetry = { version = "0.31", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["http-proto", "reqwest-blocking-client", "metrics", "trace"] }
+tracing-opentelemetry = { version = "0.32", features = ["metrics"] }
+opentelemetry-http = "0.31"
+opentelemetry-semantic-conventions = "0.31"
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }

@@ -16,11 +16,15 @@ use atc_server::config;
 use atc_server::db;
 use atc_server::listener;
 use atc_server::metrics;
+use atc_server::otel::{self, OtelHandles};
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer};
 
 /// Validates that a database URL uses a scheme ATC supports (postgres:// or
 /// postgresql://) and exits the process with an actionable log message if not.
@@ -52,6 +56,35 @@ fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+fn init_tracing_subscriber(cfg: &config::Config, otel_handles: Option<&OtelHandles>) {
+    let filter = EnvFilter::try_new(&cfg.log_filter).unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let otel_layer = otel_handles.map(|handles| {
+        tracing_opentelemetry::layer()
+            .with_tracer(handles.tracer.clone())
+            .boxed()
+    });
+
+    if matches!(cfg.log_format, config::LogFormat::Json) {
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_span_list(true)
+            .boxed();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+    } else {
+        let fmt_layer = tracing_subscriber::fmt::layer().pretty().boxed();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+    }
 }
 
 async fn shutdown_signal(shutdown: CancellationToken) {
@@ -86,21 +119,9 @@ async fn main() {
         process::exit(1);
     });
 
-    let filter = tracing_subscriber::EnvFilter::try_new(&cfg.log_filter)
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let otel_handles: Option<OtelHandles> = otel::init_otel(&cfg);
 
-    if matches!(cfg.log_format, config::LogFormat::Json) {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .with_span_list(true)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .pretty()
-            .init();
-    }
+    init_tracing_subscriber(&cfg, otel_handles.as_ref());
 
     if let Some(ref db_url) = cfg.database_url {
         ensure_pg_scheme("ATC_DATABASE_URL", db_url);

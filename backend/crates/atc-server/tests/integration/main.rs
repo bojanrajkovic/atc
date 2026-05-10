@@ -29,6 +29,7 @@ mod metrics_outbox_lag_test;
 mod metrics_router_isolation;
 mod metrics_wake_coalesced_test;
 mod notify_listener_tests;
+mod otel_init_test;
 mod outbox_tests;
 mod persist_pg_tests;
 mod readyz;
