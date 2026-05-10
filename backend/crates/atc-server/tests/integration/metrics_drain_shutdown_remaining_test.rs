@@ -8,7 +8,7 @@
 //!
 //! Docker/OrbStack required.
 
-mod common;
+use crate::common;
 
 use serial_test::serial;
 
