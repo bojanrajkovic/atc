@@ -17,6 +17,7 @@ Helm chart packaging ATC for Kubernetes deployment. Published via two parallel c
 | `values.schema.json` | JSON Schema for values validation (`additionalProperties: false`) |
 | `templates/` | Kubernetes manifests (Deployment, Service, ServiceAccount, optional Ingress/HTTPRoute/ServiceMonitor) |
 | `tests/` | helm-unittest test suites |
+| `ci/test-values.yaml` | `ct install` values fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for kind-loaded image) |
 
 ## Contracts
 
@@ -42,4 +43,4 @@ helm template atc deploy/helm/atc | kubeconform -strict  # Validate against k8s 
 
 - Architecture: `docs/architecture/deployment.md`
 - Multi-replica smoke test runbook: `docs/architecture/deployment.md#multi-replica-smoke-test`
-- CI matrix: `docs/architecture/ci-pipeline.md` (Helm job section)
+- CI matrix: `docs/architecture/ci-pipeline.md` (Helm job section — covers `helm-lint`, `helm` kubeconform matrix, and `helm-install` kind+chart-testing)
