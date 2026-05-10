@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-05-02 (updated 2026-05-02 for setup-node version-comment correction — pinned SHA was already v6.3.0, comment said v6)
+Last verified: 2026-05-10
 
 ## Purpose
 
@@ -123,11 +123,20 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
-**Decision:** Helm chart published to `oci://ghcr.io/<owner>/charts/atc` via tag-triggered `release.yml` with Sigstore attestation
+**Decision:** Helm chart published via two parallel channels — OCI on `ghcr.io/<owner>/charts/atc` (Sigstore-attested) and a classic HTTP repo on GitHub Pages (`https://<owner>.github.io/<repo>`)
 
-**Alternatives considered:** GitHub Pages + chart-releaser; publish on every push to main; unsigned artifacts
+**Alternatives considered:** OCI only; GitHub Pages only; publish on every push to main; unsigned artifacts
 
-**Rationale:** The `publish-helm-chart` job added to `release.yml` packages the chart with `helm package`, pushes to ghcr.io OCI with `helm push`, and generates a Sigstore build-provenance attestation via `actions/attest-build-provenance`. The job is gated on `needs: [create-release, build-container, merge-manifest]`, ensuring a chart artifact is never published unless the corresponding container image succeeded. Publishing is tag-triggered (matching the rest of `release.yml`) rather than on every push to main, which guarantees chart versions correspond to tagged application releases. The rejected alternative of `helm/chart-releaser-action` publishes to a GitHub Pages branch and maintains a classic HTTP chart index — this is valid and may be added in a future issue, but it requires additional workflow and branch setup. OCI publishing integrates cleanly with the existing ghcr.io registry used for container images. The chart tarball is attested via Sigstore, providing SLSA provenance records verifiable by consumers.
+**Rationale:** Both channels are tag-triggered from `release.yml` so chart versions always correspond to tagged application releases, and they stay in lockstep on the same tag rather than drifting between distribution surfaces. The split exists because the two surfaces serve different consumer profiles:
+
+- **OCI (`publish-helm-chart`)** — the canonical channel for OCI-native workflows. Packages the chart with `helm package`, pushes to ghcr.io OCI with `helm push`, and generates a Sigstore build-provenance attestation via `actions/attest-build-provenance`. Gated on `needs: [create-release, build-container, merge-manifest]`, so a chart artifact is never published unless the corresponding container image succeeded. Integrates cleanly with the existing ghcr.io registry used for container images.
+- **GitHub Pages (`publish-helm-pages`)** — the recommended channel for consumers without GHCR authentication (a `helm repo add` URL works against any laptop or CI without registry credentials). Uses `helm/chart-releaser-action` to package the chart, attach a `.tgz` to a per-chart `atc-<version>` GitHub Release, and refresh `index.yaml` on the `gh-pages` branch. Gated on `needs: publish-helm-chart` so the OCI channel must succeed first; this preserves the existing supply-chain ordering (chart only lands publicly after its container image and OCI artifact are in place). The action is pinned to the SHA of `helm/chart-releaser-action@v1.7.0`, with the underlying `cr` binary explicitly pinned to `v1.8.1` (matching the `helm-cr` tool in `.mise.toml`) so local dry-runs and CI agree.
+
+`mark_as_latest: false` on the chart-releaser invocation prevents the per-chart `atc-<version>` release from clobbering the canonical `v<version>` release that `taiki-e/create-gh-release-action` already creates with the binaries. `fetch-depth: 0` on the checkout is required by chart-releaser, which diffs against prior tags. Permissions are `contents: write` only — Pages serves passively from the `gh-pages` branch, so no `pages: write` scope is needed.
+
+**Manual prerequisite:** GitHub Pages must be enabled with source = `gh-pages` branch in repo Settings → Pages. chart-releaser does not provision Pages itself — the first release run will create the `gh-pages` branch, but the operator must wire it to Pages once.
+
+The Sigstore attestation lives only on the OCI channel — `actions/attest-build-provenance` writes the attestation against a published OCI subject path, which the GitHub Pages tarball does not have. Consumers who need SLSA provenance verification should pull from OCI; the Pages channel is the auth-free convenience surface.
 
 ---
 
@@ -159,7 +168,6 @@ The regular `Dockerfile` is unchanged and remains the canonical entry point for 
 
 - CI pipeline (ci.yml, zizmor.yml — see ci-pipeline.md)
 - Application code
-- Helm chart publishing (future)
 - Deployment automation (future)
 - Supply chain scanning beyond Sigstore attestation
 

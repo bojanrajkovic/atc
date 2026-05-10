@@ -357,3 +357,55 @@ jobs:
       - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: ./dist/atc-*.tgz
+
+  # Mirror the chart to a classic HTTP Helm repo on GitHub Pages so consumers
+  # without GHCR auth can `helm repo add` and `helm install` directly. Runs
+  # alongside (and after) the OCI publish in publish-helm-chart so both
+  # distribution channels stay in lockstep on the same tag. chart-releaser
+  # creates a per-chart GitHub Release (`atc-<version>`) with the .tgz
+  # attached, then refreshes index.yaml on the gh-pages branch.
+  #
+  # Manual prerequisite: GitHub Pages must be enabled with source = `gh-pages`
+  # branch in repo Settings → Pages. chart-releaser does not provision Pages.
+  publish-helm-pages:
+    name: Publish Helm Chart to GitHub Pages
+    needs: publish-helm-chart
+    runs-on: [self-hosted, linux, amd64]
+    permissions:
+      # `contents: write` covers the gh-pages push and the per-chart GitHub
+      # Release. Pages serves passively from the branch — no `pages: write`.
+      contents: write
+    steps:
+      # fetch-depth: 0 — chart-releaser diffs the chart against prior tags to
+      # decide what's new. Shallow clones make it think nothing changed and
+      # silently no-op.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # chart-releaser-action commits the index update to gh-pages. Without
+      # a configured git identity the push fails. Use the actor identity so
+      # the commit is attributed to whoever triggered the release tag.
+      - name: Configure git identity
+        env:
+          GITHUB_ACTOR_ID: ${{ github.actor_id }}
+        run: |
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+
+      # mark_as_latest: false — taiki-e/create-gh-release-action already
+      # creates the canonical `v<version>` release with binaries marked
+      # latest. Letting chart-releaser mark its `atc-<version>` per-chart
+      # release as latest would clobber that.
+      #
+      # version pinned to v1.8.1 to match the helm-cr tool pinned in
+      # .mise.toml — keeps local dry-runs and CI on the same `cr` binary.
+      - uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
+        with:
+          version: v1.8.1
+          charts_dir: deploy/helm
+          pages_branch: gh-pages
+          mark_as_latest: false
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
