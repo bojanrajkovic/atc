@@ -17,7 +17,7 @@
 # stack in a side terminal.
 services:
   otel-dev-stack:
-    image: grafana/otel-lgtm:latest
+    image: grafana/otel-lgtm:0.27.1
     container_name: atc-otel-dev-stack
     ports:
       - "4317:4317"   # OTLP gRPC (unused by atc-server, but exposed by the image)
