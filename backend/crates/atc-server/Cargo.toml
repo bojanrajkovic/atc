@@ -31,6 +31,7 @@ opentelemetry-otlp = { version = "0.31", features = ["http-proto", "reqwest-bloc
 tracing-opentelemetry = { version = "0.32", features = ["metrics"] }
 opentelemetry-http = "0.31"
 opentelemetry-semantic-conventions = "0.31"
+http = "1"
 axum-otel-metrics = "0.13.0"
 metrics-exporter-otel = "0.3.1"
 

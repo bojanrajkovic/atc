@@ -86,3 +86,57 @@ fn endpoint_configured_treats_empty_string_as_unset() {
          (matches init_otel's gating contract — empty endpoint silently disables OTel)"
     );
 }
+
+#[test]
+#[serial_test::serial]
+fn endpoint_configured_rejects_missing_scheme() {
+    // The OTel SDK's HTTP exporter env-resolution silently swallows Uri parse
+    // errors and falls back to http://localhost:4318. A missing scheme must
+    // disable OTel here, not silently route telemetry to localhost.
+    unsafe {
+        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "collector.example:4318");
+    }
+    let result = endpoint_configured();
+    unsafe {
+        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    }
+    assert!(
+        !result,
+        "endpoint_configured() must reject scheme-less endpoints to prevent silent localhost fallback"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn endpoint_configured_rejects_unparseable_url() {
+    unsafe {
+        std::env::set_var(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "this is definitely not a valid url",
+        );
+    }
+    let result = endpoint_configured();
+    unsafe {
+        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    }
+    assert!(
+        !result,
+        "endpoint_configured() must reject unparseable URLs to prevent silent localhost fallback"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn endpoint_configured_accepts_http_scheme() {
+    unsafe {
+        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.local:4318");
+    }
+    let result = endpoint_configured();
+    unsafe {
+        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+    }
+    assert!(
+        result,
+        "endpoint_configured() must accept http:// endpoints (e.g. local dev otel-lgtm)"
+    );
+}

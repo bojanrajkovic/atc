@@ -27,13 +27,44 @@ pub struct OtelHandles {
     pub tracer: SdkTracer,
 }
 
-/// Returns true when `OTEL_EXPORTER_OTLP_ENDPOINT` is set to a non-empty value.
+/// Returns true when `OTEL_EXPORTER_OTLP_ENDPOINT` is set to a non-empty,
+/// parseable URL with an explicit scheme and host.
+///
 /// This is the gate `init_otel` uses to decide whether to install the SDK; it
 /// is exposed separately so tests can verify the gate without triggering the
 /// process-global side effects of `init_otel` (provider registration, recorder
 /// install) that would bleed into other tests in the same integration binary.
+///
+/// Validation is deliberate. The OTel SDK's HTTP exporter env-resolution
+/// silently swallows `Uri` parse errors and falls back to
+/// `http://localhost:4318/v1/*` (see opentelemetry-otlp 0.31
+/// `resolve_http_endpoint`). Without this guard, a typo like
+/// `htttp://collector:4318` or a missing-scheme value like `collector:4318`
+/// would silently route production telemetry to localhost and lose it.
+/// Parsing here means a bad endpoint disables OTel with a clear stderr
+/// warning instead.
 pub fn endpoint_configured() -> bool {
-    matches!(env::var("OTEL_EXPORTER_OTLP_ENDPOINT"), Ok(v) if !v.is_empty())
+    let raw = match env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return false,
+    };
+    match raw.parse::<http::Uri>() {
+        Ok(uri) if uri.scheme().is_some() && uri.host().is_some() => true,
+        Ok(uri) => {
+            eprintln!(
+                "atc-server: OTEL_EXPORTER_OTLP_ENDPOINT={raw:?} parsed but is missing scheme or host (scheme={:?}, host={:?}); disabling OTel — the SDK would otherwise silently route to http://localhost:4318",
+                uri.scheme_str(),
+                uri.host()
+            );
+            false
+        }
+        Err(err) => {
+            eprintln!(
+                "atc-server: OTEL_EXPORTER_OTLP_ENDPOINT={raw:?} failed to parse as URI ({err}); disabling OTel — the SDK would otherwise silently route to http://localhost:4318"
+            );
+            false
+        }
+    }
 }
 
 pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {

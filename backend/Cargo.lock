@@ -146,6 +146,7 @@ dependencies = [
  "figment",
  "futures-util",
  "hmac 0.13.0",
+ "http",
  "metrics",
  "metrics-exporter-otel",
  "metrics-process",
