@@ -64,7 +64,7 @@ get_docs_for_file() {
             echo "docs/architecture/release-pipeline.md"
             return
             ;;
-        release-please-config.json|.release-please-manifest.json)
+        release-please-config.json|.release-please-manifest.json|deploy/helm/cr.yaml)
             echo "docs/architecture/release-pipeline.md"
             return
             ;;

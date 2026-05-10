@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-09
+Last verified: 2026-05-10
 
 ## Purpose
 
@@ -10,8 +10,11 @@ ClusterIP Service and a dedicated ServiceAccount. Optional resources (Ingress, H
 ServiceMonitor, `helm test` hook) are each gated behind independent values flags that default
 to `false`.
 
-The chart is published as an OCI artifact to `oci://ghcr.io/bojanrajkovic/charts/atc` via
-the tag-triggered release workflow, alongside the container image and binary artifacts.
+The chart is published via two parallel channels on the tag-triggered release workflow,
+alongside the container image and binary artifacts: an OCI artifact at
+`oci://ghcr.io/bojanrajkovic/charts/atc` (Sigstore-attested), and a classic HTTP Helm
+repo on GitHub Pages at `https://bojanrajkovic.github.io/atc/charts` (recommended for
+consumers without GHCR authentication).
 
 ## Key Decisions
 
@@ -52,9 +55,9 @@ seccompProfile:
 **Alternatives considered:** Conditional metrics listener based on chart flag; separate metrics Deployment
 **Rationale:** The metrics listener is a backend concern — the binary always binds both ports. Gating the Service port exposure keeps Prometheus scraping optional without requiring chart-level changes to the container runtime behavior. This matches how CNCF projects (cert-manager, Linkerd) handle the same pattern.
 
-**Decision:** OCI-only chart publishing (`oci://ghcr.io/bojanrajkovic/charts/atc`)
-**Alternatives considered:** chart-releaser + GitHub Pages HTTP repository; both OCI and Pages
-**Rationale:** OCI eliminates the need for a separate `gh-pages` branch, a chart index, and a GitHub Pages site. Helm 3.8+ supports OCI natively. GitHub Pages + chart-releaser is deferred as a future-work issue for operators who cannot use OCI registries.
+**Decision:** Dual chart publishing channels — OCI (`oci://ghcr.io/bojanrajkovic/charts/atc`) and a classic HTTP repo on GitHub Pages (`https://bojanrajkovic.github.io/atc/charts`)
+**Alternatives considered:** OCI only; GitHub Pages only
+**Rationale:** OCI is the canonical channel for OCI-native workflows and is the only channel that carries the Sigstore build-provenance attestation. GitHub Pages is the recommended channel for consumers without GHCR authentication — `helm repo add` works against any laptop or CI without registry credentials. Both channels are tag-triggered from the same workflow and gated so the Pages publish only runs after the OCI publish succeeds; chart versions stay in lockstep. See `docs/architecture/release-pipeline.md` for the workflow shape and the manual `gh-pages` Pages-source prerequisite.
 
 **Decision:** Dual routing support — optional Ingress (`networking.k8s.io/v1`) and optional HTTPRoute (`gateway.networking.k8s.io/v1`)
 **Alternatives considered:** Ingress only; Gateway API only; neither (document port-forward)
@@ -248,7 +251,7 @@ kubectl -n atc-smoke rollout status deploy/atc
 
 ## Boundaries
 
-**Owns:** Kubernetes resource templates (Deployment, Service, ServiceAccount, and optional Ingress/HTTPRoute/ServiceMonitor), values schema validation, post-install operator guidance (NOTES.txt), chart packaging and OCI publishing
+**Owns:** Kubernetes resource templates (Deployment, Service, ServiceAccount, and optional Ingress/HTTPRoute/ServiceMonitor), values schema validation, post-install operator guidance (NOTES.txt), chart packaging, and chart publishing on the OCI and GitHub Pages channels
 **Does not own:** Container image build (Dockerfile, release.yml), backend configuration (ATC_* env vars are the interface), Kubernetes cluster provisioning, Ingress controller or Gateway controller installation, PostgreSQL provisioning
 **Prohibitions:** Do not embed secrets in chart templates — operators must use `existingSecret` or provide values at install time.
 

@@ -8,9 +8,19 @@ ATC (Actions Traffic Control) is a real-time GitHub Actions dashboard. This Helm
 
 For architecture details and design decisions, see [`docs/architecture/deployment.md`](../../../docs/architecture/deployment.md).
 
+## Install from GitHub Pages (Recommended)
+
+The chart is published as a classic HTTP Helm repo on GitHub Pages. This is the recommended path for consumers without GHCR authentication:
+
+```bash
+helm repo add atc https://bojanrajkovic.github.io/atc/charts
+helm repo update
+helm install atc atc/atc --version <version>
+```
+
 ## Install from OCI Registry
 
-The chart is published as an OCI artifact to `ghcr.io/bojanrajkovic/charts/atc`:
+The same chart is also published as an OCI artifact to `ghcr.io/bojanrajkovic/charts/atc` for OCI-native workflows:
 
 ```bash
 helm install atc oci://ghcr.io/bojanrajkovic/charts/atc --version <version>

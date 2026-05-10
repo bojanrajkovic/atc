@@ -1,0 +1,9 @@
+# chart-releaser config. Controls where `cr index` writes index.yaml on
+# the gh-pages branch. We use the `charts/` subpath so the gh-pages root
+# stays available for a future docs site at https://<host>/.
+#
+# In the action's default release mode .tgz artifacts go to per-chart
+# GitHub Releases, not gh-pages, so only index.yaml moves under charts/.
+# The urls: field inside index.yaml points at GitHub Release downloads,
+# which resolve regardless of where index.yaml itself lives.
+pages-index-path: charts
