@@ -75,9 +75,28 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 **Alternatives considered:** Keep coverage-then-verify order (original); `cargo clean` between steps; split verify-types into its own job
 **Rationale:** The verify-types step runs `cargo test --workspace -- export_bindings`, a non-instrumented build of the workspace. The coverage step runs `cargo llvm-cov --workspace`, a coverage-instrumented build. The two builds use different `RUSTFLAGS`, so cargo cannot reuse artifacts between them — each produces its own ~3-9 GB of `target/` content. Reordering (verify-types first) keeps the peak smaller because instrumented artifacts layer on top of a smaller baseline `target/` rather than two stacked coverage builds. **Historical note:** when this job ran on GitHub-hosted `ubuntu-24.04`, a `jlumbroso/free-disk-space` step preceded the build steps to reclaim ~10–15 GB of pre-installed software (Android SDK, .NET, Haskell, Docker images) that the runner OS layered on top of the ~14 GB of free disk; the linker failed with "No space left on device" without it. The step was removed when the job moved to the self-hosted `[self-hosted, linux, amd64]` runner whose image starts with ~640 GB of free disk and no GitHub-hosted bloat to reclaim. Restore the step (and the order rationale stays) if returning to GitHub-hosted Linux runners.
 
+## Dependency updates
+
+Mend Renovate manages every dependency surface (Cargo, npm/pnpm, Dockerfile, docker-compose, GitHub Actions, mise) under one configuration at `renovate.json`. Manifests are pinned exactly (`=X.Y.Z` for Cargo, caret stripped for npm/pnpm), Docker `FROM` lines and GitHub Action `uses:` references are SHA-pinned via the `helpers:pinGitHubActionDigests` and `docker:pinDigests` presets, and a weekly `lockFileMaintenance` run on Sunday morning regenerates `Cargo.lock` and `pnpm-lock.yaml` to absorb transitive bumps.
+
+Auto-merge gating combines four mechanisms:
+
+- **Required status checks on the `main` ruleset** (`Backend Result`, `Frontend Result`, `Helm Result`, `PR Checks`) — applies to manual merges from the GitHub UI as well as Renovate's own merge call.
+- **3-day release-age delay** (`minimumReleaseAge: "3 days"` at the top level) — gives upstream time to yank or patch before ATC's CI sees the bump.
+- **Renovate's built-in automerge polling** (not GitHub platform automerge) — `platformAutomerge: false` is set explicitly so the `automergeSchedule` (weekday mornings) is honored. Trade-off: ~30–60 min latency between green CI and merge in exchange for predictable merge windows.
+- **Per-rule overrides** — major updates open but never auto-merge; pre-1.0 minor bumps require manual review (Renovate's `isBreaking()` already classifies them as major for cargo, but npm classification is less reliable); `ts-rs`, `sqlx`, and `opentelemetry-rust` carry no-automerge overrides because their bumps cross compile-time contracts (regenerated TypeScript types, sqlx macros, OTel 0.x ecosystem coordination).
+
+Security advisories (Dependabot + OSV via `osvVulnerabilityAlerts: true`) bypass the schedule and release-age delay, automerge non-major updates, and require manual review for major. Both `schedule` and `automergeSchedule` are set to `at any time` on the security override so neither branch creation nor the automerge poll waits for the weekday window.
+
+Conventional-commit prefix mapping: runtime dependency bumps land as `fix(deps):` (release-please ships a patch release); dev/tooling bumps land as `chore(deps):` (no release). The Svelte ecosystem custom group does not force a prefix — Renovate picks `fix(deps):` only when the group's update set includes a runtime member (`svelte`).
+
+Cross-manager groups keep multi-manager pins in lockstep: `rust-toolchain` couples `.mise.toml`'s `rust` pin with the Dockerfile's `ARG RUST_VERSION` default; `pnpm-version` couples `.mise.toml`'s `pnpm` pin with the `packageManager` field on `package.json` and `frontend/package.json`. The helm-install CI job reads `tools.rust` and `tools.node` from `.mise.toml` via `mise config get` and threads them through `--build-arg` on `docker build`, so a mise bump that lands without a corresponding Dockerfile ARG default bump still produces a CI build using the mise-pinned version (the ARG default remains as a fallback for standalone `docker build`).
+
+Design rationale and the post-merge ruleset runbook (required status checks + Mend Renovate App bypass actor) are documented in [`docs/design-plans/2026-05-10-renovate-onboarding.md`](../design-plans/2026-05-10-renovate-onboarding.md).
+
 ## Boundaries
 
-**Owns:** Workflow file definitions (.github/workflows/), test execution configuration, linting rules, security scanning configuration
+**Owns:** Workflow file definitions (.github/workflows/), test execution configuration, linting rules, security scanning configuration, Renovate dependency policy (`renovate.json`)
 **Does not own:** Application code (test by backend/frontend tests), deployment pipelines, artifact generation, secret management
 **Prohibitions:** Never store secrets in workflow files — use GitHub Secrets. Never commit workflow files without matching updates to ci-pipeline.md. Never bypass the pre-push gate (no --no-verify).
 
@@ -88,3 +107,4 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 - `deploy/helm/ct.yaml` — chart-testing config consumed by the `helm-install` job
 - `deploy/helm/atc/ci/test-values.yaml` — `ct install` values fixture (image override + `pullPolicy: Never`)
 - `scripts/doc-mapping.sh` — Maps workflow file changes to this architecture doc
+- `renovate.json` — Mend Renovate configuration (see § Dependency updates)
