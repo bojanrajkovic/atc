@@ -346,12 +346,25 @@ jobs:
       - name: Install helm + kind + chart-testing + kubectl via mise
         run: mise install helm kind helm-ct kubectl
 
+      - name: Read Rust + Node versions from mise.toml
+        id: tool-versions
+        run: |
+          echo "rust=$(mise config get tools.rust)" >> "$GITHUB_OUTPUT"
+          echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+
       # Build the chart's image from this commit and load it into the
       # ephemeral kind cluster. `image.pullPolicy=Never` (set via the
       # ci/test-values.yaml fixture) tells the kubelet to use the loaded
       # image instead of trying to pull from the private GHCR repository.
+      # `--build-arg` passes the mise-pinned Rust/Node versions so the
+      # built image tracks `.mise.toml` rather than the Dockerfile's ARG
+      # defaults (which remain as fallbacks for standalone `docker build`).
       - name: Build atc image for kind
-        run: docker build -t atc:ct -f Dockerfile .
+        run: |
+          docker build -t atc:ct -f Dockerfile \
+            --build-arg RUST_VERSION=${{ steps.tool-versions.outputs.rust }} \
+            --build-arg NODE_VERSION=${{ steps.tool-versions.outputs.node }} \
+            .
 
       - name: Create kind cluster
         # `--wait` blocks until the control-plane Node is Ready. 120 s gives
