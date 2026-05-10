@@ -31,6 +31,7 @@ Helm chart packaging ATC for Kubernetes deployment. Published via two parallel c
 - **PodDisruptionBudget gating:** off by default; opt in via `podDisruptionBudget.enabled: true`. `minAvailable` (default `1`) and `maxUnavailable` are mutually exclusive — set one, leave the other null. The chart fails template rendering when both are set. Canonical write-up: `docs/architecture/deployment.md` § PodDisruptionBudget.
 - **HPA defaults are not provided.** Tracked as #8.
 - **Graceful shutdown surface:** `shutdown.preStopSleepSeconds` (default 5; `0` opts out and omits the `lifecycle` block) and `shutdown.terminationGracePeriodSeconds` (default 30) pair the EndpointSlice/preStop drain with `atc-server`'s ~13 s in-process budget. The `preStop` hook uses Kubernetes' native `Sleep` action (KEP-3960) — required because the runtime image is Distroless `cc:nonroot` (no `sleep` binary). `kubeVersion` is pinned to `>=1.32.0-0`. Canonical write-up: `docs/architecture/deployment.md` § Graceful shutdown.
+- **NetworkPolicy gating:** `networkPolicy.enabled` (default `false`) renders `networking.k8s.io/v1` NetworkPolicy with chart selectorLabels; `ingress`/`egress` rule lists pass through verbatim and drive `policyTypes`. Defaults are permissive (operators harden in production). Canonical write-up: `docs/architecture/deployment.md` § NetworkPolicy.
 
 ## Commands
 

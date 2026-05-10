@@ -1,0 +1,109 @@
+suite: NetworkPolicy — gating, selector wiring, rule pass-through
+
+templates:
+  - networkpolicy.yaml
+
+tests:
+  - it: renders no NetworkPolicy when networkPolicy.enabled is false (default)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a NetworkPolicy with the chart selectorLabels when networkPolicy.enabled is true
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: apiVersion
+          value: networking.k8s.io/v1
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/name"]
+          value: atc
+      - equal:
+          path: spec.podSelector.matchLabels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: declares both Ingress and Egress in policyTypes when both rule lists are non-empty
+    set:
+      networkPolicy.enabled: true
+    asserts:
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+
+  - it: passes custom egress rules through verbatim (toYaml round-trip)
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.egress:
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: postgres
+          ports:
+            - port: 5432
+              protocol: TCP
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: postgres
+            ports:
+              - port: 5432
+                protocol: TCP
+
+  - it: passes custom ingress rules through verbatim (toYaml round-trip)
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: ingress-nginx
+          ports:
+            - port: http
+              protocol: TCP
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: ingress-nginx
+            ports:
+              - port: http
+                protocol: TCP
+
+  - it: omits Ingress from policyTypes when ingress rules list is empty
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.ingress: []
+    asserts:
+      - notContains:
+          path: spec.policyTypes
+          content: Ingress
+      - contains:
+          path: spec.policyTypes
+          content: Egress
+
+  - it: omits Egress from policyTypes when egress rules list is empty
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.egress: []
+    asserts:
+      - contains:
+          path: spec.policyTypes
+          content: Ingress
+      - notContains:
+          path: spec.policyTypes
+          content: Egress

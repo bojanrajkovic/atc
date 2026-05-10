@@ -219,6 +219,41 @@ gateway:
   # -- Custom HTTPRoute rules. When empty, a default rule routing all traffic to the Service is generated.
   rules: []
 
+# Optional NetworkPolicy. Defaults are intentionally permissive so the chart
+# installs cleanly into any cluster; operators are expected to harden these
+# rules in production by restricting `from`/`to` peers and ports. See
+# docs/architecture/deployment.md § NetworkPolicy.
+networkPolicy:
+  # -- Whether to render the NetworkPolicy resource.
+  enabled: false
+  # -- Ingress rules (list of `networking.k8s.io/v1` NetworkPolicyIngressRule
+  # objects). Each rule passes through verbatim. The default permits inbound
+  # traffic to the chart's HTTP port from any namespace; restrict `from` to
+  # ingress-controller / monitoring namespaces in production.
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+  # -- Egress rules (list of `networking.k8s.io/v1` NetworkPolicyEgressRule
+  # objects). Each rule passes through verbatim. The default permits DNS
+  # lookups to the kube-system namespace and outbound HTTPS for the GitHub
+  # API; add a rule scoped to the PostgreSQL peer in production (the chart
+  # does not know your DB topology — namespace selector, IP block, or
+  # external CIDR are all valid options).
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: 443
+          protocol: TCP
+
 tests:
   # -- Whether to include the helm test hook Pod (test-connection).
   enabled: true

@@ -296,6 +296,32 @@
         }
       }
     },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to render the NetworkPolicy resource."
+        },
+        "ingress": {
+          "type": "array",
+          "description": "Ingress rules. Each item is a networking.k8s.io/v1 NetworkPolicyIngressRule, passed through verbatim.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "egress": {
+          "type": "array",
+          "description": "Egress rules. Each item is a networking.k8s.io/v1 NetworkPolicyEgressRule, passed through verbatim.",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
     "tests": {
       "type": "object",
       "additionalProperties": false,
