@@ -37,14 +37,13 @@ pub fn endpoint_configured() -> bool {
 }
 
 pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
-    let endpoint = match env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
-        Ok(value) if !value.is_empty() => value,
-        _ => return None,
-    };
+    if !endpoint_configured() {
+        return None;
+    }
 
     let resource = build_resource();
 
-    let tracer_provider = match build_tracer_provider(&endpoint, resource.clone()) {
+    let tracer_provider = match build_tracer_provider(resource.clone()) {
         Ok(provider) => provider,
         Err(err) => {
             // The tracing subscriber is initialized AFTER init_otel returns,
@@ -58,7 +57,7 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
         }
     };
 
-    let meter_provider = match build_meter_provider(&endpoint, resource) {
+    let meter_provider = match build_meter_provider(resource) {
         Ok(provider) => provider,
         Err(err) => {
             eprintln!(
@@ -100,13 +99,18 @@ fn build_resource() -> Resource {
 }
 
 fn build_tracer_provider(
-    endpoint: &str,
     resource: Resource,
 ) -> Result<SdkTracerProvider, Box<dyn std::error::Error>> {
+    // Do NOT call `.with_endpoint(...)` here. Per OTel spec, programmatic
+    // endpoint config is treated as the FULL signal URL (no `/v1/traces`
+    // append), while `OTEL_EXPORTER_OTLP_ENDPOINT` from env is treated as
+    // the BASE and the SDK appends the signal path. We let the SDK read
+    // the env var so operators get spec-compliant behavior — set
+    // `OTEL_EXPORTER_OTLP_ENDPOINT=https://collector:4318` and the SDK
+    // posts traces to `.../v1/traces` and metrics to `.../v1/metrics`.
     let exporter = SpanExporter::builder()
         .with_http()
         .with_protocol(Protocol::HttpBinary)
-        .with_endpoint(endpoint)
         .build()?;
 
     let processor = BatchSpanProcessor::builder(exporter).build();
@@ -119,13 +123,12 @@ fn build_tracer_provider(
 }
 
 fn build_meter_provider(
-    endpoint: &str,
     resource: Resource,
 ) -> Result<SdkMeterProvider, Box<dyn std::error::Error>> {
+    // See `build_tracer_provider` for why `.with_endpoint(...)` is omitted.
     let exporter = MetricExporter::builder()
         .with_http()
         .with_protocol(Protocol::HttpBinary)
-        .with_endpoint(endpoint)
         .build()?;
 
     let reader = PeriodicReader::builder(exporter).build();
