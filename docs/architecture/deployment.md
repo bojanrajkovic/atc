@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-06
+Last verified: 2026-05-09
 
 ## Purpose
 
@@ -88,11 +88,38 @@ The runtime invariants that make symmetric multi-replica safe (see [`state-exter
 - **Per-replica `broadcast_watermark`.** Each replica owns an `Arc<AtomicI64>` cursor advanced by the drain task only after a successful drain pass. `/v1/state` snapshot reads do an `Acquire` load before opening the snapshot transaction; the snapshot's `lastSeq` is bounded by what that replica has actually broadcast.
 - **REPEATABLE READ snapshots.** `/v1/state` opens a REPEATABLE READ transaction that reads `runs`, `jobs`, and `MAX(outbox.seq)` from one MVCC snapshot. Without this isolation level, a concurrent webhook commit between the runs SELECT and the seq SELECT could advance `lastSeq` past content the snapshot hasn't materialized — the frontend's `seq > lastSeq` filter would then permanently drop a real event.
 - **Ring-buffer dedup (single-delivery contract).** The drain task carries a 2048-seq ring buffer (~16 KB per replica) and skips a NOTIFY-driven row if its seq has already been broadcast on this replica. This preserves ADR 0003's no-frontend-dedup stance under gap-healing rescans (a re-fetched row never reaches the WS broadcast a second time).
-- **Drain heartbeat readiness.** `/readyz` 503s when the drain heartbeat is older than 30s. Routes a misbehaving replica out of Service endpoints fast enough that a client reconnect lands on a healthy peer.
+- **Drain heartbeat readiness.** `/readyz` 503s when the drain heartbeat is older than 30s, and short-circuits to 503 `{"status":"shutting_down"}` once `state.shutdown` is cancelled (see § Graceful shutdown below). Routes a misbehaving or terminating replica out of Service endpoints fast enough that a client reconnect lands on a healthy peer.
 
 **Sticky sessions are NOT required** and are discouraged outside specific cost-tuning scenarios. Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design (ADR 0002 D5). A client that always lands on the same replica via sticky cookies will never exercise the reconnect-across-replicas code path, masking gap-healing regressions in development. Operators with specific needs (e.g., reducing reconnect storms during rolling updates) can add sticky-cookie annotations themselves at the Ingress / HTTPRoute level — the chart does not do this by default.
 
 **Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8.
+
+## Graceful shutdown
+
+The chart pairs Kubernetes' pod-termination lifecycle with the in-process cooperative shutdown orchestration in `atc-server` (~13 s aggregate budget; see `docs/architecture/backend-server.md` § Operator shutdown contract).
+
+**preStop hold.** A `lifecycle.preStop.sleep` action runs before the kubelet sends SIGTERM. It absorbs the propagation delay between the EndpointSlice flip (`ready=false, serving=true, terminating=true` per `ProxyTerminatingEndpoints`) and kube-proxy / cloud-LB rule sync. The chart uses Kubernetes' native `Sleep` action (KEP-3960, beta default-on in 1.30, GA in 1.33) — chart `kubeVersion` is `>=1.32.0-0`. The native action is required because the runtime image is `gcr.io/distroless/cc-debian13:nonroot` and ships no `sleep` binary or shell; an `exec` preStop with `["/bin/sleep", "5"]` would `ENOENT` at runtime.
+
+**terminationGracePeriodSeconds.** The pod-spec field is rendered from `shutdown.terminationGracePeriodSeconds` (default `30`). Sized so that `preStopSleepSeconds + 13 s` (the aggregate shutdown budget) fits inside the grace period with headroom. Lowering this without also reducing the cooperative-shutdown budget risks SIGKILL during the drain window.
+
+**Readiness probe shutdown awareness.** `/readyz` short-circuits to 503 `{"status":"shutting_down"}` once the pod's `shutdown` token is cancelled — independent of the EndpointSlice flip. This is what cloud-LB controllers (AWS LBC, GCE NEG, Azure AGIC) and service meshes that watch readiness probes directly observe to start their own deregistration clocks. `/healthz` continues returning 200 unconditionally; the kubelet's liveness probe must not restart the pod mid-drain.
+
+**Timeline.**
+
+| Step | Source | Default |
+|------|--------|---------|
+| 1. EndpointSlice flips to `terminating` | kubelet / endpoint-slice controller | immediate on `deletionTimestamp` |
+| 2. kubelet runs `preStop sleep` | `shutdown.preStopSleepSeconds` | 5 s |
+| 3. kubelet sends SIGTERM | — | — |
+| 4. cooperative shutdown sequence | `shutdown.rs` | up to 13 s |
+| 5. SIGKILL if not exited | `shutdown.terminationGracePeriodSeconds` | 30 s budget |
+
+**Knobs.**
+
+| Values key | Default | Notes |
+|-----------|---------|-------|
+| `shutdown.preStopSleepSeconds` | `5` | Set to `0` to disable the hook (the chart omits the `lifecycle` block; required because Kubernetes rejects `Sleep.Seconds <= 0`). |
+| `shutdown.terminationGracePeriodSeconds` | `30` | Should be `>= preStopSleepSeconds + 13`. Soft constraint, not validated by the chart — operators tuning either knob downward should keep this relation in mind. |
 
 ## Multi-replica smoke test
 

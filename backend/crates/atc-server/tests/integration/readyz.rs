@@ -249,6 +249,135 @@ async fn no_pg_always_200() {
     assert_eq!(json["status"], "ok");
 }
 
+// ─── shutdown token cancelled ─────────────────────────────────────────────
+
+/// When state.shutdown is cancelled, GET /readyz returns 503 with
+///     `{"status":"shutting_down"}` — even without PG.
+#[tokio::test]
+#[serial]
+async fn shutdown_cancelled_returns_503() {
+    let layer = common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0
+        .clone();
+    let state_machine = Arc::new(RunStateMachine::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
+    let shutdown = CancellationToken::new();
+    let app_state = Arc::new(AppState {
+        state_machine,
+        webhook_tx,
+        webhook_secret: None,
+        seq,
+        pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
+        shutdown: shutdown.clone(),
+        ws_tracker: TaskTracker::new(),
+    });
+
+    shutdown.cancel();
+
+    let app = atc_server::routes::api_routes(layer)
+        .with_state(app_state)
+        .fallback(atc_server::assets::fallback_handler());
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/readyz")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "cancelled shutdown token must cause /readyz to return 503"
+    );
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["status"], "shutting_down",
+        "body should indicate shutting_down"
+    );
+}
+
+/// When state.shutdown is cancelled, GET /healthz still returns 200 — liveness
+///     must not restart the pod mid-drain.
+#[tokio::test]
+#[serial]
+async fn healthz_returns_200_after_shutdown() {
+    let layer = common::PROMETHEUS_INIT
+        .get_or_init(common::install_test_recorder)
+        .0
+        .clone();
+    let state_machine = Arc::new(RunStateMachine::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
+    ));
+    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+
+    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
+    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
+        state_machine.clone(),
+        seq.clone(),
+        webhook_tx.clone(),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
+    let shutdown = CancellationToken::new();
+    let app_state = Arc::new(AppState {
+        state_machine,
+        webhook_tx,
+        webhook_secret: None,
+        seq,
+        pg_pool: None,
+        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
+        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis())),
+        broadcast_watermark: Arc::new(AtomicI64::new(0)),
+        persist,
+        shutdown: shutdown.clone(),
+        ws_tracker: TaskTracker::new(),
+    });
+
+    shutdown.cancel();
+
+    let app = atc_server::routes::api_routes(layer)
+        .with_state(app_state)
+        .fallback(atc_server::assets::fallback_handler());
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/healthz")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "/healthz must return 200 even after shutdown is cancelled"
+    );
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["status"], "ok", "body should be ok");
+}
+
 // ─── fresh heartbeat → 200 ────────────────────────────────────────────────
 
 /// When the drain task is running and healthy, GET /readyz returns 200.

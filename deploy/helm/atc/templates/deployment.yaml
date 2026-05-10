@@ -101,6 +101,12 @@ spec:
             httpGet:
               path: /readyz
               port: http
+          {{- if gt (.Values.shutdown.preStopSleepSeconds | int) 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.shutdown.preStopSleepSeconds }}
+          {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -123,3 +129,4 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.shutdown.terminationGracePeriodSeconds }}

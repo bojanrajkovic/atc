@@ -54,6 +54,15 @@ async fn healthz() -> Json<HealthResponse> {
 }
 
 async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if state.shutdown.is_cancelled() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthResponse {
+                status: "shutting_down",
+            }),
+        )
+            .into_response();
+    }
     if let Some(pool) = &state.pg_pool {
         if let Err(e) = sqlx::query("SELECT 1").execute(pool).await {
             tracing::warn!(error = %e, "readyz: db check failed");

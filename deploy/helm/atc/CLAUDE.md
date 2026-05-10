@@ -1,6 +1,6 @@
 # CLAUDE.md — deploy/helm/atc
 
-Last verified: 2026-05-06
+Last verified: 2026-05-09
 
 > Canonical documentation lives in `docs/architecture/deployment.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -27,6 +27,7 @@ Helm chart packaging ATC for Kubernetes deployment. Published as OCI artifact to
 - **URL scheme validation:** the inline `config.databaseUrl` path is rejected at render time unless it starts with `postgres://` or `postgresql://`. The `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`), which exits with a remediation-naming log line before any sqlx connect call.
 - **Sticky sessions are NOT required.** Reconnect-then-snapshot via `/v1/state`+`lastSeq` is the design. Configuring sticky cookies is discouraged outside specific cost-tuning scenarios — it can mask gap-healing regressions in development.
 - **Anti-affinity / PDB / HPA defaults are not provided.** Tracked as #10 / #9 / #8.
+- **Graceful shutdown surface:** `shutdown.preStopSleepSeconds` (default 5; `0` opts out and omits the `lifecycle` block) and `shutdown.terminationGracePeriodSeconds` (default 30) pair the EndpointSlice/preStop drain with `atc-server`'s ~13 s in-process budget. The `preStop` hook uses Kubernetes' native `Sleep` action (KEP-3960) — required because the runtime image is Distroless `cc:nonroot` (no `sleep` binary). `kubeVersion` is pinned to `>=1.32.0-0`. Canonical write-up: `docs/architecture/deployment.md` § Graceful shutdown.
 
 ## Commands
 
