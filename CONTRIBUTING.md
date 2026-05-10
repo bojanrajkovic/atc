@@ -47,6 +47,33 @@ just test    # Runs all tests (requires Docker or OrbStack)
 export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
 ```
 
+## Inspecting OpenTelemetry Output Locally
+
+ATC exports traces and metrics over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; with the env var unset the SDK is never initialized. To inspect what `atc-server` emits during local development:
+
+1. Start the bundled all-in-one stack (Grafana otel-lgtm — OpenTelemetry collector, Tempo, Mimir, Loki, and a pre-wired Grafana UI in one container):
+
+   ```bash
+   just otel-dev-stack
+   ```
+
+2. Run the ATC dev servers with the exporter pointed at the collector. Set the env var in your shell, then run `just dev`:
+
+   ```bash
+   export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+   just dev
+   ```
+
+3. Open <http://localhost:3000> for the Grafana UI. The image ships with anonymous access enabled and Tempo/Mimir/Loki pre-configured as datasources, so you can navigate Explore -> Tempo to see spans, Explore -> Mimir to see metrics, and Explore -> Loki for whatever you forward there. Trigger any webhook or hit `/v1/state` to generate emissions.
+
+4. When done, tear the stack down:
+
+   ```bash
+   just otel-dev-stack-stop
+   ```
+
+`just dev` itself does not start the observability stack — it remains backend + frontend dev servers only, with no Docker dependency. The stack is opt-in via the dedicated recipe.
+
 ## Commit Conventions
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit message must follow this format:

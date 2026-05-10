@@ -162,6 +162,16 @@ dev:
 	cd backend && cargo run -p atc-server &
 	wait
 
+# Start the Grafana otel-lgtm all-in-one observability stack (collector, Tempo, Mimir, Loki, Grafana).
+# Run alongside `just dev` after exporting OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+# in the dev shell. Grafana UI is at http://localhost:3000.
+otel-dev-stack:
+	docker compose -f compose.otel-dev.yaml up -d
+
+# Stop and remove the otel-lgtm dev-stack container.
+otel-dev-stack-stop:
+	docker compose -f compose.otel-dev.yaml down
+
 # Audit dependencies for vulnerabilities and license compliance (parallel)
 audit:
 	#!/usr/bin/env bash

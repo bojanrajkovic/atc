@@ -4,9 +4,11 @@
 
 ## Overview
 
-ATC (Actions Traffic Control) is a real-time GitHub Actions dashboard. This Helm chart packages the ATC server for deployment to any conformant Kubernetes cluster (≥1.29). It creates a single Deployment with a ClusterIP Service and ServiceAccount, with optional routing resources (Ingress, Gateway API HTTPRoute) and observability resources (ServiceMonitor) that can be toggled independently. The chart is shipped with secure-by-default Pod Security Standards (restricted) enforcement baked in.
+ATC (Actions Traffic Control) is a real-time GitHub Actions dashboard. This Helm chart packages the ATC server for deployment to any conformant Kubernetes cluster (≥1.29). It creates a single Deployment with a ClusterIP Service and ServiceAccount, with optional routing resources (Ingress, Gateway API HTTPRoute) that can be toggled independently. Observability is exported via OpenTelemetry (OTLP/HTTP) when enabled — operators run a collector that exposes whatever scrape format their backend prefers. The chart is shipped with secure-by-default Pod Security Standards (restricted) enforcement baked in.
 
 For architecture details and design decisions, see [`docs/architecture/deployment.md`](../../../docs/architecture/deployment.md).
+
+> **Breaking change (chart 0.2+):** The `metrics.*` values block, `config.metricsAddr`, the `metrics` Service port, and the bundled `ServiceMonitor` template have been removed. ATC no longer exposes a `/metrics` endpoint; observability is exported via OTLP through the new `otel.*` block (see below). Operators upgrading from chart 0.1.x must remove any `metrics.*` and `config.metricsAddr` overrides — the values schema rejects them at render time. Configure your collector (Alloy, OpenTelemetry Collector, etc.) to receive OTLP on the endpoint passed via `otel.endpoint` and re-expose Prometheus scrape on the collector if your monitoring stack still scrapes that format.
 
 ## Install from GitHub Pages (Recommended)
 
@@ -93,12 +95,28 @@ See `values.yaml` for the complete list of configurable parameters. Every field 
 Key sections:
 - `replicaCount` — Number of Pod replicas. Values > 1 require an external Postgres connection string (chart-render-time guard).
 - `image` — Container image repository, tag, and pull policy
-- `config` — ATC application configuration (HTTP addr, metrics addr, database URL, listener URL, logging)
+- `config` — ATC application configuration (HTTP addr, database URL, listener URL, logging)
 - `existingSecret` — Reference an existing Secret for the database URL and listener URL
-- `metrics` — Whether to expose the metrics port (9090) on the Service; optional ServiceMonitor
+- `otel` — OpenTelemetry export. Set `enabled: true` and point `endpoint` at an OTLP/HTTP collector to inject the spec-standard `OTEL_*` env vars; defaults to disabled
 - `serviceAccount` — ServiceAccount creation and annotations
 - `service` — Service type and port configuration
 - `ingress` / `gateway` — Optional routing configuration
+
+### OpenTelemetry export
+
+When `otel.enabled: true`, the chart injects the spec-standard `OTEL_*` env vars into the container:
+
+| Values key | Env var | Purpose |
+|------------|---------|---------|
+| `otel.endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector URL (e.g. `http://otel-collector.observability:4318`). Required when enabled. |
+| `otel.serviceName` | `OTEL_SERVICE_NAME` | Resource attribute identifying the service. Defaults to `"atc"`. |
+| `otel.resourceAttributes` | `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` pairs (e.g. `deployment.environment=production,service.namespace=ingest`). |
+| `otel.sampler` | `OTEL_TRACES_SAMPLER` | Trace sampler. Defaults to `parentbased_always_on`. |
+| `otel.samplerArg` | `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (e.g. `"0.1"` for 10% root sampling with `parentbased_traceidratio`). |
+
+OTLP transport is HTTP/protobuf only. There is no `protocol` key — gRPC is out of scope and would require an opt-in build of `atc-server`.
+
+When `otel.enabled: false` (the default) no `OTEL_*` env vars are injected and the OTel SDK is never initialized in the container.
 
 ## Restricted Pod Security Standards
 

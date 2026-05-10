@@ -11,11 +11,5 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
-    {{- if .Values.metrics.enabled }}
-    - port: 9090
-      targetPort: metrics
-      protocol: TCP
-      name: metrics
-    {{- end }}
   selector:
     {{- include "atc.selectorLabels" . | nindent 4 }}

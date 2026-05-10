@@ -74,8 +74,6 @@ spec:
           env:
             - name: ATC_HTTP_ADDR
               value: {{ .Values.config.httpAddr | quote }}
-            - name: ATC_METRICS_ADDR
-              value: {{ .Values.config.metricsAddr | quote }}
             - name: ATC_LOG_FILTER
               value: {{ .Values.config.logFilter | quote }}
             {{- if .Values.config.logFormat }}
@@ -102,12 +100,21 @@ spec:
             - name: ATC_DATABASE_LISTENER_URL
               value: {{ .Values.config.databaseListenerUrl | quote }}
             {{- end }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otel.serviceName | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ .Values.otel.resourceAttributes | quote }}
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ .Values.otel.sampler | quote }}
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.otel.samplerArg | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: 8080
-              protocol: TCP
-            - name: metrics
-              containerPort: 9090
               protocol: TCP
           livenessProbe:
             httpGet:

@@ -1,0 +1,104 @@
+suite: OpenTelemetry env var injection — gated on otel.enabled
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: does not render any OTEL_* env var when otel.enabled is false (default)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_ENDPOINT
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_RESOURCE_ATTRIBUTES
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER_ARG
+          any: true
+
+  - it: renders all five OTEL_* env vars from values when otel.enabled is true
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://otel-collector.observability:4318"
+      otel.serviceName: "atc"
+      otel.resourceAttributes: "deployment.environment=production"
+      otel.sampler: "parentbased_traceidratio"
+      otel.samplerArg: "0.1"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "http://otel-collector.observability:4318"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_SERVICE_NAME
+            value: "atc"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_RESOURCE_ATTRIBUTES
+            value: "deployment.environment=production"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER
+            value: "parentbased_traceidratio"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_TRACES_SAMPLER_ARG
+            value: "0.1"
+
+  - it: does not inject the (now-removed) OTEL_EXPORTER_OTLP_PROTOCOL env var
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: OTEL_EXPORTER_OTLP_PROTOCOL
+          any: true
+
+  - it: does not inject the legacy ATC_METRICS_ADDR env var even when otel is enabled
+    set:
+      otel.enabled: true
+      otel.endpoint: "http://collector:4318"
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_METRICS_ADDR
+          any: true
+
+  - it: rejects the legacy metrics.enabled key via values schema
+    set:
+      metrics.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "metrics"
+
+  - it: rejects the legacy config.metricsAddr key via values schema
+    set:
+      config.metricsAddr: "0.0.0.0:9090"
+    asserts:
+      - failedTemplate:
+          errorPattern: "metricsAddr"

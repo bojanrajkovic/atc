@@ -4,6 +4,8 @@ Last verified: 2026-05-10
 
 > Canonical documentation lives in `docs/architecture/deployment.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
+> TODO: the architecture doc still describes the chart's pre-OTel surface (`metrics.*` block, ServiceMonitor, `/metrics` endpoint, `config.metricsAddr`). The Phase 6 documentation sweep rewrites `docs/architecture/deployment.md` for the OTLP-export model and adds the `otel.*` values reference.
+
 ## Purpose
 
 Helm chart packaging ATC for Kubernetes deployment. Published via two parallel channels on tag-triggered release: OCI on `oci://ghcr.io/bojanrajkovic/charts/atc` (Sigstore-attested) and a classic HTTP Helm repo at `https://bojanrajkovic.github.io/atc/charts` (no auth required). Index path uses the `/charts` subpath so the gh-pages root stays available for a future docs site — see `docs/architecture/release-pipeline.md` for the URL-stability rationale and `deploy/helm/cr.yaml` for the chart-releaser config.
@@ -15,14 +17,16 @@ Helm chart packaging ATC for Kubernetes deployment. Published via two parallel c
 | `Chart.yaml` | Chart metadata and version |
 | `values.yaml` | Default values (restricted Pod Security Standards) |
 | `values.schema.json` | JSON Schema for values validation (`additionalProperties: false`) |
-| `templates/` | Kubernetes manifests (Deployment, Service, ServiceAccount, optional Ingress/HTTPRoute/ServiceMonitor) |
-| `tests/` | helm-unittest test suites |
+| `templates/` | Kubernetes manifests (Deployment, Service, ServiceAccount, optional Ingress/HTTPRoute/HPA/PDB/NetworkPolicy) |
+| `tests/` | helm-unittest test suites + values fixtures consumed by `just helm-template` and `just helm-check` |
 | `ci/test-values.yaml` | `ct install` values fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for kind-loaded image) |
 
 ## Contracts
 
 - **Restricted security by default:** `runAsNonRoot: true`, UID 65532, seccomp RuntimeDefault. Overridable via values for operator edge cases.
-- **Optional resources gated by flags:** Ingress, HTTPRoute, ServiceMonitor each default to `false`.
+- **Optional resources gated by flags:** Ingress and HTTPRoute each default to `false`.
+- **OpenTelemetry export gated by `otel.enabled`:** when `true`, the deployment template injects five spec-standard env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`). When `false` (default) none are injected. OTLP transport is HTTP/protobuf only — no `protocol` values key.
+- **Removed in chart 0.2:** `metrics.*` values block, `config.metricsAddr`, the `metrics` Service port, and the `templates/servicemonitor.yaml` template are gone. The values schema's `additionalProperties: false` rejects any leftover `metrics.*` or `config.metricsAddr` overrides at render time. Operators upgrading from 0.1.x must remove those keys.
 - **PgBouncer + listener compatibility:** Operators running the main pool through transaction-mode PgBouncer MUST set `ATC_DATABASE_LISTENER_URL` (via `config.databaseListenerUrl` or `existingSecret.databaseListenerUrlKey`) to point the PG listener at a session-mode endpoint. Transaction-mode PgBouncer reassigns the underlying connection between transactions, silently dropping `LISTEN` registrations and breaking the listener task. The `existingSecret` path wins over the plain-value path when both are set.
 - **Multi-replica precondition:** `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. Enforced at template-render time via a `{{ fail }}` guard in `templates/deployment.yaml`.
 - **URL scheme validation:** the inline `config.databaseUrl` path is rejected at render time unless it starts with `postgres://` or `postgresql://`. The `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`), which exits with a remediation-naming log line before any sqlx connect call.
