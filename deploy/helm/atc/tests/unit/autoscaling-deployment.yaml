@@ -1,0 +1,48 @@
+suite: Autoscaling — Deployment coordination when HPA is enabled
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: drops spec.replicas from the Deployment when autoscaling.enabled is true (HPA owns the count)
+    set:
+      autoscaling.enabled: true
+      config.databaseUrl: "postgres://atc:atc@postgres:5432/atc"
+    asserts:
+      - notExists:
+          path: spec.replicas
+
+  - it: keeps spec.replicas when autoscaling.enabled is false (default)
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+
+  - it: fails when autoscaling.enabled is true with maxReplicas > 1 and no Postgres URL
+    set:
+      autoscaling.enabled: true
+      autoscaling.maxReplicas: 3
+    asserts:
+      - failedTemplate:
+          errorPattern: "config\\.databaseUrl"
+      - failedTemplate:
+          errorPattern: "existingSecret\\.name"
+
+  - it: renders successfully when autoscaling.enabled is true with maxReplicas=1 and no Postgres URL
+    set:
+      autoscaling.enabled: true
+      autoscaling.minReplicas: 1
+      autoscaling.maxReplicas: 1
+    asserts:
+      - notExists:
+          path: spec.replicas
+
+  - it: renders successfully when autoscaling.enabled is true with maxReplicas > 1 and existingSecret credentials
+    set:
+      autoscaling.enabled: true
+      autoscaling.maxReplicas: 4
+      existingSecret.name: atc-db-secret
+      existingSecret.databaseUrlKey: database_url
+    asserts:
+      - notExists:
+          path: spec.replicas
