@@ -237,3 +237,17 @@ shutdown:
   # (the worst-case in-process shutdown budget). Default 30 covers the default
   # 5 s preStop with comfortable headroom.
   terminationGracePeriodSeconds: 30
+
+# Optional PodDisruptionBudget for the ATC Deployment. Off by default —
+# single-replica deployments don't benefit from a PDB, and operators running
+# multi-replica should opt in explicitly. See docs/architecture/deployment.md
+# § PodDisruptionBudget for sizing guidance.
+podDisruptionBudget:
+  # -- Whether to render a PodDisruptionBudget for the ATC Deployment.
+  enabled: false
+
+  # -- minAvailable and maxUnavailable are mutually exclusive — set one, leave
+  # the other null. Both accept either an integer (pod count) or a percentage
+  # string like "50%". The chart fails template rendering when both are set.
+  minAvailable: 1
+  maxUnavailable: null
