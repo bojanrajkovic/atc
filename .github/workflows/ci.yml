@@ -367,8 +367,34 @@ jobs:
         run: ct install --config deploy/helm/ct.yaml --charts deploy/helm/atc
 
       - name: Delete kind cluster
+        # Self-healing cleanup. The kind cluster lives inside this pod's
+        # DinD sidecar; if dockerd inside dind hangs reaping the
+        # control-plane container, `kind delete` returns non-zero. Since
+        # the runner pod is ephemeral (ARC reaps it when the workflow
+        # finishes), any half-cleaned state dies with the pod — so
+        # cleanup flakes should not turn an otherwise-green `ct install`
+        # into a red job. Surface them as `::warning::` annotations for
+        # visibility instead of failing the step.
         if: always()
-        run: kind delete cluster --name atc-ct
+        run: |
+          set +e
+          kind delete cluster --name atc-ct
+          kind_rc=$?
+          if [ $kind_rc -eq 0 ]; then
+            exit 0
+          fi
+          echo "::warning title=kind cleanup::kind delete cluster exited $kind_rc; falling back to defensive docker cleanup"
+          # kind names containers <cluster>-control-plane (and -worker-N for HA topologies).
+          docker ps -a --filter "name=^atc-ct-" --format '{{.Names}}' | while read -r container; do
+            docker kill "$container" >/dev/null 2>&1
+            if docker rm -f -v "$container" >/dev/null 2>&1; then
+              echo "  cleaned: $container"
+            else
+              echo "::warning title=kind cleanup::could not remove $container; runner pod teardown will reap it"
+            fi
+          done
+          docker network rm kind >/dev/null 2>&1 || true
+          exit 0
 
   pr-checks:
     name: PR Checks
