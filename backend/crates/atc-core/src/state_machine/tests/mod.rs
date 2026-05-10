@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 mod edge_cases;
 mod event_ingestion;
 mod eviction;
+mod pure_application;
 mod queries;
 mod webhook_domain_updates;
 

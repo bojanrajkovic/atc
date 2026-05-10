@@ -9,7 +9,6 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::TimeDelta;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -59,6 +58,169 @@ impl From<InvalidJobTransition> for StateMachineError {
     fn from(e: InvalidJobTransition) -> Self {
         Self::InvalidJobTransition(e)
     }
+}
+
+/// Apply a run event to an optional existing run, returning the updated run.
+///
+/// - `existing = None` — first-sight creation; all fields come from the envelope.
+/// - `existing = Some(run)` — existing run is updated; unchanged fields are
+///   carried forward via struct-update syntax. Same-status events are idempotent.
+///
+/// No locks, no async, no side effects beyond the returned value.
+///
+/// # Errors
+///
+/// Returns [`StateMachineError::InvalidRunTransition`] if the event implies
+/// a status transition that the state machine rejects (e.g.,
+/// `Completed` -> `InProgress`).
+pub fn apply_run_event(
+    existing: Option<WorkflowRun>,
+    envelope: RunEventEnvelope,
+) -> Result<WorkflowRun, StateMachineError> {
+    let (target_status, conclusion) = match &envelope.action {
+        RunEvent::Requested => (RunStatus::Queued, None),
+        RunEvent::InProgress => (RunStatus::InProgress, None),
+        RunEvent::Completed { conclusion } => (RunStatus::Completed, Some(*conclusion)),
+    };
+
+    // Validate: check transition before touching state.
+    if let Some(ref run) = existing {
+        run.status.transition_to(target_status)?;
+    }
+
+    let run = match existing {
+        Some(existing) => WorkflowRun {
+            status: target_status,
+            conclusion: conclusion.or(existing.conclusion),
+            workflow_name: envelope.workflow_name.or(existing.workflow_name),
+            workflow_path: envelope.workflow_path.or(existing.workflow_path),
+            branch: envelope.branch,
+            head_sha: envelope.head_sha,
+            commit_message: envelope.commit_message,
+            display_title: envelope.display_title,
+            html_url: envelope.html_url,
+            run_started_at: envelope.run_started_at.or(existing.run_started_at),
+            updated_at: envelope.updated_at,
+            ..existing
+        },
+        None => WorkflowRun {
+            id: envelope.run_id,
+            org: envelope.org,
+            repo: envelope.repo,
+            workflow_name: envelope.workflow_name,
+            workflow_path: envelope.workflow_path,
+            branch: envelope.branch,
+            head_sha: envelope.head_sha,
+            commit_message: envelope.commit_message,
+            event: envelope.trigger_event,
+            display_title: envelope.display_title,
+            status: target_status,
+            conclusion,
+            html_url: envelope.html_url,
+            created_at: envelope.created_at,
+            run_started_at: envelope.run_started_at,
+            updated_at: envelope.updated_at,
+        },
+    };
+
+    Ok(run)
+}
+
+/// Apply a job event to an optional existing job, returning the updated job.
+///
+/// - `existing = None` — first-sight creation; all fields come from the envelope.
+/// - `existing = Some(job)` — existing job is updated; unchanged fields are
+///   carried forward. Steps use snapshot semantics (fully replaced).
+///
+/// Secondary indexes (`jobs_by_run`, `jobs_by_repo`) are **not** managed here;
+/// callers are responsible for index maintenance on first sight.
+///
+/// No locks, no async, no side effects beyond the returned value.
+///
+/// # Errors
+///
+/// Returns [`StateMachineError::InvalidJobTransition`] if the event implies
+/// a backward status transition on an existing job.
+pub fn apply_job_event(
+    existing: Option<Job>,
+    envelope: JobEventEnvelope,
+) -> Result<Job, StateMachineError> {
+    let (target_status, conclusion, runner, labels, steps) = match envelope.action {
+        JobEvent::Queued { labels, steps } => (JobStatus::Queued, None, None, labels, steps),
+        JobEvent::Waiting { labels, steps } => (JobStatus::Waiting, None, None, labels, steps),
+        JobEvent::InProgress {
+            runner,
+            labels,
+            steps,
+        } => (JobStatus::InProgress, None, runner, labels, steps),
+        JobEvent::Completed {
+            conclusion,
+            runner,
+            labels,
+            steps,
+        } => (
+            JobStatus::Completed,
+            Some(conclusion),
+            runner,
+            labels,
+            steps,
+        ),
+    };
+
+    // Validate: check transition before touching state.
+    if let Some(ref job) = existing {
+        job.status.transition_to(target_status)?;
+    }
+
+    let job = match existing {
+        Some(existing) => Job {
+            status: target_status,
+            conclusion: conclusion.or(existing.conclusion),
+            runner: runner.or(existing.runner),
+            labels,
+            steps, // Snapshot replacement
+            started_at: envelope.started_at.or(existing.started_at),
+            completed_at: envelope.completed_at.or(existing.completed_at),
+            ..existing
+        },
+        None => Job {
+            id: envelope.job_id,
+            name: envelope.name,
+            run_id: envelope.run_id,
+            status: target_status,
+            conclusion,
+            runner,
+            labels,
+            steps,
+            created_at: envelope.created_at,
+            started_at: envelope.started_at,
+            completed_at: envelope.completed_at,
+        },
+    };
+
+    Ok(job)
+}
+
+/// Return whether a job is eligible for eviction.
+///
+/// A job is evictable when:
+/// - its status is `Completed`,
+/// - `completed_at` is set, and
+/// - `now - completed_at > ttl`.
+///
+/// Active jobs (`Queued`, `Waiting`, `InProgress`) and completed jobs without
+/// a `completed_at` timestamp are never evictable.
+#[must_use]
+pub fn is_evictable(
+    job: &Job,
+    now: chrono::DateTime<chrono::Utc>,
+    ttl: std::time::Duration,
+) -> bool {
+    let ttl_delta = chrono::TimeDelta::from_std(ttl).unwrap_or(chrono::TimeDelta::MAX);
+    job.status == JobStatus::Completed
+        && job
+            .completed_at
+            .is_some_and(|t| now.signed_duration_since(t) > ttl_delta)
 }
 
 /// In-memory state machine for workflow runs and jobs.
@@ -155,57 +317,12 @@ impl RunStateMachine {
         envelope: RunEventEnvelope,
     ) -> Result<(), StateMachineError> {
         let mut state = self.state.write().await;
-
-        let (target_status, conclusion) = match &envelope.action {
-            RunEvent::Requested => (RunStatus::Queued, None),
-            RunEvent::InProgress => (RunStatus::InProgress, None),
-            RunEvent::Completed { conclusion } => (RunStatus::Completed, Some(*conclusion)),
-        };
-
-        // Validate: check transition before touching state.
-        // If this fails, the map is untouched.
-        if let Some(existing) = state.runs.get(&envelope.run_id) {
-            existing.status.transition_to(target_status)?;
-        }
-
-        // Apply: build the new value and insert.
-        // For updates, remove the old value and use struct update syntax
-        // to carry forward unchanged fields.
-        let run = match state.runs.remove(&envelope.run_id) {
-            Some(existing) => WorkflowRun {
-                status: target_status,
-                conclusion: conclusion.or(existing.conclusion),
-                workflow_name: envelope.workflow_name.or(existing.workflow_name),
-                workflow_path: envelope.workflow_path.or(existing.workflow_path),
-                branch: envelope.branch,
-                head_sha: envelope.head_sha,
-                commit_message: envelope.commit_message,
-                display_title: envelope.display_title,
-                html_url: envelope.html_url,
-                run_started_at: envelope.run_started_at.or(existing.run_started_at),
-                updated_at: envelope.updated_at,
-                ..existing // id, org, repo, event, created_at unchanged
-            },
-            None => WorkflowRun {
-                id: envelope.run_id,
-                org: envelope.org,
-                repo: envelope.repo,
-                workflow_name: envelope.workflow_name,
-                workflow_path: envelope.workflow_path,
-                branch: envelope.branch,
-                head_sha: envelope.head_sha,
-                commit_message: envelope.commit_message,
-                event: envelope.trigger_event,
-                display_title: envelope.display_title,
-                status: target_status,
-                conclusion,
-                html_url: envelope.html_url,
-                created_at: envelope.created_at,
-                run_started_at: envelope.run_started_at,
-                updated_at: envelope.updated_at,
-            },
-        };
-
+        // Clone the existing run; the pure fn validates transition, so we must
+        // not remove from the map until we know the call will succeed.
+        let existing = state.runs.get(&envelope.run_id).cloned();
+        let run = apply_run_event(existing, envelope)?;
+        // Transition validated — commit via CoW remove-then-insert.
+        state.runs.remove(&run.id);
         state.runs.insert(run.id, run);
         Ok(())
     }
@@ -234,70 +351,22 @@ impl RunStateMachine {
     ) -> Result<(), StateMachineError> {
         let mut state = self.state.write().await;
 
-        let (target_status, conclusion, runner, labels, steps) = match envelope.action {
-            JobEvent::Queued { labels, steps } => (JobStatus::Queued, None, None, labels, steps),
-            JobEvent::Waiting { labels, steps } => (JobStatus::Waiting, None, None, labels, steps),
-            JobEvent::InProgress {
-                runner,
-                labels,
-                steps,
-            } => (JobStatus::InProgress, None, runner, labels, steps),
-            JobEvent::Completed {
-                conclusion,
-                runner,
-                labels,
-                steps,
-            } => (
-                JobStatus::Completed,
-                Some(conclusion),
-                runner,
-                labels,
-                steps,
-            ),
-        };
-
         let job_id = envelope.job_id;
         let run_id = envelope.run_id;
-
-        // Validate: check transition before touching state.
-        if let Some(existing) = state.jobs.get(&job_id) {
-            existing.status.transition_to(target_status)?;
-        }
-
-        // Apply: build the new value and insert.
+        let org = envelope.org.clone();
+        let repo = envelope.repo.clone();
         let is_new = !state.jobs.contains_key(&job_id);
-
-        let job = match state.jobs.remove(&job_id) {
-            Some(existing) => Job {
-                status: target_status,
-                conclusion: conclusion.or(existing.conclusion),
-                runner: runner.or(existing.runner),
-                labels,
-                steps, // Snapshot replacement
-                started_at: envelope.started_at.or(existing.started_at),
-                completed_at: envelope.completed_at.or(existing.completed_at),
-                ..existing // id, name, run_id, created_at unchanged
-            },
-            None => Job {
-                id: job_id,
-                name: envelope.name,
-                run_id,
-                status: target_status,
-                conclusion,
-                runner,
-                labels,
-                steps,
-                created_at: envelope.created_at,
-                started_at: envelope.started_at,
-                completed_at: envelope.completed_at,
-            },
-        };
-
+        // Clone the existing job; the pure fn validates transition, so we must
+        // not remove from the map until we know the call will succeed.
+        let existing = state.jobs.get(&job_id).cloned();
+        let job = apply_job_event(existing, envelope)?;
+        // Transition validated — commit via CoW remove-then-insert.
+        state.jobs.remove(&job_id);
         state.jobs.insert(job_id, job);
 
         // Update secondary indexes on first sight
         if is_new {
-            let repo_key = RepoKey::new(envelope.org, envelope.repo);
+            let repo_key = RepoKey::new(org, repo);
             state.jobs_by_run.entry(run_id).or_default().insert(job_id);
             state
                 .jobs_by_repo
@@ -408,18 +477,12 @@ impl RunStateMachine {
 
         let now = self.clock.now();
         let mut state = self.state.write().await;
-        let ttl = TimeDelta::from_std(self.completed_ttl).unwrap_or(TimeDelta::MAX);
 
         // Find expired completed job IDs
         let expired_job_ids: Vec<JobId> = state
             .jobs
             .iter()
-            .filter(|(_, job)| {
-                job.status == JobStatus::Completed
-                    && job
-                        .completed_at
-                        .is_some_and(|t| now.signed_duration_since(t) > ttl)
-            })
+            .filter(|(_, job)| is_evictable(job, now, self.completed_ttl))
             .map(|(id, _)| *id)
             .collect();
 
