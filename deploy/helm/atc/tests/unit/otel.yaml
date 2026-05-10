@@ -102,3 +102,18 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "metricsAddr"
+
+  - it: rejects otel.enabled=true with empty otel.endpoint at render time
+    set:
+      otel.enabled: true
+      otel.endpoint: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "otel.enabled=true requires a non-empty otel.endpoint"
+
+  - it: rejects otel.enabled=true with otel.endpoint absent (default empty string)
+    set:
+      otel.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "otel.enabled=true requires a non-empty otel.endpoint"

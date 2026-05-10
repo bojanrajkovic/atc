@@ -24,6 +24,9 @@
 {{- if and $multiReplica (not $hasDbUrl) -}}
 {{- fail "Multi-replica mode requires a PostgreSQL connection string. Set config.databaseUrl=postgres://... or existingSecret.name (with existingSecret.databaseUrlKey). This applies when replicaCount > 1 (autoscaling disabled) or when autoscaling.enabled with autoscaling.maxReplicas > 1. The chart's ephemeral in-memory mode is single-replica only." -}}
 {{- end -}}
+{{- if and .Values.otel.enabled (eq (.Values.otel.endpoint | default "") "") -}}
+{{- fail "otel.enabled=true requires a non-empty otel.endpoint (HTTP/protobuf OTLP URL, e.g. http://otel-collector.observability:4318). atc-server treats an empty endpoint as disabled, so leaving it blank silently turns telemetry off." -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
