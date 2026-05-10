@@ -7,8 +7,8 @@ Last verified: 2026-05-10
 The ATC Helm chart (`deploy/helm/atc/`) packages the ATC server for deployment to any
 conformant Kubernetes cluster. It produces a single mandatory Deployment backed by a
 ClusterIP Service and a dedicated ServiceAccount. Optional resources (Ingress, HTTPRoute,
-ServiceMonitor, `helm test` hook) are each gated behind independent values flags that default
-to `false`.
+ServiceMonitor, NetworkPolicy, `helm test` hook) are each gated behind independent values flags
+that default to `false`.
 
 The chart is published via two parallel channels on the tag-triggered release workflow,
 alongside the container image and binary artifacts: an OCI artifact at
@@ -58,6 +58,10 @@ seccompProfile:
 **Decision:** Dual chart publishing channels — OCI (`oci://ghcr.io/bojanrajkovic/charts/atc`) and a classic HTTP repo on GitHub Pages (`https://bojanrajkovic.github.io/atc/charts`)
 **Alternatives considered:** OCI only; GitHub Pages only
 **Rationale:** OCI is the canonical channel for OCI-native workflows and is the only channel that carries the Sigstore build-provenance attestation. GitHub Pages is the recommended channel for consumers without GHCR authentication — `helm repo add` works against any laptop or CI without registry credentials. Both channels are tag-triggered from the same workflow and gated so the Pages publish only runs after the OCI publish succeeds; chart versions stay in lockstep. See `docs/architecture/release-pipeline.md` for the workflow shape and the manual `gh-pages` Pages-source prerequisite.
+
+**Decision:** Optional NetworkPolicy with permissive defaults; operators harden in production
+**Alternatives considered:** Ship a hardened default (rejected — requires operators to know their ingress controller and monitoring namespaces ahead of install, breaks the first-touch demo path); omit the resource entirely and require operators to author their own (rejected — leaves the chart without an opinionated peer-allowlist surface and forces ad-hoc YAML in every deployment); pin `policyTypes` to a fixed list independent of rule contents (rejected — diverges from Kubernetes' `policyTypes`-mirrors-`spec` convention and surprises operators reading the rendered manifest)
+**Rationale:** A NetworkPolicy resource is only authored when `networkPolicy.enabled=true`. The default ingress and egress rule lists permit traffic to the chart's HTTP port and DNS lookups to `kube-system`, with an open egress fallback for GitHub API and Postgres traffic — enough to install cleanly into any cluster without prior knowledge of the operator's network topology. The chart documents (here and in `values.yaml` comments) that operators are expected to restrict `from`/`to` peers in production. `policyTypes` mirrors which of `ingress` / `egress` is **present** as a key (not whether the list has rules): omitting a key entirely (e.g. `networkPolicy.ingress: null`) drops that direction from `policyTypes`, while setting it to an empty list (`ingress: []`) keeps it in `policyTypes` and renders the empty rule list verbatim — preserving Kubernetes' "deny-all this direction" semantics. Rule items are passed through verbatim via `toYaml`, matching how the chart already handles `ingress.hosts` and `gateway.rules` — operators who need cluster-specific peers (`namespaceSelector`, `ipBlock`, `podSelector`) author them in their values overlay without chart changes.
 
 **Decision:** Dual routing support — optional Ingress (`networking.k8s.io/v1`) and optional HTTPRoute (`gateway.networking.k8s.io/v1`)
 **Alternatives considered:** Ingress only; Gateway API only; neither (document port-forward)
@@ -151,6 +155,55 @@ The chart pairs Kubernetes' pod-termination lifecycle with the in-process cooper
 |-----------|---------|-------|
 | `shutdown.preStopSleepSeconds` | `5` | Set to `0` to disable the hook (the chart omits the `lifecycle` block; required because Kubernetes rejects `Sleep.Seconds <= 0`). |
 | `shutdown.terminationGracePeriodSeconds` | `30` | Should be `>= preStopSleepSeconds + 13`. Soft constraint, not validated by the chart — operators tuning either knob downward should keep this relation in mind. |
+
+## NetworkPolicy
+
+The chart renders an optional `networking.k8s.io/v1` NetworkPolicy when `networkPolicy.enabled=true` (default `false`). The resource scopes to the ATC pod via `atc.selectorLabels` and exposes `ingress` / `egress` as plain rule lists that are passed through verbatim via `toYaml`. `policyTypes` mirrors which keys are **present** under `networkPolicy`, distinguishing two operator intents that Kubernetes treats differently:
+
+| Intent | Values shape | Rendered manifest |
+|---|---|---|
+| No constraint on a direction | key omitted (`networkPolicy.ingress: null`) | direction absent from `policyTypes`; no `ingress:` field |
+| Default-deny a direction | key present, empty (`networkPolicy.ingress: []`) | direction in `policyTypes`; `ingress: []` rendered literally |
+| Allow listed peers | key present with rules (`networkPolicy.ingress: [{...}]`) | direction in `policyTypes`; rules rendered |
+
+Setting `ingress: []` and `egress: []` together yields the canonical isolation policy (deny all in both directions).
+
+**Defaults are permissive — harden in production.** The chart-shipped defaults permit inbound traffic to the chart's HTTP port from any namespace, DNS lookups to `kube-system`, and outbound TCP/443 for the GitHub API. The PostgreSQL peer is intentionally not in the default egress because the chart does not know whether the database lives in a sibling namespace, a managed RDS-class endpoint outside the cluster, or a `podSelector`-addressable pod — operators add a rule scoped to their topology. Operators are also expected to restrict the inbound `from` list to ingress-controller and monitoring namespaces in production. Example operator overlay:
+
+```yaml
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: http
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+```
+
+**`kubeVersion` requirement.** NetworkPolicy `networking.k8s.io/v1` is GA on every supported cluster (the chart's `kubeVersion: ">=1.32.0-0"` already covers it). Authors should still verify the cluster runs a CNI that enforces NetworkPolicy (Calico, Cilium, kube-router, etc.) before flipping `enabled: true` — many CNIs install successfully without policy enforcement and the resource becomes a no-op.
 
 ## Multi-replica smoke test
 
@@ -279,7 +332,7 @@ kubectl -n atc-smoke rollout status deploy/atc
 
 ## Boundaries
 
-**Owns:** Kubernetes resource templates (Deployment, Service, ServiceAccount, and optional Ingress/HTTPRoute/ServiceMonitor), values schema validation, post-install operator guidance (NOTES.txt), chart packaging, and chart publishing on the OCI and GitHub Pages channels
+**Owns:** Kubernetes resource templates (Deployment, Service, ServiceAccount, and optional Ingress/HTTPRoute/ServiceMonitor/NetworkPolicy), values schema validation, post-install operator guidance (NOTES.txt), chart packaging, and chart publishing on the OCI and GitHub Pages channels
 **Does not own:** Container image build (Dockerfile, release.yml), backend configuration (ATC_* env vars are the interface), Kubernetes cluster provisioning, Ingress controller or Gateway controller installation, PostgreSQL provisioning
 **Prohibitions:** Do not embed secrets in chart templates — operators must use `existingSecret` or provide values at install time.
 
@@ -298,8 +351,9 @@ kubectl -n atc-smoke rollout status deploy/atc
 - `deploy/helm/atc/templates/ingress.yaml` — Optional Ingress (`networking.k8s.io/v1`), gated on `ingress.enabled`; supports TLS, hosts, and custom annotations
 - `deploy/helm/atc/templates/httproute.yaml` — Optional HTTPRoute (`gateway.networking.k8s.io/v1`), gated on `gateway.enabled`; validates non-empty `parentRefs` via `{{ fail }}` guard
 - `deploy/helm/atc/templates/servicemonitor.yaml` — Optional ServiceMonitor (`monitoring.coreos.com/v1`), gated on `metrics.enabled && metrics.serviceMonitor.enabled`; includes label selector for Prometheus discovery
+- `deploy/helm/atc/templates/networkpolicy.yaml` — Optional NetworkPolicy (`networking.k8s.io/v1`), gated on `networkPolicy.enabled`; selectorLabels scope, `policyTypes` mirrors which of `ingress` / `egress` keys are present (so `ingress: []` renders as default-deny ingress; key omitted means no constraint on that direction), rule items pass through verbatim
 - `deploy/helm/atc/templates/tests/test-connection.yaml` — Helm test hook Pod with restricted Pod Security Standards; validates Service connectivity; excluded from charts via `helm.sh/hook: test` annotation
-- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, metrics) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
+- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, metrics, networkpolicy) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
 - `deploy/helm/atc/ci/test-values.yaml` — `ct install` fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for the kind-loaded local image). See `docs/architecture/ci-pipeline.md` for the job definition.
 
 ## Storage modes
