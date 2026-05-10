@@ -13,7 +13,7 @@ to `false`.
 The chart is published via two parallel channels on the tag-triggered release workflow,
 alongside the container image and binary artifacts: an OCI artifact at
 `oci://ghcr.io/bojanrajkovic/charts/atc` (Sigstore-attested), and a classic HTTP Helm
-repo on GitHub Pages at `https://bojanrajkovic.github.io/atc` (recommended for
+repo on GitHub Pages at `https://bojanrajkovic.github.io/atc/charts` (recommended for
 consumers without GHCR authentication).
 
 ## Key Decisions
@@ -55,7 +55,7 @@ seccompProfile:
 **Alternatives considered:** Conditional metrics listener based on chart flag; separate metrics Deployment
 **Rationale:** The metrics listener is a backend concern — the binary always binds both ports. Gating the Service port exposure keeps Prometheus scraping optional without requiring chart-level changes to the container runtime behavior. This matches how CNCF projects (cert-manager, Linkerd) handle the same pattern.
 
-**Decision:** Dual chart publishing channels — OCI (`oci://ghcr.io/bojanrajkovic/charts/atc`) and a classic HTTP repo on GitHub Pages (`https://bojanrajkovic.github.io/atc`)
+**Decision:** Dual chart publishing channels — OCI (`oci://ghcr.io/bojanrajkovic/charts/atc`) and a classic HTTP repo on GitHub Pages (`https://bojanrajkovic.github.io/atc/charts`)
 **Alternatives considered:** OCI only; GitHub Pages only
 **Rationale:** OCI is the canonical channel for OCI-native workflows and is the only channel that carries the Sigstore build-provenance attestation. GitHub Pages is the recommended channel for consumers without GHCR authentication — `helm repo add` works against any laptop or CI without registry credentials. Both channels are tag-triggered from the same workflow and gated so the Pages publish only runs after the OCI publish succeeds; chart versions stay in lockstep. See `docs/architecture/release-pipeline.md` for the workflow shape and the manual `gh-pages` Pages-source prerequisite.
 

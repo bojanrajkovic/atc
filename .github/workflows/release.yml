@@ -408,5 +408,6 @@ jobs:
           config: deploy/helm/cr.yaml
           pages_branch: gh-pages
           mark_as_latest: false
+          skip_existing: true
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
