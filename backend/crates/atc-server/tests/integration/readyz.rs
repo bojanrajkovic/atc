@@ -256,10 +256,7 @@ async fn no_pg_always_200() {
 async fn shutdown_cancelled_returns_503_with_pg() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -287,7 +284,7 @@ async fn shutdown_cancelled_returns_503_with_pg() {
 
     shutdown.cancel();
 
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state)
         .fallback(atc_server::assets::fallback_handler());
 
@@ -319,10 +316,7 @@ async fn shutdown_cancelled_returns_503_with_pg() {
 #[tokio::test]
 #[serial]
 async fn shutdown_cancelled_returns_503() {
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -352,7 +346,7 @@ async fn shutdown_cancelled_returns_503() {
 
     shutdown.cancel();
 
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state)
         .fallback(atc_server::assets::fallback_handler());
 
@@ -384,10 +378,7 @@ async fn shutdown_cancelled_returns_503() {
 #[tokio::test]
 #[serial]
 async fn healthz_returns_200_after_shutdown() {
-    let layer = common::PROMETHEUS_INIT
-        .get_or_init(common::install_test_recorder)
-        .0
-        .clone();
+    common::ensure_recorder_installed();
     let state_machine = Arc::new(RunStateMachine::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
@@ -417,7 +408,7 @@ async fn healthz_returns_200_after_shutdown() {
 
     shutdown.cancel();
 
-    let app = atc_server::routes::api_routes(layer)
+    let app = atc_server::routes::api_routes()
         .with_state(app_state)
         .fallback(atc_server::assets::fallback_handler());
 
