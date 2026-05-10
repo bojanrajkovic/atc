@@ -4,8 +4,6 @@ Last verified: 2026-05-10
 
 > Canonical documentation lives in `docs/architecture/deployment.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
-> TODO: the architecture doc still describes the chart's pre-OTel surface (`metrics.*` block, ServiceMonitor, `/metrics` endpoint, `config.metricsAddr`). The Phase 6 documentation sweep rewrites `docs/architecture/deployment.md` for the OTLP-export model and adds the `otel.*` values reference.
-
 ## Purpose
 
 Helm chart packaging ATC for Kubernetes deployment. Published via two parallel channels on tag-triggered release: OCI on `oci://ghcr.io/bojanrajkovic/charts/atc` (Sigstore-attested) and a classic HTTP Helm repo at `https://bojanrajkovic.github.io/atc/charts` (no auth required). Index path uses the `/charts` subpath so the gh-pages root stays available for a future docs site — see `docs/architecture/release-pipeline.md` for the URL-stability rationale and `deploy/helm/cr.yaml` for the chart-releaser config.

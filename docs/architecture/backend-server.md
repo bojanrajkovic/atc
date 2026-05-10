@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-09
+Last verified: 2026-05-10
 
 ## Purpose
 
@@ -131,11 +131,12 @@ The snapshot returns `QueryResult` only (no inline pool-stats computation). The 
 
 Config fields and their `ATC_*` env var overrides:
 - `http_addr` (`ATC_HTTP_ADDR`) — default `0.0.0.0:8080`
-- `metrics_addr` (`ATC_METRICS_ADDR`) — default `0.0.0.0:9090`
 - `database_url` (`ATC_DATABASE_URL`) — default `None`
 - `database_listener_url` (`ATC_DATABASE_LISTENER_URL`) — default `None` (falls back to `ATC_DATABASE_URL` when unset). Use to point the PG listener at a session-mode endpoint when the main pool runs through transaction-mode PgBouncer.
 - `log_filter` (`ATC_LOG_FILTER`) — default `"info"` (passed to `EnvFilter`)
 - `log_format` (`ATC_LOG_FORMAT`) — default `pretty` in debug builds, `json` in release builds
+
+OpenTelemetry export is configured via spec-standard `OTEL_*` env vars read by the SDK directly (and, for the sampler, by `init_otel`); they are not modeled in `Config`. See `deployment.md` § "Environment Variables" for the operator-facing list and `metrics.md` § "Metric and span authoring contract" for the authoring rules.
 
 **Decision:** Branch tracing format on `LogFormat` (debug → pretty, release → JSON)
 **Alternatives considered:** Always JSON, always pretty, runtime-only env var
@@ -193,11 +194,22 @@ macOS/OrbStack users: export `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
 **Does not own:** Domain logic (atc-core), GitHub API integration (atc-github), frontend build process, authentication
 **Prohibitions:** Do not put business logic in route handlers — extract to atc-core. Do not call GitHub API directly from handlers — use atc-github. Do not serve assets from filesystem in release mode — always use rust-embed.
 
-## Metrics
+## Observability
 
-The server binds a second TCP listener (default `0.0.0.0:9090`, overridden via `ATC_METRICS_ADDR`) for the Prometheus scrape endpoint. Serving metrics on a separate port keeps the metrics surface out of the application ingress and lets Kubernetes `NetworkPolicy` rules grant scrape access to Prometheus without exposing the full API.
+ATC emits metrics and spans through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, `init_otel` (`backend/crates/atc-server/src/otel.rs`) builds an OTLP/HTTP tracer provider and a meter provider, installs the `metrics-exporter-otel` recorder behind the `metrics` crate facade, registers `TraceContextPropagator` globally, and layers `axum-otel-metrics::HttpMetricsLayer` onto `routes::api_routes()` for HTTP request duration. With the env var unset, the SDK is never initialized — no provider, no exporter, no background-task overhead — and `metrics::counter!()` macros resolve through the `metrics` facade's no-op recorder.
 
-See [`metrics.md`](metrics.md) for the metric authoring contract, axum-prometheus wiring, and per-metric interpretation blocks for every metric exposed at `/metrics`.
+The metric and span authoring contract — naming, attributes, propagation, the `tokio::spawn` Instrument-trait gotcha, the histogram aggregation choice, the per-metric interpretation blocks, and the per-span inventory — lives in [`metrics.md`](metrics.md). This section describes the wiring; the contract lives there.
+
+### Tracing
+
+- **Boundary instrumentation.** The webhook ingress span (`webhook.handler`, in `routes::webhook_handler`) is the root of every webhook trace. It is constructed manually (not via `#[instrument]`) so `traceparent` extraction can attach the parent context before the span is entered. Its descendants are `webhook.verify` (atc-github), `webhook.parse` (atc-github), `persist.apply.run_event` / `persist.apply.job_event` → `persist.notify.emit` (atc-server `persist.rs`). The drain pipeline emits `drain.task` → `drain.pass` → N×`drain.broadcast`; the listener emits `listener.task` → N×`listener.recv`. See [`metrics.md`](metrics.md) § "Span inventory" for attributes.
+- **W3C trace context.** `TraceContextPropagator` is installed globally in `init_otel`. Incoming `traceparent` headers extract a parent context that the webhook handler attaches to the request span before the first poll. Absent or malformed headers produce a fresh root.
+- **Sampler.** Default `ParentBased(root=AlwaysOn)`. `init_otel` reads `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` directly (the SDK's autoload does not yet pick these up reliably as of opentelemetry 0.31) and falls back to the default on unrecognized or out-of-range values, with a `tracing::warn!` log.
+- **Tokio spawn discipline.** Long-lived spawned futures (`spawn_listener_task`, `spawn_drain_task`) construct a task-lifetime root span at spawn time and attach it via `.instrument(span)` from the `tracing::Instrument` trait. Per-iteration child spans (`drain.pass`, `drain.broadcast`, `listener.recv`) attach as descendants automatically because they are constructed inside the instrumented future.
+
+### Shutdown ordering
+
+OTel SDK tear-down runs after every emitter has joined. `run_shutdown_orchestration` (in `backend/crates/atc-server/src/shutdown.rs`) joins drain, listener, eviction, process collector, and the axum graceful-shutdown drain BEFORE calling `tracer_provider.shutdown()` and `meter_provider.shutdown()`. The "no live emitter when shutdown fires" invariant is documented in a comment block at the OTel shutdown step in `shutdown.rs`; new emitter categories MUST extend that comment so the next contributor knows where to plug their join.
 
 ## Server Wiring
 
@@ -354,22 +366,23 @@ Server wiring configuration extends the existing figment-based config:
 
 In `main.rs`:
 1. Load config via `Config::load()`
-2. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
-3. Create `RunStateMachine` with `SystemClock` and TTL (default 1 hour)
-4. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
-5. Call `metrics::register_pg_write_counters()` after the recorder is installed.
-6. Construct `persist: Arc<dyn PersistentStore>` — `PgStore::new(pool)` when `pg_pool` is `Some`, otherwise `InMemoryStore::new(state_machine, seq, webhook_tx)` (ADR 0005).
-7. Create `AppState` with all components (`state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`) and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not touch `pg_pool` for the write path.
-8. Start background eviction task: `start_eviction_task(state_machine.clone())`
-9. **If `pg_pool` is `Some`** (before `axum::serve`):
-   1. Derive `listener_url` from `cfg.database_listener_url` if set, else fall back to `cfg.database_url`.
-   2. `PgListener::connect(&listener_url)` — fail-fast on Err (exit(1)).
-   3. `listener.listen(NOTIFY_CHANNEL)` — fail-fast on Err (exit(1)).
-   4. `SELECT COALESCE(MAX(seq), 0) FROM outbox` — query the initial watermark; seed both the drain task's local watermark and `broadcast_watermark` from this value (so `/v1/state` returns a sensible cursor before the first post-startup drain pass). Fail-fast on Err (exit(1)).
-   5. Spawn listener task (receives PG NOTIFYs, calls `min_pending_seq.fetch_min(seq, Release)`, fires `Arc<Notify>`).
-   6. Spawn drain task (wakes on `Arc<Notify>` or 5 s heartbeat tick; NOTIFY-driven passes fetch `seq > pass_start_floor ORDER BY seq` in pages, apply ring-buffer dedup, broadcast `SeqEvent`s, advance `watermark`; every iteration updates `last_drain_pass_at`).
-10. Bind the server to `http_addr` via `axum::serve`
-11. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
+2. Initialize the OTel pipeline by calling `otel::init_otel(&cfg)`. Returns `Some(handles)` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (tracer/meter providers built, propagator installed, `metrics-exporter-otel` recorder installed); returns `None` otherwise. The handles flow into `run_shutdown_orchestration` so providers flush during graceful shutdown.
+3. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
+4. Create `RunStateMachine` with `SystemClock` and TTL (default 1 hour)
+5. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
+6. Call `metrics::register_build_info()`, `metrics::register_pg_write_counters()`, and `metrics::register_listener_metrics()`. These run unconditionally — when OTel is enabled the descriptions land on the OTel meter; when OTel is disabled the macros resolve through the no-op recorder and the calls are cheap no-ops.
+7. Construct `persist: Arc<dyn PersistentStore>` — `PgStore::new(pool)` when `pg_pool` is `Some`, otherwise `InMemoryStore::new(state_machine, seq, webhook_tx)` (ADR 0005).
+8. Create `AppState` with all components (`state_machine`, `webhook_tx`, `webhook_secret`, `seq: Arc<Mutex<u64>>`, `persist`, `pg_pool`, `min_pending_seq`, `last_drain_pass_at`, `broadcast_watermark`) and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not touch `pg_pool` for the write path.
+9. Start background eviction task: `start_eviction_task(state_machine.clone())`
+10. **If `pg_pool` is `Some`** (before `axum::serve`):
+    1. Derive `listener_url` from `cfg.database_listener_url` if set, else fall back to `cfg.database_url`.
+    2. `PgListener::connect(&listener_url)` — fail-fast on Err (exit(1)).
+    3. `listener.listen(NOTIFY_CHANNEL)` — fail-fast on Err (exit(1)).
+    4. `SELECT COALESCE(MAX(seq), 0) FROM outbox` — query the initial watermark; seed both the drain task's local watermark and `broadcast_watermark` from this value (so `/v1/state` returns a sensible cursor before the first post-startup drain pass). Fail-fast on Err (exit(1)).
+    5. Spawn listener task (receives PG NOTIFYs, calls `min_pending_seq.fetch_min(seq, Release)`, fires `Arc<Notify>`).
+    6. Spawn drain task (wakes on `Arc<Notify>` or 5 s heartbeat tick; NOTIFY-driven passes fetch `seq > pass_start_floor ORDER BY seq` in pages, apply ring-buffer dedup, broadcast `SeqEvent`s, advance `watermark`; every iteration updates `last_drain_pass_at`).
+11. Bind the server to `http_addr` via `axum::serve`
+12. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
 
 The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
 
@@ -506,7 +519,8 @@ Aggregate worst-case shutdown: ~13 seconds.
 - `backend/crates/atc-server/src/state.rs` — AppState struct (includes `persist: Arc<dyn PersistentStore>` and `seq: Arc<Mutex<u64>>` per ADR 0005) and `SeqEvent { seq, event }` type; `StateSnapshot` lives in `routes.rs`
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
-- `backend/crates/atc-server/src/metrics.rs` — Prometheus layer, build_info gauge, process collector, PG write counter registration (`atc_pg_write_failures_total`, `atc_pg_in_memory_drift_total`)
+- `backend/crates/atc-server/src/otel.rs` — `init_otel`: builds the OTLP/HTTP tracer + meter providers (when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), installs `TraceContextPropagator` globally, registers the shared `exponential_histogram_view` so all histograms emit as base-2 exponential aggregations, and installs the `metrics-exporter-otel` recorder behind the `metrics` facade. `shutdown(handles)`: flushes both providers; called from `run_shutdown_orchestration` after every emitter has joined.
+- `backend/crates/atc-server/src/metrics.rs` — `register_*` helpers (build_info gauge, PG write counters, listener/drain metrics — all emit through the OTel-backed `metrics` recorder installed by `otel::init_otel`); `spawn_process_collector` for process metrics. The metric inventory and authoring contract live in [`metrics.md`](metrics.md).
 - `backend/crates/atc-server/src/persist.rs` — `pub trait PersistentStore`; `PgStore` and `InMemoryStore` impls (ADR 0005); `pub(crate)` transaction helpers for UPSERT+outbox+NOTIFY pattern; `pub(crate)` read helpers for state handler
 - `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. Spawned only when `pg_pool` is `Some`. The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes

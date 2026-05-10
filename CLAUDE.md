@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-05-08
+Last verified: 2026-05-10
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -65,7 +65,7 @@ just build    # Production build
 |------|-------|
 | Architecture docs | `docs/architecture/` (created per feature) |
 | Deployment | `docs/architecture/deployment.md` |
-| Metrics surface (`/metrics` endpoint) | `docs/architecture/metrics.md` |
+| Observability (metrics + spans + OTel pipeline) | `docs/architecture/metrics.md` |
 | Architecture decisions (ADRs) | `docs/architecture-decisions/` |
 | Design plans | `docs/design-plans/` |
 | Pre-code design & research | `docs/ideation/` (architecture research, UI design, prototype, competitive analysis) |

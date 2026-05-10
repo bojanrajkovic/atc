@@ -333,17 +333,13 @@ Created only for high-risk directories where AI agents make costly mistakes. Eac
 
 Do not create these speculatively — wait until agents encounter sharp edges in a specific directory, then create a targeted directive extract.
 
-### Metrics
+### Observability
 
-ATC exposes Prometheus metrics at `/metrics`. Two rules apply when adding or modifying metrics.
+ATC exports metrics and spans through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes and pushes OTLP/HTTP to the configured collector; with the env var unset, no provider, exporter, or background task is initialized. Two contributor-facing rules apply when adding or modifying observability surfaces.
 
-**Naming convention:**
-- `atc_` project prefix on every metric
-- `pg_` subsystem prefix for Postgres-path metrics; reserve future subsystem prefixes (`http_`, `ws_`, etc.) for analogous separation
-- `_total` suffix for monotonic counters
-- `_seconds` suffix for time-valued metrics regardless of metric type (counter, gauge, histogram). Prometheus best practice — `process_start_time_seconds` is a gauge, `axum_http_requests_duration_seconds` is a histogram
-- `_bytes` suffix for memory or byte-valued metrics
-- Gauges that aren't time- or byte-valued carry no unit suffix; the description names the unit
-- No replica or pod label is baked into any metric — replica identity is added by the monitoring stack at scrape time as standard target labels (e.g., `pod`, `instance`)
+**Naming and attribute conventions** (metrics and spans):
+- `atc_` project prefix on every metric; snake_case names; `_total` for counters; `_seconds` for time-valued; `_bytes` for byte-valued.
+- Lowercase keys for metric attributes; no high-cardinality values; no PII; no replica/pod labels (target attributes are injected at the collector).
+- Span names use a dotted hierarchy that names the boundary (`webhook.handler`, `persist.apply.run_event`, `drain.broadcast`). Late-bound span attributes use `tracing::field::Empty` at construction and `Span::current().record(...)` once the value is known.
 
-**Authoring contract:** every new metric ships with the seven-element interpretation-surface block (name, type, labels with source, semantics, per-replica scope, aggregation guidance, example PromQL) in [`docs/architecture/metrics.md`](docs/architecture/metrics.md) § "Metric authoring contract". The contract is canonically defined there — this section codifies the rule that contributors who add metrics MUST extend that section before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) blocks the push if backend metric changes land without the matching `metrics.md` update.
+**Authoring contract:** every new metric ships with the seven-element interpretation block (name, type, attributes with source, semantics, per-replica scope, aggregation guidance, example PromQL); every new span boundary lands in the span inventory. Both surfaces are canonically documented in [`docs/architecture/metrics.md`](docs/architecture/metrics.md) § "Metric and span authoring contract" — this section codifies the rule that contributors who add either MUST extend that doc before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) blocks the push if backend telemetry changes land without the matching `metrics.md` update.
