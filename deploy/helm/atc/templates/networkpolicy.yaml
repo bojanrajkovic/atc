@@ -10,18 +10,26 @@ spec:
     matchLabels:
       {{- include "atc.selectorLabels" . | nindent 6 }}
   policyTypes:
-    {{- if .Values.networkPolicy.ingress }}
+    {{- if hasKey .Values.networkPolicy "ingress" }}
     - Ingress
     {{- end }}
-    {{- if .Values.networkPolicy.egress }}
+    {{- if hasKey .Values.networkPolicy "egress" }}
     - Egress
     {{- end }}
-  {{- with .Values.networkPolicy.ingress }}
+  {{- if hasKey .Values.networkPolicy "ingress" }}
+  {{- if empty .Values.networkPolicy.ingress }}
+  ingress: []
+  {{- else }}
   ingress:
-    {{- toYaml . | nindent 4 }}
+    {{- toYaml .Values.networkPolicy.ingress | nindent 4 }}
   {{- end }}
-  {{- with .Values.networkPolicy.egress }}
+  {{- end }}
+  {{- if hasKey .Values.networkPolicy "egress" }}
+  {{- if empty .Values.networkPolicy.egress }}
+  egress: []
+  {{- else }}
   egress:
-    {{- toYaml . | nindent 4 }}
+    {{- toYaml .Values.networkPolicy.egress | nindent 4 }}
+  {{- end }}
   {{- end }}
 {{- end }}
