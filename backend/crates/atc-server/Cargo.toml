@@ -20,7 +20,7 @@ serde_json = "1.0.149"
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "chrono", "migrate", "macros", "json"] }
 tokio = { version = "1.50.0", features = ["full"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
-tower-http = { version = "0.6.8", features = ["cors", "trace"] }
+tower-http = { version = "=0.6.8", features = ["cors", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
@@ -48,7 +48,7 @@ sha2 = "0.11.0"
 testcontainers = { version = "0.27.3", features = ["reusable-containers"] }
 testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
 tokio-tungstenite = "0.24.0"
-tower = "0.5.3"
+tower = "=0.5.3"
 
 [build-dependencies]
 vergen-gix = { version = "9.1.0", features = ["build", "cargo", "si", "rustc"] }
