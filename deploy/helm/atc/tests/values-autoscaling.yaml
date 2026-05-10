@@ -1,0 +1,14 @@
+autoscaling:
+  enabled: true
+  maxReplicas: 3
+
+# Required when autoscaling.targetCPUUtilizationPercentage is set (default 80).
+# Without a CPU request, metrics-server cannot compute utilization and the
+# HPA reports FailedGetResourceMetric. The chart fails at render time when
+# the target is set without the matching request.
+resources:
+  requests:
+    cpu: 100m
+
+config:
+  databaseUrl: "postgres://atc:atc@postgres:5432/atc"

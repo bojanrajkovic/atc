@@ -109,7 +109,25 @@ The runtime invariants that make symmetric multi-replica safe (see [`state-exter
 
 Setting `affinity:` to a non-empty value (full operator override) takes precedence over `podAntiAffinity.type` — the chart renders the supplied value verbatim and skips the convenience injection. Use this for compound affinity needs that mix `nodeAffinity`, `podAffinity`, custom weights, or non-hostname topology keys.
 
-**HPA defaults are not provided.** Tracked as #8.
+## Autoscaling
+
+The chart renders an optional `HorizontalPodAutoscaler` (`autoscaling/v2`) gated on `autoscaling.enabled`. When enabled, the chart drops `spec.replicas` from the Deployment so the HPA owns the replica count — the autoscaler treats `replicas` as an external mutation otherwise, and operators see warning events on every reconcile. Operators set `autoscaling.minReplicas` for floor-count semantics.
+
+The HPA emits a CPU `Resource` metric with `target.type: Utilization` driven by `autoscaling.targetCPUUtilizationPercentage` (default 80) and, when `autoscaling.targetMemoryUtilizationPercentage` is non-null, a memory `Resource` metric alongside it. Either target may be set to `null` to omit the corresponding metric (e.g., for memory-only autoscaling); when both are null, the HPA renders without a `metrics` block (uncommon — typically paired with custom `metrics.external` set elsewhere).
+
+**Resource-request precondition.** Utilization-based metrics divide observed usage by the Pod's `resources.requests.<resource>`. When the request is unset, metrics-server reports `FailedGetResourceMetric` / `missing request for cpu` and the HPA never makes a scaling decision. The chart enforces this at template-render time: setting `autoscaling.targetCPUUtilizationPercentage` (default 80) without `resources.requests.cpu` fails the render with a remediation message, and the same guard pairs `autoscaling.targetMemoryUtilizationPercentage` with `resources.requests.memory`. The guard fires before any HPA is created, so operators see the misconfig at `helm install` time rather than after a load test.
+
+**Multi-replica precondition extends to autoscaling.** The same `{{ fail }}` guard that rejects `replicaCount > 1` without a Postgres URL also fires when `autoscaling.enabled` is true with `autoscaling.maxReplicas > 1`. The guard tests `maxReplicas` (not `minReplicas`) because the autoscaler is allowed to scale up to that ceiling — any unguarded ceiling above 1 admits divergent in-memory state. When `autoscaling.enabled` is true, the guard considers ONLY `autoscaling.maxReplicas` and ignores `replicaCount`, because the HPA owns `spec.replicas` (replicaCount is dead config in that mode); a high `replicaCount` paired with `autoscaling.maxReplicas: 1` is therefore valid for in-memory single-replica installs. When `autoscaling.enabled` is false, the guard falls back to `replicaCount > 1`.
+
+**Knobs.**
+
+| Values key | Default | Notes |
+|-----------|---------|-------|
+| `autoscaling.enabled` | `false` | When false, the Deployment uses `replicaCount` directly and no HPA is rendered. |
+| `autoscaling.minReplicas` | `1` | Floor; respected during low-traffic windows. |
+| `autoscaling.maxReplicas` | `5` | Ceiling; values > 1 require a Postgres URL via the multi-replica fail-guard. |
+| `autoscaling.targetCPUUtilizationPercentage` | `80` | CPU `Resource` metric target. When set, requires `resources.requests.cpu`. Set to `null` to omit the CPU metric. |
+| `autoscaling.targetMemoryUtilizationPercentage` | `null` | When set, appends a memory `Resource` metric alongside CPU; requires `resources.requests.memory`. |
 
 ## PodDisruptionBudget
 
@@ -352,8 +370,9 @@ kubectl -n atc-smoke rollout status deploy/atc
 - `deploy/helm/atc/templates/httproute.yaml` — Optional HTTPRoute (`gateway.networking.k8s.io/v1`), gated on `gateway.enabled`; validates non-empty `parentRefs` via `{{ fail }}` guard
 - `deploy/helm/atc/templates/servicemonitor.yaml` — Optional ServiceMonitor (`monitoring.coreos.com/v1`), gated on `metrics.enabled && metrics.serviceMonitor.enabled`; includes label selector for Prometheus discovery
 - `deploy/helm/atc/templates/networkpolicy.yaml` — Optional NetworkPolicy (`networking.k8s.io/v1`), gated on `networkPolicy.enabled`; selectorLabels scope, `policyTypes` mirrors which of `ingress` / `egress` keys are present (so `ingress: []` renders as default-deny ingress; key omitted means no constraint on that direction), rule items pass through verbatim
+- `deploy/helm/atc/templates/hpa.yaml` — Optional HorizontalPodAutoscaler (`autoscaling/v2`), gated on `autoscaling.enabled`; targets the chart Deployment with CPU `Resource` metric (always) and an optional memory `Resource` metric
 - `deploy/helm/atc/templates/tests/test-connection.yaml` — Helm test hook Pod with restricted Pod Security Standards; validates Service connectivity; excluded from charts via `helm.sh/hook: test` annotation
-- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, metrics, networkpolicy) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
+- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, metrics, networkpolicy, autoscaling) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
 - `deploy/helm/atc/ci/test-values.yaml` — `ct install` fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for the kind-loaded local image). See `docs/architecture/ci-pipeline.md` for the job definition.
 
 ## Storage modes
