@@ -354,34 +354,37 @@ async fn pg_job_idempotent_same_status_replay() {
     );
 }
 
-/// Queued → Completed is invalid for jobs (unlike runs).
+/// Queued → Completed is valid for jobs — GitHub sends this when a run is cancelled
+/// before the job starts (no InProgress event is emitted in that case).
 #[tokio::test]
 #[serial_test::serial]
-async fn pg_job_queued_to_completed_rejected() {
+async fn pg_job_queued_to_completed_accepted() {
     let (pool, _c, _) = common::start_pg().await;
     let store = PgStore::new_for_test(pool.clone());
 
     store.apply_run_event(run_requested(2005)).await.unwrap();
     store.apply_job_event(job_queued(3005, 2005)).await.unwrap();
 
-    // Queued → Completed is NOT in predecessors_of(Completed) for jobs
     let result = store.apply_job_event(job_completed(3005, 2005)).await;
     assert!(
-        matches!(result, Err(PersistError::InvalidTransition)),
-        "Queued→Completed should be InvalidTransition for jobs, got: {result:?}"
+        result.is_ok(),
+        "Queued→Completed must be accepted for jobs (GitHub cancellation path), got: {result:?}"
     );
 
     let row = sqlx::query!("SELECT status FROM jobs WHERE id = 3005")
         .fetch_one(&pool)
         .await
         .expect("job row not found");
-    assert_eq!(row.status, "Queued", "row should still be Queued");
+    assert_eq!(
+        row.status, "Completed",
+        "job must be Completed after transition"
+    );
 
-    // Confirm predecessors_of explicitly excludes Queued
+    // Confirm predecessors_of includes Queued
     let preds = JobStatus::predecessors_of(JobStatus::Completed);
     assert!(
-        !preds.contains(&JobStatus::Queued),
-        "Queued must not be a predecessor of Completed for jobs"
+        preds.contains(&JobStatus::Queued),
+        "Queued must be a predecessor of Completed for jobs"
     );
 }
 

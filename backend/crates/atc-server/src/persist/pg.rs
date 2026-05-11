@@ -443,6 +443,10 @@ pub(crate) async fn upsert_run_in_txn(
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
     if result.rows_affected() == 0 {
+        tracing::warn!(
+            target_status = target_str,
+            "run predicated UPSERT rejected (0 rows affected)"
+        );
         return Err(PersistError::InvalidTransition);
     }
     Ok(())
@@ -562,6 +566,10 @@ pub(crate) async fn upsert_job_in_txn(
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
     if result.rows_affected() == 0 {
+        tracing::warn!(
+            target_status = target_str,
+            "job predicated UPSERT rejected (0 rows affected)"
+        );
         return Err(PersistError::InvalidTransition);
     }
     Ok(())

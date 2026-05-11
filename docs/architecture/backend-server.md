@@ -55,7 +55,7 @@ The `atc-core` crate implements the canonical domain model for ATC, consisting o
 ### Entity Hierarchy
 
 - **WorkflowRun** — A GitHub Actions workflow invocation (one per push/PR/manual trigger). Identified by `run_id`. State: Queued → InProgress → Completed (Queued may skip directly to Completed for skipped/cancelled-before-start workflows).
-- **Job** — A unit of work within a run (e.g., "test-linux", "build-docker"). Identified by `job_id`. Belongs to exactly one run. State: Queued → InProgress → Completed (with optional conclusion: Success, Failure, Skipped, etc.).
+- **Job** — A unit of work within a run (e.g., "test-linux", "build-docker"). Identified by `job_id`. Belongs to exactly one run. State: Queued → InProgress → Completed (with optional conclusion: Success, Failure, Skipped, etc.). Queued may also transition directly to Completed — GitHub emits `workflow_job completed` for Queued jobs when a run is cancelled before those jobs start.
 - **Step** — An individual action within a job (e.g., "Checkout code", "Run tests"). Identified by `step_id`. Belongs to exactly one job. Carries conclusion and conclusion text. Steps are immutable after completion.
 
 ### PG Table Notes
@@ -86,7 +86,7 @@ Events are created from GitHub webhook payloads by `atc-github` and applied to t
 
 ### State Machine Invariants
 
-1. **Forward-only transitions** — A job cannot transition from Completed back to Queued. Violations return `StateMachineError::InvalidTransition`.
+1. **Forward-only transitions** — A job cannot transition from Completed back to Queued or to any earlier state. Violations return `StateMachineError::InvalidTransition`. Note: `Queued → Completed` is valid — GitHub emits this for jobs cancelled before they start.
 2. **Idempotent reapplication** — Applying the same event twice is safe; the second application is a no-op. This allows out-of-order event tolerance (e.g., a job event may arrive before its run event).
 3. **Conclusion implies completion** — If a job has a conclusion set, its status must be Completed.
 4. **Index consistency** — Every job in the primary map exists in exactly one of `jobs_by_repo` (by repo) and exactly one entry in `jobs_by_run` (by run_id). Applying or evicting a job updates both indexes.

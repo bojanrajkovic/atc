@@ -158,12 +158,18 @@ impl JobStatus {
     ///
     /// # Valid transitions
     ///
-    /// - `Queued` -> `Waiting` | `InProgress`
+    /// - `Queued` -> `Waiting` | `InProgress` | `Completed`
     /// - `Waiting` -> `InProgress`
     /// - `InProgress` -> `Completed`
     ///
-    /// Note: `Waiting` transitions match GitHub's `workflow_job` model where
-    /// jobs can enter a `waiting` state for dependency resolution.
+    /// `Queued` -> `Completed` handles GitHub's cancellation behavior: when a
+    /// run is cancelled before a Queued job starts, GitHub emits a
+    /// `workflow_job completed` event directly from `Queued` — no `InProgress`
+    /// event is sent. Rejecting this transition causes those events to be
+    /// silently dropped, leaving orphaned Queued jobs in the store.
+    ///
+    /// `Waiting` transitions match GitHub's `workflow_job` model where jobs
+    /// can enter a `waiting` state for dependency resolution.
     ///
     /// # Errors
     ///
@@ -174,7 +180,7 @@ impl JobStatus {
             return Ok(self);
         }
         match (self, target) {
-            (Self::Queued, Self::Waiting | Self::InProgress)
+            (Self::Queued, Self::Waiting | Self::InProgress | Self::Completed)
             | (Self::Waiting, Self::InProgress)
             | (Self::InProgress, Self::Completed) => Ok(target),
             _ => Err(InvalidJobTransition {
@@ -187,16 +193,13 @@ impl JobStatus {
     /// Returns the set of statuses that can validly transition to `target`,
     /// inclusive of `target` itself (so same-status replay is admitted).
     /// Consistent with `transition_to` — verified by property test.
-    ///
-    /// Note: `Queued` -> `Completed` is invalid for jobs (asymmetry vs. runs).
     #[must_use]
     pub fn predecessors_of(target: Self) -> &'static [Self] {
         match target {
             Self::Queued => &[Self::Queued],
             Self::Waiting => &[Self::Queued, Self::Waiting],
             Self::InProgress => &[Self::Queued, Self::Waiting, Self::InProgress],
-            // NB: Queued → Completed is invalid for jobs (asymmetry vs. runs)
-            Self::Completed => &[Self::InProgress, Self::Completed],
+            Self::Completed => &[Self::Queued, Self::InProgress, Self::Completed],
         }
     }
 }
