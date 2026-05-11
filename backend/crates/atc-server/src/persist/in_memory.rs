@@ -226,9 +226,10 @@ impl PersistentStore for InMemoryStore {
         let mut state = self.state.write().await;
 
         let existing = state.runs.get(&env.run_id).cloned();
-        // `?` auto-converts StateMachineError → PersistError::InvalidTransition via From impl.
-        let run = atc_core::state_machine::apply_run_event(existing, env.clone())
-            .map_err(atc_core::PersistError::from)?;
+        let run = atc_core::state_machine::apply_run_event(existing, env.clone()).map_err(|e| {
+            tracing::warn!(error = %e, "state machine rejected run transition");
+            atc_core::PersistError::from(e)
+        })?;
 
         // Transition validated — commit via CoW remove-then-insert.
         state.runs.remove(&run.id);
@@ -267,8 +268,10 @@ impl PersistentStore for InMemoryStore {
         let is_new = !state.jobs.contains_key(&job_id);
         let existing = state.jobs.get(&job_id).cloned();
 
-        let job = atc_core::state_machine::apply_job_event(existing, env.clone())
-            .map_err(atc_core::PersistError::from)?;
+        let job = atc_core::state_machine::apply_job_event(existing, env.clone()).map_err(|e| {
+            tracing::warn!(error = %e, "state machine rejected job transition");
+            atc_core::PersistError::from(e)
+        })?;
 
         // Transition validated — commit via CoW remove-then-insert.
         state.jobs.remove(&job_id);

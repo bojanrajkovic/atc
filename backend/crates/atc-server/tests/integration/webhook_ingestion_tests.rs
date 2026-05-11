@@ -468,9 +468,9 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
 
 /// A Job event that returns a store transition error results in no broadcast.
 ///
-/// Drive a job to Queued via POST webhook, then attempt an invalid backward transition
-/// (Queued → Completed, which is invalid for jobs: predecessors_of(Completed) = [InProgress, Completed]).
-/// Assert the second POST does NOT cause a broadcast — no SeqEvent is emitted for
+/// Drive a job to Completed via Queued → Completed (valid: GitHub cancellation path),
+/// then attempt a backward transition (Completed → Queued, which is invalid).
+/// Assert the backward POST does NOT cause a broadcast — no SeqEvent is emitted for
 /// rejected transitions.
 #[tokio::test]
 #[serial_test::serial]
@@ -492,7 +492,7 @@ async fn failed_job_transition_produces_no_broadcast() {
         .unwrap();
     assert_eq!(resp1.status(), StatusCode::OK);
 
-    // POST workflow_job_queued to create job 70928200168 at Queued status
+    // POST workflow_job_queued: job=Queued
     let resp2 = app
         .clone()
         .oneshot(
@@ -507,14 +507,7 @@ async fn failed_job_transition_produces_no_broadcast() {
         .unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
 
-    // Subscribe AFTER setup events so we have a clean baseline.
-    // By this point, two SeqEvents have already been broadcast and consumed.
-    let mut rx = state.webhook_tx.subscribe();
-
-    // POST workflow_job_completed for the SAME job (still Queued in the store).
-    // Queued → Completed is invalid for jobs: predecessors_of(Completed) = [InProgress, Completed].
-    // The store apply_job_event will return an InvalidTransition error.
-    // The handler must NOT broadcast a SeqEvent for this rejected transition.
+    // POST workflow_job_completed: Queued → Completed is valid (GitHub cancellation path).
     let resp3 = app
         .clone()
         .oneshot(
@@ -527,8 +520,28 @@ async fn failed_job_transition_produces_no_broadcast() {
         )
         .await
         .unwrap();
+    assert_eq!(resp3.status(), StatusCode::OK);
+
+    // Subscribe AFTER the three setup events so we have a clean baseline.
+    let mut rx = state.webhook_tx.subscribe();
+
+    // POST workflow_job_queued again: Completed → Queued is a backward transition.
+    // predecessors_of(Queued) = [Queued]; Completed is not in that set → InvalidTransition.
+    // The handler must NOT broadcast a SeqEvent for this rejected transition.
+    let resp4 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "workflow_job")
+                .body(Body::from(fixture_workflow_job_queued()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(
-        resp3.status(),
+        resp4.status(),
         StatusCode::OK,
         "rejected transition still returns 200"
     );
@@ -536,7 +549,7 @@ async fn failed_job_transition_produces_no_broadcast() {
     // No SeqEvent must have been broadcast for the rejected backward transition.
     assert!(
         rx.try_recv().is_err(),
-        "expected no broadcast for rejected job backward transition (Queued → Completed), but received an event"
+        "expected no broadcast for rejected job backward transition (Completed → Queued), but received an event"
     );
 }
 

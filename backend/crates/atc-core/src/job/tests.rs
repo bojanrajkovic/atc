@@ -273,15 +273,11 @@ fn test_job_transition_completed_to_in_progress_fails() {
 }
 
 #[test]
-fn test_job_transition_queued_to_completed_fails() {
+fn test_job_transition_queued_to_completed_succeeds() {
+    // GitHub sends workflow_job completed directly from Queued when a run is
+    // cancelled before the job starts — this must be a valid transition.
     let result = JobStatus::Queued.transition_to(JobStatus::Completed);
-    assert_eq!(
-        result,
-        Err(InvalidJobTransition {
-            from: JobStatus::Queued,
-            to: JobStatus::Completed,
-        })
-    );
+    assert_eq!(result, Ok(JobStatus::Completed));
 }
 
 #[test]
@@ -360,10 +356,13 @@ fn test_predecessors_of_in_progress() {
 
 #[test]
 fn test_predecessors_of_completed() {
-    // NB: Queued → Completed is invalid for jobs (asymmetry vs. runs)
     assert_eq!(
         JobStatus::predecessors_of(JobStatus::Completed),
-        &[JobStatus::InProgress, JobStatus::Completed]
+        &[
+            JobStatus::Queued,
+            JobStatus::InProgress,
+            JobStatus::Completed
+        ]
     );
 }
 

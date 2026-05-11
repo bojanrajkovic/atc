@@ -378,13 +378,11 @@ async fn bigserial_gap_property() {
     );
 }
 
-/// Second job webhook with invalid transition (Queued → Completed) rolls back
-/// the transaction. End state: 1 stub run, 1 job (still Queued), 1 outbox row
-/// (from first successful webhook only).
+/// Backward job transition (Completed → Queued) rolls back the transaction.
+/// End state: 1 stub run, 1 job (still Completed), 2 outbox rows (queued + completed only).
 ///
-/// predecessors_of(Completed) for jobs = [InProgress, Completed].
-/// Queued → Completed is therefore invalid (Queued is not a predecessor of Completed for jobs).
-/// The transaction rolls back; no new outbox row is written.
+/// predecessors_of(Queued) = [Queued] — Completed is not a predecessor of Queued.
+/// The backward-transition request rolls back; no new outbox row is written.
 #[tokio::test]
 #[serial_test::serial]
 async fn job_upsert_rejection_rolls_back_stub_run() {
@@ -395,7 +393,7 @@ async fn job_upsert_rejection_rolls_back_stub_run() {
     let run_id = 24290980517i64; // from all fixtures
     let job_id = 70928200168i64; // from workflow_job_queued.json and workflow_job_completed.json
 
-    // First webhook: workflow_job.queued — creates stub run + job + outbox row
+    // Step 1: workflow_job.queued — creates stub run + job + outbox row
     let (status, json) = post_webhook(
         app.clone(),
         "workflow_job",
@@ -404,61 +402,59 @@ async fn job_upsert_rejection_rolls_back_stub_run() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["status"], "accepted");
-    assert!(
-        json["seq"].is_number(),
-        "PG-mode handler must include outbox seq in response, got: {json}"
-    );
 
-    // Assert initial state: 1 stub run, 1 job (Queued), 1 outbox row
-    assert_eq!(
-        count_by_id(&pool, "runs", run_id).await,
-        1,
-        "should have 1 stub run"
-    );
     assert_eq!(
         fetch_status(&pool, "jobs", job_id).await,
         "Queued",
-        "job must be Queued"
+        "job must be Queued after first webhook"
     );
-    assert_eq!(
-        count_rows(&pool, "outbox").await,
-        1,
-        "should have 1 outbox row after first webhook"
-    );
+    assert_eq!(count_rows(&pool, "outbox").await, 1, "1 outbox row");
 
-    // Second webhook: workflow_job.completed for the SAME job_id.
-    // job is currently Queued; predecessors_of(Completed) = [InProgress, Completed].
-    // Queued is NOT in predecessors_of(Completed) → InvalidTransition → parity rejection.
-    // The transaction (including the outbox INSERT) is rolled back.
+    // Step 2: workflow_job.completed — Queued → Completed is now valid (GitHub sends this on
+    // cancellation before the job starts). Job transitions; second outbox row is written.
     let (status, json) = post_webhook(
         app.clone(),
         "workflow_job",
         &common::fixture_workflow_job_completed(),
     )
     .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "accepted");
+
+    assert_eq!(
+        fetch_status(&pool, "jobs", job_id).await,
+        "Completed",
+        "job must be Completed after second webhook"
+    );
+    assert_eq!(count_rows(&pool, "outbox").await, 2, "2 outbox rows");
+
+    // Step 3: workflow_job.queued again — Completed → Queued is a backward transition.
+    // predecessors_of(Queued) = [Queued]; Completed is not in that set → parity rejection.
+    // The transaction (including the outbox INSERT) is rolled back.
+    let (status, json) = post_webhook(
+        app.clone(),
+        "workflow_job",
+        &common::fixture_workflow_job_queued(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "parity rejection returns 200");
     assert_eq!(json["status"], "rejected", "body must be 'rejected'");
 
-    // End state assertions:
-    // runs: still exactly 1 row
+    // End state: runs=1, job=Completed (not rolled back to Queued), outbox=2
     assert_eq!(
         count_by_id(&pool, "runs", run_id).await,
         1,
         "must still have exactly 1 run row"
     );
-
-    // jobs: still exactly 1 row, still Queued (update was rolled back)
     assert_eq!(
         fetch_status(&pool, "jobs", job_id).await,
-        "Queued",
-        "job must still be Queued"
+        "Completed",
+        "job must still be Completed (backward transition rolled back)"
     );
-
-    // outbox: still exactly 1 row (the rolled-back tx added nothing)
     assert_eq!(
         count_rows(&pool, "outbox").await,
-        1,
-        "outbox must still have 1 row (rolled-back tx added nothing)"
+        2,
+        "outbox must still have 2 rows (rolled-back tx added nothing)"
     );
 }
 

@@ -263,7 +263,23 @@ async fn webhook_handler(
                         )
                     }
                     Err(PersistError::InvalidTransition) => {
-                        tracing::warn!("transition invalid; rejecting");
+                        match &event {
+                            atc_github::WebhookEvent::Run(env) => {
+                                tracing::warn!(
+                                    event_type,
+                                    run_id = env.run_id.0,
+                                    "transition invalid; rejecting"
+                                );
+                            }
+                            atc_github::WebhookEvent::Job(env) => {
+                                tracing::warn!(
+                                    event_type,
+                                    run_id = env.run_id.0,
+                                    job_id = env.job_id.0,
+                                    "transition invalid; rejecting"
+                                );
+                            }
+                        }
                         (
                             StatusCode::OK,
                             Json(serde_json::json!({"status": "rejected"})),
