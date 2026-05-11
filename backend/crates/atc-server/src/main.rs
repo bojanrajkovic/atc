@@ -56,8 +56,7 @@ fn ensure_pg_scheme(label: &str, url: &str) {
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn init_tracing_subscriber(cfg: &config::Config, otel_handles: Option<&OtelHandles>) {
@@ -243,13 +242,13 @@ async fn main() {
         // In-memory mode: InMemoryStore owns all state.
         let in_memory = Arc::new(InMemoryStore::new(
             Arc::new(SystemClock),
-            Duration::from_secs(3600),
+            Duration::from_hours(1),
             webhook_tx.clone(),
         ));
         // Spawn eviction only in in-memory mode (PG mode has no in-memory state to evict).
         let ev_handle = spawn_eviction_task(
             Arc::clone(&in_memory),
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             shutdown.clone(),
         );
         let persist: Arc<dyn atc_server::persist::PersistentStore> = in_memory;

@@ -644,7 +644,7 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
         org: "test-org".to_string(),
         repo: "test-repo".to_string(),
         name: "DIFFERENT-NAME".to_string(), // Envelope has a different name
-        created_at: Utc::now() + Duration::from_secs(3600), // different created_at
+        created_at: Utc::now() + Duration::from_hours(1), // different created_at
         started_at: None,
         completed_at: None,
         action: JobEvent::Queued {

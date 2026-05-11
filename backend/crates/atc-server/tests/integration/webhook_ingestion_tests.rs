@@ -427,7 +427,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     let mut subscriber = webhook_tx.subscribe();
     let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
-        Duration::from_secs(3600),
+        Duration::from_hours(1),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {

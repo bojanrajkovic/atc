@@ -235,7 +235,7 @@ fn evictable_completed_job_past_ttl() {
     let completed_at = Utc::now() - chrono::Duration::hours(2);
     let job = build_completed_job(Some(completed_at));
     let now = Utc::now();
-    let ttl = Duration::from_secs(30 * 60); // 30 min
+    let ttl = Duration::from_mins(30);
 
     assert!(
         is_evictable(&job, now, ttl),
@@ -260,7 +260,7 @@ fn not_evictable_active_job() {
         started_at: Some(now - chrono::Duration::hours(2)),
         completed_at: None,
     };
-    let ttl = Duration::from_secs(30 * 60);
+    let ttl = Duration::from_mins(30);
 
     assert!(
         !is_evictable(&job, now, ttl),
@@ -274,7 +274,7 @@ fn not_evictable_active_job() {
 fn not_evictable_completed_job_without_completed_at() {
     let job = build_completed_job(None);
     let now = Utc::now();
-    let ttl = Duration::from_secs(30 * 60);
+    let ttl = Duration::from_mins(30);
 
     assert!(
         !is_evictable(&job, now, ttl),

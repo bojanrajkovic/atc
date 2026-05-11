@@ -32,7 +32,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(broadcast_capacity);
     let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
-        Duration::from_secs(3600),
+        Duration::from_hours(1),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
