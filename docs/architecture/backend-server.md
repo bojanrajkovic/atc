@@ -380,7 +380,7 @@ In `main.rs`:
 11. Bind the server to `http_addr` via `axum::serve`
 12. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
 
-The eviction task runs periodically (default every 30 minutes) and removes completed jobs whose completion timestamp exceeds the TTL. This keeps in-memory state bounded and prevents unbounded growth.
+The eviction task runs periodically (default interval: `Duration::from_mins(1)`) and removes completed jobs whose TTL (default: `Duration::from_hours(1)`) has elapsed since `completed_at`. This keeps in-memory state bounded and prevents unbounded growth.
 
 ## Supervision and Shutdown
 

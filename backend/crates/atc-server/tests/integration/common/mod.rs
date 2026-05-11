@@ -339,7 +339,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
     let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
-        Duration::from_secs(3600),
+        Duration::from_hours(1),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
@@ -361,7 +361,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
     let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
-        Duration::from_secs(3600),
+        Duration::from_hours(1),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {

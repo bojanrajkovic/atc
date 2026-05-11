@@ -7,7 +7,7 @@
 MISE_CARGO_BINSTALL = "1"
 
 [tools]
-rust = "1.94.1"
+rust = "1.95.0"
 node = "25.9.0"
 pnpm = "11.0.8"
 just = "1.50.0"

@@ -27,12 +27,12 @@ use chrono::{DateTime, Utc};
 
 fn make_store() -> InMemoryStore {
     let (tx, _) = tokio::sync::broadcast::channel(256);
-    InMemoryStore::new(Arc::new(SystemClock), Duration::from_secs(3600), tx)
+    InMemoryStore::new(Arc::new(SystemClock), Duration::from_hours(1), tx)
 }
 
 fn make_store_with_clock(clock: Arc<dyn atc_core::Clock>) -> InMemoryStore {
     let (tx, _) = tokio::sync::broadcast::channel(256);
-    InMemoryStore::new(clock, Duration::from_secs(3600), tx)
+    InMemoryStore::new(clock, Duration::from_hours(1), tx)
 }
 
 fn make_store_with_clock_and_ttl(clock: Arc<dyn atc_core::Clock>, ttl: Duration) -> InMemoryStore {
@@ -873,7 +873,7 @@ async fn completed_job_past_ttl_evicted() {
 
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_secs(3600));
+    let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_hours(1));
 
     let run_id = RunId(1800);
     let job_id = JobId(1801);
@@ -919,7 +919,7 @@ async fn run_evicted_when_all_jobs_evicted() {
 
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_secs(3600));
+    let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_hours(1));
 
     let run_id = RunId(1900);
     let job_id = JobId(1901);
@@ -1001,7 +1001,7 @@ async fn eviction_indexes_remain_consistent() {
 
     let start_time = Utc::now();
     let clock = Arc::new(TestClock::new(start_time));
-    let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_secs(3600));
+    let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_hours(1));
 
     let run_id = RunId(2100);
     let job_expired = JobId(2101);
