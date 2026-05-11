@@ -9,7 +9,7 @@ MISE_CARGO_BINSTALL = "1"
 [tools]
 rust = "1.94.1"
 node = "25.9.0"
-pnpm = "10.33.0"
+pnpm = "11.0.8"
 just = "1.49.0"
 lefthook = "2.1.5"
 helm = "4.1.4"
