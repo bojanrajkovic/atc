@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Duration;
 
-use atc_core::{RunStateMachine, SystemClock};
+use atc_core::SystemClock;
 use atc_server::listener;
 use atc_server::otel::exponential_histogram_view;
 use atc_server::persist::{InMemoryStore, PgStore};
@@ -333,30 +333,19 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
     format!("sha256={}", const_hex::encode(digest.into_bytes()))
 }
 
-/// Build app with a specific webhook secret
+/// Build app with a specific webhook secret (in-memory mode).
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
+    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: Some(secret.to_string()),
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -366,30 +355,19 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     (app, app_state)
 }
 
-/// Build app with no webhook secret (verification bypassed)
+/// Build app with no webhook secret (verification bypassed, in-memory mode).
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
+    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -553,6 +531,14 @@ pub struct AppFixture {
     pub drain_started: Arc<tokio::sync::Notify>,
     pub shutdown: CancellationToken,
     pub db_url: String,
+    /// Heartbeat atomic shared with the drain task. Tests that need to manipulate
+    /// or read the drain staleness timestamp access it here rather than through
+    /// AppState (which no longer holds it).
+    pub last_drain_pass_at: Arc<AtomicI64>,
+    /// Commit-order cursor advanced by the drain after each successful pass.
+    /// Tests that need to poll or read the broadcast watermark (e.g. `state_pg_read`)
+    /// access it here rather than through AppState (which no longer holds it).
+    pub broadcast_watermark: Arc<AtomicI64>,
 }
 
 /// Build a full fixture with PG pool, listener task, and drain task.
@@ -591,10 +577,6 @@ async fn build_app_inner(
     use std::time::Instant;
 
     ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
     let (webhook_tx, broadcast_rx) =
         tokio::sync::broadcast::channel::<atc_server::state::SeqEvent>(256);
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
@@ -616,20 +598,20 @@ async fn build_app_inner(
     let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
     #[allow(clippy::cast_precision_loss)]
     ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist =
-        Arc::new(PgStore::new(pool.clone())) as Arc<dyn atc_server::persist::PersistentStore>;
+
+    let pg_store = Arc::new(PgStore::new(
+        pool.clone(),
+        Arc::clone(&broadcast_watermark),
+        Arc::clone(&last_drain_pass_at),
+    ));
+    let persist = pg_store as Arc<dyn atc_server::persist::PersistentStore>;
+
+    let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: Some(pool.clone()),
-        min_pending_seq: min_pending_seq.clone(),
-        last_drain_pass_at: last_drain_pass_at.clone(),
-        broadcast_watermark: broadcast_watermark.clone(),
-        persist,
-        shutdown: CancellationToken::new(),
+        shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
     });
 
@@ -645,7 +627,6 @@ async fn build_app_inner(
     let observed_recv = Arc::new(AtomicU64::new(0));
     let observed_passes = Arc::new(AtomicU64::new(0));
     let drain_started = Arc::new(tokio::sync::Notify::new());
-    let shutdown = CancellationToken::new();
     let drain_notify = Arc::new(tokio::sync::Notify::new());
 
     let listener_handle = listener::spawn_listener_task(
@@ -657,13 +638,14 @@ async fn build_app_inner(
         Some(observed_recv.clone()),
     );
 
+    let broadcast_watermark_for_fixture = Arc::clone(&broadcast_watermark);
     let drain_handle = listener::spawn_drain_task(
         pool.clone(),
         initial_watermark,
         startup_at,
         drain_notify,
         min_pending_seq,
-        last_drain_pass_at,
+        Arc::clone(&last_drain_pass_at),
         broadcast_watermark,
         drain_in_flight,
         state.webhook_tx.clone(),
@@ -693,6 +675,8 @@ async fn build_app_inner(
         drain_started,
         shutdown,
         db_url,
+        last_drain_pass_at,
+        broadcast_watermark: broadcast_watermark_for_fixture,
     }
 }
 

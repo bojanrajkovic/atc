@@ -43,40 +43,8 @@ async fn metrics_endpoint_not_served_by_api_router() {
     common::ensure_recorder_installed();
 
     // Use the bare API router (no SPA fallback) so this test reflects the
-    // route table itself rather than the asset fallback. axum's `Router`
-    // requires its state type, so we attach a stub state matching production.
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicI64;
-
-    use atc_core::{RunStateMachine, SystemClock};
-    use atc_server::state::AppState;
-    use tokio_util::sync::CancellationToken;
-    use tokio_util::task::TaskTracker;
-
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        std::time::Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(0)),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
+    // route table itself rather than the asset fallback.
+    let (_full_app, app_state) = common::build_app_no_secret();
     let app = atc_server::routes::api_routes().with_state(app_state);
 
     let req = Request::builder()

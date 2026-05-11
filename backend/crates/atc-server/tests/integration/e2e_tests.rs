@@ -8,74 +8,27 @@
 use crate::common;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{RunStateMachine, SystemClock};
-use atc_server::routes;
-use atc_server::state::AppState;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
-
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 use futures_util::stream::StreamExt;
 
-/// Start an ephemeral server with full AppState, all routes, and return the server address.
+/// Start an ephemeral server with in-memory mode and return the server address.
 ///
-/// The server is configured with:
-/// - `Arc<RunStateMachine>` with `SystemClock` and 1-hour TTL
-/// - Broadcast channel with capacity 256
-/// - `Arc<AppState>` with `webhook_secret: None` (HMAC tested separately)
-/// - `seq: Arc::new(Mutex::new(0))` (shared with `InMemoryStore`)
-/// - `persist: Arc<dyn PersistentStore>` (`InMemoryStore` for in-memory mode)
-/// - OTel test harness via `common::ensure_recorder_installed`, with `#[serial_test::serial]`
-/// - Ephemeral `TcpListener::bind("127.0.0.1:0")`
-/// - `tokio::spawn(axum::serve(...))`
+/// Uses `common::build_app_no_secret()` for fixture construction.
+/// OTel test harness installed via `common::ensure_recorder_installed`.
+/// Binds to an ephemeral port and spawns `axum::serve` in a background task.
 ///
 /// Returns `SocketAddr` for HTTP/WS clients to connect to.
 async fn start_test_server() -> SocketAddr {
     common::ensure_recorder_installed();
 
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    let main_router = routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let (app, _state) = common::build_app_no_secret();
 
     let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let main_addr = main_listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        axum::serve(main_listener, main_router).await.unwrap();
+        axum::serve(main_listener, app).await.unwrap();
     });
 
     main_addr

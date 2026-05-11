@@ -10,20 +10,12 @@
 use crate::common;
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{RunStateMachine, SystemClock};
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use futures_util::future::join_all;
@@ -43,24 +35,13 @@ fn build_app_with_pg(
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
     common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
     let (webhook_tx, rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
+    let persist = Arc::new(atc_server::persist::PgStore::new_for_test(pool.clone()))
         as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: Some(pool),
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -572,39 +553,12 @@ async fn success_returns_200_accepted() {
     );
 }
 
-/// With pg_pool: None (in-memory only mode), a webhook returns 200 processed
+/// With no database configured (in-memory only mode), a webhook returns 200
 /// and the in-memory store reflects the event. No DB calls are made.
 #[tokio::test]
 #[serial_test::serial]
 async fn no_pg_pool_uses_in_memory_path() {
-    common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let (app, app_state) = common::build_app_no_secret();
 
     let body = common::fixture_workflow_run_requested();
     let req = Request::builder()
@@ -622,8 +576,8 @@ async fn no_pg_pool_uses_in_memory_path() {
         "in-memory path must return 200"
     );
 
-    // In-memory store reflects the event — no outbox to check in this mode
-    let snap = app_state.state_machine.snapshot().await;
+    // In-memory store reflects the event — verify via read_snapshot.
+    let snap = app_state.persist.read_snapshot().await.expect("snapshot");
     assert_eq!(snap.runs.len(), 1, "run must be in the in-memory store");
 }
 
@@ -838,18 +792,14 @@ async fn no_in_memory_drift_in_pg_mode() {
         .unwrap();
     assert_eq!(pg_status, "Queued", "PG must reflect the committed event");
 
-    // In-memory store stays empty in PG mode — no drift can occur because the
-    // handler doesn't write to it.
-    let snap = app_state.state_machine.snapshot().await;
-    assert!(
-        snap.runs.is_empty(),
-        "in-memory store must stay empty in PG mode; runs={:?}",
-        snap.runs
-    );
-    assert!(
-        snap.jobs.is_empty(),
-        "in-memory store must stay empty in PG mode; jobs={:?}",
-        snap.jobs
+    // PG mode has no in-memory state; reads go directly to the database.
+    // Verify read_snapshot returns the committed run (confirming PG-mode
+    // reads are consistent with what was written).
+    let snap = app_state.persist.read_snapshot().await.expect("snapshot");
+    assert_eq!(
+        snap.runs.len(),
+        1,
+        "PG snapshot must contain the committed run"
     );
 
     // Drift counter is stuck at zero — no apply, no detection.

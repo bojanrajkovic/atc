@@ -20,5 +20,5 @@ pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
 pub use persist::PersistError;
 pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
-pub use state_machine::{QueryResult, RunStateMachine, RunnerPoolStats, StateMachineError};
-pub use types::{JobId, LabelSet, RepoKey, RunId};
+pub use state_machine::StateMachineError;
+pub use types::{JobId, LabelSet, RepoKey, RunId, RunnerPoolStats};

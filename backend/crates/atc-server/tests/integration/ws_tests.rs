@@ -8,51 +8,37 @@ use crate::common;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{RunStateMachine, SystemClock};
+use atc_core::SystemClock;
+use atc_server::persist::InMemoryStore;
 use atc_server::routes;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 use futures_util::stream::StreamExt;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
 /// Build an ephemeral server with a custom broadcast capacity.
 /// Returns (server_address, AppState with broadcast channel).
+///
+/// The broadcast capacity is parameterized so the lagging-client test can
+/// trigger lag by using a capacity smaller than the number of events sent.
 async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     common::ensure_recorder_installed();
 
-    let state_machine = Arc::new(RunStateMachine::new(
+    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(broadcast_capacity);
+    let persist = Arc::new(InMemoryStore::new(
         Arc::new(SystemClock),
         Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(broadcast_capacity);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
         webhook_tx.clone(),
     )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });

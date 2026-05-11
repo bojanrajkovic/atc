@@ -1,57 +1,20 @@
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicI64;
-
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
+use std::sync::Arc;
 
 use crate::common;
 use common::{fixture_workflow_job_queued, fixture_workflow_run_requested};
 
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
-/// Setup an ephemeral HTTP server for testing.
-async fn test_setup() -> (SocketAddr, std::sync::Arc<atc_server::state::AppState>) {
+/// Setup an ephemeral HTTP server for testing (in-memory mode).
+async fn test_setup() -> (SocketAddr, Arc<atc_server::state::AppState>) {
     common::ensure_recorder_installed();
 
-    let state_machine = std::sync::Arc::new(atc_core::RunStateMachine::new(
-        std::sync::Arc::new(atc_core::SystemClock),
-        std::time::Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let seq = std::sync::Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = std::sync::Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as std::sync::Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = std::sync::Arc::new(atc_server::state::AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    let main_router = atc_server::routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let (app, app_state) = common::build_app_no_secret();
 
     let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let main_addr = main_listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        axum::serve(main_listener, main_router).await.unwrap();
+        axum::serve(main_listener, app).await.unwrap();
     });
 
     (main_addr, app_state)

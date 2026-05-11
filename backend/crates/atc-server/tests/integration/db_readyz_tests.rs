@@ -10,10 +10,17 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_core::{RunStateMachine, SystemClock};
-use atc_server::state::{AppState, SeqEvent};
+use atc_server::persist::PgStore;
+use atc_server::state::AppState;
+use axum::body::Body;
+use axum::body::to_bytes;
+use axum::http::{Request, StatusCode};
+use testcontainers::ImageExt;
+use testcontainers::runners::AsyncRunner;
+use testcontainers_modules::postgres::Postgres;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use tower::ServiceExt;
 
 fn now_millis_for_test() -> i64 {
     std::time::SystemTime::now()
@@ -21,34 +28,22 @@ fn now_millis_for_test() -> i64 {
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
 }
-use axum::body::Body;
-use axum::body::to_bytes;
-use axum::http::{Request, StatusCode};
-use testcontainers::ImageExt;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
-use tower::ServiceExt;
 
 async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
     common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
-        as Arc<dyn atc_server::persist::PersistentStore>;
+    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+    // Use a fresh timestamp so liveness_check considers the heartbeat as recent.
+    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis_for_test()));
+    let broadcast_watermark = Arc::new(AtomicI64::new(0));
+    let persist = Arc::new(PgStore::new(
+        pool.clone(),
+        Arc::clone(&broadcast_watermark),
+        Arc::clone(&last_drain_pass_at),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: Some(pool),
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });

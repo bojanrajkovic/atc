@@ -29,7 +29,6 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use atc_core::{RunStateMachine, SystemClock};
 use atc_server::listener;
 use atc_server::metrics;
 use atc_server::persist::PgStore;
@@ -41,13 +40,6 @@ use atc_server::shutdown::{
 };
 use atc_server::state::{AppState, SeqEvent};
 
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
 /// Full-stack fixture with real TCP listeners, PG pool, and all background tasks.
 struct FullServerFixture {
     main_addr: SocketAddr,
@@ -58,13 +50,14 @@ struct FullServerFixture {
 async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixture {
     common::ensure_recorder_installed();
 
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(256);
     let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
-    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+    let last_drain_pass_at = Arc::new(AtomicI64::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+            .unwrap_or(0),
+    ));
     let broadcast_watermark = Arc::new(AtomicI64::new(0));
     let drain_in_flight = Arc::new(AtomicBool::new(false));
     let startup_at = Instant::now();
@@ -77,30 +70,24 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
             .expect("watermark query failed");
     broadcast_watermark.store(initial_watermark, std::sync::atomic::Ordering::Release);
 
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist =
-        Arc::new(PgStore::new(pool.clone())) as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = Arc::new(PgStore::new(
+        pool.clone(),
+        Arc::clone(&broadcast_watermark),
+        Arc::clone(&last_drain_pass_at),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
 
     let shutdown = CancellationToken::new();
     let ws_tracker = TaskTracker::new();
 
     let state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: Some(pool.clone()),
-        min_pending_seq: min_pending_seq.clone(),
-        last_drain_pass_at,
-        broadcast_watermark: broadcast_watermark.clone(),
-        persist,
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
     });
 
-    let eviction_handle = state
-        .state_machine
-        .start_eviction_task(Duration::from_secs(60), shutdown.clone());
+    // In PG mode there is no eviction task; pass None to the orchestrator.
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 
     let pg_listener = listener::connect_listener(&db_url)
@@ -121,7 +108,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         startup_at,
         drain_notify,
         min_pending_seq,
-        state.last_drain_pass_at.clone(),
+        last_drain_pass_at,
         broadcast_watermark,
         drain_in_flight,
         state.webhook_tx.clone(),
@@ -155,7 +142,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         main_serve_task,
         Some(drain_handle),
         Some(listener_handle),
-        eviction_handle,
+        None, // no eviction task in PG mode
         metrics_handle,
         None,
     ));

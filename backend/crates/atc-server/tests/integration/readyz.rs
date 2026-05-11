@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
-use atc_core::{RunStateMachine, SystemClock};
+use atc_server::persist::PgStore;
 use atc_server::state::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -35,7 +35,7 @@ fn now_millis() -> i64 {
 
 // ─── stale heartbeat → 503 ────────────────────────────────────────────────
 
-/// When pg_pool is Some and last_drain_pass_at is older than 30 seconds,
+/// When PgStore is configured and last_drain_pass_at is older than 30 seconds,
 ///     GET /readyz returns 503 with `{"status":"drain_stale"}`.
 ///
 /// Uses a testcontainers PG instance (so the DB check passes), but sets
@@ -47,28 +47,22 @@ async fn stale_heartbeat_returns_503() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
     common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
 
     // Set last_drain_pass_at to 60 seconds ago (well past the 30 s threshold).
     let stale_time = now_millis() - 60_000;
+    let last_drain_pass_at = Arc::new(AtomicI64::new(stale_time));
+    let broadcast_watermark = Arc::new(AtomicI64::new(0));
 
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
-        as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = Arc::new(PgStore::new(
+        pool.clone(),
+        Arc::clone(&broadcast_watermark),
+        Arc::clone(&last_drain_pass_at),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: Some(pool),
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -148,10 +142,7 @@ async fn drain_abort_drives_503() {
     // Stash a stale timestamp. Were the drain still running, this would race
     // a heartbeat refresh — but the drain is gone, so the value sticks.
     let stale = now_millis() - 60_000;
-    fixture
-        .state
-        .last_drain_pass_at
-        .store(stale, Ordering::Relaxed);
+    fixture.last_drain_pass_at.store(stale, Ordering::Relaxed);
 
     let req = Request::builder()
         .method("GET")
@@ -175,7 +166,7 @@ async fn drain_abort_drives_503() {
 
     // Confirm the heartbeat was NOT refreshed during the test — proves
     // the abort actually killed the heartbeat producer.
-    let post = fixture.state.last_drain_pass_at.load(Ordering::Relaxed);
+    let post = fixture.last_drain_pass_at.load(Ordering::Relaxed);
     assert_eq!(
         post, stale,
         "drain task is aborted; heartbeat must not have advanced",
@@ -184,44 +175,15 @@ async fn drain_abort_drives_503() {
     fixture.shutdown.cancel();
 }
 
-/// When pg_pool is None, /readyz always returns 200 regardless of
-///      last_drain_pass_at (the drain heartbeat check only applies in PG mode).
+/// When InMemoryStore is used (no PG), /readyz always returns 200.
+///
+/// InMemoryStore.liveness_check() always returns Ok(()). The drain-staleness
+/// check only applies to PgStore, which has the heartbeat atomic.
 #[tokio::test]
 #[serial]
 async fn no_pg_always_200() {
-    common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-
-    // Set last_drain_pass_at to a very stale value — should not matter without PG.
-    let stale_time = 0i64; // epoch = maximally stale
-
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None, // no PG
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(stale_time)),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state)
-        .fallback(atc_server::assets::fallback_handler());
+    // build_app_no_secret() wires InMemoryStore → liveness_check() = Ok(())
+    let (app, _state) = common::build_app_no_secret();
 
     let req = Request::builder()
         .method("GET")
@@ -233,7 +195,7 @@ async fn no_pg_always_200() {
     assert_eq!(
         resp.status(),
         StatusCode::OK,
-        "without PG pool, readyz must always return 200"
+        "InMemoryStore liveness is always ok, readyz must return 200"
     );
 
     let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
@@ -257,27 +219,22 @@ async fn shutdown_cancelled_returns_503_with_pg() {
     let (pool, _container, _db_url) = common::start_pg().await;
 
     common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
     let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
 
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::PgStore::new(pool.clone()))
-        as Arc<dyn atc_server::persist::PersistentStore>;
+    // Fresh heartbeat so the drain-staleness path would otherwise return 200.
+    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+    let broadcast_watermark = Arc::new(AtomicI64::new(0));
+
+    let persist = Arc::new(PgStore::new(
+        pool.clone(),
+        Arc::clone(&broadcast_watermark),
+        Arc::clone(&last_drain_pass_at),
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
     let shutdown = CancellationToken::new();
     let app_state = Arc::new(AppState {
-        state_machine,
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: Some(pool),
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        // Fresh heartbeat so the drain-staleness path would otherwise return 200.
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
     });
@@ -316,39 +273,9 @@ async fn shutdown_cancelled_returns_503_with_pg() {
 #[tokio::test]
 #[serial]
 async fn shutdown_cancelled_returns_503() {
-    common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let shutdown = CancellationToken::new();
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: shutdown.clone(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    shutdown.cancel();
-
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state)
-        .fallback(atc_server::assets::fallback_handler());
+    let (app, state) = common::build_app_no_secret();
+    // Extract the shutdown token from state and cancel it.
+    state.shutdown.cancel();
 
     let req = Request::builder()
         .method("GET")
@@ -378,39 +305,8 @@ async fn shutdown_cancelled_returns_503() {
 #[tokio::test]
 #[serial]
 async fn healthz_returns_200_after_shutdown() {
-    common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let shutdown = CancellationToken::new();
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: Arc::new(AtomicI64::new(now_millis())),
-        broadcast_watermark: Arc::new(AtomicI64::new(0)),
-        persist,
-        shutdown: shutdown.clone(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    shutdown.cancel();
-
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state)
-        .fallback(atc_server::assets::fallback_handler());
+    let (app, state) = common::build_app_no_secret();
+    state.shutdown.cancel();
 
     let req = Request::builder()
         .method("GET")
@@ -467,7 +363,7 @@ async fn fresh_heartbeat_returns_200() {
     assert_eq!(json["status"], "ok", "body should be ok");
 
     // Also assert last_drain_pass_at is indeed recent (within 10 seconds).
-    let last = fixture.state.last_drain_pass_at.load(Ordering::Relaxed);
+    let last = fixture.last_drain_pass_at.load(Ordering::Relaxed);
     let age_ms = now_millis().saturating_sub(last);
     assert!(
         age_ms < 10_000,
@@ -494,7 +390,7 @@ async fn heartbeat_ticks_during_quiet_period() {
     tokio::time::sleep(Duration::from_secs(6)).await;
 
     // The heartbeat should have been refreshed after the tick.
-    let last = fixture.state.last_drain_pass_at.load(Ordering::Relaxed);
+    let last = fixture.last_drain_pass_at.load(Ordering::Relaxed);
 
     assert!(
         last >= before_ms,

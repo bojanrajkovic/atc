@@ -61,7 +61,6 @@ async fn snapshot_returns_pg_state() {
         loop {
             tokio::time::sleep(Duration::from_millis(20)).await;
             if fixture
-                .state
                 .broadcast_watermark
                 .load(std::sync::atomic::Ordering::Acquire)
                 >= 2
@@ -285,11 +284,11 @@ async fn in_memory_fallback() {
         "in-memory snapshot should include the run"
     );
 
-    // pg_pool is None.
-    assert!(
-        state.pg_pool.is_none(),
-        "pg_pool must be None in in-memory mode"
-    );
+    // In-memory mode uses InMemoryStore, which has no PG connection.
+    // The behavioral assertion is that the snapshot above returned the run
+    // via the in-memory path (no DB involved). Structural proof: build_app_no_secret()
+    // constructs an InMemoryStore, so the read_snapshot() dispatch went there.
+    let _ = state; // consumed above
 }
 
 // ─── helper ──────────────────────────────────────────────────────────────────
