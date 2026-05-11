@@ -46,8 +46,8 @@ catalogs:
       specifier: 4.1.4
       version: 4.1.4
     bits-ui:
-      specifier: 2.17.3
-      version: 2.17.3
+      specifier: 2.18.1
+      version: 2.18.1
     clsx:
       specifier: 2.1.1
       version: 2.1.1
@@ -164,7 +164,7 @@ importers:
         version: 4.1.4(@vitest/browser@4.1.4)(vitest@4.1.4)
       bits-ui:
         specifier: 'catalog:'
-        version: 2.17.3(@internationalized/date@3.12.1)(svelte@5.55.0)
+        version: 2.18.1(@internationalized/date@3.12.1)(svelte@5.55.0)
       eslint:
         specifier: 'catalog:'
         version: 10.1.0(jiti@2.6.1)
@@ -919,8 +919,8 @@ packages:
   bidi-js@1.0.3:
     resolution: {integrity: sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==}
 
-  bits-ui@2.17.3:
-    resolution: {integrity: sha512-Bef41uY9U2jaBJHPhcPvmBNkGec5Wx2z6eioDsTmsaR2vH4QoaOcPi75gzCG3+/2TNr6v/qBwzgWNPYCxNtrEA==}
+  bits-ui@2.18.1:
+    resolution: {integrity: sha512-KkemzKFH4T3gt3H+P86JcnAWExjByv/6vlwjm/BoCwTPHu03yiCdxbghdJLvFReQTe0acCAiRcKfmixxD6XvlA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@internationalized/date': ^3.8.1
@@ -2655,7 +2655,7 @@ snapshots:
     dependencies:
       require-from-string: 2.0.2
 
-  bits-ui@2.17.3(@internationalized/date@3.12.1)(svelte@5.55.0):
+  bits-ui@2.18.1(@internationalized/date@3.12.1)(svelte@5.55.0):
     dependencies:
       '@floating-ui/core': 1.7.5
       '@floating-ui/dom': 1.7.6
