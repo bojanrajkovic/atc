@@ -89,7 +89,7 @@ Both modes now return `{"status":"accepted","seq":<u64>}` on success. The in-mem
 **Positive:**
 
 - Route handler is ~80 lines shorter. The storage-mode branch is gone; error handling is uniform.
-- `AppState` no longer branches on `pg_pool.is_some()` for the write path. The field stays for read-path consumers that still need direct pool access.
+- `AppState` no longer branches on `pg_pool.is_some()` for the write path. (Follow-up issue #69 removed the read-path branching too and dropped `pg_pool` from `AppState` entirely; `PgStore` now owns the pool internally.)
 - `atc-core`'s public API shrinks: the trait and its `RunStateMachine` impl are removed. `atc-core` returns to being a pure domain model crate.
 - Both backends are exercised through the same test surface; `webhook_ingestion_tests.rs` and `webhook_hmac_tests.rs` now cover both modes without mode-specific assertions.
 - The `"accepted"` + seq response provides useful observability for webhook senders and tests without new infrastructure.
@@ -98,7 +98,7 @@ Both modes now return `{"status":"accepted","seq":<u64>}` on success. The in-mem
 
 - `async-trait` stays in `atc-server`; it moves out of `atc-core` (no longer needed there).
 - `tests/persist_pg_tests.rs` continues to test `PgStore` directly through the trait, unchanged in behavior (outbox rows and NOTIFYs are now side effects of `apply_*_event`, verified in separate `transactional_writes_tests.rs` tests).
-- The `/v1/state` read path still branches on `pg_pool.is_some()` — this is tracked as a follow-up in issue #69, which would introduce a snapshot-provider trait to unify the read path. That scope is larger and depends on this PR landing first.
+- ~~The `/v1/state` read path still branches on `pg_pool.is_some()`~~ — resolved by issue #69 (PR #103): `read_snapshot` and `liveness_check` joined the `PersistentStore` trait, route handlers became storage-mode-uniform, and atc-core was reduced to pure transition functions.
 
 **Negative (accepted trade-offs):**
 
@@ -113,6 +113,6 @@ Both modes now return `{"status":"accepted","seq":<u64>}` on success. The in-mem
 ## See Also
 
 - Issue [#50](https://github.com/bojanrajkovic/atc/issues/50) — Reconcile `PersistentStore` trait with transactional outbox
-- Issue [#69](https://github.com/bojanrajkovic/atc/issues/69) — Follow-up: unify `/v1/state` read path through a snapshot-provider trait
+- Issue [#69](https://github.com/bojanrajkovic/atc/issues/69) — Resolved by PR #103: unified `/v1/state` and `/readyz` read paths through `read_snapshot` / `liveness_check` trait methods; atc-core reduced to pure transition functions; all persistence concerns moved to `atc-server::persist`.
 - `docs/design-plans/2026-05-07-issue-50-persistentstore-trait-relocation.md` — Full implementation plan with all acceptance criteria
 - Forward-looking research on decomposed and composed alternative backends — Phase 7 of the implementation plan; deferred to a separate PR.
