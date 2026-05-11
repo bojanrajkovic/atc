@@ -192,8 +192,18 @@ impl PersistentStore for InMemoryStore {
     ///
     /// Locks seq then read-locks state so snapshot content and cursor describe
     /// the same point in time — concurrent writers cannot interleave.
+    #[tracing::instrument(
+        name = "persist.read.snapshot",
+        skip_all,
+        fields(last_seq = tracing::field::Empty, runs_count = tracing::field::Empty, jobs_count = tracing::field::Empty),
+    )]
     async fn read_snapshot(&self) -> Result<StateSnapshot, PersistError> {
-        Ok(self.read_snapshot_inner().await)
+        let snap = self.read_snapshot_inner().await;
+        let span = tracing::Span::current();
+        span.record("last_seq", snap.last_seq);
+        span.record("runs_count", snap.runs.len());
+        span.record("jobs_count", snap.jobs.len());
+        Ok(snap)
     }
 
     /// Always returns `Ok(())` — the in-memory store is always live.

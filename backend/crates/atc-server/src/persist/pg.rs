@@ -187,6 +187,11 @@ impl PersistentStore for PgStore {
     /// Opens a REPEATABLE READ transaction and reads runs/jobs from the same
     /// MVCC snapshot. The snapshot view is taken strictly AFTER the watermark
     /// load, so every row reflected in `lastSeq` is also visible in the snapshot.
+    #[tracing::instrument(
+        name = "persist.read.snapshot",
+        skip_all,
+        fields(last_seq = tracing::field::Empty, runs_count = tracing::field::Empty, jobs_count = tracing::field::Empty),
+    )]
     async fn read_snapshot(&self) -> Result<StateSnapshot, PersistError> {
         // (1) Load the commit-order cursor BEFORE the snapshot view is taken.
         let watermark_at_start = self.broadcast_watermark.load(Ordering::Acquire);
@@ -212,11 +217,16 @@ impl PersistentStore for PgStore {
         }
 
         let last_seq = u64::try_from(watermark_at_start).unwrap_or(0);
-        Ok(StateSnapshot {
+        let snap = StateSnapshot {
             last_seq,
             runs,
             jobs,
-        })
+        };
+        let span = tracing::Span::current();
+        span.record("last_seq", snap.last_seq);
+        span.record("runs_count", snap.runs.len());
+        span.record("jobs_count", snap.jobs.len());
+        Ok(snap)
     }
 
     /// Check liveness: SELECT 1 for DB connectivity, then check drain heartbeat age.

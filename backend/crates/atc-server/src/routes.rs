@@ -78,17 +78,40 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 /// For `InMemoryStore`: locks seq across snapshot + seq read so the cursor
 /// matches snapshot content.
 async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.persist.read_snapshot().await {
-        Ok(snap) => Json(snap).into_response(),
-        Err(e) => {
-            tracing::error!(error = ?e, "state_handler: snapshot failed");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": "snapshot failed"})),
-            )
-                .into_response()
+    let span = info_span!(
+        "state.snapshot",
+        http.route = "/v1/state",
+        snapshot.runs_count = field::Empty,
+        snapshot.jobs_count = field::Empty,
+        snapshot.last_seq = field::Empty,
+    );
+    async move {
+        match state.persist.read_snapshot().await {
+            Ok(snap) => {
+                let current = tracing::Span::current();
+                current.record("snapshot.runs_count", snap.runs.len());
+                current.record("snapshot.jobs_count", snap.jobs.len());
+                current.record("snapshot.last_seq", snap.last_seq);
+                tracing::debug!(
+                    last_seq = snap.last_seq,
+                    runs_count = snap.runs.len(),
+                    jobs_count = snap.jobs.len(),
+                    "state snapshot served"
+                );
+                Json(snap).into_response()
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "state_handler: snapshot failed");
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"error": "snapshot failed"})),
+                )
+                    .into_response()
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 /// Handler for removed endpoints that should return 404.

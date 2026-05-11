@@ -44,6 +44,8 @@ The seven elements:
 
 ATC spans use a dotted hierarchy that names the boundary, not the implementation:
 
+- `state.snapshot` — root request span for `GET /v1/state` reads.
+- `persist.read.snapshot` — `PgStore` / `InMemoryStore` read-path entry; child of `state.snapshot`.
 - `webhook.handler` — root request span for `/v1/webhooks/github` POSTs.
 - `webhook.verify`, `webhook.parse` — atc-github boundary spans nested under `webhook.handler`.
 - `persist.apply.run_event`, `persist.apply.job_event` — `PgStore` / `InMemoryStore` write-path entries.
@@ -309,6 +311,13 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 ## Span inventory
 
 Spans declared by ATC, grouped by the boundary they decorate.
+
+### State snapshot path
+
+| Span | Source | Attributes |
+|---|---|---|
+| `state.snapshot` | `backend/crates/atc-server/src/routes.rs` (`state_handler`) — root request span for `GET /v1/state`. Built manually (not via `#[instrument]`) so span fields can be recorded from the snapshot response before the handler returns. No `traceparent` extraction: `/v1/state` is a client-pull endpoint with no upstream trace context today. | `http.route="/v1/state"`, `snapshot.runs_count` (usize; late-bound, recorded after snapshot is read), `snapshot.jobs_count` (usize; late-bound), `snapshot.last_seq` (u64; late-bound). |
+| `persist.read.snapshot` | `PgStore::read_snapshot` in `persist/pg.rs` and `InMemoryStore::read_snapshot` in `persist/in_memory.rs` — via `#[tracing::instrument]`, child of `state.snapshot`. | `last_seq` (u64; late-bound), `runs_count` (usize; late-bound), `jobs_count` (usize; late-bound). |
 
 ### Webhook ingestion path
 
