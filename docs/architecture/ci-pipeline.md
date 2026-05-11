@@ -1,6 +1,6 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-05-10
+Last verified: 2026-05-11
 
 ## Purpose
 
@@ -79,14 +79,13 @@ Both workflows are gated by lefthook pre-push hooks at development time, prevent
 
 Mend Renovate manages every dependency surface (Cargo, npm/pnpm, Dockerfile, docker-compose, GitHub Actions, mise) under one configuration at `renovate.json`. It extends `config:best-practices`, which bundles digest pinning for Docker FROMs and GitHub Action `uses:` references, dev-dependency pinning, weekly lockfile maintenance, the npm security minimum-release-age, and abandoned-package surfacing on the dependency dashboard. Manifests are pinned exactly (`=X.Y.Z` for Cargo, caret stripped for npm/pnpm), and `lockFileMaintenance` is scheduled weekly on Sunday morning to regenerate `Cargo.lock` and `pnpm-lock.yaml` and absorb transitive bumps.
 
-Auto-merge gating combines four mechanisms:
+Auto-merge gating combines three mechanisms:
 
-- **Required status checks on the `main` ruleset** (`Backend Result`, `Frontend Result`, `Helm Result`, `PR Checks`) — applies to manual merges from the GitHub UI as well as Renovate's own merge call.
+- **Required status checks on the `main` ruleset** (`Backend Result`, `Frontend Result`, `Helm Result`, `PR Checks`) — applies to manual merges from the GitHub UI as well as Renovate's platform auto-merge.
 - **3-day release-age delay** (`minimumReleaseAge: "3 days"` at the top level) — gives upstream time to yank or patch before ATC's CI sees the bump.
-- **Renovate's built-in automerge polling** (not GitHub platform automerge) — `platformAutomerge: false` is set explicitly so the `automergeSchedule` (weekday mornings) is honored. Trade-off: ~30–60 min latency between green CI and merge in exchange for predictable merge windows.
 - **Per-rule overrides** — major updates open but never auto-merge; pre-1.0 minor bumps require manual review (Renovate's `isBreaking()` already classifies them as major for cargo, but npm classification is less reliable); `ts-rs`, `sqlx`, and `opentelemetry-rust` carry no-automerge overrides because their bumps cross compile-time contracts (regenerated TypeScript types, sqlx macros, OTel 0.x ecosystem coordination).
 
-Security advisories (Dependabot + OSV via `osvVulnerabilityAlerts: true`) bypass the schedule and release-age delay, automerge non-major updates, and require manual review for major. Both `schedule` and `automergeSchedule` are set to `at any time` on the security override so neither branch creation nor the automerge poll waits for the weekday window.
+Security advisories (Dependabot + OSV via `osvVulnerabilityAlerts: true`) bypass the release-age delay, automerge non-major updates, and require manual review for major. `schedule` is set to `at any time` on the security override so branch creation is not gated.
 
 Conventional-commit prefix mapping: runtime dependency bumps land as `fix(deps):` (release-please ships a patch release); dev/tooling bumps land as `chore(deps):` (no release). The Svelte ecosystem custom group does not force a prefix — Renovate picks `fix(deps):` only when the group's update set includes a runtime member (`svelte`).
 

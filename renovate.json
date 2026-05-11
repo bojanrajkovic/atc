@@ -4,8 +4,6 @@
     "config:best-practices"
   ],
   "timezone": "America/New_York",
-  "schedule": ["before 9am every weekday"],
-  "automergeSchedule": ["before 9am every weekday"],
   "prHourlyLimit": 3,
   "prConcurrentLimit": 6,
   "branchConcurrentLimit": 0,
@@ -14,7 +12,7 @@
   "semanticCommits": "enabled",
   "rangeStrategy": "pin",
   "automerge": false,
-  "platformAutomerge": false,
+  "platformAutomerge": true,
   "automergeStrategy": "squash",
   "minimumReleaseAge": "3 days",
   "osvVulnerabilityAlerts": true,
