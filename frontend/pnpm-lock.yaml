@@ -85,8 +85,8 @@ catalogs:
       specifier: 1.6.0
       version: 1.6.0
     tailwind-merge:
-      specifier: 2.6.1
-      version: 2.6.1
+      specifier: 3.5.0
+      version: 3.5.0
     tailwind-variants:
       specifier: 3.2.2
       version: 3.2.2
@@ -121,7 +121,7 @@ importers:
         version: 5.55.0
       tailwind-merge:
         specifier: 'catalog:'
-        version: 2.6.1
+        version: 3.5.0
     devDependencies:
       '@bgotink/playwright-coverage':
         specifier: 'catalog:'
@@ -191,7 +191,7 @@ importers:
         version: 1.6.0(svelte@5.55.0)
       tailwind-variants:
         specifier: 'catalog:'
-        version: 3.2.2(tailwind-merge@2.6.1)(tailwindcss@4.2.2)
+        version: 3.2.2(tailwind-merge@3.5.0)(tailwindcss@4.2.2)
       tailwindcss:
         specifier: 'catalog:'
         version: 4.2.2
@@ -1720,9 +1720,6 @@ packages:
   tagged-tag@1.0.0:
     resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
     engines: {node: '>=20'}
-
-  tailwind-merge@2.6.1:
-    resolution: {integrity: sha512-Oo6tHdpZsGpkKG88HJ8RR1rg/RdnEkQEfMoEk2x1XRI3F1AxeU+ijRXpiVUF4UbLfcxxRGw6TbUINKYdWVsQTQ==}
 
   tailwind-merge@3.5.0:
     resolution: {integrity: sha512-I8K9wewnVDkL1NTGoqWmVEIlUcB9gFriAEkXkfCjX5ib8ezGxtR3xD7iZIxrfArjEsH7F1CHD4RFUtxefdqV/A==}
@@ -3416,15 +3413,13 @@ snapshots:
 
   tagged-tag@1.0.0: {}
 
-  tailwind-merge@2.6.1: {}
-
   tailwind-merge@3.5.0: {}
 
-  tailwind-variants@3.2.2(tailwind-merge@2.6.1)(tailwindcss@4.2.2):
+  tailwind-variants@3.2.2(tailwind-merge@3.5.0)(tailwindcss@4.2.2):
     dependencies:
       tailwindcss: 4.2.2
     optionalDependencies:
-      tailwind-merge: 2.6.1
+      tailwind-merge: 3.5.0
 
   tailwindcss@4.2.2: {}
 
