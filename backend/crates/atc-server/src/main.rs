@@ -125,6 +125,16 @@ async fn main() {
 
     init_tracing_subscriber(&cfg, otel_handles.as_ref());
 
+    // Register metric descriptions BEFORE any emission. The first emission
+    // without a prior `describe_*` creates an instrument with an empty
+    // description and that metadata is permanent for the lifetime of the
+    // meter provider — so the `atc_pg_broadcast_watermark` seed below and any
+    // listener/drain task emissions must land after these calls. Under a
+    // no-op recorder (OTel disabled) `register_*` is cheap.
+    metrics::register_build_info();
+    metrics::register_pg_write_counters();
+    metrics::register_listener_metrics();
+
     if let Some(ref db_url) = cfg.database_url {
         ensure_pg_scheme("ATC_DATABASE_URL", db_url);
     }
@@ -257,13 +267,9 @@ async fn main() {
         ws_tracker: ws_tracker.clone(),
     });
 
-    // Register metric descriptions and spawn the process-metrics collector.
-    // `register_*` runs unconditionally so descriptions land before the first
-    // emission either way (axum-otel-metrics channels through the no-op recorder
-    // when OTel is disabled, so emits are cheap no-ops when unconnected).
-    metrics::register_build_info();
-    metrics::register_pg_write_counters();
-    metrics::register_listener_metrics();
+    // Spawn the process-metrics collector. Metric descriptions for the
+    // listener/drain/build-info instruments were registered earlier in `main`
+    // (before any emission).
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 
     // Clone the Arc into the router so `app_state` itself stays in this scope
