@@ -306,9 +306,9 @@ The frontend uses Svelte 5 rune-class stores as module-level singletons. All sto
 - **`jobs: $derived.by<Job[]>`** — flat view across all runs. Iterates `this.jobsByRun.values()` and concatenates each `Job[]` into a single array. Consumed by `runnerStore.pools` (`computePoolStats(runStore.jobs)`) so the runner-pool derivation has a stable single dependency rather than threading the per-run `SvelteMap` itself.
 
 **RunnerStore** (`src/lib/stores/runners.svelte.ts`)
-- `pools` is `readonly pools = $derived.by(() => computePoolStats(runStore.jobs))`. No `$state`, no `loadPools`, no `clear`, no manual sidecar.
+- `pools` is `readonly pools = $derived.by(...)`. No `$state`, no `loadPools`, no `clear`, no manual sidecar. Before calling `computePoolStats`, the derivation filters `runStore.jobs` to exclude jobs whose parent run is `Completed` — GitHub does not emit `workflow_job` terminal events for jobs that were `Queued` but never started when a run is cancelled, so those orphans would otherwise inflate the queued count.
 - `computePoolStats(jobs: Job[]): RunnerPoolStats[]` is exported from the same module as a pure function. It dedupes labels via `new Set(...)`, sorts them, uses `JSON.stringify(sortedLabels)` as a collision-free map key, skips jobs with status `Waiting` or `Completed`, increments `queued` / `running` per status, sets `groupName` from the most recent observed `runner.groupName`, sets `isElastic = true` whenever any observed `runner.groupId === 0n` (bigint-aware), and returns the resulting array sorted lexicographically by labels.
-- The derivation chain is: `runStore.jobsByRun` (mutated by `applyJobEvent`) → `runStore.jobs` (`$derived.by<Job[]>` flat view) → `runnerStore.pools`. Pool state self-heals on every job event without any explicit dispatch into the runner store.
+- The derivation chain is: `runStore.jobsByRun` + `runStore.runs` → `runnerStore.pools`. Pool state self-heals on every run or job event without any explicit dispatch into the runner store.
 - See ADR 0004 (`docs/architecture-decisions/0004-frontend-derived-pool-stats.md`) for the rationale (multi-replica concurrent-writer correctness).
 
 **UIStore** (`src/lib/stores/ui.svelte.ts`)
