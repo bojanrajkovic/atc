@@ -53,6 +53,7 @@ WORKDIR /app
 COPY --from=deps /app/backend/target backend/target
 COPY backend/ backend/
 COPY --from=frontend /app/frontend/dist frontend/dist/
+COPY .git .git
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git/db \
     cd backend && cargo build --release --locked --bin atc-server

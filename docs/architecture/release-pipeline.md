@@ -166,7 +166,7 @@ The regular `Dockerfile` is unchanged and remains the canonical entry point for 
 - `.github/workflows/release.yml` — Artifact build and publication
 - `Dockerfile` — Multi-stage container build with dependency caching and distroless runtime; canonical for local `docker build .`
 - `Dockerfile.release` — Thin image for the release pipeline; consumes a pre-built binary from the build context (see arm64 cross-compile decision above)
-- `.dockerignore` — Docker build context filter for `Dockerfile` (excludes large/irrelevant files)
+- `.dockerignore` — Docker build context filter for `Dockerfile`; allowlist pattern (`backend/`, `frontend/`, `.git`); `.git` is included so vergen-gix can embed real commit metadata at build time
 - `Dockerfile.release.dockerignore` — Per-Dockerfile ignore-list for `Dockerfile.release`; allowlists only `atc-server` (Docker 23.0+ convention)
 - `release-please-config.json` — release-please manifest (version sync, changelog paths, bump rules)
 - `.release-please-manifest.json` — Version tracker for release-please
@@ -193,7 +193,7 @@ The regular `Dockerfile` is unchanged and remains the canonical entry point for 
 - `.github/workflows/release.yml` — Tag-triggered artifact build (binaries, Docker image) and publication
 - `Dockerfile` — Multi-stage Rust build with cargo-chef caching; distroless runtime; canonical for local `docker build .`
 - `Dockerfile.release` — Thin image used by `build-container` in `release.yml`; assumes a pre-built `atc-server` binary in the build context (see arm64 cross-compile + binary-handoff Decision in this doc)
-- `.dockerignore` — Build context filter for `Dockerfile` (excludes docs, git, CI configs, test files)
+- `.dockerignore` — Build context filter for `Dockerfile`; allowlist pattern (`backend/`, `frontend/`, `.git`); `.git` is included so vergen-gix can embed real commit metadata at build time
 - `Dockerfile.release.dockerignore` — Per-Dockerfile ignore-list for `Dockerfile.release`; allowlists only `atc-server` (Docker 23.0+ convention)
 - `release-please-config.json` — Configures release-please plugins, version sync, and CHANGELOG generation
 - `.release-please-manifest.json` — Tracks current versions for all packages

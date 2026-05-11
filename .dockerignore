@@ -7,6 +7,9 @@
 # Allow frontend source and manifests
 !frontend/
 
+# Allow .git so vergen-gix can embed real commit metadata in the binary
+!.git
+
 # Re-exclude build artifacts and dependencies
 backend/target/
 frontend/node_modules/
