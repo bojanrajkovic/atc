@@ -16,7 +16,7 @@ atc-github = { path = "../atc-github" }
 async-trait = "=0.1.89"
 axum = { version = "=0.8.8", features = ["ws"] }
 figment = { version = "=0.10.19", features = ["env", "toml"] }
-metrics = "=0.24.3"
+metrics = "=0.24.5"
 metrics-process = "=2.4.3"
 reqwest = { version = "=0.13.2", default-features = false, features = ["rustls"] }
 rust-embed = "=8.11.0"
