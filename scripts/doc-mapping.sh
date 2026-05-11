@@ -36,9 +36,10 @@ get_docs_for_file() {
             echo "docs/architecture/metrics.md"
             return
             ;;
-        backend/crates/atc-server/src/persist.rs|backend/crates/atc-server/src/listener.rs)
+        backend/crates/atc-server/src/persist/pg.rs|backend/crates/atc-server/src/listener.rs)
             # Straddlers: PersistentStore trait / drain pipeline contracts live
-            # in backend-server.md; metric emissions documented in metrics.md.
+            # in backend-server.md; metric emissions (atc_pg_write_failures_total,
+            # atc_pg_notify_emitted_total) documented in metrics.md.
             # Both docs must be updated when either file changes.
             echo "docs/architecture/backend-server.md"
             echo "docs/architecture/metrics.md"

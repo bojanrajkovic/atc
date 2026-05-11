@@ -19,6 +19,7 @@ mod drain_forwards;
 mod e2e_tests;
 mod gap_healing;
 mod graceful_shutdown;
+mod in_memory_store_tests;
 mod metrics_broadcast_watermark_test;
 mod metrics_drain_pass_duration_test;
 mod metrics_drain_shutdown_remaining_test;

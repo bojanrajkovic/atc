@@ -108,6 +108,31 @@ impl<S: Into<String>> FromIterator<S> for LabelSet {
     }
 }
 
+/// Derived runner pool statistics.
+///
+/// Computed on read from live job state — not stored separately.
+/// Each entry represents a unique label set with aggregated counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunnerPoolStats {
+    /// The set of labels identifying this pool.
+    pub labels: LabelSet,
+    /// Number of jobs queued for this label set.
+    pub queued: usize,
+    /// Number of jobs running on runners with this label set.
+    pub running: usize,
+    /// Runner group name from the most recently observed `RunnerInfo`
+    /// for this label set, if available.
+    pub group_name: Option<String>,
+    /// Whether this pool uses GitHub-hosted (elastic) runners.
+    /// Derived from `RunnerInfo.group_id == Some(0)` for any observed runner.
+    pub is_elastic: bool,
+    /// Total runner capacity for this pool, if known.
+    /// Always `None` until operator capacity configuration is implemented.
+    pub total: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

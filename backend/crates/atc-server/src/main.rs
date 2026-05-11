@@ -9,14 +9,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Notify;
 
-use atc_core::{RunStateMachine, SystemClock};
+use atc_core::SystemClock;
 use atc_server::config;
 use atc_server::db;
 use atc_server::listener;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
+use atc_server::persist::eviction::spawn_eviction_task;
+use atc_server::persist::{InMemoryStore, PgStore};
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::{AppState, SeqEvent};
@@ -123,6 +125,16 @@ async fn main() {
 
     init_tracing_subscriber(&cfg, otel_handles.as_ref());
 
+    // Register metric descriptions BEFORE any emission. The first emission
+    // without a prior `describe_*` creates an instrument with an empty
+    // description and that metadata is permanent for the lifetime of the
+    // meter provider — so the `atc_pg_broadcast_watermark` seed below and any
+    // listener/drain task emissions must land after these calls. Under a
+    // no-op recorder (OTel disabled) `register_*` is cheap.
+    metrics::register_build_info();
+    metrics::register_pg_write_counters();
+    metrics::register_listener_metrics();
+
     if let Some(ref db_url) = cfg.database_url {
         ensure_pg_scheme("ATC_DATABASE_URL", db_url);
     }
@@ -130,6 +142,20 @@ async fn main() {
         ensure_pg_scheme("ATC_DATABASE_LISTENER_URL", listener_url);
     }
 
+    // Create the broadcast channel for pushing domain events to WebSocket clients.
+    // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
+    // and should re-fetch via GET /v1/state.
+    let (webhook_tx, _rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
+
+    // Single shared cancellation token observed by all supervised surfaces.
+    let shutdown = CancellationToken::new();
+
+    // Gap-healing backstop for the outbox drain. i64::MAX at boot (no in-flight handlers).
+    let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
+    // Wake-coalesce instrumentation flag shared by listener and drain.
+    let drain_in_flight = Arc::new(AtomicBool::new(false));
+
+    // Storage mode dispatch.
     let pg_pool: Option<sqlx::PgPool> = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
             if matches!(e, sqlx::Error::Migrate(_)) {
@@ -146,87 +172,7 @@ async fn main() {
         None
     };
 
-    // Clone the pool before it moves into AppState so the listener can use it.
-    // PgPool is internally reference-counted; this clone is cheap.
-    let pg_pool_for_listener = pg_pool.clone();
-
-    // Create the shared state machine with system clock and 1-hour TTL for completed entries.
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-
-    // Create the broadcast channel for pushing domain events to WebSocket clients.
-    // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
-    // and should re-fetch via GET /v1/state.
-    let (webhook_tx, _rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-
-    // Gap-healing backstop and drain heartbeat. min_pending_seq is
-    // i64::MAX at boot (no in-flight handlers); last_drain_pass_at is now()
-    // so /readyz cannot 503 between bind and the first drain pass.
-    // broadcast_watermark seeds from the same MAX(seq) value used to seed the
-    // drain's local watermark — see below; we plumb that value in once the
-    // PG-pool branch computes it.
-    let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
-    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
-    let broadcast_watermark = Arc::new(AtomicI64::new(0));
-    // Wake-coalesce instrumentation: the listener observes this flag in its
-    // NOTIFY recv loop to count arrivals that overlapped an in-flight drain
-    // pass. The drain task brackets each `drain_pass(...)` call with
-    // `store(true)` ... `store(false)`.
-    let drain_in_flight = Arc::new(AtomicBool::new(false));
-
-    let seq = Arc::new(Mutex::new(0u64));
-    let persist: Arc<dyn atc_server::persist::PersistentStore> = match pg_pool.clone() {
-        Some(pool) => Arc::new(atc_server::persist::PgStore::new(pool)),
-        None => Arc::new(atc_server::persist::InMemoryStore::new(
-            state_machine.clone(),
-            seq.clone(),
-            webhook_tx.clone(),
-        )),
-    };
-    // Single shared cancellation token observed by all supervised surfaces:
-    // axum × 2 (with_graceful_shutdown), listener, drain, eviction, process
-    // metrics collector, and every WS handler. Construct before AppState so the
-    // token can be cloned into both the router (via app_state) and into each
-    // background-task spawn site below. WS handlers treat RecvError::Closed as
-    // a graceful shutdown signal (sending Close(1001) on either path), so no
-    // separate keepalive is needed to cover the broadcast-channel race.
-    let shutdown = CancellationToken::new();
-    let ws_tracker = TaskTracker::new();
-    let app_state = Arc::new(AppState {
-        state_machine,
-        webhook_tx: webhook_tx.clone(),
-        webhook_secret: cfg.github.webhook_secret.clone(),
-        seq,
-        pg_pool,
-        min_pending_seq: min_pending_seq.clone(),
-        last_drain_pass_at: last_drain_pass_at.clone(),
-        broadcast_watermark: broadcast_watermark.clone(),
-        persist,
-        shutdown: shutdown.clone(),
-        ws_tracker: ws_tracker.clone(),
-    });
-
-    // The OTel-backed `metrics-rs` recorder is installed inside `init_otel`
-    // when an OTLP endpoint is configured. With no endpoint the macros resolve
-    // through the no-op recorder, so describes/emits are cheap no-ops.
-    // `register_*` runs unconditionally so descriptions land before the first
-    // emission either way.
-    metrics::register_build_info();
-    metrics::register_pg_write_counters();
-    metrics::register_listener_metrics();
-
-    // Spawn the process metrics collector with a cooperative shutdown handle.
-    let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
-
-    // Start the background eviction task. Runs every 60 seconds.
-    let eviction_handle = app_state
-        .state_machine
-        .start_eviction_task(Duration::from_secs(60), shutdown.clone());
-
-    // If a PG pool is configured, initialize the listener and drain background tasks.
-    let (listener_handle, drain_handle) = if let Some(pool) = pg_pool_for_listener {
+    let (persist, eviction_handle, listener_handle, drain_handle) = if let Some(pool) = pg_pool {
         let listener_url = cfg
             .database_listener_url
             .clone()
@@ -241,8 +187,7 @@ async fn main() {
             });
 
         // Capture startup_at BEFORE the COALESCE round-trip so the drain
-        // startup histogram includes the cold-pool query cost. Observed once
-        // by the drain task after its first pass returns.
+        // startup histogram includes the cold-pool query cost.
         let startup_at = Instant::now();
 
         let initial_watermark: i64 =
@@ -254,11 +199,18 @@ async fn main() {
                     process::exit(1);
                 });
 
-        // Seed broadcast_watermark from the same MAX(seq) so /v1/state returns
-        // a sensible lastSeq before the first post-startup drain pass.
-        broadcast_watermark.store(initial_watermark, std::sync::atomic::Ordering::Release);
+        let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
+        let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+
+        // Seed the gauge so /metrics reflects the initial watermark immediately.
         #[allow(clippy::cast_precision_loss)]
         ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
+
+        let pg_store = Arc::new(PgStore::new(
+            pool.clone(),
+            Arc::clone(&broadcast_watermark),
+            Arc::clone(&last_drain_pass_at),
+        ));
 
         let drain_notify = Arc::new(Notify::new());
         let lh = listener::spawn_listener_task(
@@ -278,16 +230,47 @@ async fn main() {
             last_drain_pass_at,
             broadcast_watermark,
             drain_in_flight,
-            webhook_tx,
+            webhook_tx.clone(),
             shutdown.clone(),
             None,
             None,
             None, // drain_delay: None in production
         );
-        (Some(lh), Some(dh))
+
+        let persist: Arc<dyn atc_server::persist::PersistentStore> = pg_store;
+        (persist, None, Some(lh), Some(dh))
     } else {
-        (None, None)
+        // In-memory mode: InMemoryStore owns all state.
+        let in_memory = Arc::new(InMemoryStore::new(
+            Arc::new(SystemClock),
+            Duration::from_secs(3600),
+            webhook_tx.clone(),
+        ));
+        // Spawn eviction only in in-memory mode (PG mode has no in-memory state to evict).
+        let ev_handle = spawn_eviction_task(
+            Arc::clone(&in_memory),
+            Duration::from_secs(60),
+            shutdown.clone(),
+        );
+        let persist: Arc<dyn atc_server::persist::PersistentStore> = in_memory;
+        (persist, Some(ev_handle), None, None)
     };
+
+    let ws_tracker = TaskTracker::new();
+
+    // Build AppState with the five fields that survive the refactor.
+    let app_state = Arc::new(AppState {
+        persist,
+        webhook_tx: webhook_tx.clone(),
+        webhook_secret: cfg.github.webhook_secret.clone(),
+        shutdown: shutdown.clone(),
+        ws_tracker: ws_tracker.clone(),
+    });
+
+    // Spawn the process-metrics collector. Metric descriptions for the
+    // listener/drain/build-info instruments were registered earlier in `main`
+    // (before any emission).
+    let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 
     // Clone the Arc into the router so `app_state` itself stays in this scope
     // for the lifetime of `main`. With `app_state` still held here, AppState's

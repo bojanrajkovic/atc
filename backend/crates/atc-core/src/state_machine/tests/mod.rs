@@ -1,14 +1,10 @@
-use super::*;
-use crate::clock::TestClock;
-use crate::job::{JobConclusion, RunnerInfo, Step, StepStatus};
-use crate::run::RunConclusion;
-use chrono::{DateTime, Utc};
+use std::time::Duration;
 
-mod edge_cases;
-mod event_ingestion;
-mod eviction;
-mod queries;
-mod webhook_domain_updates;
+use super::*;
+use crate::types::{JobId, RunId};
+use chrono::Utc;
+
+mod pure_application;
 
 /// Helper to build a `RunEventEnvelope` with sensible defaults.
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
@@ -28,51 +24,6 @@ fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
         created_at: now,
         run_started_at: None,
         updated_at: now,
-        action,
-    }
-}
-
-/// Helper to build a `JobEventEnvelope` with sensible defaults.
-fn make_job_event(
-    job_id: JobId,
-    run_id: RunId,
-    org: &str,
-    repo: &str,
-    action: JobEvent,
-) -> JobEventEnvelope {
-    let now = Utc::now();
-    JobEventEnvelope {
-        job_id,
-        run_id,
-        org: org.to_string(),
-        repo: repo.to_string(),
-        name: "Test Job".to_string(),
-        created_at: now,
-        started_at: None,
-        completed_at: None,
-        action,
-    }
-}
-
-/// Helper to build a `JobEventEnvelope` with custom `completed_at` timestamp.
-fn make_job_event_with_completed_at(
-    job_id: JobId,
-    run_id: RunId,
-    org: &str,
-    repo: &str,
-    action: JobEvent,
-    completed_at: Option<DateTime<Utc>>,
-) -> JobEventEnvelope {
-    let now = Utc::now();
-    JobEventEnvelope {
-        job_id,
-        run_id,
-        org: org.to_string(),
-        repo: repo.to_string(),
-        name: "Test Job".to_string(),
-        created_at: now,
-        started_at: None,
-        completed_at,
         action,
     }
 }

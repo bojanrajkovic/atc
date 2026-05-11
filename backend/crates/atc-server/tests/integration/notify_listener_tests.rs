@@ -7,7 +7,6 @@
 
 use crate::common;
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -15,8 +14,6 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use sqlx::postgres::PgListener;
 use tokio::time::timeout;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -125,59 +122,26 @@ async fn no_notify_on_rollback() {
     fixture.shutdown.cancel();
 }
 
-// ─── no NOTIFY when pg_pool is None ────────────────────────────────────────
+// ─── no NOTIFY when using InMemoryStore ────────────────────────────────────
 
 #[tokio::test]
 #[serial]
 async fn no_notify_in_memory_mode() {
-    use atc_core::{RunStateMachine, SystemClock};
-    use atc_server::state::AppState;
-
-    common::ensure_recorder_installed();
-    let state_machine = Arc::new(RunStateMachine::new(
-        Arc::new(SystemClock),
-        Duration::from_secs(3600),
-    ));
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let seq = Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let state = Arc::new(AppState {
-        state_machine,
-        webhook_tx,
-        webhook_secret: None,
-        seq,
-        pg_pool: None, // in-memory mode
-        min_pending_seq: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: std::sync::Arc::new(std::sync::atomic::AtomicI64::new({
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-                .unwrap_or(0)
-        })),
-        broadcast_watermark: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
-        persist,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
-    let router = atc_server::routes::api_routes()
-        .with_state(state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    // In-memory mode: the PersistentStore dispatch goes to InMemoryStore, which
+    // has no NOTIFY path at all (it doesn't touch a PG connection). The webhook
+    // must succeed without panicking.
+    let (router, _state) = common::build_app_no_secret();
 
     let body = common::fixture_workflow_run_requested();
     let (status, _) = common::post_webhook_to_router(router.clone(), "workflow_run", &body).await;
-    assert_eq!(status, StatusCode::OK);
-
-    // Direct behavioral assertion: the NOTIFY helper is only reachable when
-    // pg_pool is Some. Asserting pg_pool is None proves the notify branch was
-    // never entered — the webhook processed successfully via the in-memory path.
-    assert!(
-        state.pg_pool.is_none(),
-        "pg_pool must be None in in-memory mode (notify path must not have been taken)"
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "in-memory webhook must return 200 without NOTIFY"
     );
+    // If this test reaches here without panic, the NOTIFY path was not entered.
+    // InMemoryStore has no pg_notify call; it broadcasts directly via the
+    // tokio broadcast channel, so the NOTIFY branch is structurally unreachable.
 }
 
 // ─── listener task receives all N notifications ────────────────────────────

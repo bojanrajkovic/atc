@@ -110,8 +110,6 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
- "tokio",
- "tokio-util",
  "tracing",
  "ts-rs",
 ]
@@ -139,6 +137,7 @@ dependencies = [
  "async-trait",
  "atc-core",
  "atc-github",
+ "atc-server",
  "axum",
  "axum-otel-metrics",
  "chrono",

@@ -136,7 +136,7 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// - `main_serve_task`: Spawned `JoinHandle<io::Result<()>>` from main axum serve.
 /// - `drain_handle`: `Some` in PG mode; `None` in in-memory mode.
 /// - `listener_handle`: `Some` in PG mode; `None` in in-memory mode.
-/// - `eviction_handle`: Always `Some`.
+/// - `eviction_handle`: `Some` in in-memory mode; `None` in PG mode.
 /// - `metrics_handle`: Always `Some`.
 /// - `otel_handles`: `Some` when `init_otel` returned a configured pipeline
 ///   (i.e., `OTEL_EXPORTER_OTLP_ENDPOINT` was set); `None` when OTel is
@@ -148,7 +148,7 @@ pub async fn run_shutdown_orchestration(
     main_serve_task: JoinHandle<io::Result<()>>,
     drain_handle: Option<JoinHandle<()>>,
     listener_handle: Option<JoinHandle<()>>,
-    eviction_handle: JoinHandle<()>,
+    eviction_handle: Option<JoinHandle<()>>,
     metrics_handle: JoinHandle<()>,
     otel_handles: Option<OtelHandles>,
 ) -> bool {
@@ -213,7 +213,9 @@ pub async fn run_shutdown_orchestration(
     if let Some(handle) = listener_handle {
         join_with_timeout(handle, SHUTDOWN_TIMEOUT_LISTENER, "listener").await;
     }
-    join_with_timeout(eviction_handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
+    if let Some(handle) = eviction_handle {
+        join_with_timeout(handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
+    }
     join_with_timeout(metrics_handle, SHUTDOWN_TIMEOUT_METRICS, "metrics").await;
 
     // OTel pipeline tear-down. The shutdown flush exports any spans/metrics
@@ -293,7 +295,7 @@ mod tests {
                 main_serve_task,
                 None,
                 None,
-                eviction_handle,
+                Some(eviction_handle),
                 metrics_handle,
                 None,
             ),
@@ -337,7 +339,7 @@ mod tests {
                 main_serve_task,
                 None,
                 None,
-                eviction_handle,
+                Some(eviction_handle),
                 metrics_handle,
                 None,
             ),

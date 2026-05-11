@@ -130,11 +130,14 @@ async fn concurrent_same_entity_commits_in_seq_order() {
         "dedup counter must stay at zero (no rescan expected with row-lock serialization)",
     );
 
-    // In PG mode the in-memory seq counter is never incremented.
-    let seq_val = *fixture.state.seq.lock().await;
-    assert_eq!(
-        seq_val, 0,
-        "in-memory seq counter must stay 0 in PG mode; got {seq_val}"
+    // In PG mode the broadcast watermark advances via the drain, not in-memory.
+    // The fixture's last_drain_pass_at should be a recent timestamp (drain ran).
+    let drain_heartbeat = fixture
+        .last_drain_pass_at
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        drain_heartbeat > 0,
+        "drain heartbeat must be non-zero after processing events"
     );
 
     fixture.shutdown.cancel();

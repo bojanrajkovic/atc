@@ -64,7 +64,7 @@ Span names are stable identifiers — operators build dashboards and alerts that
 New instrumentation goes at one of these boundaries:
 
 - **API boundaries.** Every public HTTP route handler that performs work worth tracing (today: `webhook_handler`). The `axum-otel-metrics` middleware is the duration / status-code surface for *every* HTTP route automatically; per-route span instrumentation only needs to be added when the handler does enough work that the operator wants to see its internal structure.
-- **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `persist.rs`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
+- **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `persist/pg.rs`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
 - **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` need an explicit task-lifetime root span (`listener.task`, `drain.task`) constructed at spawn time and attached via `.instrument(span)` — see the [Tokio spawn gotcha](#tokio-spawn-gotcha) below.
 
 Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph. If a function is not load-bearing for an operator reading a flame graph, leave it uninstrumented and let it inherit the surrounding span.
@@ -322,9 +322,9 @@ Spans declared by ATC, grouped by the boundary they decorate.
 
 | Span | Source | Attributes |
 |---|---|---|
-| `persist.apply.run_event` | `PgStore::apply_run_event` and `InMemoryStore::apply_run_event` in `backend/crates/atc-server/src/persist.rs` | `run_id` (i64); `seq` (i64; late-bound, recorded after the outbox row's `BIGSERIAL` is allocated). |
-| `persist.apply.job_event` | `PgStore::apply_job_event` and `InMemoryStore::apply_job_event` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
-| `persist.notify.emit` | `notify_outbox_seq_in_txn` in `persist.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
+| `persist.apply.run_event` | `PgStore::apply_run_event` in `persist/pg.rs` and `InMemoryStore::apply_run_event` in `persist/in_memory.rs` | `run_id` (i64); `seq` (i64; late-bound, recorded after the outbox row's `BIGSERIAL` is allocated). |
+| `persist.apply.job_event` | `PgStore::apply_job_event` in `persist/pg.rs` and `InMemoryStore::apply_job_event` in `persist/in_memory.rs` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
+| `persist.notify.emit` | `notify_outbox_seq_in_txn` in `persist/pg.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
 
 Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`) carry default `#[tracing::instrument(skip_all)]` spans and inherit context from the surrounding `persist.apply.*` span.
 

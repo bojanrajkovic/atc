@@ -1,18 +1,8 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use std::sync::atomic::AtomicI64;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 use crate::common;
-
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 
 use common::{
     build_app_no_secret, fixture_workflow_job_completed, fixture_workflow_job_queued,
@@ -423,28 +413,27 @@ async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
 async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     common::ensure_recorder_installed();
 
-    let state_machine = std::sync::Arc::new(atc_core::RunStateMachine::new(
-        std::sync::Arc::new(atc_core::SystemClock),
-        std::time::Duration::from_secs(3600),
-    ));
+    // Build a custom InMemoryStore with a pre-subscribed broadcast receiver so
+    // we can assert the seq on the emitted SeqEvent.
+    use atc_core::SystemClock;
+    use atc_server::persist::InMemoryStore;
+    use atc_server::state::AppState;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    use tokio_util::task::TaskTracker;
+
     let (webhook_tx, _rx) = tokio::sync::broadcast::channel(256);
     let mut subscriber = webhook_tx.subscribe();
-    let seq = std::sync::Arc::new(tokio::sync::Mutex::new(0u64));
-    let persist = std::sync::Arc::new(atc_server::persist::InMemoryStore::new(
-        state_machine.clone(),
-        seq.clone(),
+    let persist = Arc::new(InMemoryStore::new(
+        Arc::new(SystemClock),
+        Duration::from_secs(3600),
         webhook_tx.clone(),
-    )) as std::sync::Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = std::sync::Arc::new(atc_server::state::AppState {
-        state_machine,
+    )) as Arc<dyn atc_server::persist::PersistentStore>;
+    let app_state = Arc::new(AppState {
+        persist,
         webhook_tx,
         webhook_secret: None,
-        seq,
-        pg_pool: None,
-        min_pending_seq: std::sync::Arc::new(AtomicI64::new(i64::MAX)),
-        last_drain_pass_at: std::sync::Arc::new(AtomicI64::new(now_millis_for_test())),
-        broadcast_watermark: std::sync::Arc::new(AtomicI64::new(0)),
-        persist,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -591,10 +580,14 @@ async fn in_memory_invalid_transition_returns_rejected() {
         rx.try_recv().is_err(),
         "successful Completed apply must broadcast exactly one event"
     );
-    let seq_counter_after_success = *state.seq.lock().await;
+    let snap_after_success = state
+        .persist
+        .read_snapshot()
+        .await
+        .expect("snapshot after success");
     assert_eq!(
-        seq_counter_after_success, seq_after_success,
-        "AppState.seq must equal the broadcast seq after a successful apply"
+        snap_after_success.last_seq, seq_after_success,
+        "persist.read_snapshot().last_seq must equal the broadcast seq after a successful apply"
     );
 
     // Backward transition: Completed → InProgress (parity rejection).
@@ -633,9 +626,13 @@ async fn in_memory_invalid_transition_returns_rejected() {
         rx.try_recv().is_err(),
         "rejected InProgress must not broadcast a SeqEvent"
     );
-    let seq_counter_after_reject = *state.seq.lock().await;
+    let snap_after_reject = state
+        .persist
+        .read_snapshot()
+        .await
+        .expect("snapshot after reject");
     assert_eq!(
-        seq_counter_after_reject, seq_counter_after_success,
-        "rejected InProgress must not advance AppState.seq"
+        snap_after_reject.last_seq, snap_after_success.last_seq,
+        "rejected InProgress must not advance persist last_seq"
     );
 }

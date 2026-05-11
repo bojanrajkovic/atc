@@ -5,6 +5,11 @@ publish = false
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+# Enables inspection helpers on `InMemoryStore` for integration and unit tests.
+# Activated automatically via the self-referential dev-dependency below.
+test-support = []
+
 [dependencies]
 atc-core = { path = "../atc-core" }
 atc-github = { path = "../atc-github" }
@@ -37,6 +42,9 @@ metrics-exporter-otel = "=0.3.1"
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }
+# Self-referential dev-dependency enables the test-support feature when building
+# integration tests, making InMemoryStore inspection helpers available.
+atc-server = { path = ".", features = ["test-support"] }
 chrono = { version = "=0.4.44", features = ["serde"] }
 const-hex = "=1.18.1"
 futures-util = "=0.3.32"

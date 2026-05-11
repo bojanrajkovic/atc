@@ -12,7 +12,7 @@ Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite fronte
 ## Tech Stack
 
 - **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates:
-  - `atc-core` — Domain model (WorkflowRun, Job, Step types; RunStateMachine with event-driven mutations; TTL eviction)
+  - `atc-core` — Pure domain model (WorkflowRun, Job, Step types; pure transition functions `apply_run_event` / `apply_job_event`; eviction predicate `is_evictable`). No tokio, no interior mutability.
   - `atc-github` — GitHub API integration (webhook parsing via `parse_webhook`, HMAC-SHA256 signature verification via `verify_signature`, event translation to atc-core domain types)
   - `atc-server` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
 - **Frontend:** Svelte 5 + Vite + Tailwind v4 — standalone SPA at `frontend/` with OKLCH design system
@@ -42,7 +42,7 @@ just build    # Production build
 - `lefthook.yml` — Three-tier git hook definitions
 - `justfile` — Task runner recipes
 - `backend/` — Rust workspace with three crates:
-  - `backend/crates/atc-core/` — Domain model and state machine (types: RunId, JobId, StepId; events: RunEvent, JobEvent; RunStateMachine with RwLock and TTL eviction; Clock trait)
+  - `backend/crates/atc-core/` — Pure domain model and transition functions (types: RunId, JobId, StepId; events: RunEvent, JobEvent; pure `apply_*_event` and `is_evictable` free functions; Clock trait). All stateful persistence concerns (HashMap state, locks, TTL eviction task) live in `atc-server::persist`.
   - `backend/crates/atc-github/` — GitHub API integration (webhook parsing and translation to atc-core domain events, HMAC-SHA256 signature verification)
   - `backend/crates/atc-server/` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system

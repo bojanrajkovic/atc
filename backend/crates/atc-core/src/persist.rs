@@ -23,60 +23,24 @@ impl From<StateMachineError> for PersistError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use chrono::Utc;
-
     use super::*;
-    use crate::event::{RunEvent, RunEventEnvelope};
-    use crate::types::RunId;
-    use crate::{RunConclusion, RunStateMachine, SystemClock};
-
-    fn make_machine() -> RunStateMachine {
-        RunStateMachine::new(Arc::new(SystemClock), Duration::from_secs(3600))
-    }
-
-    fn run_env(action: RunEvent) -> RunEventEnvelope {
-        RunEventEnvelope {
-            run_id: RunId(1),
-            org: "org".into(),
-            repo: "repo".into(),
-            workflow_name: None,
-            workflow_path: None,
-            branch: Some("main".into()),
-            head_sha: "abc".into(),
-            commit_message: None,
-            trigger_event: "push".into(),
-            display_title: "run".into(),
-            html_url: "https://github.com/".into(),
-            created_at: Utc::now(),
-            run_started_at: None,
-            updated_at: Utc::now(),
-            action,
-        }
-    }
+    use crate::run::InvalidRunTransition;
+    use crate::state_machine::StateMachineError;
 
     /// `StateMachineError` converts via `From` to `PersistError::InvalidTransition`.
-    #[tokio::test]
-    async fn state_machine_error_maps_to_invalid_transition() {
-        let machine = make_machine();
-        machine
-            .apply_run_event(run_env(RunEvent::Requested))
-            .await
-            .unwrap();
-        machine
-            .apply_run_event(run_env(RunEvent::Completed {
-                conclusion: RunConclusion::Success,
-            }))
-            .await
-            .unwrap();
-        // Completed → InProgress is rejected; StateMachineError converts via From to InvalidTransition
-        let err = machine
-            .apply_run_event(run_env(RunEvent::InProgress))
-            .await
-            .unwrap_err();
-        let persist_err = PersistError::from(err);
+    ///
+    /// Constructs a `StateMachineError` directly rather than driving a full
+    /// state machine — the conversion is purely structural.
+    #[test]
+    fn state_machine_error_maps_to_invalid_transition() {
+        // Build an InvalidRunTransition directly — the exact variant is irrelevant.
+        use crate::run::RunStatus;
+        let transition_err = InvalidRunTransition {
+            from: RunStatus::Completed,
+            to: RunStatus::InProgress,
+        };
+        let sm_err = StateMachineError::InvalidRunTransition(transition_err);
+        let persist_err = PersistError::from(sm_err);
         assert!(
             matches!(persist_err, PersistError::InvalidTransition),
             "expected InvalidTransition, got {persist_err:?}"
