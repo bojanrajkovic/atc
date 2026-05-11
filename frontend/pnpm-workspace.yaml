@@ -7,7 +7,7 @@ catalog:
   '@sveltejs/vite-plugin-svelte': 7.0.0
   '@tailwindcss/vite': 4.2.2
   '@testing-library/svelte': 5.3.1
-  '@types/node': 25.6.0
+  '@types/node': 25.6.2
   '@typescript-eslint/parser': 8.59.2
   '@vitest/browser': 4.1.4
   '@vitest/browser-playwright': 4.1.4
