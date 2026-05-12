@@ -51,12 +51,10 @@ helm-template:
 		helm template atc deploy/helm/atc --values "$f" > /dev/null
 	done
 
-# Validate Helm chart with kubeconform across every tests/values-*.yaml fixture.
-# Invoke with a positional Kubernetes version (just's standard convention):
-#   just helm-check            # defaults to 1.29.0
-#   just helm-check 1.32.0
-helm-check kube_version="1.29.0":
-	scripts/helm-kubeconform.sh {{kube_version}}
+# Validate Helm chart with kubeconform across every k8s-version × values-*.yaml
+# combination (mirrors the single-runner matrix in CI).
+helm-check:
+	scripts/helm-kubeconform.sh
 
 # Package Helm chart
 helm-package:

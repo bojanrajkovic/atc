@@ -48,4 +48,4 @@ helm template atc deploy/helm/atc | kubeconform -strict  # Validate against k8s 
 
 - Architecture: `docs/architecture/deployment.md`
 - Multi-replica smoke test runbook: `docs/architecture/deployment.md#multi-replica-smoke-test`
-- CI matrix: `docs/architecture/ci-pipeline.md` (Helm job section — covers `helm-lint`, `helm` kubeconform matrix, and `helm-install` kind+chart-testing)
+- CI validation: `docs/architecture/ci-pipeline.md` (Helm job section — covers `helm-lint`, `helm-validate` single-runner kubeconform sweep, and `helm-install` kind+chart-testing)

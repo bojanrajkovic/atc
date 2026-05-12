@@ -87,6 +87,10 @@ get_docs_for_file() {
             echo "docs/architecture/ci-pipeline.md"
             return
             ;;
+        scripts/helm-kubeconform*.sh|scripts/check-docs-lefthook.sh|scripts/verify-workflow-security.sh)
+            echo "docs/architecture/ci-pipeline.md"
+            return
+            ;;
         renovate.json)
             echo "docs/architecture/ci-pipeline.md"
             return

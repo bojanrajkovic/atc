@@ -45,6 +45,7 @@ jobs:
               - '.mise.toml'
             helm:
               - 'deploy/helm/**'
+              - 'scripts/helm-kubeconform*.sh'
               - '.github/workflows/ci.yml'
               - '.mise.toml'
               - 'justfile'
@@ -281,33 +282,20 @@ jobs:
       - name: Run helm unit tests
         run: helm unittest -f 'deploy/helm/atc/tests/unit/*.yaml' deploy/helm/atc
 
-  helm:
+  helm-validate:
     name: Helm Validate
     if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
     needs: changes
     runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
-    strategy:
-      matrix:
-        k8s: ["1.32.0", "1.33.0"]
-        values:
-          - values-defaults.yaml
-          - values-ingress.yaml
-          - values-gateway.yaml
-          - values-multi-replica.yaml
-          - values-otel.yaml
-          - values-existing-secret-listener.yaml
-          - values-pdb.yaml
-          - values-networkpolicy.yaml
-          - values-autoscaling.yaml
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      # mise install: false + explicit subset so the helm matrix doesn't drag
-      # in Rust/Node/cargo-tools it never uses. See the helm-lint job above
+      # mise install: false + explicit subset so this job doesn't drag in
+      # Rust/Node/cargo-tools it never uses. See the helm-lint job above
       # for the rationale.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
         with:
@@ -316,11 +304,8 @@ jobs:
       - name: Install helm + kubeconform via mise
         run: mise install helm kubeconform
 
-      - name: Render and validate
-        env:
-          VALUES_FILE: deploy/helm/atc/tests/${{ matrix.values }}
-          KUBE_VERSION: ${{ matrix.k8s }}
-        run: scripts/helm-kubeconform-one.sh "${KUBE_VERSION}" "${VALUES_FILE}"
+      - name: Render and validate all k8s × values combinations
+        run: scripts/helm-kubeconform.sh
 
   helm-install:
     name: Helm Install (kind + ct)
@@ -486,7 +471,7 @@ jobs:
 
   helm-result:
     name: Helm Result
-    needs: [changes, helm-lint, helm, helm-install]
+    needs: [changes, helm-lint, helm-validate, helm-install]
     if: always()
     runs-on: [self-hosted, linux, amd64]
     steps:
@@ -495,7 +480,7 @@ jobs:
           HELM_CHANGED: ${{ needs.changes.outputs.helm }}
           EVENT_NAME: ${{ github.event_name }}
           HELM_LINT_RESULT: ${{ needs.helm-lint.result }}
-          HELM_RESULT: ${{ needs.helm.result }}
+          HELM_VALIDATE_RESULT: ${{ needs.helm-validate.result }}
           HELM_INSTALL_RESULT: ${{ needs.helm-install.result }}
         run: |
           if [[ "$HELM_CHANGED" != "true" && "$EVENT_NAME" != "push" ]]; then
@@ -506,8 +491,8 @@ jobs:
             echo "Helm lint/unit checks failed: $HELM_LINT_RESULT"
             exit 1
           fi
-          if [[ "$HELM_RESULT" != "success" ]]; then
-            echo "Helm validate checks failed: $HELM_RESULT"
+          if [[ "$HELM_VALIDATE_RESULT" != "success" ]]; then
+            echo "Helm validate checks failed: $HELM_VALIDATE_RESULT"
             exit 1
           fi
           if [[ "$HELM_INSTALL_RESULT" != "success" ]]; then

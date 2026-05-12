@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-10
+Last verified: 2026-05-11
 
 ## Purpose
 
@@ -402,7 +402,7 @@ kubectl -n atc-smoke rollout status deploy/atc
 - `deploy/helm/atc/templates/hpa.yaml` — Optional HorizontalPodAutoscaler (`autoscaling/v2`), gated on `autoscaling.enabled`; targets the chart Deployment with CPU `Resource` metric (always) and an optional memory `Resource` metric
 - `deploy/helm/atc/templates/pdb.yaml` — Optional PodDisruptionBudget (`policy/v1`), gated on `podDisruptionBudget.enabled`; `minAvailable` and `maxUnavailable` are mutually exclusive (chart fails template rendering when both are set)
 - `deploy/helm/atc/templates/tests/test-connection.yaml` — Helm test hook Pod with restricted Pod Security Standards; validates Service connectivity; excluded from charts via `helm.sh/hook: test` annotation
-- `deploy/helm/atc/tests/values-*.yaml` — CI values matrix (defaults, ingress, gateway, multi-replica, otel, existing-secret-listener, pdb, networkpolicy, autoscaling) feeding `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
+- `deploy/helm/atc/tests/values-*.yaml` — CI values sweep (defaults, ingress, gateway, multi-replica, otel, existing-secret-listener, pdb, networkpolicy, autoscaling) consumed by `scripts/helm-kubeconform.sh` via `helm template | kubeconform`; excluded from chart tarball by `.helmignore /tests/` anchor
 - `deploy/helm/atc/ci/test-values.yaml` — `ct install` fixture consumed by the `helm-install` CI job (image override + `pullPolicy: Never` for the kind-loaded local image). See `docs/architecture/ci-pipeline.md` for the job definition.
 
 ## Storage modes
