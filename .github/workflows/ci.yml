@@ -45,6 +45,7 @@ jobs:
               - '.mise.toml'
             helm:
               - 'deploy/helm/**'
+              - 'scripts/helm-kubeconform*.sh'
               - '.github/workflows/ci.yml'
               - '.mise.toml'
               - 'justfile'
