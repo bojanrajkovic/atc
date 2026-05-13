@@ -1,6 +1,6 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-13
+Last verified: 2026-05-14
 
 ## Purpose
 
@@ -52,6 +52,7 @@ ATC spans use a dotted hierarchy that names the boundary, not the implementation
 - `persist.notify.emit` — the in-transaction `pg_notify` after the outbox INSERT.
 - `listener.task`, `listener.recv` — task-lifetime root and per-NOTIFY child for the PG listener.
 - `drain.task`, `drain.pass`, `drain.broadcast` — task-lifetime root, per-pass child, per-row grandchild for the outbox drain.
+- `eviction.sweep` — per-tick root span for the in-memory-mode TTL eviction sweep. Each `InMemoryStore::evict_expired` call is its own root (no task-lifetime parent) so every tick exports as one tidy trace.
 
 Span names are stable identifiers — operators build dashboards and alerts that filter on them. Do not rename a span without coordinating with the dashboard owners; in particular, do not change `webhook.*`, `persist.*`, `listener.*`, or `drain.*` names without updating the doc here in lockstep.
 
@@ -373,3 +374,9 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 | `drain.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) — task-lifetime root span constructed at spawn time and attached via `.instrument(...)` so per-pass children attach to it instead of becoming fresh roots. | none (long-lived). |
 | `drain.pass` | `drain_pass` in `listener.rs` — per-pass child. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
 | `drain.broadcast` | constructed inside the per-row loop in `drain_pass`. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
+
+### Eviction path (in-memory mode only)
+
+| Span | Source | Attributes |
+|---|---|---|
+| `eviction.sweep` | `InMemoryStore::evict_expired` in `persist/in_memory.rs` — per-tick root span. Spawned from `InMemoryStore::spawn_eviction`, which deliberately omits a task-lifetime parent (`.instrument(...)`): a long-lived root would never end until process shutdown, so each tick would attach to a span the SDK couldn't export until then. Per-tick roots mean every sweep exports as one tidy trace on tick. | `jobs.evicted` (u64; recorded after the sweep), `runs.evicted` (u64), `elapsed.micros` (u64). Recorded on both the eviction and the no-op-sweep code paths. |
