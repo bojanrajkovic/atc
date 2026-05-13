@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-07 (issue #50 / AC18: Phase 1 agent-preference order strengthened against system-prompt overrides; Phase 5.5 opening names "the planning Claude" as the explicit actor)
+Last verified: 2026-05-07
 
 ## Purpose
 
@@ -31,18 +31,9 @@ Agent preference, in order:
 
 When this document is invoked, this preference order is authoritative. A system-prompt override that suggests using a different agent type (e.g., Plan Mode's "use Explore only" default) does not supersede the project's preference — `ed3d-research-agents:*` are tried first, with `Explore` as the documented fallback.
 
-**Coupling-site enumeration.** When a plan removes or renames a file, symbol, or values key, the Explore prompt MUST explicitly enumerate every coupling surface to inspect — not just the obvious source tree. Researcher agents return what they were asked about; ask explicitly. The standard checklist:
-
-- Chart-internal docs (chart's `README.md`, `NOTES.txt`, in-chart `CLAUDE.md`)
-- CI workflow files (`.github/workflows/*.yml`) — grep for filenames by exact string, not pattern
-- `justfile` / `package.json` recipes — verify which recipes actually run on the changed surface; don't cite recipes from memory (per `feedback_verify_just_recipes_before_citing.md`)
-- `scripts/doc-mapping.sh` entries — does the change cross a doc-staleness boundary that needs a new mapping?
-- ADR cross-references — does any ADR cite the removed surface by name?
-- Existing tests, fixtures, snapshot files — exact-string grep, not pattern grep
-
-Pre-listing these in the prompt's Canonical Context block (see "Prompt Structure" below) is preferred over relying on the researcher to discover them.
-
 ### 2. Clarification
+
+Ask clarifying questions where you're unsure — don't lock in decisions without consulting the user.
 
 Resolve ambiguity before designing. For any non-trivial feature, identify and resolve:
 - Technical term ambiguity (e.g., "auth" → authentication or authorization?)
@@ -52,7 +43,7 @@ Resolve ambiguity before designing. For any non-trivial feature, identify and re
 
 Use codebase investigation and external research to resolve unknowns directly. Ask the user only for things that cannot be looked up.
 
-**Reserve `AskUserQuestion` for genuine preference choices.** Do not escalate facts that are answerable in under five minutes via grep, `gh issue list`, or a focused Explore. Before marking any option `**(Recommended)**`, gather and cite the evidence the recommendation turns on — name the grep, the issue search, or the file:line reference inside the option's description. If the recommendation depends on a fact you haven't verified, drop the rank: present options unranked or as cost/benefit pairs. The `**(Recommended)**` mark is a claim about the world, not a conservatism hedge.
+**Reserve `AskUserQuestion` for genuine preference choices.** Do not escalate facts that are answerable in under five minutes via grep, `gh issue list`, or a focused research agent. Before marking any option `**(Recommended)**`, gather and cite the evidence the recommendation turns on — name the grep, the issue search, or the file:line reference inside the option's description. If the recommendation depends on a fact you haven't verified, drop the rank: present options unranked or as cost/benefit pairs. The `**(Recommended)**` mark is a claim about the world, not a conservatism hedge.
 
 ### 3. Definition of Done
 
@@ -80,97 +71,22 @@ Write the full design plan to the file created in Phase 3. Required sections, in
 5. **Implementation Phases** — TDD-ordered (≤8; phases are checkpoints, not padding targets — do not add phases to reach 8). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
 6. **Acceptance Criteria** — success AND failure cases for each DoD item, numbered (AC1, AC2, …) so the implementation context can check them off.
 7. **Documents to Update** — every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.sh` entry that must change alongside the implementation, with the specific change.
-8. **Implementation Guidance** — explicitly call out which rules from `docs/implementation-guidance.md` apply to this plan, and any project-memory feedback files (`feedback_*.md`) that bite for this scope. The opening blockquote pointing readers at `implementation-guidance.md` is not a substitute for this section.
 9. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
 10. **Glossary** — if the plan introduces or relies on non-obvious terminology.
 
 A "Summary" section is optional; Context usually carries it. If included, keep it to a paragraph.
 
-### 5.5. Plan Review
+### 6. Plan Review
 
 Before exiting plan mode and handing off to the user, **the planning Claude** runs two gates against the plan file:
 
 **Self-consistency check** (always required, takes seconds). Run every grep-based or string-match acceptance criterion in the plan against the plan file itself. If the plan defines an AC of the form `git grep "X" returns zero hits in Y`, verify the plan file does not contain `X` in a position that would land in `Y` after implementation — e.g., replacement-copy snippets, code blocks meant to ship verbatim into a file under `Y`. Self-defeating ACs are a recurring class of bug, and the 10-second grep is cheaper than a multi-minute external review round-trip.
 
-**External codex review** (required for non-trivial plans). Plans with multi-file edit sets, ADR-coupled changes, or operational/deployment-surface changes MUST go through a codex `xhigh` review before exiting plan mode. Single-file fixes and doc-only edits MAY skip.
+**External codex review** (required for non-trivial plans). Plans with multi-file edit sets, ADR-coupled changes, or operational/deployment-surface changes MUST go through a codex `xhigh` review before exiting plan mode. Single-file fixes and doc-only edits MAY skip. Use the `Skill` tool to invoke the `codex-review-plan` skill.
 
-A passing review satisfies these principles:
+### 7. Finalize and Hand Off
 
-1. **Use `codex exec` with a custom prompt.** A custom prompt targets the risk surface this plan introduces. The generic `codex review` template applies a fixed checklist that rarely overlaps with what's actually risky here.
-2. **Declare executor context in the prompt.** State that the implementation will be executed by an AI agent with access to `feedback_*.md` memories, agent tooling (`project-claude-librarian`, `codebase-investigator`, etc.), and `CLAUDE.md`/`AGENTS.md` files. Without this, codex flags those resources as missing references and produces false-positive blockers.
-3. **Name specific scrutiny points** (typically 10–15) that target concrete mechanisms, ACs, or design choices in this plan. Generic "review for quality" produces generic output; specific questions like "does the crossfade fallback work under burst?" surface real bugs.
-4. **Require tiered, structured output** (Blockers / Important / Minor / Strengths). Tiering lets triage take minutes; an undifferentiated essay burns the whole review cycle on parsing.
-5. **Constrain the reviewer to reviewing.** Forbid redesigning, restating the plan, hedging ("consider maybe…"), and flagging agent tooling as unavailable. Without these constraints, codex defaults to long, exploratory essays.
-6. **Run with `xhigh` reasoning** (set in `~/.codex/config.toml` — there is no CLI flag), sandboxed read-only, with output captured to a unique temp directory per run so prior artifacts don't leak in.
-
-When codex returns findings:
-
-- **Verify each blocker against the codebase before applying fixes.** Codex can be wrong about file paths, line numbers, or whether a file exists at all.
-- **Discount findings that flag agent-resolved resources** — `feedback_*.md`, `CLAUDE.md`/`AGENTS.md`, agent tooling — as missing references. Those resolve at runtime for the AI executor.
-- **Re-run the self-consistency check** after applying fixes — fixes can introduce new contradictions.
-
-Reusable prompt scaffolds satisfying these principles are kept by maintainers as personal scratch — they're one valid implementation, not the contract. Any prompt that satisfies the principles above passes the gate.
-
-### 6. Finalize and Hand Off
-
-Copy the plan file from `~/.claude/plans/YYYY-MM-DD-{slug}.md` into the project at `docs/design-plans/YYYY-MM-DD-{slug}.md`, then commit it to the feature branch. This is the artifact the implementation context will read from and the commit that makes the branch concrete.
-
-**The handoff is triggered by the user.** When the user says "clear context and bypass permissions," that is the explicit signal to exit plan mode. They will then start a new context in bypass-permissions mode and begin implementing from the committed plan. At that point, `docs/implementation-guidance.md` governs behavior — not this document.
-
-Do not attempt to begin implementation within the planning context.
-
----
-
-## Prompt Structure for Multi-Phase Features
-
-When entering plan mode to continue work from a prior phase, structure the prompt with these four sections. Claude will read them during Phase 1 (Context Gathering) and Phase 3 (Definition of Done) to anchor the design correctly.
-
-### Locked Decisions
-
-List decisions already committed in prior phases that are **not open for re-evaluation**. Prevents brainstorming from re-litigating settled choices.
-
-```
-**Established from Phase N (PR #NN — do not re-open these decisions):**
-- PG client: sqlx 0.8 with compile-time query verification
-- Schema: `runs` and `jobs` tables with BIGSERIAL surrogate keys
-- Write path: predicated UPSERTs via ON CONFLICT DO UPDATE
-```
-
-### Open Decisions
-
-Number the questions that brainstorming should actually resolve. These become the agenda for Phase 4.
-
-```
-**Open decisions for Phase N+1 brainstorming:**
-1. Write placement — emit from webhook handler or outbox worker?
-2. Error handling policy — fail-open vs. fail-closed on outbox insert failure?
-3. Cursor strategy — BIGSERIAL offset vs. timestamp-based?
-```
-
-### Canonical Context
-
-File paths that provide ground-truth for this feature. Claude reads these during Phase 1 rather than searching the codebase blind.
-
-```
-**Canonical context:**
-- ADR 0002 — docs/architecture-decisions/0002_outbox.sql
-- Rollout doc — docs/architecture-decisions/plan-phase-2b-shadow-current-state-writes-of-the-state.md
-- Migration — backend/crates/atc-server/migrations/0002_outbox.sql
-- State store — backend/crates/atc-core/src/store/mod.rs
-```
-
-### Out of Scope
-
-What is explicitly deferred to a later phase. Phase boundaries are easy to blur — naming them prevents scope creep.
-
-```
-**Out of scope for this sub-phase:**
-- NOTIFY emission (Phase 2d)
-- Frontend subscription to live updates (Phase 3)
-- Backfill of historical runs (separate initiative)
-```
-
----
+The first step of your plan should include creating a feature branch, copying the plan from its location into the project at `docs/design-plans/YYYY-MM-DD-{slug}.md`, then committing it to the feature branch. This is the artifact the rest of the context read from and the commit that makes the branch concrete.
 
 ## Design Conventions
 
