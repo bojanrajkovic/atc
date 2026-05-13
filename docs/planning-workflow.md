@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-07
+Last verified: 2026-05-13
 
 ## Purpose
 
@@ -86,7 +86,7 @@ Before exiting plan mode and handing off to the user, **the planning Claude** ru
 
 ### 7. Finalize and Hand Off
 
-The first step of your plan should include creating a feature branch, copying the plan from its location into the project at `docs/design-plans/YYYY-MM-DD-{slug}.md`, then committing it to the feature branch. This is the artifact the rest of the context read from and the commit that makes the branch concrete.
+The first step of your plan should include creating a feature branch, copying the plan from its location into the project at `docs/design-plans/YYYY-MM-DD-{slug}.md`, then committing it to the feature branch. This is the artifact the rest of the context reads from and the commit that makes the branch concrete.
 
 ## Design Conventions
 

@@ -1,6 +1,6 @@
 # Implementation Guidance
 
-Last verified: 2026-05-07 (issue #50 / AC19: rule 16 added naming `ed3d-research-agents:*` as the preferred researcher agents; rule 7 path updated to `state_machine/tests/` post-rename)
+Last verified: 2026-05-13
 
 ## Purpose
 
@@ -12,9 +12,11 @@ Rules for implementing features in ATC. These apply after the user has triggered
 
 Implementation continues on the branch where the design plan was committed. Do not create a new branch. The PR title must describe the full deliverable (squash merge makes it the commit message on main). Test plans go in the PR's first comment — never in the PR description.
 
-### 2. Use test-driven development
+### 2. Use test-driven development for behavior-changing work
 
-Write tests before writing implementation code. For each acceptance criterion in the design plan: write a failing test that captures the behavior, then write the minimum code to make it pass, then refactor. Do not write implementation first and tests after — tests written after implementation tend to confirm the implementation rather than the requirement.
+For behavior-changing work, write tests before writing implementation code. For each acceptance criterion in the design plan: write a failing test that captures the behavior, then write the minimum code to make it pass, then refactor. Do not write implementation first and tests after — tests written after implementation tend to confirm the implementation rather than the requirement.
+
+For refactors that preserve behavior, the regression net must stay green throughout. Extending or restructuring tests is fine, but the "red phase" of TDD does not apply — behavior-preserving change has no new behavior to assert.
 
 ### 3. Never pin library versions
 
@@ -62,9 +64,13 @@ To update copied components when shadcn-svelte releases a new version, re-run `p
 
 When some tests need browser mode (e.g., Svelte 5 `$effect` reliability) and others work under jsdom, use separate Vitest `projects` in the config. Don't mix environments — browser mode is slower, and mixing creates flaky tests. Use filename conventions (`.browser.test.ts` vs `.test.ts`) or directory-based `include` patterns to route tests.
 
-### 14. Use subagents to keep the main context clean
+### 14. Use implementation subagents when they pay for themselves
 
-The orchestrating context reads the committed design plan from `docs/design-plans/` and coordinates — it does not write code inline. Delegate implementation work to subagents. Create teams as appropriate for parallel or independent work streams. The main context's job is to dispatch, review output, and sequence phases — not to implement them directly.
+The orchestrating context reads the committed design plan from `docs/design-plans/` and coordinates. **Dispatch implementation subagents when:** (a) two or more genuinely independent file sets need parallel edit application, or (b) a phase requires search/grep over ~15+ files where keeping the artifacts out of the main context is worth the dispatch overhead.
+
+**Skip subagents when** the work is a coherent sequential edit chain — coordination overhead exceeds the parallelism gain, and reading back a subagent's output to apply edits manually is slower than editing inline.
+
+The planning Claude may name phases as parallelizable in the design plan; the implementing Claude is the final arbiter of whether the parallelism is worth the dispatch.
 
 ### 15. Lefthook hooks are pre-configured
 

@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-11
+Last verified: 2026-05-13
 
 ## Purpose
 
@@ -252,6 +252,23 @@ networkPolicy:
 ```
 
 **`kubeVersion` requirement.** NetworkPolicy `networking.k8s.io/v1` is GA on every supported cluster (the chart's `kubeVersion: ">=1.32.0-0"` already covers it). Authors should still verify the cluster runs a CNI that enforces NetworkPolicy (Calico, Cilium, kube-router, etc.) before flipping `enabled: true` — many CNIs install successfully without policy enforcement and the resource becomes a no-op.
+
+## Testing Conventions
+
+helm-unittest suites live in `deploy/helm/atc/tests/unit/*.yaml` and are run via `helm unittest deploy/helm/atc`. Scope them to invariants and conditionals, not template tautologies.
+
+**Assert:**
+
+- **Security invariants** — PSS restricted fields (`runAsNonRoot`, `runAsUser`, `readOnlyRootFilesystem`, `capabilities.drop`, `seccompProfile.type`) in the default render, so a future PR that removes one ships a visible test failure rather than an insecure chart.
+- **Conditional-branch flips** — both sides of any business-logic branch. For example, `strategy.type` toggling between `RollingUpdate` and `Recreate` based on `persistence.enabled`.
+- **`{{ fail }}` guards** — every guard gets a dedicated test that sets the conflicting values and asserts the render fails with the expected message. An untested guard can be silently broken by a refactor.
+- **Cross-template invariants** — e.g. a PVC's `metadata.name` MUST equal the Deployment's volume `claimName`. These catch the class of bug that motivated this convention.
+
+**Skip:**
+
+- **Tautological field assertions** on static content (Ingress className, TLS hosts, ServiceMonitor intervals). They duplicate the template. Kubeconform validates schema; diff review catches semantic regressions.
+- **Rendered-kinds-under-defaults** assertions. The individual `if` gates are themselves the test; Kubeconform would still validate any mistakenly-rendered resources.
+- **Content assertions on optional templates** (Ingress, PVC, ServiceMonitor, HTTPRoute) beyond what a conditional-branch or invariant check requires.
 
 ## Multi-replica smoke test
 

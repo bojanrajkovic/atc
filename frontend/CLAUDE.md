@@ -1,6 +1,6 @@
 # CLAUDE.md — frontend
 
-Last verified: 2026-05-08
+Last verified: 2026-05-13
 
 > Canonical documentation lives in `docs/architecture/frontend-app.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -43,6 +43,14 @@ pnpm format       # Biome + prettier-plugin-svelte
 pnpm test         # Vitest unit + browser tests
 pnpm test:e2e     # Playwright E2E tests
 ```
+
+## Sharp Edges
+
+**Typed-union switches need runtime exhaustiveness, not just compile-time.** Functions that `switch` over a generated typed union (e.g. `RunConclusion`, `StatusKey` in `src/lib/format/status-key.ts`) MUST include a `default: const _: never = value; throw new Error(...)` branch. Without it, off-shape values from boundaries — test fixtures with loose `Record<string, unknown>` typing, JSON over the wire, raw `evaluate` injections in Playwright — silently return `undefined` and cascade into broken downstream renders that look like reactivity bugs.
+
+**E2E fixture typing.** `frontend/e2e/lib/ws-mock.ts` helpers (`makeRunEvent`, `makeJobSeqEvent`) should use the generated discriminated-union types, not `Record<string, unknown>`, so casing mismatches surface at edit time rather than after a multi-hour debug.
+
+Debugging heuristic: when a page becomes unresponsive after a `page.evaluate(...)` store mutation and the snapshot shows an unrelated empty state, suspect a downstream render error from a mismatched value shape, NOT a reactivity propagation bug.
 
 ## Key References
 

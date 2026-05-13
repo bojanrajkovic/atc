@@ -47,6 +47,29 @@ just test    # Runs all tests (requires Docker or OrbStack)
 export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
 ```
 
+### Test Runners
+
+Use `just test` for the full suite (what CI and the pre-push hook run) or `cargo nextest run -p <crate> <filter>` for focused dev loops. Do not use bare `cargo test` — it runs sequentially and is meaningfully slower than nextest on this codebase. Examples:
+
+- `cargo nextest run -p atc-server shutdown::` — every test in the shutdown module
+- `cargo nextest run -p atc-core eviction` — every test with "eviction" in the name
+- `cargo nextest run -p atc-server --test graceful_shutdown` — a single integration test file
+
+### Test Conventions
+
+Do not write source-level grep assertions — tests that `readFileSync` a source file and regex-match its content to enforce invariants like "this file only reads `storeX.fieldY`." They fire on innocuous refactors, miss semantically-identical variants (e.g., `const { x } = obj` vs `obj.x`), and replicate what code review and lint rules already do. Prefer: behavioral test > lint rule > reviewer guidance > source grep. Reserve source-level checks for ESLint/Biome custom AST rules where they belong.
+
+### E2E Tests
+
+`just test` runs Vitest (unit + browser) + cargo nextest, but does NOT include Playwright E2E. Run `just test-e2e` separately (`pnpm exec playwright test` under the hood) when touching:
+
+- `frontend/src/lib/connection.ts` (snapshot shape, reviver, buffer filter)
+- Any store that affects what E2E tests drive via the `window.__stores` bridge
+- `frontend/e2e/lib/ws-mock.ts` or snapshot mock helpers
+- Any wire-contract field that E2E fixtures embed inline
+
+The pre-push hook does not run E2E either — if you skip `just test-e2e` locally, regressions in these layers ship to CI before being caught.
+
 ## Inspecting OpenTelemetry Output Locally
 
 ATC exports traces and metrics over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; with the env var unset the SDK is never initialized. To inspect what `atc-server` emits during local development:
@@ -108,6 +131,10 @@ Renovate manages dependency updates with conventional-commit prefixes that coope
 - `chore(deps):` — dev/tooling dependency bump (no release).
 
 Minor/patch updates auto-merge after a 3-day release-age delay; major updates require manual review. Security advisories bypass the delay. The full policy lives in `renovate.json`.
+
+### Dependency Philosophy
+
+Prefer best-in-class, batteries-included libraries over hand-rolled minimalism. "Fewer dependencies" is a neutral fact, not a virtue — rank options by ergonomics, maintenance health, and fit, not by dep count. Adding a well-maintained crate or package to get good out-of-box behavior is a fair trade. When proposing architectural alternatives, do not write "(Recommended)" next to an option whose main advantage is minimalism.
 
 ## Git Hooks
 
@@ -192,7 +219,10 @@ gh attestation verify oci://ghcr.io/bojanrajkovic/atc:latest -R bojanrajkovic/at
 - Open a PR against `main`
 - PRs require passing CI checks
 - **Squash merges**: This repo uses squash merges. The PR description becomes the squashed commit body, so keep it clean — summary and context only.
-- **Test plans**: Put the test plan in the **first comment** on the PR, not in the PR description.
+- **Test plans**: Post the test plan as the **first comment** on the PR via `gh pr comment`. Never put it in the PR description. Never commit it as a `test-plan.md` or similar file in the repo — test plans are ephemeral review artifacts, not permanent content.
+- **PR body voice**: When a design-plan PR is first created, write the body as "what will be implemented" — describe the planned architecture and approach. When finishing the branch (after implementation is complete), update the body to "what was implemented" with concrete details (function names, types, design decisions, how modules fit together). Organize by logical subsystem, not by phase or task number. Use implementation-focused prose, not checkbox summaries with test counts — the body becomes the squash commit body, so it should read like commit documentation.
+- **PR title**: Conventional Commits format (`type(scope): description`), describing the full implementation deliverable — not the first commit. A design-doc PR for a `feat` lands as `feat:`, not `docs:`, because the squash merge makes the PR title the commit message on `main`.
+- **Fix the class, not the instance**: When a code review flags a structural bug pattern, identify the underlying invariant and apply the fix to every site where it holds — not just the call sites the reviewer named. "The reviewer didn't flag it" is not a sufficient reason to skip a fix the structural analysis already implies; the architecture-doc note for the fix should state the invariant explicitly so future readers find the rule, not just the symptom.
 
 ---
 
@@ -331,6 +361,26 @@ Design plans, ADRs, and implementation tickets use numbering schemes to coordina
 **Audit hint:** when stripping one class, sweep the others at the same time. The starter regex `rg 'Phase \d|AC[0-9]|\bT[0-9]+[a-z]?\b|fn (phase|ac|t)[0-9]'` catches all four common patterns; tune as new schemes appear.
 
 **The pattern:** ask "is this artifact part of the current contract / current state, or part of the historical record?" If current, strip the planning-artifact reference (and probably the surrounding sentence — these refs usually accompany changelog narration that doesn't belong in a current-state doc). If historical, keep.
+
+### Terminology
+
+Pick the right voice when writing about people:
+
+- **Author** — the codebase developer (currently Bojan). Used in design plans, PR bodies, and any doc that describes development-time perspective.
+- **Operator** — anyone (the author or a third party) deploying ATC from the published chart. Used in deployment / runbook / Helm-chart voice.
+- **User** — the end-user of the deployed app, interacting with the ATC frontend or sending webhooks from a GitHub repo. Reserve for that voice.
+
+Mixing these makes it unclear which voice is speaking. The literal "user" in a Claude Code conversation transcript (the live conversational party) is a separate, acceptable usage in agent prompts and memory entries.
+
+### Committed Design Plans
+
+Design plans in `docs/design-plans/` are committed as final documents. Future readers see only the committed file, not the conversation that produced it. When condensing toward commit, strip:
+
+- References to drafts — "previous draft", "earlier version of this plan", "the draft I started with"
+- Review-tool citations — "codex blocker #1", "the reviewer flagged", "see review concern #6"
+- Decision-process narrative — "we initially proposed X, then realized Y". Keep the *current* rationale, not the path that produced it.
+
+Exception: citing a *committed* document (rollout doc, ADR, prior design plan) by file path is fine — the reader can find it. The test is: can a future reader follow this citation to something concrete in the repo?
 
 ### Directory-Level CLAUDE.md Files
 
