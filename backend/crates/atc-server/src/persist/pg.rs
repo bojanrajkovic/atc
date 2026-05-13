@@ -422,6 +422,15 @@ impl PersistentStore for PgStore {
     async fn shutdown(&self) {
         // Drop the std::sync::Mutex guard BEFORE awaiting — holding it across
         // `.await` would `!Send` the future and break the `async_trait` bound.
+        //
+        // Callers must cancel the shutdown token they passed to `start()` /
+        // `start_with_test_hooks()` before invoking `shutdown()` — otherwise
+        // the listener and drain never observe cancellation and this method
+        // waits the full per-task timeout (~6 s combined) before aborting
+        // them. Production: `run_shutdown_orchestration` cancels the token
+        // in step 1 before calling `persist.shutdown()` in step 4. Tests:
+        // see `common::start_pg_store_for_test`, which returns the token to
+        // the caller for end-of-test cancel.
         let handles = self.handles.lock().expect("handles mutex poisoned").take();
         if let Some(handles) = handles {
             // Join drain first: it owns the broadcast write end and may still

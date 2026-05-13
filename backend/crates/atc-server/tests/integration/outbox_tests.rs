@@ -37,7 +37,8 @@ async fn build_app_with_pg(
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
     common::ensure_recorder_installed();
-    let store = common::start_pg_store_for_test(pool, db_url).await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
     let rx = store.subscribe();
     let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
@@ -154,7 +155,7 @@ async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
 #[serial_test::serial]
 async fn run_webhook_produces_run_and_outbox_row() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     let (status, json) = post_webhook(
         app,
@@ -194,6 +195,7 @@ async fn run_webhook_produces_run_and_outbox_row() {
         outbox_run_id, 24290980517i64,
         "outbox run_id must match fixture"
     );
+    state.shutdown.cancel();
 }
 
 /// seq values in the outbox are strictly increasing across N committed transactions.
@@ -246,7 +248,7 @@ async fn seq_strictly_increasing() {
 #[serial_test::serial]
 async fn payload_roundtrips_as_envelope() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     post_webhook(
         app,
@@ -279,6 +281,7 @@ async fn payload_roundtrips_as_envelope() {
         payload.get("seq").is_none(),
         "payload must not contain seq (would indicate SeqEvent serialization)"
     );
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +297,7 @@ async fn payload_roundtrips_as_envelope() {
 #[serial_test::serial]
 async fn parity_rejection_rolls_back_outbox() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // The fixture run_id is 24290980517
     let run_id = 24290980517i64;
@@ -318,6 +321,7 @@ async fn parity_rejection_rolls_back_outbox() {
         0,
         "outbox must have 0 rows: transaction was rolled back"
     );
+    state.shutdown.cancel();
 }
 
 /// BIGSERIAL gap property — an aborted transaction consumes a seq that
@@ -388,7 +392,7 @@ async fn bigserial_gap_property() {
 #[serial_test::serial]
 async fn job_upsert_rejection_rolls_back_stub_run() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fixture shared IDs
     let run_id = 24290980517i64; // from all fixtures
@@ -457,6 +461,7 @@ async fn job_upsert_rejection_rolls_back_stub_run() {
         2,
         "outbox must still have 2 rows (rolled-back tx added nothing)"
     );
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -472,7 +477,7 @@ async fn parity_rejection_returns_200_rejected() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Pre-insert Completed run to force parity rejection on Requested
     let run_id = 24290980517i64;
@@ -498,6 +503,7 @@ async fn parity_rejection_returns_200_rejected() {
         parity, 1,
         "parity counter must increment by 1; got parity={parity}",
     );
+    state.shutdown.cancel();
 }
 
 /// Successful webhook in PG mode returns HTTP 200 with body
@@ -510,7 +516,7 @@ async fn success_returns_200_accepted() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     let (status, json) = post_webhook(
         app,
@@ -548,6 +554,7 @@ async fn success_returns_200_accepted() {
         0,
         "transient counter must not increment on success"
     );
+    state.shutdown.cancel();
 }
 
 /// With no database configured (in-memory only mode), a webhook returns 200
@@ -593,7 +600,7 @@ async fn no_pg_pool_uses_in_memory_path() {
 #[serial_test::serial]
 async fn job_webhook_creates_stub_run_and_outbox() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // The fixtures share run_id=24290980517, job_id=70928200168
     let run_id = 24290980517i64;
@@ -662,6 +669,7 @@ async fn job_webhook_creates_stub_run_and_outbox() {
         2,
         "must have 2 outbox rows total"
     );
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -674,7 +682,7 @@ async fn job_webhook_creates_stub_run_and_outbox() {
 #[serial_test::serial]
 async fn payload_is_envelope_not_seq_event() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fire a run webhook first (to have a real run row for the job FK)
     post_webhook(
@@ -737,6 +745,7 @@ async fn payload_is_envelope_not_seq_event() {
             other => panic!("unexpected outbox kind: {other}"),
         }
     }
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -824,6 +833,7 @@ async fn no_in_memory_drift_in_pg_mode() {
         0,
         "transient counter must not increment on success"
     );
+    app_state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------

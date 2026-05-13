@@ -264,6 +264,12 @@ impl PersistentStore for InMemoryStore {
     async fn shutdown(&self) {
         // Drop the std::sync::Mutex guard BEFORE awaiting — holding it across
         // `.await` would `!Send` the future and break the `async_trait` bound.
+        //
+        // Callers must cancel the shutdown token they passed to `start()`
+        // before invoking `shutdown()` — otherwise the eviction task never
+        // observes cancellation and this method waits the full per-task
+        // timeout before aborting. Stores constructed via `new_for_test`
+        // hold `None` here and return immediately.
         let handle = self
             .eviction_handle
             .lock()

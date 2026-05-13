@@ -239,15 +239,17 @@ mod tests {
     use crate::persist::InMemoryStore;
     use atc_core::SystemClock;
 
-    /// Construct an `InMemoryStore` whose `shutdown()` is safe to call from
-    /// these orchestration tests — long completed-job TTL, never-firing
-    /// eviction period, fresh cancellation token.
-    fn test_persist() -> Arc<dyn PersistentStore> {
+    /// Construct an `InMemoryStore` whose eviction task observes the same
+    /// `shutdown` token the orchestrator drives — long completed-job TTL,
+    /// never-firing eviction period. Sharing the token means the orchestrator
+    /// cancelling `shutdown` in step 1 also signals the eviction task, so
+    /// `persist.shutdown()` in step 4 joins quickly instead of timing out.
+    fn test_persist(shutdown: CancellationToken) -> Arc<dyn PersistentStore> {
         InMemoryStore::start(
             Arc::new(SystemClock),
             Duration::from_secs(3600),
             Duration::from_secs(60),
-            CancellationToken::new(),
+            shutdown,
         )
     }
 
@@ -294,7 +296,7 @@ mod tests {
         // Stub metrics handle that exits immediately. The store's own
         // background tasks are joined via `persist.shutdown()`.
         let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
-        let persist = test_persist();
+        let persist = test_persist(shutdown.clone());
 
         // Bound the whole orchestration with a generous test timeout. The
         // expected wall time is dominated by SHUTDOWN_TIMEOUT_SERVES (3 s)
@@ -339,7 +341,7 @@ mod tests {
         let main_serve_task: JoinHandle<io::Result<()>> = tokio::spawn(async { Ok(()) });
 
         let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
-        let persist = test_persist();
+        let persist = test_persist(shutdown.clone());
 
         let result = tokio::time::timeout(
             Duration::from_secs(15),

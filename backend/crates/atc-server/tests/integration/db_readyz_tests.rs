@@ -20,17 +20,24 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
-async fn build_app_with_pool(pool: sqlx::PgPool, db_url: &str) -> axum::Router {
+async fn build_app_with_pool(
+    pool: sqlx::PgPool,
+    db_url: &str,
+) -> (axum::Router, CancellationToken) {
     common::ensure_recorder_installed();
-    let store = common::start_pg_store_for_test(pool, db_url).await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
     let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        shutdown: CancellationToken::new(),
+        shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
     });
-    atc_server::routes::api_routes().with_state(app_state)
+    (
+        atc_server::routes::api_routes().with_state(app_state),
+        shutdown,
+    )
 }
 
 #[tokio::test]
@@ -51,7 +58,7 @@ async fn readyz_returns_ok_with_healthy_db() {
         .await
         .expect("init_pool failed");
 
-    let app = build_app_with_pool(pool, &db_url).await;
+    let (app, shutdown) = build_app_with_pool(pool, &db_url).await;
     let response = app
         .oneshot(
             Request::builder()
@@ -66,6 +73,8 @@ async fn readyz_returns_ok_with_healthy_db() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "ok");
+
+    shutdown.cancel();
 }
 
 #[tokio::test]
@@ -128,7 +137,7 @@ async fn readyz_returns_503_when_db_unreachable() {
         .await
         .expect("migrations failed");
 
-    let app = build_app_with_pool(pool, &db_url).await;
+    let (app, shutdown) = build_app_with_pool(pool, &db_url).await;
 
     // Stop the container to make the DB unreachable
     container.stop().await.expect("failed to stop container");
@@ -147,4 +156,6 @@ async fn readyz_returns_503_when_db_unreachable() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "db_unreachable");
+
+    shutdown.cancel();
 }

@@ -335,19 +335,25 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 }
 
 /// Build app with a specific webhook secret (in-memory mode).
+///
+/// Uses `InMemoryStore::new_for_test`, which constructs the store without
+/// spawning the eviction task. These helpers back tests that cover routing,
+/// auth, WS, and ingestion — not TTL eviction — so the eviction task would
+/// be dead weight here, and the shared-binary test environment means a
+/// leaked detached task would accumulate across tests until process exit.
+/// Tests that explicitly exercise eviction (`in_memory_store_tests.rs`)
+/// use their own helpers.
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
-    let shutdown = CancellationToken::new();
-    let persist = InMemoryStore::start(
+    let persist = InMemoryStore::new_for_test(
         Arc::new(SystemClock),
         Duration::from_hours(1),
-        Duration::from_mins(1),
-        shutdown.clone(),
+        IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: Some(secret.to_string()),
-        shutdown,
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes()
@@ -357,19 +363,20 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 }
 
 /// Build app with no webhook secret (verification bypassed, in-memory mode).
+///
+/// Same `new_for_test` shape as [`build_app_with_secret`]; see that doc for
+/// why eviction isn't spawned here.
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
-    let shutdown = CancellationToken::new();
-    let persist = InMemoryStore::start(
+    let persist = InMemoryStore::new_for_test(
         Arc::new(SystemClock),
         Duration::from_hours(1),
-        Duration::from_mins(1),
-        shutdown.clone(),
+        IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        shutdown,
+        shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes()
@@ -377,6 +384,12 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state)
 }
+
+/// Broadcast capacity used by the shared in-memory app builders. Matches the
+/// production capacity (`InMemoryStore::start` constant) so `RecvError::Lagged`
+/// semantics in the shared helpers mirror production. Lagging-client coverage
+/// uses a smaller capacity via `InMemoryStore::new_for_test` directly.
+const IN_MEMORY_TEST_BROADCAST_CAPACITY: usize = 256;
 
 // Fixture: workflow_run_requested.json
 pub fn fixture_workflow_run_requested() -> Vec<u8> {
@@ -652,14 +665,23 @@ async fn build_app_inner(
 /// `read_snapshot`. Spawns the listener + drain tasks against the test DB so
 /// the store is realistic; tests that need to peek at watermark or abort the
 /// drain should use the full `AppFixture` instead.
+///
+/// The caller owns the cancellation token. Tests MUST call
+/// `shutdown.cancel()` at end-of-test so the listener and drain exit before
+/// the test process moves on; otherwise these tasks linger inside the
+/// shared nextest integration-test binary, accumulating DB connections
+/// across the run. `cancel()` alone is sufficient — the tasks observe
+/// cancellation at their next `select!` boundary and exit within
+/// milliseconds. Tests that want to synchronously confirm the join can
+/// additionally `store.shutdown().await` afterward.
 pub async fn start_pg_store_for_test(
     pool: sqlx::PgPool,
     db_url: &str,
+    shutdown: CancellationToken,
 ) -> Arc<atc_server::persist::PgStore> {
     let pg_listener = listener::connect_listener(db_url)
         .await
         .expect("connect_listener failed");
-    let shutdown = CancellationToken::new();
     let (store, _handles) = atc_server::persist::PgStore::start_with_test_hooks(
         pool,
         pg_listener,

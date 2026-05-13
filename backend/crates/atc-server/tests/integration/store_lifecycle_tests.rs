@@ -65,6 +65,9 @@ async fn in_memory_start_subscribe_observes_apply() {
     assert_eq!(event.seq, 1, "first event should carry seq=1");
 
     // Shut down to reclaim the eviction task before the test exits.
+    // `shutdown.cancel()` signals cooperative exit; `store.shutdown().await`
+    // joins the task within its per-task timeout.
+    shutdown.cancel();
     store.shutdown().await;
 }
 
@@ -104,7 +107,8 @@ async fn in_memory_shutdown_is_idempotent() {
         shutdown.clone(),
     );
 
-    // First call cancels and joins; second call observes None and is a no-op.
+    // First call joins after cancel; second call observes None and is a no-op.
+    shutdown.cancel();
     store.shutdown().await;
     timeout(Duration::from_secs(2), store.shutdown())
         .await
@@ -153,7 +157,9 @@ async fn pg_start_with_test_hooks_exposes_handles() {
         "expected broadcast_watermark to advance after broadcast, got {watermark_after_broadcast}",
     );
 
-    // Calling shutdown joins both tasks within the per-task timeout budget.
+    // Cancel the caller's token so the spawned tasks observe shutdown, then
+    // join via `store.shutdown()` within the per-task budget.
+    shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
         .await
         .expect("shutdown did not finish within 8s");
@@ -183,6 +189,7 @@ async fn pg_shutdown_is_idempotent() {
             .await
             .expect("start_with_test_hooks");
 
+    shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
         .await
         .expect("first shutdown");
@@ -212,8 +219,10 @@ async fn pg_shutdown_handles_aborted_drain_cleanly() {
     // Give the runtime a beat to mark the task as cancelled.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // shutdown should join both tasks (drain returns JoinError::is_cancelled)
-    // and return within the per-task budget.
+    // shutdown should join both tasks (drain returns JoinError::is_cancelled
+    // — handled cleanly per ADR-0006). Cancel the token so the listener
+    // observes shutdown too, then join.
+    shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
         .await
         .expect("shutdown should not hang on an aborted drain task");
@@ -245,5 +254,6 @@ async fn subscribe_via_trait_object() {
         .expect("broadcast channel closed");
     assert_eq!(event.seq, 1);
 
+    shutdown.cancel();
     store.shutdown().await;
 }
