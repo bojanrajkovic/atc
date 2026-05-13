@@ -6,15 +6,17 @@
 //! any locks or async runtime.
 
 use super::*;
+use crate::clock::fixed_test_timestamp;
 use crate::job::{JobConclusion, Step, StepStatus};
 use crate::run::RunConclusion;
+use chrono::Utc;
 
 // ===== apply_run_event =====
 
 /// A completed run cannot transition back to `InProgress`.
 #[test]
 fn run_forward_only_rejects_completed_to_in_progress() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let run_id = RunId(1001);
     let completed_run = WorkflowRun {
         id: run_id,
@@ -62,7 +64,7 @@ fn run_idempotent_same_status_requested_twice() {
 /// First-sight: `apply_run_event(None, Requested)` creates a new run with envelope fields.
 #[test]
 fn run_first_sight_from_none_creates_run() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let run_id = RunId(1003);
     let envelope = RunEventEnvelope {
         run_id,
@@ -97,7 +99,7 @@ fn run_first_sight_from_none_creates_run() {
 /// Struct-update merge: an envelope without `workflow_name` preserves the existing value.
 #[test]
 fn run_struct_update_merge_preserves_workflow_name() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let run_id = RunId(1004);
 
     // Build an existing run with a workflow_name already set.
@@ -155,7 +157,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
 /// produces a job with exactly 2 steps (not 5).
 #[test]
 fn job_snapshot_step_replacement() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let job_id = JobId(2001);
     let run_id = RunId(200);
 
@@ -232,9 +234,9 @@ fn job_snapshot_step_replacement() {
 /// A completed job whose TTL has elapsed is evictable.
 #[test]
 fn evictable_completed_job_past_ttl() {
-    let completed_at = Utc::now() - chrono::Duration::hours(2);
+    let completed_at = fixed_test_timestamp() - chrono::Duration::hours(2);
     let job = build_completed_job(Some(completed_at));
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let ttl = Duration::from_mins(30);
 
     assert!(
@@ -246,7 +248,7 @@ fn evictable_completed_job_past_ttl() {
 /// An active (`InProgress`) job is never evictable regardless of age.
 #[test]
 fn not_evictable_active_job() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let job = Job {
         id: JobId(3001),
         name: "build".to_string(),
@@ -273,7 +275,7 @@ fn not_evictable_active_job() {
 #[test]
 fn not_evictable_completed_job_without_completed_at() {
     let job = build_completed_job(None);
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let ttl = Duration::from_mins(30);
 
     assert!(
@@ -285,7 +287,7 @@ fn not_evictable_completed_job_without_completed_at() {
 // ===== Helpers =====
 
 fn build_completed_job(completed_at: Option<chrono::DateTime<Utc>>) -> Job {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     Job {
         id: JobId(9001),
         name: "completed-job".to_string(),

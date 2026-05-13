@@ -8,7 +8,7 @@ use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 
-use atc_core::SystemClock;
+use atc_core::{Clock, SystemClock};
 use atc_server::config;
 use atc_server::db;
 use atc_server::listener;
@@ -131,6 +131,11 @@ async fn main() {
     // Single shared cancellation token observed by all supervised surfaces.
     let shutdown = CancellationToken::new();
 
+    // Single Clock for the process. Routes every wall-clock read in
+    // production through one source so tests (and any future fault-injection
+    // shim) can swap it deterministically.
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+
     // Storage mode dispatch. Each store owns its own broadcast sender and
     // background tasks; main.rs only holds the resulting `Arc<dyn
     // PersistentStore>`.
@@ -156,7 +161,7 @@ async fn main() {
                 process::exit(1);
             });
 
-        PgStore::start(pool, pg_listener, shutdown.clone())
+        PgStore::start(Arc::clone(&clock), pool, pg_listener, shutdown.clone())
             .await
             .unwrap_or_else(|e| {
                 tracing::error!(error = %e, "failed to start PgStore");
@@ -165,7 +170,7 @@ async fn main() {
     } else {
         tracing::info!("no ATC_DATABASE_URL configured; running in in-memory mode");
         InMemoryStore::start(
-            Arc::new(SystemClock),
+            Arc::clone(&clock),
             Duration::from_hours(1),
             Duration::from_mins(1),
             shutdown.clone(),

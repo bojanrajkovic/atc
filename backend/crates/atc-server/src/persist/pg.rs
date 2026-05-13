@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use atc_core::{
-    JobConclusion, JobStatus, PersistError, RunConclusion, RunStatus,
+    Clock, JobConclusion, JobStatus, PersistError, RunConclusion, RunStatus,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 use sqlx::PgPool;
@@ -158,6 +158,11 @@ fn derive_job_target(action: &JobEvent) -> JobStatus {
 /// (tests).
 pub struct PgStore {
     pub(super) pool: PgPool,
+    /// Wall-clock source for the drain heartbeat and outbox-lag observation.
+    /// Owning this here (rather than reading `Utc::now()` directly at each call
+    /// site) lets tests advance time deterministically via `TestClock`. See
+    /// `atc-core/src/clock.rs` for the wall-vs-monotonic split.
+    clock: Arc<dyn Clock>,
     /// Highest outbox `seq` the drain has fetched and broadcast.
     /// Used as `lastSeq` in `read_snapshot`. Memory ordering: drain writes
     /// via `Release`; we read via `Acquire` before opening the REPEATABLE READ tx.
@@ -223,11 +228,12 @@ impl PgStore {
     /// step after the spawn calls must cancel and join the already-spawned
     /// tasks before returning `Err`.
     pub async fn start(
+        clock: Arc<dyn Clock>,
         pool: PgPool,
         listener_conn: PgListener,
         shutdown: CancellationToken,
     ) -> Result<Arc<Self>, PgStoreStartError> {
-        Self::start_inner(pool, listener_conn, shutdown, None, None, None, None).await
+        Self::start_inner(clock, pool, listener_conn, shutdown, None, None, None, None).await
     }
 
     /// Test variant that mirrors [`PgStore::start`] but accepts optional
@@ -237,12 +243,14 @@ impl PgStore {
     /// the drain mid-pass.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn start_with_test_hooks(
+        clock: Arc<dyn Clock>,
         pool: PgPool,
         listener_conn: PgListener,
         shutdown: CancellationToken,
         hooks: PgStoreTestHooks,
     ) -> Result<(Arc<Self>, PgStoreTestHandles), PgStoreStartError> {
         let store = Self::start_inner(
+            clock,
             pool,
             listener_conn,
             shutdown,
@@ -271,6 +279,7 @@ impl PgStore {
     /// test-hooks variant to inject counters / notifies / per-pass delays.
     #[allow(clippy::too_many_arguments)]
     async fn start_inner(
+        clock: Arc<dyn Clock>,
         pool: PgPool,
         listener_conn: PgListener,
         shutdown: CancellationToken,
@@ -293,7 +302,7 @@ impl PgStore {
 
         // Arcs the listener and drain need to coordinate.
         let broadcast_watermark = Arc::new(AtomicI64::new(0));
-        let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+        let last_drain_pass_at = Arc::new(AtomicI64::new(clock.now().timestamp_millis()));
         let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
         let drain_in_flight = Arc::new(AtomicBool::new(false));
         let drain_notify = Arc::new(Notify::new());
@@ -328,6 +337,7 @@ impl PgStore {
 
         // Spawn drain.
         let drain_handle = listener::spawn_drain_task(
+            Arc::clone(&clock),
             pool.clone(),
             initial_watermark,
             startup_at,
@@ -350,6 +360,7 @@ impl PgStore {
 
         let store = Arc::new(Self {
             pool,
+            clock,
             broadcast_watermark,
             last_drain_pass_at,
             broadcast_tx,
@@ -370,13 +381,6 @@ impl PgStore {
             .await
             .map(|_| ())
     }
-}
-
-fn now_millis() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 #[async_trait::async_trait]
@@ -464,16 +468,11 @@ impl PersistentStore for PgStore {
     /// (whether woken by NOTIFY or the 5 s heartbeat tick). If the heartbeat is
     /// older than 30 s the drain task has stalled; return `DrainStale`.
     async fn liveness_check(&self) -> Result<(), LivenessError> {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
         if let Err(e) = sqlx::query("SELECT 1").execute(&self.pool).await {
             return Err(LivenessError::DbUnreachable(e));
         }
 
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
+        let now_ms = self.clock.now().timestamp_millis();
         let last = self.last_drain_pass_at.load(Ordering::Relaxed);
         let age = now_ms.saturating_sub(last);
         const READYZ_HEARTBEAT_STALENESS_MS: i64 = 30_000;

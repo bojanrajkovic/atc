@@ -1,5 +1,5 @@
 use super::*;
-use chrono::Utc;
+use atc_core::fixed_test_timestamp;
 
 use crate::webhook::types::{
     HeadCommit, OwnerData, RepositoryData, StepData, WorkflowData, WorkflowJobData, WorkflowRunData,
@@ -21,9 +21,9 @@ fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> Workflow
         event: "push".to_string(),
         display_title: "Test Workflow".to_string(),
         html_url: "https://github.com/test/repo/runs/123456".to_string(),
-        created_at: Utc::now(),
-        run_started_at: Some(Utc::now()),
-        updated_at: Utc::now(),
+        created_at: fixed_test_timestamp(),
+        run_started_at: Some(fixed_test_timestamp()),
+        updated_at: fixed_test_timestamp(),
     };
 
     WorkflowRunWebhook {
@@ -54,9 +54,9 @@ fn make_workflow_job_webhook(
         name: "test-job".to_string(),
         status: "completed".to_string(),
         conclusion: conclusion.map(std::string::ToString::to_string),
-        created_at: Utc::now(),
-        started_at: Some(Utc::now()),
-        completed_at: Some(Utc::now()),
+        created_at: fixed_test_timestamp(),
+        started_at: Some(fixed_test_timestamp()),
+        completed_at: Some(fixed_test_timestamp()),
         steps: vec![],
         labels: vec!["ubuntu-latest".to_string()],
         runner_id: if runner { Some(1) } else { None },
@@ -256,15 +256,15 @@ fn test_translate_job_with_steps() {
             name: "Setup".to_string(),
             status: "completed".to_string(),
             conclusion: Some("success".to_string()),
-            started_at: Some(Utc::now()),
-            completed_at: Some(Utc::now()),
+            started_at: Some(fixed_test_timestamp()),
+            completed_at: Some(fixed_test_timestamp()),
         },
         StepData {
             number: 2,
             name: "Build".to_string(),
             status: "in_progress".to_string(),
             conclusion: None,
-            started_at: Some(Utc::now()),
+            started_at: Some(fixed_test_timestamp()),
             completed_at: None,
         },
     ];
@@ -275,8 +275,8 @@ fn test_translate_job_with_steps() {
         name: "test-job".to_string(),
         status: "in_progress".to_string(),
         conclusion: None,
-        created_at: Utc::now(),
-        started_at: Some(Utc::now()),
+        created_at: fixed_test_timestamp(),
+        started_at: Some(fixed_test_timestamp()),
         completed_at: None,
         steps,
         labels: vec!["ubuntu-latest".to_string()],
@@ -414,8 +414,8 @@ fn test_unknown_step_status() {
         name: "test-job".to_string(),
         status: "in_progress".to_string(),
         conclusion: None,
-        created_at: Utc::now(),
-        started_at: Some(Utc::now()),
+        created_at: fixed_test_timestamp(),
+        started_at: Some(fixed_test_timestamp()),
         completed_at: None,
         steps,
         labels: vec![],
@@ -455,8 +455,8 @@ fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
         name: "test-job".to_string(),
         status: "in_progress".to_string(),
         conclusion: None,
-        created_at: Utc::now(),
-        started_at: Some(Utc::now()),
+        created_at: fixed_test_timestamp(),
+        started_at: Some(fixed_test_timestamp()),
         completed_at: None,
         steps: vec![],
         labels: vec!["ubuntu-latest".to_string()],

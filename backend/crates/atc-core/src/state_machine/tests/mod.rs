@@ -1,14 +1,14 @@
 use std::time::Duration;
 
 use super::*;
+use crate::clock::fixed_test_timestamp;
 use crate::types::{JobId, RunId};
-use chrono::Utc;
 
 mod pure_application;
 
 /// Helper to build a `RunEventEnvelope` with sensible defaults.
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     RunEventEnvelope {
         run_id,
         org: "octocat".to_string(),

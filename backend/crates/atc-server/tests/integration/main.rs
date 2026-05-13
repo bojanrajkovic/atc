@@ -32,6 +32,7 @@ mod notify_listener_tests;
 mod otel_init_test;
 mod outbox_tests;
 mod persist_pg_tests;
+mod pg_clock_seam_tests;
 mod readyz;
 mod restart_recovery;
 mod routes_tests;

@@ -15,6 +15,7 @@ use std::time::Duration;
 use atc_core::{
     JobConclusion, JobId, JobStatus, RunConclusion, RunId, RunStatus, RunnerInfo, SystemClock,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
+    fixed_test_timestamp,
     job::{Step, StepStatus},
     types::RepoKey,
 };
@@ -41,7 +42,7 @@ fn make_store_with_clock_and_ttl(
 }
 
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     RunEventEnvelope {
         run_id,
         org: "octocat".to_string(),
@@ -68,7 +69,7 @@ fn make_job_event(
     repo: &str,
     action: JobEvent,
 ) -> JobEventEnvelope {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     JobEventEnvelope {
         job_id,
         run_id,
@@ -90,7 +91,7 @@ fn make_job_event_with_completed_at(
     action: JobEvent,
     completed_at: Option<DateTime<Utc>>,
 ) -> JobEventEnvelope {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     JobEventEnvelope {
         job_id,
         run_id,
@@ -400,7 +401,7 @@ async fn steps_snapshot_replacement_not_append() {
             name: "Step A".to_string(),
             status: StepStatus::InProgress,
             conclusion: None,
-            started_at: Some(Utc::now()),
+            started_at: Some(fixed_test_timestamp()),
             completed_at: None,
         },
         Step {
@@ -723,7 +724,7 @@ async fn workflow_name_preserved_on_in_progress_without_name() {
         .unwrap();
 
     // InProgress with no workflow_name (common for this event type)
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let env = RunEventEnvelope {
         run_id,
         org: "octocat".to_string(),
@@ -824,7 +825,7 @@ async fn completed_job_within_ttl_retained() {
     use atc_core::clock::TestClock;
     use chrono::TimeDelta;
 
-    let start_time = Utc::now();
+    let start_time = fixed_test_timestamp();
     let clock = Arc::new(TestClock::new(start_time));
     let store = make_store_with_clock(clock.clone());
 
@@ -871,7 +872,7 @@ async fn completed_job_past_ttl_evicted() {
     use atc_core::clock::TestClock;
     use chrono::TimeDelta;
 
-    let start_time = Utc::now();
+    let start_time = fixed_test_timestamp();
     let clock = Arc::new(TestClock::new(start_time));
     let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_hours(1));
 
@@ -917,7 +918,7 @@ async fn run_evicted_when_all_jobs_evicted() {
     use atc_core::clock::TestClock;
     use chrono::TimeDelta;
 
-    let start_time = Utc::now();
+    let start_time = fixed_test_timestamp();
     let clock = Arc::new(TestClock::new(start_time));
     let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_hours(1));
 
@@ -959,7 +960,7 @@ async fn run_evicted_when_all_jobs_evicted() {
 async fn active_job_not_evicted() {
     use atc_core::clock::TestClock;
 
-    let start_time = Utc::now();
+    let start_time = fixed_test_timestamp();
     let clock = Arc::new(TestClock::new(start_time));
     let store = make_store_with_clock(clock.clone());
 
@@ -999,7 +1000,7 @@ async fn eviction_indexes_remain_consistent() {
     use atc_core::clock::TestClock;
     use chrono::TimeDelta;
 
-    let start_time = Utc::now();
+    let start_time = fixed_test_timestamp();
     let clock = Arc::new(TestClock::new(start_time));
     let store = make_store_with_clock_and_ttl(clock.clone(), Duration::from_hours(1));
 

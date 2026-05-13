@@ -16,3 +16,8 @@ sha2 = "=0.11.0"
 thiserror = "=2.0.18"
 tracing = "=0.1.44"
 ts-rs = { workspace = true, features = ["serde-compat"] }
+
+[dev-dependencies]
+# Enables `atc_core::fixed_test_timestamp` for deterministic timestamps in
+# webhook-translation test fixtures.
+atc-core = { path = "../atc-core", features = ["test-support"] }

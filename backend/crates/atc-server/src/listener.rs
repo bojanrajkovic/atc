@@ -15,8 +15,9 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
+use atc_core::Clock;
 use atc_github::WebhookEvent;
 use tokio::sync::{Notify, broadcast};
 use tokio::task::JoinHandle;
@@ -52,13 +53,6 @@ const SHUTDOWN_REMAINING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 /// of magnitude wider than the in-flight commit window (milliseconds). Memory
 /// cost: ~16 KB per replica (u64 ring + HashSet of i64).
 const DEDUP_CAP: usize = 2048;
-
-fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 
 /// Connect a `PgListener`, subscribe to [`NOTIFY_CHANNEL`], and return it.
 pub async fn connect_listener(
@@ -192,6 +186,7 @@ fn handle_listener_notification(
 ///    the heartbeat (so `/readyz` reflects sustained drain failure).
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_drain_task(
+    clock: Arc<dyn Clock>,
     pool: sqlx::PgPool,
     initial_watermark: i64,
     startup_at: Instant,
@@ -244,7 +239,7 @@ pub fn spawn_drain_task(
                     // — it's a "loop is alive". Updating the timestamp here is
                     // correct because the alternative (only refresh on successful
                     // drain) would 503 quiet replicas after 30 s.
-                    last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
+                    last_drain_pass_at.store(clock.now().timestamp_millis(), Ordering::Relaxed);
                     continue;
                 }
 
@@ -267,6 +262,7 @@ pub fn spawn_drain_task(
                 drain_in_flight.store(true, Ordering::Release);
                 let pass_start = Instant::now();
                 let pass_ok = drain_pass(
+                    clock.as_ref(),
                     &pool,
                     pass_start_floor,
                     &mut watermark,
@@ -301,7 +297,7 @@ pub fn spawn_drain_task(
                     // Refresh heartbeat ONLY on success. A failed drain pass must
                     // not advertise readiness — after 30 s of failures, /readyz
                     // will go stale and traffic gets routed away.
-                    last_drain_pass_at.store(now_millis(), Ordering::Relaxed);
+                    last_drain_pass_at.store(clock.now().timestamp_millis(), Ordering::Relaxed);
                     // Publish the broadcast cursor. Read by `state_handler` as the
                     // PG-mode `lastSeq` (commit-order cursor — see ADR 0003
                     // implementation notes). Using `MAX(outbox.seq)` directly is unsafe:
@@ -427,6 +423,7 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics:
     ),
 )]
 async fn drain_pass(
+    clock: &dyn Clock,
     pool: &sqlx::PgPool,
     pass_start_floor: i64,
     watermark: &mut i64,
@@ -518,7 +515,7 @@ async fn drain_pass(
                 // evaluates `transaction_timestamp()` (transaction start),
                 // not commit. See `metrics.md` § Operational metrics.
                 #[allow(clippy::cast_precision_loss)]
-                let lag_seconds = (chrono::Utc::now() - row.inserted_at)
+                let lag_seconds = (clock.now() - row.inserted_at)
                     .num_microseconds()
                     .unwrap_or(0) as f64
                     / 1_000_000.0;

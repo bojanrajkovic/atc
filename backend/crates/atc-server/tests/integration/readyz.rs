@@ -13,20 +13,16 @@
 
 use crate::common;
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use atc_core::{Clock, TestClock, fixed_test_timestamp};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use chrono::TimeDelta;
 use serial_test::serial;
 use tower::ServiceExt;
-
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
 
 // ─── stale heartbeat → 503 ────────────────────────────────────────────────
 
@@ -43,17 +39,19 @@ async fn stale_heartbeat_returns_503() {
 
     common::ensure_recorder_installed();
 
-    // Boot a real fixture so PgStore owns its heartbeat atomic, then abort the
-    // drain so it can't refresh the heartbeat we're about to poison.
-    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    // Use a TestClock so the staleness baseline is deterministic — production
+    // routes `clock.now()` through `PgStore.clock`, so advancing the
+    // `TestClock` is the canonical way to make the heartbeat "old".
+    let clock = Arc::new(TestClock::new(fixed_test_timestamp()));
+    let fixture =
+        common::build_app_with_pg_clock(Arc::clone(&clock) as Arc<dyn Clock>, pool, db_url).await;
     fixture.drain_abort.abort();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Set last_drain_pass_at to 60 seconds ago (well past the 30 s threshold).
-    let stale_time = now_millis() - 60_000;
-    fixture
-        .last_drain_pass_at
-        .store(stale_time, Ordering::Relaxed);
+    // Advance the clock by 60 s. The startup pass recorded the heartbeat at
+    // `fixed_test_timestamp()`; after the advance, the staleness age is
+    // 60_000 ms — well past the 30 s threshold.
+    clock.advance(TimeDelta::seconds(60));
 
     let req = Request::builder()
         .method("GET")
@@ -100,7 +98,9 @@ async fn stale_heartbeat_returns_503() {
 #[serial]
 async fn drain_abort_drives_503() {
     let (pool, _container, db_url) = common::start_pg().await;
-    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    let clock = Arc::new(TestClock::new(fixed_test_timestamp()));
+    let fixture =
+        common::build_app_with_pg_clock(Arc::clone(&clock) as Arc<dyn Clock>, pool, db_url).await;
 
     // Sanity: heartbeat is fresh and /readyz is 200 right now.
     let pre_req = Request::builder()
@@ -126,10 +126,12 @@ async fn drain_abort_drives_503() {
     // at its next await point.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Stash a stale timestamp. Were the drain still running, this would race
-    // a heartbeat refresh — but the drain is gone, so the value sticks.
-    let stale = now_millis() - 60_000;
-    fixture.last_drain_pass_at.store(stale, Ordering::Relaxed);
+    // Snapshot the heartbeat that the startup pass recorded, then advance the
+    // clock past the 30 s threshold. With the drain gone the heartbeat will
+    // not move forward — the staleness check sees `clock.now() - last ==
+    // 60_000` and returns 503.
+    let snapshot_heartbeat = fixture.last_drain_pass_at.load(Ordering::Relaxed);
+    clock.advance(TimeDelta::seconds(60));
 
     let req = Request::builder()
         .method("GET")
@@ -155,7 +157,7 @@ async fn drain_abort_drives_503() {
     // the abort actually killed the heartbeat producer.
     let post = fixture.last_drain_pass_at.load(Ordering::Relaxed);
     assert_eq!(
-        post, stale,
+        post, snapshot_heartbeat,
         "drain task is aborted; heartbeat must not have advanced",
     );
 
@@ -300,17 +302,19 @@ async fn healthz_returns_200_after_shutdown() {
 
 /// When the drain task is running and healthy, GET /readyz returns 200.
 ///
-/// Uses `build_app_with_pg_and_listener` which starts a real drain task.
-/// After the fixture initializes (drain_started fires), the heartbeat should
-/// be fresh. Assert /readyz returns 200.
+/// Uses `build_app_with_pg_clock` so the heartbeat the startup pass records
+/// is exactly `fixed_test_timestamp().timestamp_millis()` — assertable to the
+/// millisecond rather than a fuzzy "is it recent?" check against wall-clock.
 #[tokio::test]
 #[serial]
 async fn fresh_heartbeat_returns_200() {
     let (pool, _container, db_url) = common::start_pg().await;
-    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    let clock = Arc::new(TestClock::new(fixed_test_timestamp()));
+    let fixture =
+        common::build_app_with_pg_clock(Arc::clone(&clock) as Arc<dyn Clock>, pool, db_url).await;
 
     // The drain task has run its first pass (drain_started fired in
-    // build_app_with_pg_and_listener). The heartbeat is fresh.
+    // build_app_with_pg_clock). The heartbeat is fresh.
     let req = Request::builder()
         .method("GET")
         .uri("/readyz")
@@ -330,12 +334,13 @@ async fn fresh_heartbeat_returns_200() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["status"], "ok", "body should be ok");
 
-    // Also assert last_drain_pass_at is indeed recent (within 10 seconds).
+    // Exact equality: the startup pass recorded `clock.now()` and we have
+    // not advanced the clock since.
     let last = fixture.last_drain_pass_at.load(Ordering::Relaxed);
-    let age_ms = now_millis().saturating_sub(last);
-    assert!(
-        age_ms < 10_000,
-        "last_drain_pass_at should be recent; age_ms = {age_ms}"
+    assert_eq!(
+        last,
+        clock.now().timestamp_millis(),
+        "heartbeat must equal clock time at the startup pass",
     );
 
     fixture.shutdown.cancel();
@@ -343,27 +348,35 @@ async fn fresh_heartbeat_returns_200() {
 
 /// The drain heartbeat ticks even during quiet periods (no events).
 ///
-/// Sleeps past the 5 s HEARTBEAT_TICK and asserts the heartbeat has been
-/// refreshed — proving the tick fires even when no NOTIFY arrives.
+/// Sleeps past the 5 s HEARTBEAT_TICK so the real tokio tick fires; in
+/// between, we advance the TestClock by 1 s so the tick reads a strictly
+/// greater `clock.now()`. The heartbeat after the tick must equal that new
+/// time exactly — sharper than a wall-clock `>=` comparison.
 #[tokio::test]
 #[serial]
 async fn heartbeat_ticks_during_quiet_period() {
     let (pool, _container, db_url) = common::start_pg().await;
-    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    let clock = Arc::new(TestClock::new(fixed_test_timestamp()));
+    let fixture =
+        common::build_app_with_pg_clock(Arc::clone(&clock) as Arc<dyn Clock>, pool, db_url).await;
 
-    // Capture timestamp before the quiet tick.
-    let before_ms = now_millis();
+    // Heartbeat at startup equals `fixed_test_timestamp().timestamp_millis()`.
+    let before_ms = fixture.last_drain_pass_at.load(Ordering::Relaxed);
+    assert_eq!(before_ms, clock.now().timestamp_millis());
 
-    // Wait 6 s (> HEARTBEAT_TICK = 5 s) during which no events are fired.
+    // Move the clock forward by 1 s — the tick will read this advanced
+    // value when it fires.
+    clock.advance(TimeDelta::seconds(1));
+    let expected_after_tick = clock.now().timestamp_millis();
+
+    // Wait 6 s real time (> HEARTBEAT_TICK = 5 s) for the tokio tick.
     tokio::time::sleep(Duration::from_secs(6)).await;
 
-    // The heartbeat should have been refreshed after the tick.
     let last = fixture.last_drain_pass_at.load(Ordering::Relaxed);
-
-    assert!(
-        last >= before_ms,
-        "last_drain_pass_at must have advanced after a heartbeat tick; \
-         before={before_ms}, last={last}"
+    assert_eq!(
+        last, expected_after_tick,
+        "heartbeat tick must have refreshed last_drain_pass_at to the new clock time; \
+         before={before_ms}, expected_after_tick={expected_after_tick}, last={last}",
     );
 
     // /readyz should still return 200.

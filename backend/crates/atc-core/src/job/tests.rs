@@ -1,4 +1,5 @@
 use super::*;
+use crate::clock::fixed_test_timestamp;
 use proptest::prelude::*;
 
 // Job fields: Construct a `Job` with all fields populated
@@ -6,7 +7,7 @@ use proptest::prelude::*;
 // verify each field is accessible.
 #[test]
 fn test_job_with_all_fields() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
@@ -53,7 +54,7 @@ fn test_job_with_all_fields() {
 // Step fields: Construct a `Step` with all fields, verify accessible.
 #[test]
 fn test_step_with_all_fields() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let step = Step {
         number: 1,
         name: "Build".to_string(),
@@ -75,7 +76,7 @@ fn test_step_with_all_fields() {
 // deserialize back, assert round-trip equality.
 #[test]
 fn test_job_serde_round_trip() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let runner = RunnerInfo {
         id: 5,
         name: "runner-5".to_string(),
@@ -178,7 +179,7 @@ fn test_runner_info_as_separate_struct() {
         runner: Some(runner.clone()),
         labels: vec![],
         steps: vec![],
-        created_at: Utc::now(),
+        created_at: fixed_test_timestamp(),
         started_at: None,
         completed_at: None,
     };
@@ -196,7 +197,7 @@ fn test_runner_info_as_separate_struct() {
 // Test Step serde round-trip
 #[test]
 fn test_step_serde_round_trip() {
-    let now = Utc::now();
+    let now = fixed_test_timestamp();
     let step = Step {
         number: 5,
         name: "Integration tests".to_string(),
