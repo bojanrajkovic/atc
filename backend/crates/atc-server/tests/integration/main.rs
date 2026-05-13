@@ -17,6 +17,7 @@ mod config_tests;
 mod db_readyz_tests;
 mod drain_forwards;
 mod e2e_tests;
+mod eviction_spans_test;
 mod gap_healing;
 mod graceful_shutdown;
 mod in_memory_store_tests;
