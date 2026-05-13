@@ -1,6 +1,6 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-10
+Last verified: 2026-05-13
 
 ## Purpose
 
@@ -70,6 +70,28 @@ New instrumentation goes at one of these boundaries:
 - **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` need an explicit task-lifetime root span (`listener.task`, `drain.task`) constructed at spawn time and attached via `.instrument(span)` — see the [Tokio spawn gotcha](#tokio-spawn-gotcha) below.
 
 Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph. If a function is not load-bearing for an operator reading a flame graph, leave it uninstrumented and let it inherit the surrounding span.
+
+### Cached handle convention
+
+Every repeat-emit metric in `atc-server` MUST go through a cached `Counter` / `Gauge` / `Histogram` handle held on the `PgMetrics` struct in `backend/crates/atc-server/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register()` once after the global recorder is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.increment(N)`) instead of a fresh `metrics::counter!("…").increment(N)` invocation.
+
+This is **defense-in-depth, not micro-perf**. PR #153 fixed a real correctness bug where a `metrics-util` hash-contract mismatch let `metrics-exporter-otel` reinstall observable callbacks on every inline emit — the cached form hits the registry exactly once at handle creation, so the entire bug class cannot reach hot-path emits. The performance side is a happy side effect.
+
+Two inline exceptions remain, with **distinct rationale**:
+
+1. **`describe_*!` macros** — metadata only. They register a metric name, type, and description with the recorder; no instrument is created and no value is emitted. Caching is meaningless because there is no handle to cache.
+2. **`register_build_info()`'s `metrics::gauge!(…).set(1.0)`** — a real emit, not metadata. It is safe to leave inline because it runs **exactly once at startup** with compile-time labels and is never invoked again. The handle would be unique to that single call site, so caching would be pure ceremony. Future contributors must not generalize this exception to "metadata-only" — it is one-shot at startup, which is a separate carve-out.
+
+Mechanical check (run before merging changes that touch `atc-server/src/`):
+
+```sh
+rg -U --multiline 'metrics::(counter|gauge|histogram)!\([\s\S]*?\)\s*\.(increment|set|record)' \
+   backend/crates/atc-server/src/
+```
+
+The grep should return only the `register_build_info` emit in `metrics.rs` (the macro spans multiple lines, so use `-U --multiline`). A new hit anywhere else in `backend/crates/atc-server/src/` is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register` and the metric documented under [Operational metrics](#operational-metrics)).
+
+`atc_pg_in_memory_drift_total` is described in `PgMetrics::register` but no handle is cached: the metric is part of the documented surface but has no production emit site today. If a future writer adds an emit, the cached-handle field MUST be added in the same change.
 
 ### W3C trace context propagation
 

@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-10
+Last verified: 2026-05-13
 
 ## Purpose
 
@@ -278,7 +278,7 @@ The frontend derives `RunnerPoolStats` from the underlying job state via `comput
      - Calls `insert_outbox_*_in_txn`. The `BIGSERIAL` allocates the durable seq. On failure → `PersistError::Backend`.
      - Emits `SELECT pg_notify('atc_outbox', seq::text)` inside the same transaction. PG queues the NOTIFY and delivers on COMMIT; aborted transactions silently drop it.
      - Calls `tx.commit()`. On failure → `PersistError::Backend`.
-     - Emits metrics: `atc_pg_write_failures_total{kind="parity"}` on `InvalidTransition`; `atc_pg_write_failures_total{kind="transient"}` on backend errors; `atc_pg_notify_emitted_total{kind}` after a successful commit.
+     - Emits metrics: `atc_pg_write_failures_total{kind="parity"}` on `InvalidTransition`; `atc_pg_write_failures_total{kind="transient"}` on backend errors; `atc_pg_notify_emitted_total{kind}` after a successful commit. Every `atc_pg_*` emit goes through a cached handle on `PgMetrics` (see [Cached handle convention](metrics.md#cached-handle-convention)).
      - **Does NOT broadcast to `webhook_tx`, does NOT apply in-memory state, and does NOT touch the seq mutex.** The drain task is the sole broadcaster in PG mode.
      - Returns `Ok(<u64 seq>)` on success.
    - **`InMemoryStore` path** (when `ATC_DATABASE_URL` is unset):

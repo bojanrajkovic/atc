@@ -114,15 +114,12 @@ async fn main() {
 
     init_tracing_subscriber(&cfg, otel_handles.as_ref());
 
-    // Register metric descriptions BEFORE any emission. The first emission
-    // without a prior `describe_*` creates an instrument with an empty
-    // description and that metadata is permanent for the lifetime of the
-    // meter provider — so the `atc_pg_broadcast_watermark` seed below and any
-    // listener/drain task emissions must land after these calls. Under a
-    // no-op recorder (OTel disabled) `register_*` is cheap.
+    // `register_build_info` is the only describe call `main.rs` makes
+    // eagerly. The cached `PgMetrics` handles (which carry every other
+    // `describe_*!`) are registered inside `PgStore::start` so the PG-mode
+    // describes only fire when a `PgStore` is constructed. Under a no-op
+    // recorder (OTel disabled) the describe/set pair is cheap.
     metrics::register_build_info();
-    metrics::register_pg_write_counters();
-    metrics::register_listener_metrics();
 
     if let Some(ref db_url) = cfg.database_url {
         ensure_pg_scheme("ATC_DATABASE_URL", db_url);
