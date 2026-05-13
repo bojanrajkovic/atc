@@ -362,23 +362,16 @@ Server wiring configuration extends the existing figment-based config:
 ### Lifecycle Wiring
 
 In `main.rs`:
-1. Load config via `Config::load()`
+1. Load config via `Config::load()`.
 2. Initialize the OTel pipeline by calling `otel::init_otel(&cfg)`. Returns `Some(handles)` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (tracer/meter providers built, propagator installed, `metrics-exporter-otel` recorder installed); returns `None` otherwise. The handles flow into `run_shutdown_orchestration` so providers flush during graceful shutdown.
-3. If `ATC_DATABASE_URL` is set: call `atc_server::db::init_pool(url)` — connects `sqlx::PgPool` and runs embedded migrations; exit(1) on failure
-4. Create broadcast channel: `tokio::sync::broadcast::channel(256)`
-5. Call `metrics::register_build_info()`, `metrics::register_pg_write_counters()`, and `metrics::register_listener_metrics()`. These run unconditionally — when OTel is enabled the descriptions land on the OTel meter; when OTel is disabled the macros resolve through the no-op recorder and the calls are cheap no-ops.
-6. Construct `persist: Arc<dyn PersistentStore>` — `PgStore::new(pool, broadcast_watermark, last_drain_pass_at)` when `pg_pool` is `Some`, otherwise `InMemoryStore::new(clock, completed_ttl, webhook_tx)` (ADR 0005).
-7. Create `AppState { persist, webhook_tx, webhook_secret, shutdown, ws_tracker }` and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not branch on storage mode.
-8. Start background eviction task: `atc_server::persist::eviction::spawn_eviction_task(in_memory_store.clone())`
-9. **If `pg_pool` is `Some`** (before `axum::serve`):
-    1. Derive `listener_url` from `cfg.database_listener_url` if set, else fall back to `cfg.database_url`.
-    2. `PgListener::connect(&listener_url)` — fail-fast on Err (exit(1)).
-    3. `listener.listen(NOTIFY_CHANNEL)` — fail-fast on Err (exit(1)).
-    4. `SELECT COALESCE(MAX(seq), 0) FROM outbox` — query the initial watermark; seed both the drain task's local watermark and `broadcast_watermark` from this value (so `/v1/state` returns a sensible cursor before the first post-startup drain pass). Fail-fast on Err (exit(1)).
-    5. Spawn listener task (receives PG NOTIFYs, calls `min_pending_seq.fetch_min(seq, Release)`, fires `Arc<Notify>`).
-    6. Spawn drain task (wakes on `Arc<Notify>` or 5 s heartbeat tick; NOTIFY-driven passes fetch `seq > pass_start_floor ORDER BY seq` in pages, apply ring-buffer dedup, broadcast `SeqEvent`s, advance `watermark`; every iteration updates `last_drain_pass_at`).
-11. Bind the server to `http_addr` via `axum::serve`
-12. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
+3. Construct the single `CancellationToken` shared by every supervised surface.
+4. Call `metrics::register_build_info()`, `metrics::register_pg_write_counters()`, and `metrics::register_listener_metrics()`. These run unconditionally — when OTel is enabled the descriptions land on the OTel meter; when OTel is disabled the macros resolve through the no-op recorder and the calls are cheap no-ops.
+5. Construct `persist: Arc<dyn PersistentStore>` via the mode-appropriate `start` constructor:
+    - **PG mode** (`ATC_DATABASE_URL` set): `db::init_pool(url)` → `listener::connect_listener(listener_url)` → `PgStore::start(pool, listener_conn, shutdown.clone())`. `PgStore::start` runs `SELECT COALESCE(MAX(seq), 0) FROM outbox` to seed the watermark (last fallible step), then spawns the listener and drain tasks internally and stores their `JoinHandle`s on the returned `Arc<PgStore>` (ADR 0006).
+    - **In-memory mode**: `InMemoryStore::start(clock, completed_ttl, eviction_period, shutdown.clone())`. The store constructs its own `broadcast::channel(256)`, spawns the eviction task internally, and stores the `JoinHandle` on the returned `Arc<InMemoryStore>` (ADR 0006).
+6. Create `AppState { persist, webhook_secret, shutdown, ws_tracker }` and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not branch on storage mode. WS handlers obtain their broadcast receiver via `state.persist.subscribe()`.
+7. Bind the server to `http_addr` via `axum::serve`.
+8. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
 
 The eviction task runs periodically (default interval: `Duration::from_mins(1)`) and removes completed jobs whose TTL (default: `Duration::from_hours(1)`) has elapsed since `completed_at`. This keeps in-memory state bounded and prevents unbounded growth.
 
@@ -390,9 +383,9 @@ ATC uses a single-token cooperative shutdown model implemented in `backend/crate
 
 Five supervised surfaces observe a single shared `CancellationToken` (`shutdown`) and exit cooperatively when it fires:
 
-1. **Eviction task** (`atc-server::persist::eviction::spawn_eviction_task`) — `tokio::select!` on `cancel.cancelled()` vs `ticker.tick()`. Exits at its next tick boundary after the token fires.
-2. **Listener task** (`atc-server::listener::spawn_listener_task`) — `tokio::select!` on `cancel.cancelled()` vs `pg_listener.recv()`. Exits cooperatively.
-3. **Drain task** (`atc-server::listener::spawn_drain_task`) — checks the token only between drain passes, never inside `drain_pass()`. The current pass always runs to completion (or to a Postgres error); cancellation fires at the next inter-pass check. After the loop exits, the task runs one bounded `SELECT COUNT(*) FROM outbox WHERE seq > watermark` (1 s timeout) and records the result into `atc_pg_drain_shutdown_remaining_rows` so operators can verify the cooperative-shutdown assumption that the unscanned tail rarely exceeds one drain pass; on query failure or timeout the observation is skipped (logged) rather than recorded as zero.
+1. **Eviction task** (spawned internally by `InMemoryStore::start`) — `tokio::select!` on `cancel.cancelled()` vs `ticker.tick()`. Exits at its next tick boundary after the token fires. Joined by `InMemoryStore::shutdown()`.
+2. **Listener task** (spawned internally by `PgStore::start`) — `tokio::select!` on `cancel.cancelled()` vs `pg_listener.recv()`. Exits cooperatively. Joined by `PgStore::shutdown()`.
+3. **Drain task** (spawned internally by `PgStore::start`) — checks the token only between drain passes, never inside `drain_pass()`. The current pass always runs to completion (or to a Postgres error); cancellation fires at the next inter-pass check. After the loop exits, the task runs one bounded `SELECT COUNT(*) FROM outbox WHERE seq > watermark` (1 s timeout) and records the result into `atc_pg_drain_shutdown_remaining_rows` so operators can verify the cooperative-shutdown assumption that the unscanned tail rarely exceeds one drain pass; on query failure or timeout the observation is skipped (logged) rather than recorded as zero. Joined by `PgStore::shutdown()`.
 4. **Process metrics collector** (`atc-server::metrics::spawn_process_collector`) — `tokio::select!` on `cancel.cancelled()` vs `ticker.tick()`. `Collector::collect()` is synchronous; the cancel arm fires between ticks, not mid-collect.
 5. **WebSocket handlers** (`atc-server::ws::handle_socket`) — each spawned as a tracked future in `ws_tracker`. The select loop watches `shutdown.cancelled()` (top of the biased order); on cancel the handler emits `Close(1001 "going away")` and returns.
 
@@ -417,7 +410,7 @@ shutdown.cancel()
   └── WS handlers:    cancel arm fires → send Close(1001) → return → ws_tracker counts down
 ```
 
-The orchestration then awaits `ws_tracker.wait()` (so connected clients receive their Close frames before runtime drop), joins the spawned serve tasks, and joins the remaining background-task handles, each within a bounded timeout.
+The orchestration then awaits `ws_tracker.wait()` (so connected clients receive their Close frames before runtime drop), joins the spawned serve tasks, and joins the store-owned background tasks via `persist.shutdown()` — one call that internally joins the listener + drain (PG mode) or the eviction task (in-memory mode) within their per-task budgets. The process metrics collector is joined last, then the OTel pipeline flushes.
 
 ### Why a single token suffices
 
@@ -435,7 +428,7 @@ The WS handler loop uses `tokio::select! { biased; … }` with arms ordered:
 
 Cancel is first so the cancel signal is preferred over any concurrently-ready arm, keeping shutdown predictable for tests and operators. A client-initiated Close still wins via arm 3 if it arrives independently; the server then exits via the client-initiated branch (no server-side Close 1001).
 
-`main` keeps an `Arc<AppState>` clone alive for the lifetime of the function (`with_state(app_state.clone())` rather than moving the Arc into the router), so the `webhook_tx` sender embedded in `AppState` stays alive through the full orchestration. This means the `RecvError::Closed` arm of `rx.recv()` is only reached in genuinely abnormal scenarios — not as part of the normal shutdown path — and the handler simply returns from there without trying to send a Close frame on a torn-down channel.
+`main` keeps an `Arc<AppState>` clone alive for the lifetime of the function (`with_state(app_state.clone())` rather than moving the Arc into the router), so the `Arc<dyn PersistentStore>` embedded in `AppState` — and therefore the store's internal broadcast sender — stays alive through the full orchestration. This means the `RecvError::Closed` arm of `rx.recv()` is only reached in genuinely abnormal scenarios — not as part of the normal shutdown path — and the handler simply returns from there without trying to send a Close frame on a torn-down channel.
 
 ### WS task tracking — `TaskTracker`
 
@@ -501,24 +494,24 @@ Aggregate worst-case shutdown: ~13 seconds.
 
 ### Modules
 
-- **`state.rs`** — `AppState` struct (fields: `persist: Arc<dyn PersistentStore>`, `webhook_tx`, `webhook_secret`, `shutdown: CancellationToken`, `ws_tracker: TaskTracker`) and the `SeqEvent { seq, event }` broadcast type (ADR 0004); `StateSnapshot { last_seq, runs, jobs }` (ADR 0005)
+- **`state.rs`** — `AppState` struct (fields: `persist: Arc<dyn PersistentStore>`, `webhook_secret`, `shutdown: CancellationToken`, `ws_tracker: TaskTracker`) and the `SeqEvent { seq, event }` broadcast type (ADR 0004); `StateSnapshot { last_seq, runs, jobs }` (ADR 0005). WS handlers obtain their receiver via `state.persist.subscribe()` (ADR 0006).
 - **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`, `/healthz`, `/readyz`; defines `StateSnapshot { last_seq, runs, jobs }`; webhook handler dispatches through `state.persist.apply_*_event(env)` uniformly for both modes (ADR 0005), returns `{"status":"accepted","seq":<u64>}` on success; state handler uses REPEATABLE READ in PG mode; `/readyz` checks drain heartbeat staleness in PG mode
-- **`ws.rs`** — WebSocket connection handling and message broadcast logic
-- **`persist.rs`** (module at `src/persist/`) — `pub trait PersistentStore` with `apply_run_event`, `apply_job_event`, `read_snapshot`, `liveness_check`; `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its own transaction lifecycle, emits metrics, encapsulates `broadcast_watermark` and `last_drain_pass_at`; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — owns full state (`RwLock<StateData>`, seq `Mutex<u64>`, clock, TTL), delegates mutation to `atc_core::state_machine` free functions, maintains secondary indexes, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the PG state handler (ADR 0005)
+- **`ws.rs`** — WebSocket connection handling and message broadcast logic. Subscribes via `state.persist.subscribe()` (ADR 0006).
+- **`persist.rs`** (module at `src/persist/`) — `pub trait PersistentStore` with `apply_run_event`, `apply_job_event`, `read_snapshot`, `liveness_check`, `subscribe`, `shutdown`; `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its connection pool, broadcast sender, `broadcast_watermark` / `last_drain_pass_at` atomics, and the listener + drain `JoinHandle`s (ADR 0006). Constructed via `PgStore::start(pool, listener_conn, shutdown)` / `PgStore::start_with_test_hooks(...)`; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — owns full state (`RwLock<StateData>`, seq `Mutex<u64>`, clock, TTL), broadcast sender, and the eviction `JoinHandle` (ADR 0006). Constructed via `InMemoryStore::start(clock, ttl, eviction_period, shutdown)`; delegates mutation to `atc_core::state_machine` free functions, maintains secondary indexes, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the PG state handler (ADR 0005)
 
 ## Files
 
-- `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition, eviction task lifecycle
+- `backend/crates/atc-server/src/main.rs` — Server entry point, config loading, tracing branching, router composition. Constructs `Arc<dyn PersistentStore>` via `PgStore::start` / `InMemoryStore::start` (ADR 0006); the per-mode background-task lifecycle is owned by the store, not main.
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
 - `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
-- `backend/crates/atc-server/src/state.rs` — AppState struct (5 fields: `persist`, `webhook_tx`, `webhook_secret`, `shutdown`, `ws_tracker` per ADR 0005) and `SeqEvent { seq, event }` type; `StateSnapshot { last_seq, runs, jobs }` also lives here
-- `backend/crates/atc-server/src/ws.rs` — WebSocket handler, broadcast subscription, SeqEvent serialization
+- `backend/crates/atc-server/src/state.rs` — AppState struct (4 fields: `persist`, `webhook_secret`, `shutdown`, `ws_tracker` per ADR 0006) and `SeqEvent { seq, event }` type; `StateSnapshot { last_seq, runs, jobs }` also lives here
+- `backend/crates/atc-server/src/ws.rs` — WebSocket handler. Subscribes via `state.persist.subscribe()` (ADR 0006); per-connection event forwarding and SeqEvent serialization unchanged.
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/otel.rs` — `init_otel`: builds the OTLP/HTTP tracer + meter providers (when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), installs `TraceContextPropagator` globally, registers the shared `exponential_histogram_view` so all histograms emit as base-2 exponential aggregations, and installs the `metrics-exporter-otel` recorder behind the `metrics` facade. `shutdown(handles)`: flushes both providers; called from `run_shutdown_orchestration` after every emitter has joined.
 - `backend/crates/atc-server/src/metrics.rs` — `register_*` helpers (build_info gauge, PG write counters, listener/drain metrics — all emit through the OTel-backed `metrics` recorder installed by `otel::init_otel`); `spawn_process_collector` for process metrics. The metric inventory and authoring contract live in [`metrics.md`](metrics.md).
-- `backend/crates/atc-server/src/persist/` — `pub trait PersistentStore`; `PgStore` and `InMemoryStore` impls (ADR 0005); `pub(crate)` transaction helpers for UPSERT+outbox+NOTIFY pattern; `pub(crate)` read helpers for PG state handler; `eviction` sub-module for TTL eviction background task
-- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. Spawned only when `pg_pool` is `Some`. The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
+- `backend/crates/atc-server/src/persist/` — `pub trait PersistentStore` (ADR 0005, extended in ADR 0006 with `subscribe` + `shutdown`); `PgStore` and `InMemoryStore` impls. `PgStore::start` / `InMemoryStore::start` spawn the per-store background tasks and store the `JoinHandle`s on the returned `Arc<Self>`; `pub(crate)` transaction helpers for UPSERT+outbox+NOTIFY pattern; `pub(crate)` read helpers for PG state handler; `eviction` sub-module exporting `spawn_eviction_task` (sole production caller: `InMemoryStore::start`).
+- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. The sole production caller is `PgStore::start_inner`. The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/crates/atc-server/migrations/0002_outbox.sql` — Outbox table: `BIGSERIAL seq` PK, `kind` discriminator, `run_id`/`job_id`, `payload JSONB` (domain event envelope), `inserted_at TIMESTAMPTZ`; `outbox_run_idx` on `run_id`

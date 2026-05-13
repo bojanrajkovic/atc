@@ -49,6 +49,8 @@ Both impls emit `PersistError::InvalidTransition` on rejected transitions and `P
 
 `AppState` gains `pub persist: Arc<dyn PersistentStore>` as the webhook write-path dispatch point. `pg_pool: Option<PgPool>` is retained for non-persist consumers — drain task, listener task, `/v1/state` snapshot reader, `/readyz` probe. `seq: Mutex<u64>` becomes `Arc<Mutex<u64>>` so `InMemoryStore` can hold a shared reference.
 
+> **Revised by ADR-0006:** Each store now owns the background tasks that read its state and emit broadcast events (listener + drain for `PgStore`; eviction for `InMemoryStore`). The trait gains `subscribe()` and `shutdown()`, `AppState` drops `webhook_tx`, and WS handlers obtain their receiver via `state.persist.subscribe()`. `main.rs` no longer plumbs Arcs or spawns the per-store tasks; it constructs the store via `PgStore::start` / `InMemoryStore::start` and hands the resulting `Arc<dyn PersistentStore>` to the shutdown orchestrator, which calls `persist.shutdown()` once.
+
 `main.rs` constructs the right impl at startup:
 
 ```rust

@@ -1,8 +1,9 @@
 //! WebSocket integration tests.
 //!
-//! Each test starts an ephemeral server and uses tokio_tungstenite to connect as a client.
-//! For lag handling tests, we send events directly via state.webhook_tx.send() to avoid
-//! timing races and more easily control event volume.
+//! Each test starts an ephemeral server and uses tokio_tungstenite to connect
+//! as a client. For lag handling tests we drive events through
+//! `persist.apply_run_event(...)` with distinct run ids — the store fans them
+//! out through its internal broadcast sender.
 
 use crate::common;
 
@@ -22,22 +23,20 @@ use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
 /// Build an ephemeral server with a custom broadcast capacity.
-/// Returns (server_address, AppState with broadcast channel).
+/// Returns (server_address, AppState).
 ///
 /// The broadcast capacity is parameterized so the lagging-client test can
 /// trigger lag by using a capacity smaller than the number of events sent.
 async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     common::ensure_recorder_installed();
 
-    let (webhook_tx, _) = tokio::sync::broadcast::channel::<SeqEvent>(broadcast_capacity);
-    let persist = Arc::new(InMemoryStore::new(
+    let persist = InMemoryStore::new_for_test(
         Arc::new(SystemClock),
         Duration::from_hours(1),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
+        broadcast_capacity,
+    ) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
@@ -271,22 +270,30 @@ async fn lagging_client_is_disconnected() {
     // flood it.
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Parse a valid fixture to get a real WebhookEvent.
+    // Parse a valid fixture to get a real RunEventEnvelope template.
     let fixture = common::fixture_workflow_run_requested();
     let parsed = atc_github::parse_webhook("workflow_run", &fixture).expect("fixture parse failed");
-    let event = match parsed {
-        atc_github::ParseResult::Parsed(boxed) => *boxed,
-        other => panic!("unexpected parse result: {:?}", other),
+    let env_template = match parsed {
+        atc_github::ParseResult::Parsed(boxed) => match *boxed {
+            atc_github::WebhookEvent::Run(env) => env,
+            other => panic!("expected a Run event, got {other:?}"),
+        },
+        other => panic!("unexpected parse result: {other:?}"),
     };
 
-    // Send 3 events directly via the sender without the WS client consuming
-    // them. With capacity 2, the third send laps the ring — the receiver's
-    // position is invalidated and the next recv() returns Lagged.
-    for i in 0..3u64 {
-        let _ = state.webhook_tx.send(SeqEvent {
-            seq: i + 1,
-            event: event.clone(),
-        });
+    // Apply 3 run events with distinct run_ids so each call is a first-sight
+    // create (no Queued → Queued transition handling involved). Each successful
+    // apply broadcasts a `SeqEvent`; with capacity 2 the third broadcast laps
+    // the ring buffer, invalidating the receiver's position so its next
+    // `recv()` returns `Lagged`.
+    for i in 0..3i64 {
+        let mut env = env_template.clone();
+        env.run_id = atc_core::types::RunId(9_900_000 + i);
+        state
+            .persist
+            .apply_run_event(env)
+            .await
+            .expect("apply_run_event");
     }
 
     // The handler should observe lag and close the socket. Assert close or

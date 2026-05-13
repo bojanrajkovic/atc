@@ -28,7 +28,7 @@ use tokio::time::timeout;
 async fn drain_broadcasts_seq_in_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     // Fire run webhook (seq=1).
     let (status1, body1) = common::post_webhook_to_router(
@@ -128,7 +128,7 @@ async fn handler_silent_in_pg_mode() {
     // Subscribe AFTER fixture build so the startup pass (which runs
     // immediately in build_app_inner before the delay setting matters) has
     // already cleared. The fixture's drain_started signal fires after that.
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     // Fire webhook and await HTTP 200.
     let (status, body) = common::post_webhook_to_router(

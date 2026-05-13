@@ -14,7 +14,7 @@ use atc_core::{
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     types::{JobId, RunId},
 };
-use atc_server::persist::{PersistentStore, PgStore};
+use atc_server::persist::PersistentStore;
 use chrono::{DateTime, Utc};
 
 fn ts() -> DateTime<Utc> {
@@ -161,8 +161,8 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_first_sight_creates_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     let env = run_requested(1001);
     let result = store.apply_run_event(env).await;
@@ -182,8 +182,8 @@ async fn pg_run_first_sight_creates_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_valid_transition_updates_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(1002)).await.unwrap();
 
@@ -206,8 +206,8 @@ async fn pg_run_valid_transition_updates_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_invalid_transition_returns_err() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     // Bring run to Completed
     store.apply_run_event(run_requested(1003)).await.unwrap();
@@ -233,8 +233,8 @@ async fn pg_run_invalid_transition_returns_err() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_idempotent_same_status_replay() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(1004)).await.unwrap();
     let result = store.apply_run_event(run_requested(1004)).await;
@@ -258,8 +258,8 @@ async fn pg_run_idempotent_same_status_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_first_sight_creates_row_with_existing_run() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     // Pre-insert real run
     store.apply_run_event(run_requested(2001)).await.unwrap();
@@ -287,8 +287,8 @@ async fn pg_job_first_sight_creates_row_with_existing_run() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_valid_transition_updates_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(2002)).await.unwrap();
     store.apply_job_event(job_queued(3002, 2002)).await.unwrap();
@@ -309,8 +309,8 @@ async fn pg_job_valid_transition_updates_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_invalid_transition_returns_err() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(2003)).await.unwrap();
     store.apply_job_event(job_queued(3003, 2003)).await.unwrap();
@@ -341,8 +341,8 @@ async fn pg_job_invalid_transition_returns_err() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_idempotent_same_status_replay() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(2004)).await.unwrap();
     store.apply_job_event(job_queued(3004, 2004)).await.unwrap();
@@ -359,8 +359,8 @@ async fn pg_job_idempotent_same_status_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_queued_to_completed_accepted() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(2005)).await.unwrap();
     store.apply_job_event(job_queued(3005, 2005)).await.unwrap();
@@ -392,8 +392,8 @@ async fn pg_job_queued_to_completed_accepted() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_before_run_creates_stub_run() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     // Fire job event for unknown run 9001
     let result = store.apply_job_event(job_queued(8001, 9001)).await;
@@ -421,8 +421,8 @@ async fn pg_job_before_run_creates_stub_run() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_real_run_event_reconciles_stub() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     // Job-before-run
     store.apply_job_event(job_queued(8002, 9002)).await.unwrap();
@@ -468,8 +468,8 @@ async fn pg_real_run_event_reconciles_stub() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_two_jobs_same_unknown_run_share_stub() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_job_event(job_queued(8003, 9003)).await.unwrap();
     store.apply_job_event(job_queued(8004, 9003)).await.unwrap();
@@ -489,8 +489,8 @@ async fn pg_two_jobs_same_unknown_run_share_stub() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_coalesce_preserves_workflow_name() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     // First event: workflow_name = Some("CI")
     store.apply_run_event(run_requested(4001)).await.unwrap();
@@ -514,8 +514,8 @@ async fn pg_run_coalesce_preserves_workflow_name() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_runner() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(4002)).await.unwrap();
     store.apply_job_event(job_queued(5002, 4002)).await.unwrap();
@@ -564,8 +564,8 @@ async fn pg_job_coalesce_preserves_runner() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_runner_group_cleared_when_runner_changes() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(4010)).await.unwrap();
     store.apply_job_event(job_queued(5010, 4010)).await.unwrap();
@@ -629,8 +629,8 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_name_run_id_created_at() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
 
     store.apply_run_event(run_requested(4003)).await.unwrap();
 
@@ -680,8 +680,8 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_store_ping_succeeds() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool);
+    let (pool, _c, db_url) = common::start_pg().await;
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url).await;
     assert!(
         store.ping().await.is_ok(),
         "ping should succeed with a healthy pool"

@@ -34,7 +34,7 @@ async fn no_historical_replay_after_restart() {
 
     // ── Step 1: f1 — commit two events ───────────────────────────────────────
     let f1 = common::build_app_with_pg_and_listener(pool.clone(), db_url.clone()).await;
-    let mut rx1 = f1.state.webhook_tx.subscribe();
+    let mut rx1 = f1.state.persist.subscribe();
 
     let (s1, b1) = common::post_webhook_to_router(
         f1.router.clone(),
@@ -80,15 +80,13 @@ async fn no_historical_replay_after_restart() {
 
     // ── Step 2: simulate clean shutdown of f1 ────────────────────────────────
     f1.shutdown.cancel();
-    timeout(Duration::from_secs(5), async {
-        let _ = tokio::join!(f1.listener_handle, f1.drain_handle);
-    })
-    .await
-    .expect("f1 tasks did not shut down within 5s");
+    timeout(Duration::from_secs(8), f1.state.persist.shutdown())
+        .await
+        .expect("f1 tasks did not shut down within 8s");
 
     // ── Step 3: f2 — fresh instance against the same PG ─────────────────────
     let f2 = common::build_app_with_pg_and_listener(pool.clone(), db_url.clone()).await;
-    let mut rx2 = f2.state.webhook_tx.subscribe();
+    let mut rx2 = f2.state.persist.subscribe();
 
     // ── Step 4: fire a new event → seq=3 ─────────────────────────────────────
     // Fire workflow_run_completed (updates the existing run to Completed).

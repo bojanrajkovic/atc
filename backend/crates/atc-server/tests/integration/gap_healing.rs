@@ -131,7 +131,7 @@ async fn dedup_suppresses_rescan_rebroadcast() {
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
 
     // Subscribe a fresh broadcast receiver for seq-observation.
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     // ── Step 1: Pre-insert two stub run rows to satisfy outbox FK ─────────────
     // Use run_id values unlikely to collide with fixture constants. We need
@@ -422,7 +422,7 @@ async fn drain_skips_bogus_payload_rows() {
     let passes_after_startup = fixture.observed_passes.load(Ordering::Relaxed);
 
     // Subscribe AFTER boot so the startup pass (0 rows) doesn't noise the receiver.
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     // ── Reset metrics so the snapshot reflects only this test's drain pass ───
     common::reset_metrics();

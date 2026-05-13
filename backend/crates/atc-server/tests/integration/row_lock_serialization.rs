@@ -44,7 +44,7 @@ fn counter_unlabeled(name: &str) -> u64 {
 async fn concurrent_same_entity_commits_in_seq_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     common::ensure_recorder_installed();
     common::reset_metrics();

@@ -15,6 +15,7 @@
 //! WS handlers.
 
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::task::{JoinError, JoinHandle};
@@ -22,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::otel::{self, OtelHandles};
+use crate::persist::PersistentStore;
 
 /// Per-task timeout budgets. Aggregate worst-case shutdown: ~13 seconds.
 /// K8s `terminationGracePeriodSeconds` defaults to 30; well within budget.
@@ -34,11 +36,17 @@ pub const SHUTDOWN_TIMEOUT_METRICS: Duration = Duration::from_secs(1);
 
 /// Join a `JoinHandle<()>` within the given timeout. On timeout, log an error
 /// and call `AbortHandle::abort()` (best-effort; task may run until its next
-/// await point). On task panic/cancellation error, log the error and continue.
+/// await point). On task panic, log the error and continue. A task that was
+/// externally cancelled (e.g. by a test's `AbortHandle::abort()`) is treated
+/// as a clean exit and logged at `warn` rather than `error` — the join itself
+/// is the intended outcome.
 pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: &'static str) {
     let abort = handle.abort_handle();
     match tokio::time::timeout(timeout, handle).await {
         Ok(Ok(())) => {}
+        Ok(Err(e)) if e.is_cancelled() => {
+            tracing::warn!(task = name, "task was cancelled before clean exit");
+        }
         Ok(Err(e)) => {
             tracing::error!(task = name, error = %e, "task ended with error");
         }
@@ -134,21 +142,18 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// - `ws_tracker`: TaskTracker wrapping WS handler futures; `close()` +
 ///   `wait()` called by this function.
 /// - `main_serve_task`: Spawned `JoinHandle<io::Result<()>>` from main axum serve.
-/// - `drain_handle`: `Some` in PG mode; `None` in in-memory mode.
-/// - `listener_handle`: `Some` in PG mode; `None` in in-memory mode.
-/// - `eviction_handle`: `Some` in in-memory mode; `None` in PG mode.
+/// - `persist`: The active `PersistentStore`. Its `shutdown()` joins every
+///   background task the store owns (listener + drain in PG mode; eviction in
+///   in-memory mode).
 /// - `metrics_handle`: Always `Some`.
 /// - `otel_handles`: `Some` when `init_otel` returned a configured pipeline
 ///   (i.e., `OTEL_EXPORTER_OTLP_ENDPOINT` was set); `None` when OTel is
 ///   disabled. Consumed so the providers cannot leak past the flush.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_shutdown_orchestration(
     shutdown: CancellationToken,
     ws_tracker: TaskTracker,
     main_serve_task: JoinHandle<io::Result<()>>,
-    drain_handle: Option<JoinHandle<()>>,
-    listener_handle: Option<JoinHandle<()>>,
-    eviction_handle: Option<JoinHandle<()>>,
+    persist: Arc<dyn PersistentStore>,
     metrics_handle: JoinHandle<()>,
     otel_handles: Option<OtelHandles>,
 ) -> bool {
@@ -203,19 +208,11 @@ pub async fn run_shutdown_orchestration(
         tracing::error!("axum serve did not resolve within timeout; runtime drop will reap");
     }
 
-    // Step 4: Join the remaining background-task handles. The drain task
-    // observes the same `shutdown` token and exits between passes, so it
-    // typically completes after step 1 fires. Listener / eviction / metrics
-    // are simple ticker loops that exit at their next cancel poll.
-    if let Some(handle) = drain_handle {
-        join_with_timeout(handle, SHUTDOWN_TIMEOUT_DRAIN, "drain").await;
-    }
-    if let Some(handle) = listener_handle {
-        join_with_timeout(handle, SHUTDOWN_TIMEOUT_LISTENER, "listener").await;
-    }
-    if let Some(handle) = eviction_handle {
-        join_with_timeout(handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
-    }
+    // Step 4: Join the persistent store's background tasks. `persist.shutdown()`
+    // joins listener + drain in PG mode, eviction in in-memory mode, each
+    // bounded by its own per-task timeout constant (defined alongside the
+    // store implementation). Then join the process metrics collector.
+    persist.shutdown().await;
     join_with_timeout(metrics_handle, SHUTDOWN_TIMEOUT_METRICS, "metrics").await;
 
     // OTel pipeline tear-down. The shutdown flush exports any spans/metrics
@@ -223,10 +220,10 @@ pub async fn run_shutdown_orchestration(
     // here — after every emitter has joined — preserves the "no live emitter
     // when shutdown fires" invariant. Emitters whose joins must precede this
     // step:
-    //   1. Drain task           (`spawn_drain_task` JoinHandle)
-    //   2. Listener task        (`spawn_listener_task` JoinHandle)
-    //   3. Process collector    (`metrics::spawn_process_collector` JoinHandle)
-    //   4. axum graceful drain  (`main_serve_task` plus `axum-otel-metrics`)
+    //   1. PersistentStore tasks (drain + listener in PG mode, eviction in
+    //      in-memory mode) — joined via `persist.shutdown()` above.
+    //   2. Process collector    (`metrics::spawn_process_collector` JoinHandle)
+    //   3. axum graceful drain  (`main_serve_task` plus `axum-otel-metrics`)
     // A new emitter category MUST be joined before this point and named here
     // so the "no live emitter" property holds for it too.
     if let Some(handles) = otel_handles {
@@ -239,6 +236,20 @@ pub async fn run_shutdown_orchestration(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persist::InMemoryStore;
+    use atc_core::SystemClock;
+
+    /// Construct an `InMemoryStore` whose `shutdown()` is safe to call from
+    /// these orchestration tests — long completed-job TTL, never-firing
+    /// eviction period, fresh cancellation token.
+    fn test_persist() -> Arc<dyn PersistentStore> {
+        InMemoryStore::start(
+            Arc::new(SystemClock),
+            Duration::from_secs(3600),
+            Duration::from_secs(60),
+            CancellationToken::new(),
+        )
+    }
 
     /// A deliberately-stuck future exceeds its timeout budget: `join_with_timeout`
     /// logs an error (observable via the tracing subscriber) and returns within
@@ -280,9 +291,10 @@ mod tests {
         let main_serve_task: JoinHandle<io::Result<()>> =
             tokio::spawn(async { Err(io::Error::other("simulated accept-loop failure")) });
 
-        // Stub eviction/metrics handles that exit immediately.
-        let eviction_handle: JoinHandle<()> = tokio::spawn(async {});
+        // Stub metrics handle that exits immediately. The store's own
+        // background tasks are joined via `persist.shutdown()`.
         let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
+        let persist = test_persist();
 
         // Bound the whole orchestration with a generous test timeout. The
         // expected wall time is dominated by SHUTDOWN_TIMEOUT_SERVES (3 s)
@@ -293,9 +305,7 @@ mod tests {
                 shutdown.clone(),
                 ws_tracker,
                 main_serve_task,
-                None,
-                None,
-                Some(eviction_handle),
+                persist,
                 metrics_handle,
                 None,
             ),
@@ -328,8 +338,8 @@ mod tests {
         // Main serve completes cleanly with Ok(()) immediately.
         let main_serve_task: JoinHandle<io::Result<()>> = tokio::spawn(async { Ok(()) });
 
-        let eviction_handle: JoinHandle<()> = tokio::spawn(async {});
         let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
+        let persist = test_persist();
 
         let result = tokio::time::timeout(
             Duration::from_secs(15),
@@ -337,9 +347,7 @@ mod tests {
                 shutdown.clone(),
                 ws_tracker,
                 main_serve_task,
-                None,
-                None,
-                Some(eviction_handle),
+                persist,
                 metrics_handle,
                 None,
             ),

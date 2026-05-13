@@ -1,17 +1,63 @@
 //! PostgreSQL-backed persistence implementation.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use atc_core::{
     JobConclusion, JobStatus, PersistError, RunConclusion, RunStatus,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 use sqlx::PgPool;
+use sqlx::postgres::PgListener;
+use tokio::sync::{Notify, broadcast};
+#[cfg(any(test, feature = "test-support"))]
+use tokio::task::AbortHandle;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
-use crate::state::StateSnapshot;
+use crate::listener;
+use crate::shutdown::{SHUTDOWN_TIMEOUT_DRAIN, SHUTDOWN_TIMEOUT_LISTENER, join_with_timeout};
+use crate::state::{SeqEvent, StateSnapshot};
 
 use super::{LivenessError, PersistentStore, reads};
+
+/// Production broadcast capacity for the PG-mode event stream.
+const BROADCAST_CAPACITY: usize = 256;
+
+/// Errors returned by [`PgStore::start`].
+///
+/// The startup path runs `SELECT MAX(seq) FROM outbox` to seed the
+/// broadcast watermark before spawning the listener and drain tasks. A
+/// pool-side failure surfaces here instead of inside a spawned task where
+/// `main.rs` could not observe it.
+#[derive(Debug)]
+pub enum PgStoreStartError {
+    /// The seed query against `outbox` failed.
+    Watermark(sqlx::Error),
+}
+
+impl std::fmt::Display for PgStoreStartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Watermark(e) => {
+                write!(
+                    f,
+                    "failed to query outbox watermark during PgStore startup: {e}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PgStoreStartError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Watermark(e) => Some(e),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SqlRepr: status/conclusion → SQL CHECK constraint string
@@ -104,13 +150,11 @@ fn derive_job_target(action: &JobEvent) -> JobStatus {
 
 /// PostgreSQL-backed implementation of [`PersistentStore`].
 ///
-/// Holds a connection pool and performs predicated UPSERTs for run and job
-/// events. Each method is a single statement (or two for job-before-run) using
-/// `sqlx::query!` compile-time-checked SQL.
-///
-/// `broadcast_watermark` and `last_drain_pass_at` are atomics shared with the
-/// drain task. The drain task is the sole writer (via `Release` stores); this
-/// store reads them via `Acquire` loads for snapshot and liveness semantics.
+/// Owns the connection pool, the broadcast sender that fans events out to WS
+/// subscribers, the drain task's watermark + heartbeat atomics, and the
+/// JoinHandles for the listener and drain tasks themselves. Constructed via
+/// [`PgStore::start`] (production) or [`PgStore::start_with_test_hooks`]
+/// (tests).
 pub struct PgStore {
     pub(super) pool: PgPool,
     /// Highest outbox `seq` the drain has fetched and broadcast.
@@ -120,51 +164,186 @@ pub struct PgStore {
     /// Drain-task heartbeat (epoch milliseconds). Refreshed by drain each loop
     /// iteration. Used by `readyz` to detect stalled drain tasks.
     pub(crate) last_drain_pass_at: Arc<AtomicI64>,
+    /// Broadcast sender for fanning `SeqEvent`s out to WS subscribers. Cloned
+    /// into the drain task at spawn time so the drain is the sole writer in
+    /// PG mode.
+    broadcast_tx: broadcast::Sender<SeqEvent>,
+    /// JoinHandles for the spawned listener and drain tasks. Consumed by the
+    /// first `shutdown()` call; subsequent calls observe `None` and return
+    /// immediately.
+    handles: StdMutex<Option<PgStoreHandles>>,
 }
 
-/// Handle struct returned by `PgStore::drain_handles()` so `main.rs` and tests
-/// can give the writer Arcs to the drain task without coupling to internals.
-pub struct DrainHandles {
-    pub watermark: Arc<AtomicI64>,
-    pub heartbeat: Arc<AtomicI64>,
+struct PgStoreHandles {
+    listener: JoinHandle<()>,
+    drain: JoinHandle<()>,
+}
+
+/// Test hooks for [`PgStore::start_with_test_hooks`]. Mirrors the optional
+/// instrumentation params on the existing `spawn_listener_task` /
+/// `spawn_drain_task` signatures so existing fixtures can keep observing
+/// listener / drain progress.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Default)]
+pub struct PgStoreTestHooks {
+    pub received_counter: Option<Arc<AtomicU64>>,
+    pub observed_passes: Option<Arc<AtomicU64>>,
+    pub drain_started: Option<Arc<Notify>>,
+    pub drain_delay: Option<Duration>,
+}
+
+/// Handles returned by [`PgStore::start_with_test_hooks`] for the test fixture.
+///
+/// Carries abort handles (extracted via `.abort_handle()` before the
+/// `JoinHandle`s were stored on the store) plus the watermark / heartbeat
+/// atomics that integration tests poll. No cfg-gated accessor methods on the
+/// store itself — tests get everything they need at construction time.
+#[cfg(any(test, feature = "test-support"))]
+pub struct PgStoreTestHandles {
+    pub drain_abort: AbortHandle,
+    pub listener_abort: AbortHandle,
+    pub last_drain_pass_at: Arc<AtomicI64>,
+    pub broadcast_watermark: Arc<AtomicI64>,
 }
 
 impl PgStore {
-    /// Create a new [`PgStore`] backed by the given connection pool.
+    /// Construct a [`PgStore`] and spawn its listener and drain tasks.
     ///
-    /// `broadcast_watermark` must be pre-seeded from `MAX(outbox.seq)` before
-    /// the drain task starts so `/v1/state` returns a sensible `lastSeq` before
-    /// the first drain pass completes. Pass `Arc::new(AtomicI64::new(initial))`.
-    #[must_use]
-    pub fn new(
+    /// Seeds the broadcast watermark from `MAX(outbox.seq)` before spawning,
+    /// so `/v1/state` returns a sensible `lastSeq` even before the first
+    /// post-startup drain pass completes. The seed query is the last fallible
+    /// operation in this function: after the tasks are spawned, this function
+    /// returns `Ok` unconditionally — any future contributor adding a fallible
+    /// step after the spawn calls must cancel and join the already-spawned
+    /// tasks before returning `Err`.
+    pub async fn start(
         pool: PgPool,
-        broadcast_watermark: Arc<AtomicI64>,
-        last_drain_pass_at: Arc<AtomicI64>,
-    ) -> Self {
-        Self {
+        listener_conn: PgListener,
+        shutdown: CancellationToken,
+    ) -> Result<Arc<Self>, PgStoreStartError> {
+        Self::start_inner(pool, listener_conn, shutdown, None, None, None, None).await
+    }
+
+    /// Test variant that mirrors [`PgStore::start`] but accepts optional
+    /// instrumentation hooks (`received_counter`, `observed_passes`,
+    /// `drain_started`, `drain_delay`) and returns a [`PgStoreTestHandles`]
+    /// alongside the store so test fixtures can poll the watermark / abort
+    /// the drain mid-pass.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn start_with_test_hooks(
+        pool: PgPool,
+        listener_conn: PgListener,
+        shutdown: CancellationToken,
+        hooks: PgStoreTestHooks,
+    ) -> Result<(Arc<Self>, PgStoreTestHandles), PgStoreStartError> {
+        let store = Self::start_inner(
+            pool,
+            listener_conn,
+            shutdown,
+            hooks.received_counter,
+            hooks.observed_passes,
+            hooks.drain_started,
+            hooks.drain_delay,
+        )
+        .await?;
+        let (drain_abort, listener_abort) = {
+            let guard = store.handles.lock().expect("handles mutex poisoned");
+            let inner = guard.as_ref().expect("handles populated by start_inner");
+            (inner.drain.abort_handle(), inner.listener.abort_handle())
+        };
+        let handles = PgStoreTestHandles {
+            drain_abort,
+            listener_abort,
+            last_drain_pass_at: Arc::clone(&store.last_drain_pass_at),
+            broadcast_watermark: Arc::clone(&store.broadcast_watermark),
+        };
+        Ok((store, handles))
+    }
+
+    /// Shared core of `start` and `start_with_test_hooks`. The four trailing
+    /// `Option<_>` parameters are always `None` in production and used by the
+    /// test-hooks variant to inject counters / notifies / per-pass delays.
+    #[allow(clippy::too_many_arguments)]
+    async fn start_inner(
+        pool: PgPool,
+        listener_conn: PgListener,
+        shutdown: CancellationToken,
+        received_counter: Option<Arc<AtomicU64>>,
+        observed_passes: Option<Arc<AtomicU64>>,
+        drain_started: Option<Arc<Notify>>,
+        drain_delay: Option<Duration>,
+    ) -> Result<Arc<Self>, PgStoreStartError> {
+        // Construct broadcast channel (sentinel receiver dropped immediately —
+        // production subscribers come from `subscribe()`).
+        let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(BROADCAST_CAPACITY);
+
+        // Arcs the listener and drain need to coordinate.
+        let broadcast_watermark = Arc::new(AtomicI64::new(0));
+        let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
+        let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
+        let drain_in_flight = Arc::new(AtomicBool::new(false));
+        let drain_notify = Arc::new(Notify::new());
+
+        // Capture startup_at BEFORE the seed query so the drain startup
+        // histogram includes the cold-pool query cost.
+        let startup_at = Instant::now();
+
+        // Seed the watermark. Last fallible step before the spawns.
+        let initial_watermark: i64 =
+            sqlx::query_scalar!("SELECT COALESCE(MAX(seq), 0) AS \"max!: i64\" FROM outbox")
+                .fetch_one(&pool)
+                .await
+                .map_err(PgStoreStartError::Watermark)?;
+        broadcast_watermark.store(initial_watermark, Ordering::Release);
+
+        // Mirror the watermark into the gauge so /metrics is immediately
+        // consistent with the seeded atomic.
+        #[allow(clippy::cast_precision_loss)]
+        metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
+
+        // Spawn listener.
+        let listener_handle = listener::spawn_listener_task(
+            listener_conn,
+            Arc::clone(&drain_notify),
+            Arc::clone(&min_pending_seq),
+            Arc::clone(&drain_in_flight),
+            shutdown.clone(),
+            received_counter,
+        );
+
+        // Spawn drain.
+        let drain_handle = listener::spawn_drain_task(
+            pool.clone(),
+            initial_watermark,
+            startup_at,
+            drain_notify,
+            min_pending_seq,
+            Arc::clone(&last_drain_pass_at),
+            Arc::clone(&broadcast_watermark),
+            drain_in_flight,
+            broadcast_tx.clone(),
+            shutdown,
+            observed_passes,
+            drain_started,
+            drain_delay,
+        );
+
+        // After this point, no fallible operations remain. A future
+        // contributor adding a fallible step here MUST cancel and join the
+        // already-spawned listener+drain tasks before returning `Err`.
+
+        let store = Arc::new(Self {
             pool,
             broadcast_watermark,
             last_drain_pass_at,
-        }
-    }
+            broadcast_tx,
+            handles: StdMutex::new(Some(PgStoreHandles {
+                listener: listener_handle,
+                drain: drain_handle,
+            })),
+        });
 
-    /// Return cloned Arcs the drain task needs to advance watermark and
-    /// refresh the heartbeat.
-    pub fn drain_handles(&self) -> DrainHandles {
-        DrainHandles {
-            watermark: Arc::clone(&self.broadcast_watermark),
-            heartbeat: Arc::clone(&self.last_drain_pass_at),
-        }
-    }
-
-    /// Convenience constructor for tests that only need `apply_*` / `read_snapshot`
-    /// and never call `liveness_check`. Uses dummy atomics for the shared counters.
-    pub fn new_for_test(pool: PgPool) -> Self {
-        Self::new(
-            pool,
-            Arc::new(AtomicI64::new(0)),
-            Arc::new(AtomicI64::new(0)),
-        )
+        Ok(store)
     }
 
     /// Check pool connectivity. Used in tests and health-check utilities.
@@ -174,6 +353,13 @@ impl PgStore {
             .await
             .map(|_| ())
     }
+}
+
+fn now_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 #[async_trait::async_trait]
@@ -227,6 +413,23 @@ impl PersistentStore for PgStore {
         span.record("runs_count", snap.runs.len());
         span.record("jobs_count", snap.jobs.len());
         Ok(snap)
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<SeqEvent> {
+        self.broadcast_tx.subscribe()
+    }
+
+    async fn shutdown(&self) {
+        // Drop the std::sync::Mutex guard BEFORE awaiting — holding it across
+        // `.await` would `!Send` the future and break the `async_trait` bound.
+        let handles = self.handles.lock().expect("handles mutex poisoned").take();
+        if let Some(handles) = handles {
+            // Join drain first: it owns the broadcast write end and may still
+            // be advancing the watermark. Listener exits within one
+            // `select!` iteration once the shutdown token cancels.
+            join_with_timeout(handles.drain, SHUTDOWN_TIMEOUT_DRAIN, "drain").await;
+            join_with_timeout(handles.listener, SHUTDOWN_TIMEOUT_LISTENER, "listener").await;
+        }
     }
 
     /// Check liveness: SELECT 1 for DB connectivity, then check drain heartbeat age.

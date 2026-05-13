@@ -159,7 +159,7 @@ async fn webhook_ingestion_backward_transition_returns_200_no_broadcast() {
     let (app, state) = build_app_no_secret();
 
     // Subscribe to broadcast channel before sending any requests
-    let mut rx = state.webhook_tx.subscribe();
+    let mut rx = state.persist.subscribe();
 
     // First request: send workflow_run_completed
     let body_completed = fixture_workflow_run_completed();
@@ -228,7 +228,7 @@ async fn webhook_ingestion_broadcast_single_event_with_seq() {
     let (app, state) = build_app_no_secret();
 
     // Subscribe to broadcast channel before sending
-    let mut rx = state.webhook_tx.subscribe();
+    let mut rx = state.persist.subscribe();
 
     // Send valid workflow_run event
     let body = fixture_workflow_run_requested();
@@ -274,7 +274,7 @@ async fn webhook_ingestion_broadcast_single_event_with_seq() {
 async fn webhook_concurrent_requests_produce_ordered_seq() {
     let (app, state) = build_app_no_secret();
 
-    let mut rx = state.webhook_tx.subscribe();
+    let mut rx = state.persist.subscribe();
 
     // Fire two webhooks concurrently via spawned tasks.
     let app1 = app.clone();
@@ -343,7 +343,7 @@ async fn webhook_ingestion_broadcast_consecutive_events_increasing_seq() {
     let (app, state) = build_app_no_secret();
 
     // Subscribe to broadcast channel before sending
-    let mut rx = state.webhook_tx.subscribe();
+    let mut rx = state.persist.subscribe();
 
     // Send first valid workflow_run event
     let body1 = fixture_workflow_run_requested();
@@ -416,25 +416,26 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     // Build a custom InMemoryStore with a pre-subscribed broadcast receiver so
     // we can assert the seq on the emitted SeqEvent.
     use atc_core::SystemClock;
-    use atc_server::persist::InMemoryStore;
+    use atc_server::persist::{InMemoryStore, PersistentStore};
     use atc_server::state::AppState;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
     use tokio_util::task::TaskTracker;
 
-    let (webhook_tx, _rx) = tokio::sync::broadcast::channel(256);
-    let mut subscriber = webhook_tx.subscribe();
-    let persist = Arc::new(InMemoryStore::new(
+    let shutdown = CancellationToken::new();
+    let store = InMemoryStore::start(
         Arc::new(SystemClock),
         Duration::from_hours(1),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
+        Duration::from_mins(1),
+        shutdown.clone(),
+    );
+    let mut subscriber = store.subscribe();
+    let persist = store as Arc<dyn PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
-        shutdown: CancellationToken::new(),
+        shutdown,
         ws_tracker: TaskTracker::new(),
     });
 
@@ -523,7 +524,7 @@ async fn failed_job_transition_produces_no_broadcast() {
     assert_eq!(resp3.status(), StatusCode::OK);
 
     // Subscribe AFTER the three setup events so we have a clean baseline.
-    let mut rx = state.webhook_tx.subscribe();
+    let mut rx = state.persist.subscribe();
 
     // POST workflow_job_queued again: Completed → Queued is a backward transition.
     // predecessors_of(Queued) = [Queued]; Completed is not in that set → InvalidTransition.
@@ -566,7 +567,7 @@ async fn in_memory_invalid_transition_returns_rejected() {
     // Subscribe to broadcasts BEFORE firing any webhooks so we observe every
     // emission. The contract: a successful Completed apply emits exactly one
     // SeqEvent; a subsequent rejected InProgress apply emits zero.
-    let mut rx = state.webhook_tx.subscribe();
+    let mut rx = state.persist.subscribe();
 
     // Advance to Completed via the route handler.
     let body = fixture_workflow_run_completed();

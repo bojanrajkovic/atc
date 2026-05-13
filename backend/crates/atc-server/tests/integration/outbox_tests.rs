@@ -12,6 +12,7 @@ use crate::common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use atc_server::persist::PersistentStore;
 use atc_server::state::{AppState, SeqEvent};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -27,20 +28,20 @@ use tower::ServiceExt;
 // ---------------------------------------------------------------------------
 
 /// Build a full router with a real PG pool mounted.
-fn build_app_with_pg(
+async fn build_app_with_pg(
     pool: sqlx::PgPool,
+    db_url: &str,
 ) -> (
     axum::Router,
     Arc<AppState>,
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
     common::ensure_recorder_installed();
-    let (webhook_tx, rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    let persist = Arc::new(atc_server::persist::PgStore::new_for_test(pool.clone()))
-        as Arc<dyn atc_server::persist::PersistentStore>;
+    let store = common::start_pg_store_for_test(pool, db_url).await;
+    let rx = store.subscribe();
+    let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
@@ -152,8 +153,8 @@ async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
 #[tokio::test]
 #[serial_test::serial]
 async fn run_webhook_produces_run_and_outbox_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     let (status, json) = post_webhook(
         app,
@@ -203,7 +204,7 @@ async fn run_webhook_produces_run_and_outbox_row() {
 #[tokio::test]
 #[serial_test::serial]
 async fn seq_strictly_increasing() {
-    let (pool, _c, _) = common::start_pg().await;
+    let (pool, _c, _db_url) = common::start_pg().await;
 
     // Insert stub runs for FK satisfaction
     let run_ids = [20001i64, 20002i64, 20003i64];
@@ -244,8 +245,8 @@ async fn seq_strictly_increasing() {
 #[tokio::test]
 #[serial_test::serial]
 async fn payload_roundtrips_as_envelope() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     post_webhook(
         app,
@@ -292,8 +293,8 @@ async fn payload_roundtrips_as_envelope() {
 #[tokio::test]
 #[serial_test::serial]
 async fn parity_rejection_rolls_back_outbox() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // The fixture run_id is 24290980517
     let run_id = 24290980517i64;
@@ -329,7 +330,7 @@ async fn parity_rejection_rolls_back_outbox() {
 #[tokio::test]
 #[serial_test::serial]
 async fn bigserial_gap_property() {
-    let (pool, _c, _) = common::start_pg().await;
+    let (pool, _c, _db_url) = common::start_pg().await;
 
     // Insert a stub run for FK constraint satisfaction
     insert_stub_run(&pool, 99001).await;
@@ -386,8 +387,8 @@ async fn bigserial_gap_property() {
 #[tokio::test]
 #[serial_test::serial]
 async fn job_upsert_rejection_rolls_back_stub_run() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fixture shared IDs
     let run_id = 24290980517i64; // from all fixtures
@@ -470,8 +471,8 @@ async fn parity_rejection_returns_200_rejected() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Pre-insert Completed run to force parity rejection on Requested
     let run_id = 24290980517i64;
@@ -508,8 +509,8 @@ async fn success_returns_200_accepted() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     let (status, json) = post_webhook(
         app,
@@ -591,8 +592,8 @@ async fn no_pg_pool_uses_in_memory_path() {
 #[tokio::test]
 #[serial_test::serial]
 async fn job_webhook_creates_stub_run_and_outbox() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // The fixtures share run_id=24290980517, job_id=70928200168
     let run_id = 24290980517i64;
@@ -672,8 +673,8 @@ async fn job_webhook_creates_stub_run_and_outbox() {
 #[tokio::test]
 #[serial_test::serial]
 async fn payload_is_envelope_not_seq_event() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, _state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fire a run webhook first (to have a real run row for the job FK)
     post_webhook(
@@ -761,8 +762,8 @@ async fn no_in_memory_drift_in_pg_mode() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, app_state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, app_state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fire a webhook through the PG-mode handler.
     let (status, json) = post_webhook(
@@ -851,7 +852,7 @@ async fn concurrent_run_requested_broadcast_matches_durable_order() {
     const N: usize = 4;
     let (pool, _c, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     // Bind ephemeral listener and spawn server with the full router (includes drain).
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -947,7 +948,7 @@ async fn concurrent_different_runs_broadcast_matches_durable_order() {
     const N: usize = 4;
     let (pool, _c, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

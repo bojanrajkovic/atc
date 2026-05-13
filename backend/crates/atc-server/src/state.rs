@@ -3,7 +3,6 @@ use std::sync::Arc;
 use atc_core::{Job, WorkflowRun};
 use atc_github::WebhookEvent;
 use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -11,20 +10,17 @@ use crate::persist::PersistentStore;
 
 /// Shared application state passed to all Axum handlers via `State<Arc<AppState>>`.
 pub struct AppState {
-    /// Write-path dispatch for domain events, and read-path snapshot.
+    /// Write-path dispatch for domain events, read-path snapshot, and the
+    /// subscribe seam for WS clients.
     ///
     /// Routes each incoming webhook event to the appropriate backend:
     /// - [`crate::persist::PgStore`] when database is configured.
     /// - [`crate::persist::InMemoryStore`] when running in in-memory mode.
     ///
     /// The trait object is `Arc<dyn PersistentStore>` so it can be cloned
-    /// cheaply and used across `async` handler closures.
+    /// cheaply and used across `async` handler closures. WS handlers obtain
+    /// their broadcast receiver via `persist.subscribe()`.
     pub persist: Arc<dyn PersistentStore>,
-    /// Broadcast channel sender for pushing domain events to WebSocket clients.
-    ///
-    /// In in-memory mode the webhook handler writes directly. In PG mode the
-    /// drain task is the sole writer; the handler is silent.
-    pub webhook_tx: broadcast::Sender<SeqEvent>,
     /// HMAC-SHA256 secret for verifying GitHub webhook signatures.
     /// `None` means verification is skipped.
     pub webhook_secret: Option<String>,
@@ -33,9 +29,10 @@ pub struct AppState {
     /// Cloned from `main`'s `shutdown` token. WS handlers observe it via the
     /// first (biased) arm of their `select!` loop and emit
     /// `Message::Close(CloseFrame { code: 1001, reason: "going away" })`
-    /// before returning. Other supervised surfaces (eviction, listener, drain,
-    /// process metrics, axum's `with_graceful_shutdown`) observe the same
-    /// token directly via their own clones in `main`.
+    /// before returning. The active `PersistentStore` holds its own clone for
+    /// its background tasks (listener + drain in PG mode, eviction in
+    /// in-memory mode); axum's `with_graceful_shutdown` and the process
+    /// metrics collector observe the same token from their spawn sites.
     pub shutdown: CancellationToken,
     /// Task tracker for spawned WS handler futures.
     ///

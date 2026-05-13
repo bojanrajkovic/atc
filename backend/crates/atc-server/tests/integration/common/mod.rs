@@ -8,7 +8,8 @@ use std::time::Duration;
 use atc_core::SystemClock;
 use atc_server::listener;
 use atc_server::otel::exponential_histogram_view;
-use atc_server::persist::{InMemoryStore, PgStore};
+use atc_server::persist::pg::PgStoreTestHooks;
+use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
 use atc_server::state::AppState;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::MeterProvider as _;
@@ -22,7 +23,7 @@ use opentelemetry_sdk::metrics::{
 };
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor};
-use tokio::task::JoinHandle;
+use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -336,17 +337,17 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 /// Build app with a specific webhook secret (in-memory mode).
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let persist = Arc::new(InMemoryStore::new(
+    let shutdown = CancellationToken::new();
+    let persist = InMemoryStore::start(
         Arc::new(SystemClock),
         Duration::from_hours(1),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
+        Duration::from_mins(1),
+        shutdown.clone(),
+    ) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: Some(secret.to_string()),
-        shutdown: CancellationToken::new(),
+        shutdown,
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes()
@@ -358,17 +359,17 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 /// Build app with no webhook secret (verification bypassed, in-memory mode).
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    let persist = Arc::new(InMemoryStore::new(
+    let shutdown = CancellationToken::new();
+    let persist = InMemoryStore::start(
         Arc::new(SystemClock),
         Duration::from_hours(1),
-        webhook_tx.clone(),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
+        Duration::from_mins(1),
+        shutdown.clone(),
+    ) as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
-        shutdown: CancellationToken::new(),
+        shutdown,
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes()
@@ -518,27 +519,34 @@ pub async fn start_pg() -> (sqlx::PgPool, impl Drop, String) {
 // Full-stack fixture with listener + drain tasks
 // ---------------------------------------------------------------------------
 
-/// Full-stack test fixture with a real PG pool and running listener+drain tasks.
+/// Full-stack test fixture with a real PG pool and a `PgStore` whose listener
+/// and drain tasks are owned by the store itself. The fixture exposes abort
+/// handles (extracted before the store stored the `JoinHandle`s) plus the
+/// watermark and heartbeat atomics for tests that poll them.
 pub struct AppFixture {
     pub pool: sqlx::PgPool,
     pub router: axum::Router,
     pub state: Arc<atc_server::state::AppState>,
     pub broadcast_rx: tokio::sync::broadcast::Receiver<atc_server::state::SeqEvent>,
-    pub listener_handle: JoinHandle<()>,
-    pub drain_handle: JoinHandle<()>,
     pub observed_recv: Arc<AtomicU64>,
     pub observed_passes: Arc<AtomicU64>,
     pub drain_started: Arc<tokio::sync::Notify>,
     pub shutdown: CancellationToken,
     pub db_url: String,
-    /// Heartbeat atomic shared with the drain task. Tests that need to manipulate
-    /// or read the drain staleness timestamp access it here rather than through
-    /// AppState (which no longer holds it).
+    /// Heartbeat atomic owned by the store. Tests that need to manipulate or
+    /// read the drain staleness timestamp access it here rather than through
+    /// AppState (which never held it).
     pub last_drain_pass_at: Arc<AtomicI64>,
     /// Commit-order cursor advanced by the drain after each successful pass.
     /// Tests that need to poll or read the broadcast watermark (e.g. `state_pg_read`)
-    /// access it here rather than through AppState (which no longer holds it).
+    /// access it here rather than through AppState (which never held it).
     pub broadcast_watermark: Arc<AtomicI64>,
+    /// Abort handles for the store's listener and drain tasks. Tests use these
+    /// to simulate task death (e.g. `readyz` stale-drain coverage); calling
+    /// `abort()` consumes neither the store nor the join capability, which the
+    /// store retains and joins via `persist.shutdown()`.
+    pub drain_abort: AbortHandle,
+    pub listener_abort: AbortHandle,
 }
 
 /// Build a full fixture with PG pool, listener task, and drain task.
@@ -572,44 +580,35 @@ async fn build_app_inner(
     db_url: String,
     drain_delay: Option<Duration>,
 ) -> AppFixture {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::Ordering;
-    use std::time::Instant;
-
     ensure_recorder_installed();
-    let (webhook_tx, broadcast_rx) =
-        tokio::sync::broadcast::channel::<atc_server::state::SeqEvent>(256);
-    let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
-    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis_for_test()));
-    // Mirror of main.rs: drain_in_flight bracket for wake-coalesce
-    // observation, and startup_at captured before the watermark query.
-    let drain_in_flight = Arc::new(AtomicBool::new(false));
-    let startup_at = Instant::now();
 
-    // Initialize watermark (same logic as main.rs) using untyped API to avoid sqlx macro caching.
-    let initial_watermark: i64 =
-        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM outbox")
-            .fetch_one(&pool)
+    // Connect the PgListener for the store's listener task.
+    let pg_listener = listener::connect_listener(&db_url)
+        .await
+        .expect("connect_listener failed");
+
+    let observed_recv = Arc::new(AtomicU64::new(0));
+    let observed_passes = Arc::new(AtomicU64::new(0));
+    let drain_started = Arc::new(tokio::sync::Notify::new());
+    let shutdown = CancellationToken::new();
+
+    let hooks = PgStoreTestHooks {
+        received_counter: Some(Arc::clone(&observed_recv)),
+        observed_passes: Some(Arc::clone(&observed_passes)),
+        drain_started: Some(Arc::clone(&drain_started)),
+        drain_delay,
+    };
+
+    let (pg_store, handles) =
+        PgStore::start_with_test_hooks(pool.clone(), pg_listener, shutdown.clone(), hooks)
             .await
-            .expect("watermark query failed");
+            .expect("PgStore::start_with_test_hooks");
 
-    // Seed broadcast_watermark from initial_watermark so /v1/state returns a
-    // sensible lastSeq before the first post-startup drain pass completes.
-    let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
-    #[allow(clippy::cast_precision_loss)]
-    ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
-
-    let pg_store = Arc::new(PgStore::new(
-        pool.clone(),
-        Arc::clone(&broadcast_watermark),
-        Arc::clone(&last_drain_pass_at),
-    ));
+    let broadcast_rx = pg_store.subscribe();
     let persist = pg_store as Arc<dyn atc_server::persist::PersistentStore>;
 
-    let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
@@ -619,65 +618,57 @@ async fn build_app_inner(
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
-    // Connect the PgListener for the listener task.
-    let pg_listener = listener::connect_listener(&db_url)
-        .await
-        .expect("connect_listener failed");
-
-    let observed_recv = Arc::new(AtomicU64::new(0));
-    let observed_passes = Arc::new(AtomicU64::new(0));
-    let drain_started = Arc::new(tokio::sync::Notify::new());
-    let drain_notify = Arc::new(tokio::sync::Notify::new());
-
-    let listener_handle = listener::spawn_listener_task(
-        pg_listener,
-        drain_notify.clone(),
-        min_pending_seq.clone(),
-        drain_in_flight.clone(),
-        shutdown.clone(),
-        Some(observed_recv.clone()),
-    );
-
-    let broadcast_watermark_for_fixture = Arc::clone(&broadcast_watermark);
-    let drain_handle = listener::spawn_drain_task(
-        pool.clone(),
-        initial_watermark,
-        startup_at,
-        drain_notify,
-        min_pending_seq,
-        Arc::clone(&last_drain_pass_at),
-        broadcast_watermark,
-        drain_in_flight,
-        state.webhook_tx.clone(),
-        shutdown.clone(),
-        Some(observed_passes.clone()),
-        Some(drain_started.clone()),
-        drain_delay,
-    );
-
     // Wait for the first drain pass to complete so the fixture is stable.
     tokio::time::timeout(Duration::from_secs(5), drain_started.notified())
         .await
         .expect("drain task did not start within 5s");
 
-    // Suppress unused import warning in non-test builds.
-    let _ = Ordering::Relaxed;
+    // Suppress unused helper warning when the fixture is built but the
+    // sentinel timestamp inside PgStore is never read directly.
+    let _ = now_millis_for_test;
 
     AppFixture {
         pool,
         router,
         state,
         broadcast_rx,
-        listener_handle,
-        drain_handle,
         observed_recv,
         observed_passes,
         drain_started,
         shutdown,
         db_url,
-        last_drain_pass_at,
-        broadcast_watermark: broadcast_watermark_for_fixture,
+        last_drain_pass_at: handles.last_drain_pass_at,
+        broadcast_watermark: handles.broadcast_watermark,
+        drain_abort: handles.drain_abort,
+        listener_abort: handles.listener_abort,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Bare PgStore test fixture (no Axum, no AppState)
+// ---------------------------------------------------------------------------
+
+/// Boot a `PgStore` directly for tests that only exercise `apply_*_event` /
+/// `read_snapshot`. Spawns the listener + drain tasks against the test DB so
+/// the store is realistic; tests that need to peek at watermark or abort the
+/// drain should use the full `AppFixture` instead.
+pub async fn start_pg_store_for_test(
+    pool: sqlx::PgPool,
+    db_url: &str,
+) -> Arc<atc_server::persist::PgStore> {
+    let pg_listener = listener::connect_listener(db_url)
+        .await
+        .expect("connect_listener failed");
+    let shutdown = CancellationToken::new();
+    let (store, _handles) = atc_server::persist::PgStore::start_with_test_hooks(
+        pool,
+        pg_listener,
+        shutdown,
+        atc_server::persist::pg::PgStoreTestHooks::default(),
+    )
+    .await
+    .expect("PgStore::start_with_test_hooks");
+    store
 }
 
 // ---------------------------------------------------------------------------
