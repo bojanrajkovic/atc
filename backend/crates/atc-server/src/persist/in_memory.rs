@@ -107,13 +107,46 @@ impl InMemoryStore {
             broadcast_tx,
             eviction_handle: StdMutex::new(None),
         });
-        let handle =
-            super::eviction::spawn_eviction_task(Arc::clone(&store), eviction_period, shutdown);
+        let handle = Arc::clone(&store).spawn_eviction(eviction_period, shutdown);
         *store
             .eviction_handle
             .lock()
             .expect("eviction_handle mutex poisoned") = Some(handle);
         store
+    }
+
+    /// Spawn the supervised background task that periodically evicts expired
+    /// entries from this store.
+    ///
+    /// Returns a [`JoinHandle`] that resolves when the task exits cooperatively
+    /// after `cancel` is cancelled. The first eviction runs after `interval`
+    /// elapses (not immediately) — we consume the `tokio::time::interval`
+    /// first tick to align the cadence. The `cancel` arm of the select is
+    /// `biased;` first so cancellation is always honoured before the next
+    /// tick fires, matching the issue #60 supervision pattern.
+    ///
+    /// No `.instrument(...)` task-lifetime root: each `evict_expired` call's
+    /// `#[tracing::instrument(name = "eviction.sweep")]` becomes its own root
+    /// span, so every sweep is one tidy trace that exports on tick rather
+    /// than accumulating under a long-lived parent that only ends at process
+    /// shutdown.
+    fn spawn_eviction(
+        self: Arc<Self>,
+        interval: Duration,
+        cancel: CancellationToken,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            // First tick completes immediately — consume it to align cadence.
+            ticker.tick().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => break,
+                    _ = ticker.tick() => self.evict_expired().await,
+                }
+            }
+        })
     }
 
     /// Test-only constructor that allows a custom broadcast capacity and skips
@@ -159,6 +192,15 @@ impl InMemoryStore {
     /// Holds a single write lock for the entire sweep to avoid a TOCTOU window
     /// between predicate evaluation and removal. Matching `state_machine.rs`
     /// semantics.
+    #[tracing::instrument(
+        name = "eviction.sweep",
+        skip_all,
+        fields(
+            jobs.evicted = tracing::field::Empty,
+            runs.evicted = tracing::field::Empty,
+            elapsed.micros = tracing::field::Empty,
+        ),
+    )]
     pub async fn evict_expired(&self) {
         tracing::debug!("starting eviction sweep");
         let start = std::time::Instant::now();
@@ -177,6 +219,10 @@ impl InMemoryStore {
         if expired_job_ids.is_empty() {
             #[allow(clippy::cast_possible_truncation)]
             let elapsed_us = start.elapsed().as_micros() as u64;
+            let span = tracing::Span::current();
+            span.record("jobs.evicted", 0u64);
+            span.record("runs.evicted", 0u64);
+            span.record("elapsed.micros", elapsed_us);
             tracing::debug!(elapsed_us, "eviction sweep complete, nothing to evict");
             return;
         }
@@ -223,8 +269,13 @@ impl InMemoryStore {
 
         #[allow(clippy::cast_possible_truncation)]
         let elapsed_us = start.elapsed().as_micros() as u64;
+        let jobs_evicted = expired_job_ids.len() as u64;
+        let span = tracing::Span::current();
+        span.record("jobs.evicted", jobs_evicted);
+        span.record("runs.evicted", runs_evicted);
+        span.record("elapsed.micros", elapsed_us);
         tracing::info!(
-            jobs_evicted = expired_job_ids.len(),
+            jobs_evicted,
             runs_evicted,
             elapsed_us,
             "eviction sweep complete"

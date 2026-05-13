@@ -18,7 +18,6 @@
 //! The `reads` submodule provides `read_all_runs` / `read_all_jobs` free
 //! functions used by the PG read path.
 
-pub mod eviction;
 pub mod in_memory;
 pub mod pg;
 pub(crate) mod reads;

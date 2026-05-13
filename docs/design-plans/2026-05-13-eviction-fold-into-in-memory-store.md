@@ -4,6 +4,8 @@ slug: eviction-fold-into-in-memory-store
 status: draft
 ---
 
+> **Late revision (2026-05-14, mid-implementation):** the eviction span shape diverges from the plan body below. The plan committed to an `eviction.task` task-lifetime root with `eviction.sweep` children, mirroring `listener.task` / `drain.task`. During implementation we recognised that a task-lifetime root that never ends until process shutdown holds the unfinished span in SDK memory for the whole pod lifetime, gives every sweep one trace ID for the entire process, and loses the root entirely on SIGKILL/OOM. The implementation instead emits each sweep as its own root span (no task-lifetime parent) so every tick exports as one tidy trace. The same critique applies to `listener.task` / `drain.task` — captured as a separate follow-up issue. The instrumentation is therefore `eviction.sweep` only, with no `eviction.task`; AC6 and the docs updates were adjusted in lockstep.
+
 ## Context
 
 Issue [#163](https://github.com/coderinserepeat/atc/issues/163) was filed as a precondition for [#67](https://github.com/coderinserepeat/atc/issues/67) (PG outbox retention design): "eviction task machinery should live inside the persistence store, not parallel to it." It also asked whether the stores should split into separate crates for complexity management.
