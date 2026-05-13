@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use atc_core::SystemClock;
 use atc_core::event::{RunEvent, RunEventEnvelope};
+use atc_core::fixed_test_timestamp;
 use atc_core::types::RunId;
 use atc_server::listener;
 use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
-use chrono::Utc;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -31,9 +31,9 @@ fn run_requested(run_id: i64) -> RunEventEnvelope {
         trigger_event: "push".to_string(),
         display_title: "Test run".to_string(),
         html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
-        created_at: Utc::now(),
+        created_at: fixed_test_timestamp(),
         run_started_at: None,
-        updated_at: Utc::now(),
+        updated_at: fixed_test_timestamp(),
         action: RunEvent::Requested,
     }
 }
@@ -131,10 +131,15 @@ async fn pg_start_with_test_hooks_exposes_handles() {
         .expect("connect_listener");
     let shutdown = CancellationToken::new();
 
-    let (store, handles) =
-        PgStore::start_with_test_hooks(pool, pg_listener, shutdown.clone(), Default::default())
-            .await
-            .expect("start_with_test_hooks");
+    let (store, handles) = PgStore::start_with_test_hooks(
+        Arc::new(SystemClock),
+        pool,
+        pg_listener,
+        shutdown.clone(),
+        Default::default(),
+    )
+    .await
+    .expect("start_with_test_hooks");
 
     // Apply one run event so the drain has something to broadcast.
     let mut rx = store.subscribe();
@@ -184,10 +189,15 @@ async fn pg_shutdown_is_idempotent() {
         .await
         .expect("connect_listener");
     let shutdown = CancellationToken::new();
-    let (store, _handles) =
-        PgStore::start_with_test_hooks(pool, pg_listener, shutdown.clone(), Default::default())
-            .await
-            .expect("start_with_test_hooks");
+    let (store, _handles) = PgStore::start_with_test_hooks(
+        Arc::new(SystemClock),
+        pool,
+        pg_listener,
+        shutdown.clone(),
+        Default::default(),
+    )
+    .await
+    .expect("start_with_test_hooks");
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
@@ -209,10 +219,15 @@ async fn pg_shutdown_handles_aborted_drain_cleanly() {
         .await
         .expect("connect_listener");
     let shutdown = CancellationToken::new();
-    let (store, handles) =
-        PgStore::start_with_test_hooks(pool, pg_listener, shutdown.clone(), Default::default())
-            .await
-            .expect("start_with_test_hooks");
+    let (store, handles) = PgStore::start_with_test_hooks(
+        Arc::new(SystemClock),
+        pool,
+        pg_listener,
+        shutdown.clone(),
+        Default::default(),
+    )
+    .await
+    .expect("start_with_test_hooks");
 
     // Abort the drain externally — the typical `readyz` test pattern.
     handles.drain_abort.abort();

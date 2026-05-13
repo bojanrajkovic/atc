@@ -183,11 +183,12 @@ mod arb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::fixed_test_timestamp;
     use proptest::prelude::*;
 
     #[test]
     fn test_workflow_run_fields() {
-        let now = Utc::now();
+        let now = fixed_test_timestamp();
         let run = WorkflowRun {
             id: RunId(123),
             org: "octocat".to_string(),
@@ -233,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_workflow_run_repo_key() {
-        let now = Utc::now();
+        let now = fixed_test_timestamp();
         let run = WorkflowRun {
             id: RunId(456),
             org: "github".to_string(),
@@ -284,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_workflow_run_round_trip_json() {
-        let now = Utc::now();
+        let now = fixed_test_timestamp();
         let original = WorkflowRun {
             id: RunId(789),
             org: "myorg".to_string(),
@@ -313,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_workflow_run_with_optional_fields_none() {
-        let now = Utc::now();
+        let now = fixed_test_timestamp();
         let run = WorkflowRun {
             id: RunId(999),
             org: "testorg".to_string(),

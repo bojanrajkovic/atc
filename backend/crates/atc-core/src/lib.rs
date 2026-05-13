@@ -13,9 +13,9 @@ pub mod run;
 pub mod state_machine;
 pub mod types;
 
-#[cfg(any(test, feature = "test-support"))]
-pub use clock::TestClock;
 pub use clock::{Clock, SystemClock};
+#[cfg(any(test, feature = "test-support"))]
+pub use clock::{TestClock, fixed_test_timestamp};
 pub use event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 pub use job::{InvalidJobTransition, Job, JobConclusion, JobStatus, RunnerInfo, Step, StepStatus};
 pub use persist::PersistError;

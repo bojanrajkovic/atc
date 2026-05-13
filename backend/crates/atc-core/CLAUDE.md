@@ -18,7 +18,7 @@ Pure domain types, state machine transition rules, and business logic for ATC. S
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |
 | `state_machine` | Pure free functions: `apply_run_event(Option<WorkflowRun>, RunEventEnvelope) -> Result<WorkflowRun, StateMachineError>`, `apply_job_event(Option<Job>, JobEventEnvelope) -> Result<Job, StateMachineError>`, and `is_evictable(&Job, DateTime<Utc>, Duration) -> bool`. No locks, no async, no shared state — `atc-server::persist::InMemoryStore` wraps these with its HashMap + RwLock. |
 | `persist` | `PersistError` with `InvalidTransition` and `Backend(Box<dyn Error>)` variants. The `PersistentStore` trait lives in `atc-server::persist` (ADR 0005). |
-| `clock` | `Clock` trait, `SystemClock`, `TestClock` (behind `test-support` feature) |
+| `clock` | `Clock` trait (wall-clock only — monotonic latency stays direct, see the trait doc-comment), `SystemClock`, `TestClock` and `fixed_test_timestamp` (both behind `test-support` feature) |
 
 ## TypeScript Generation
 
@@ -45,7 +45,7 @@ cargo nextest run -p atc-core    # pure-function tests + proptest invariants
 cargo clippy -p atc-core -- -D warnings
 ```
 
-The `test-support` feature exposes `TestClock` for deterministic time in downstream crate tests.
+The `test-support` feature exposes `TestClock` and `fixed_test_timestamp()` for deterministic time in downstream crate tests. Test fixtures across the workspace use `fixed_test_timestamp()` for event-envelope timestamps (`created_at`, `started_at`, …) so failures are reproducible run-over-run; a `disallowed-methods` clippy lint (see `backend/clippy.toml`) blocks new direct `Utc::now` / `SystemTime::now` calls in either production or fixture code.
 
 ## Key References
 

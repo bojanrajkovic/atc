@@ -27,13 +27,6 @@ use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
 // ---------------------------------------------------------------------------
 // OTel test harness — single shared install per test binary
 // ---------------------------------------------------------------------------
@@ -490,6 +483,10 @@ pub async fn start_pg() -> (sqlx::PgPool, impl Drop, String) {
     // errors during that startup window (typically <1s).
     use sqlx::Connection;
     let admin_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    // Cross-process DB-name uniqueness, not testability. We need the live
+    // wall-clock nanos here precisely so each test process picks a different
+    // suffix; routing through a `TestClock` would defeat the purpose.
+    #[allow(clippy::disallowed_methods)]
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -568,7 +565,7 @@ pub struct AppFixture {
 /// the first unconditional pass has run, so tests can capture a stable
 /// baseline.
 pub async fn build_app_with_pg_and_listener(pool: sqlx::PgPool, db_url: String) -> AppFixture {
-    build_app_inner(pool, db_url, None).await
+    build_app_inner(Arc::new(SystemClock), pool, db_url, None).await
 }
 
 /// Build a full fixture identical to [`build_app_with_pg_and_listener`] but
@@ -583,11 +580,23 @@ pub async fn build_app_with_pg_and_slow_drain(
     db_url: String,
     drain_delay: Duration,
 ) -> AppFixture {
-    build_app_inner(pool, db_url, Some(drain_delay)).await
+    build_app_inner(Arc::new(SystemClock), pool, db_url, Some(drain_delay)).await
+}
+
+/// Build a full fixture wired to a caller-supplied `Clock`. Tests that need to
+/// advance time deterministically (e.g. `liveness_check` staleness, outbox-lag
+/// observation) use this entry point with a `TestClock`.
+pub async fn build_app_with_pg_clock(
+    clock: Arc<dyn atc_core::Clock>,
+    pool: sqlx::PgPool,
+    db_url: String,
+) -> AppFixture {
+    build_app_inner(clock, pool, db_url, None).await
 }
 
 /// Shared implementation for both fixture builders.
 async fn build_app_inner(
+    clock: Arc<dyn atc_core::Clock>,
     pool: sqlx::PgPool,
     db_url: String,
     drain_delay: Option<Duration>,
@@ -612,7 +621,7 @@ async fn build_app_inner(
     };
 
     let (pg_store, handles) =
-        PgStore::start_with_test_hooks(pool.clone(), pg_listener, shutdown.clone(), hooks)
+        PgStore::start_with_test_hooks(clock, pool.clone(), pg_listener, shutdown.clone(), hooks)
             .await
             .expect("PgStore::start_with_test_hooks");
 
@@ -634,10 +643,6 @@ async fn build_app_inner(
     tokio::time::timeout(Duration::from_secs(5), drain_started.notified())
         .await
         .expect("drain task did not start within 5s");
-
-    // Suppress unused helper warning when the fixture is built but the
-    // sentinel timestamp inside PgStore is never read directly.
-    let _ = now_millis_for_test;
 
     AppFixture {
         pool,
@@ -678,10 +683,22 @@ pub async fn start_pg_store_for_test(
     db_url: &str,
     shutdown: CancellationToken,
 ) -> Arc<atc_server::persist::PgStore> {
+    start_pg_store_for_test_with_clock(Arc::new(SystemClock), pool, db_url, shutdown).await
+}
+
+/// Like [`start_pg_store_for_test`] but with a caller-supplied clock for tests
+/// that need to drive heartbeat / outbox-lag observations deterministically.
+pub async fn start_pg_store_for_test_with_clock(
+    clock: Arc<dyn atc_core::Clock>,
+    pool: sqlx::PgPool,
+    db_url: &str,
+    shutdown: CancellationToken,
+) -> Arc<atc_server::persist::PgStore> {
     let pg_listener = listener::connect_listener(db_url)
         .await
         .expect("connect_listener failed");
     let (store, _handles) = atc_server::persist::PgStore::start_with_test_hooks(
+        clock,
         pool,
         pg_listener,
         shutdown,

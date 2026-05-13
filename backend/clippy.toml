@@ -1,2 +1,16 @@
 # Clippy configuration — defaults are sensible, override as needed
 msrv = "1.94.0"
+
+# Production code MUST route wall-clock reads through `atc_core::Clock` so
+# tests can advance time deterministically via `TestClock`. See
+# `crates/atc-core/src/clock.rs` for the wall-vs-monotonic split and the
+# rationale for not introducing a `MonotonicClock` seam.
+#
+# Legitimate exemptions:
+#   - `atc_core::clock::SystemClock::now` (the sole production caller)
+#   - `atc_core::clock::tests` (the SystemClock drift-window assertion)
+#   - DB-name nanos in the test PG container helper (uniqueness, not testability)
+disallowed-methods = [
+    { path = "chrono::Utc::now",           reason = "use atc_core::Clock — see backend/crates/atc-core/src/clock.rs" },
+    { path = "std::time::SystemTime::now", reason = "use atc_core::Clock — see backend/crates/atc-core/src/clock.rs" },
+]

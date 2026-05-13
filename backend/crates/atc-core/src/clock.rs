@@ -10,7 +10,20 @@ use chrono::{DateTime, Utc};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
-/// Trait for abstracting time access.
+/// Trait for abstracting **wall-clock** time access.
+///
+/// Returns `DateTime<Utc>` for serializable, cross-process-comparable
+/// timestamps: event metadata, TTL/eviction decisions, drain heartbeats,
+/// outbox-lag observation.
+///
+/// **Monotonic durations** (histogram latency measurement: drain pass
+/// duration, eviction sweep elapsed) deliberately use `std::time::Instant`
+/// directly rather than routing through this trait. Wall-clock would be
+/// semantically wrong (it can jump backward under NTP); a separate
+/// `MonotonicClock` trait would force `TestInstant = Instant + Duration`
+/// gymnastics to solve a problem we don't have — histogram values are
+/// observed, not asserted on. If deterministic latency assertions are
+/// ever needed, `tokio::time::pause()` is the standard escape hatch.
 ///
 /// Implementations must be `Send + Sync` for use behind `Arc` in
 /// async contexts.
@@ -24,9 +37,27 @@ pub trait Clock: Send + Sync {
 pub struct SystemClock;
 
 impl Clock for SystemClock {
+    #[allow(clippy::disallowed_methods)]
     fn now(&self) -> DateTime<Utc> {
         Utc::now()
     }
+}
+
+/// Canonical fixed timestamp for deterministic test fixtures.
+///
+/// Returns `2025-01-01T00:00:00Z`. Tests should construct event timestamps
+/// relative to this value rather than calling `Utc::now()`, so failure
+/// cases are reproducible run-over-run.
+///
+/// # Panics
+///
+/// Never. The argument is a compile-time constant within `i64` range that
+/// `from_timestamp` accepts; the `.expect()` exists only because the
+/// signature is fallible.
+#[cfg(any(test, feature = "test-support"))]
+#[must_use]
+pub fn fixed_test_timestamp() -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(1_735_689_600, 0).expect("constant is valid")
 }
 
 /// Clock with manually controlled time for deterministic testing.
@@ -70,7 +101,12 @@ impl Clock for TestClock {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
+    // The `SystemClock` drift-window assertion legitimately compares
+    // `Utc::now()` against itself; the rest of these tests use `Utc::now()`
+    // only to source a baseline timestamp for `TestClock` constructors. None
+    // of these assert anything that depends on `fixed_test_timestamp`.
     use super::*;
 
     #[test]
