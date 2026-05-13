@@ -63,10 +63,6 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
     }
 }
 
-fn span_named<'a>(spans: &'a [SpanData], name: &str) -> Option<&'a SpanData> {
-    spans.iter().find(|s| s.name.as_ref() == name)
-}
-
 fn spans_named<'a>(spans: &'a [SpanData], name: &str) -> Vec<&'a SpanData> {
     spans.iter().filter(|s| s.name.as_ref() == name).collect()
 }
@@ -122,15 +118,18 @@ async fn eviction_sweep_emits_span_with_counts_and_elapsed() {
     store.evict_expired().await;
 
     let spans = common::read_finished_spans();
-    let sweep = span_named(&spans, "eviction.sweep")
-        .expect("eviction.sweep span must be exported after evict_expired");
+    // The InMemorySpanExporter is process-global and the consolidated
+    // integration binary serializes span-reading tests via #[serial], but
+    // the buffer is never reset between tests in a `#[serial]` group — only
+    // `reset_spans()` at this test's entry clears prior output. Filter to
+    // the sweep that matches THIS seed (1 job evicted) rather than taking
+    // the first `eviction.sweep` we see, so a stray no-op sweep from any
+    // other test cannot leak into the assertion.
+    let sweep = spans_named(&spans, "eviction.sweep")
+        .into_iter()
+        .find(|s| attribute_u64(s, "jobs.evicted") == Some(1))
+        .expect("eviction.sweep span with jobs.evicted=1 must be exported after evict_expired");
 
-    assert_eq!(
-        attribute_u64(sweep, "jobs.evicted"),
-        Some(1),
-        "eviction.sweep must record jobs.evicted=1 for the TestClock-driven seed; attributes={:?}",
-        sweep.attributes,
-    );
     assert_eq!(
         attribute_u64(sweep, "runs.evicted"),
         Some(1),
