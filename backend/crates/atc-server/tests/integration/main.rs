@@ -39,6 +39,7 @@ mod row_lock_serialization;
 mod shutdown_otel_flush_test;
 mod state_pg_read;
 mod state_tests;
+mod store_lifecycle_tests;
 mod tracing_webhook_spans_test;
 mod transactional_writes_tests;
 mod webhook_hmac_tests;

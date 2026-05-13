@@ -7,10 +7,8 @@
 use crate::common;
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
-use atc_server::persist::PgStore;
 use atc_server::state::AppState;
 use axum::body::Body;
 use axum::body::to_bytes;
@@ -22,32 +20,24 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
-fn now_millis_for_test() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0)
-}
-
-async fn build_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
+async fn build_app_with_pool(
+    pool: sqlx::PgPool,
+    db_url: &str,
+) -> (axum::Router, CancellationToken) {
     common::ensure_recorder_installed();
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
-    // Use a fresh timestamp so liveness_check considers the heartbeat as recent.
-    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis_for_test()));
-    let broadcast_watermark = Arc::new(AtomicI64::new(0));
-    let persist = Arc::new(PgStore::new(
-        pool.clone(),
-        Arc::clone(&broadcast_watermark),
-        Arc::clone(&last_drain_pass_at),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
+    let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
-        shutdown: CancellationToken::new(),
+        shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
     });
-    atc_server::routes::api_routes().with_state(app_state)
+    (
+        atc_server::routes::api_routes().with_state(app_state),
+        shutdown,
+    )
 }
 
 #[tokio::test]
@@ -68,7 +58,7 @@ async fn readyz_returns_ok_with_healthy_db() {
         .await
         .expect("init_pool failed");
 
-    let app = build_app_with_pool(pool).await;
+    let (app, shutdown) = build_app_with_pool(pool, &db_url).await;
     let response = app
         .oneshot(
             Request::builder()
@@ -83,6 +73,8 @@ async fn readyz_returns_ok_with_healthy_db() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "ok");
+
+    shutdown.cancel();
 }
 
 #[tokio::test]
@@ -145,7 +137,7 @@ async fn readyz_returns_503_when_db_unreachable() {
         .await
         .expect("migrations failed");
 
-    let app = build_app_with_pool(pool).await;
+    let (app, shutdown) = build_app_with_pool(pool, &db_url).await;
 
     // Stop the container to make the DB unreachable
     container.stop().await.expect("failed to stop container");
@@ -164,4 +156,6 @@ async fn readyz_returns_503_when_db_unreachable() {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "db_unreachable");
+
+    shutdown.cancel();
 }

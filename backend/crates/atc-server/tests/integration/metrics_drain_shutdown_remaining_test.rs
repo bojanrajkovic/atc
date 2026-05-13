@@ -67,10 +67,16 @@ async fn drain_shutdown_records_remaining_rows_at_task_exit() {
     // joining the handle guarantees the recorder has seen it before we
     // snapshot.
     fixture.shutdown.cancel();
-    fixture
-        .drain_handle
-        .await
-        .expect("drain task should join cleanly");
+    // `persist.shutdown()` joins the drain (and listener). The shutdown
+    // observation is recorded inside the drain task before it returns, so
+    // waiting on the join guarantees the recorder has seen it before we
+    // snapshot.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        fixture.state.persist.shutdown(),
+    )
+    .await
+    .expect("persist.shutdown should complete within 8s");
 
     let snapshot = common::snapshot_metrics();
     let count = common::histogram_count(&snapshot, METRIC, &[]);

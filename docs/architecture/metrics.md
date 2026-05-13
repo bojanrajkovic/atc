@@ -341,13 +341,13 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 
 | Span | Source | Attributes |
 |---|---|---|
-| `listener.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_listener_task`) — task-lifetime root span constructed at spawn time and attached to the spawned future via `.instrument(...)`. | none (long-lived). |
+| `listener.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_listener_task`, spawned from `PgStore::start_inner` per ADR-0006) — task-lifetime root span constructed at spawn time and attached to the spawned future via `.instrument(...)`. | none (long-lived). |
 | `listener.recv` | `handle_notification` in `listener.rs` — per-NOTIFY child of `listener.task`. | `notify.payload.seq` (i64; the seq carried by the NOTIFY payload). |
 
 ### Drain path
 
 | Span | Source | Attributes |
 |---|---|---|
-| `drain.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_drain_task`) — task-lifetime root span constructed at spawn time and attached via `.instrument(...)` so per-pass children attach to it instead of becoming fresh roots. | none (long-lived). |
+| `drain.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) — task-lifetime root span constructed at spawn time and attached via `.instrument(...)` so per-pass children attach to it instead of becoming fresh roots. | none (long-lived). |
 | `drain.pass` | `drain_pass` in `listener.rs` — per-pass child. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
 | `drain.broadcast` | constructed inside the per-row loop in `drain_pass`. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |

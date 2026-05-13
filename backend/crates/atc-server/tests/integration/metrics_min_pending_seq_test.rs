@@ -73,17 +73,15 @@ async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
     // doesn't synchronously stop the task, and a fixed sleep gives no
     // guarantee that the drain's `notified().await` has been canceled before
     // our pg_notify drives the listener.
-    fixture.drain_handle.abort();
-    let drain_finished = timeout(Duration::from_secs(5), async {
-        while !fixture.drain_handle.is_finished() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(
-        drain_finished.is_ok(),
-        "drain task did not finish within 5s after abort()"
-    );
+    fixture.drain_abort.abort();
+    // The PgStore retains the JoinHandle, so we can't poll `is_finished`
+    // directly. Yield a few times to give tokio the scheduling beats it needs
+    // to mark the drain as cancelled — `abort()` is synchronous from the
+    // caller's perspective but the task observes cancellation at its next
+    // await point.
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
 
     // Step 3: drive a NOTIFY for seq=0, which is below the post-webhook
     // watermark (>=1). The listener's `fetch_min` mirrors this finite

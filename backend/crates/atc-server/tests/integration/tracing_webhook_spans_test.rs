@@ -145,7 +145,7 @@ async fn drain_pass_span_is_child_of_drain_task() {
     assert_eq!(status, StatusCode::OK);
 
     // Wait for the drain to broadcast at least one event.
-    let mut rx = fixture.state.webhook_tx.subscribe();
+    let mut rx = fixture.state.persist.subscribe();
     let _ = timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timed out waiting for drain broadcast");
@@ -203,7 +203,7 @@ async fn drain_pass_span_is_child_of_drain_task() {
     // Cancel the shutdown token so drain.task ends and exports. After cancel,
     // the in-memory exporter holds the parent span too — assert by name lookup.
     fixture.shutdown.cancel();
-    let _ = tokio::time::timeout(Duration::from_secs(5), fixture.drain_handle).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), fixture.state.persist.shutdown()).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let spans_after = common::read_finished_spans();

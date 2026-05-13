@@ -6,10 +6,7 @@ mod assets;
 use std::future::IntoFuture;
 use std::process;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI64};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use tokio::sync::Notify;
+use std::time::Duration;
 
 use atc_core::SystemClock;
 use atc_server::config;
@@ -17,11 +14,10 @@ use atc_server::db;
 use atc_server::listener;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
-use atc_server::persist::eviction::spawn_eviction_task;
-use atc_server::persist::{InMemoryStore, PgStore};
+use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
-use atc_server::state::{AppState, SeqEvent};
+use atc_server::state::AppState;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing_subscriber::layer::SubscriberExt;
@@ -51,12 +47,6 @@ fn ensure_pg_scheme(label: &str, url: &str) {
         "{label} must be a postgres:// or postgresql:// URL; got scheme {scheme:?}. ATC only supports external PostgreSQL.",
     );
     process::exit(1);
-}
-
-fn now_millis() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn init_tracing_subscriber(cfg: &config::Config, otel_handles: Option<&OtelHandles>) {
@@ -141,21 +131,13 @@ async fn main() {
         ensure_pg_scheme("ATC_DATABASE_LISTENER_URL", listener_url);
     }
 
-    // Create the broadcast channel for pushing domain events to WebSocket clients.
-    // Capacity of 256 events — if a client falls behind, it receives RecvError::Lagged
-    // and should re-fetch via GET /v1/state.
-    let (webhook_tx, _rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-
     // Single shared cancellation token observed by all supervised surfaces.
     let shutdown = CancellationToken::new();
 
-    // Gap-healing backstop for the outbox drain. i64::MAX at boot (no in-flight handlers).
-    let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
-    // Wake-coalesce instrumentation flag shared by listener and drain.
-    let drain_in_flight = Arc::new(AtomicBool::new(false));
-
-    // Storage mode dispatch.
-    let pg_pool: Option<sqlx::PgPool> = if let Some(ref db_url) = cfg.database_url {
+    // Storage mode dispatch. Each store owns its own broadcast sender and
+    // background tasks; main.rs only holds the resulting `Arc<dyn
+    // PersistentStore>`.
+    let persist: Arc<dyn PersistentStore> = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
             if matches!(e, sqlx::Error::Migrate(_)) {
                 tracing::error!(error = %e, "failed to run database migrations");
@@ -165,19 +147,11 @@ async fn main() {
             process::exit(1);
         });
         tracing::info!("database connected and migrations applied");
-        Some(pool)
-    } else {
-        tracing::info!("no ATC_DATABASE_URL configured; running in in-memory mode");
-        None
-    };
 
-    let (persist, eviction_handle, listener_handle, drain_handle) = if let Some(pool) = pg_pool {
         let listener_url = cfg
             .database_listener_url
             .clone()
-            .or_else(|| cfg.database_url.clone())
-            .expect("pg_pool is Some only when database_url is set");
-
+            .unwrap_or_else(|| db_url.clone());
         let pg_listener = listener::connect_listener(&listener_url)
             .await
             .unwrap_or_else(|e| {
@@ -185,82 +159,27 @@ async fn main() {
                 process::exit(1);
             });
 
-        // Capture startup_at BEFORE the COALESCE round-trip so the drain
-        // startup histogram includes the cold-pool query cost.
-        let startup_at = Instant::now();
-
-        let initial_watermark: i64 =
-            sqlx::query_scalar!("SELECT COALESCE(MAX(seq), 0) AS \"max!: i64\" FROM outbox")
-                .fetch_one(&pool)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!(error = %e, "failed to query outbox watermark");
-                    process::exit(1);
-                });
-
-        let broadcast_watermark = Arc::new(AtomicI64::new(initial_watermark));
-        let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
-
-        // Seed the gauge so /metrics reflects the initial watermark immediately.
-        #[allow(clippy::cast_precision_loss)]
-        ::metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
-
-        let pg_store = Arc::new(PgStore::new(
-            pool.clone(),
-            Arc::clone(&broadcast_watermark),
-            Arc::clone(&last_drain_pass_at),
-        ));
-
-        let drain_notify = Arc::new(Notify::new());
-        let lh = listener::spawn_listener_task(
-            pg_listener,
-            drain_notify.clone(),
-            min_pending_seq.clone(),
-            drain_in_flight.clone(),
-            shutdown.clone(),
-            None,
-        );
-        let dh = listener::spawn_drain_task(
-            pool,
-            initial_watermark,
-            startup_at,
-            drain_notify,
-            min_pending_seq,
-            last_drain_pass_at,
-            broadcast_watermark,
-            drain_in_flight,
-            webhook_tx.clone(),
-            shutdown.clone(),
-            None,
-            None,
-            None, // drain_delay: None in production
-        );
-
-        let persist: Arc<dyn atc_server::persist::PersistentStore> = pg_store;
-        (persist, None, Some(lh), Some(dh))
+        PgStore::start(pool, pg_listener, shutdown.clone())
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "failed to start PgStore");
+                process::exit(1);
+            })
     } else {
-        // In-memory mode: InMemoryStore owns all state.
-        let in_memory = Arc::new(InMemoryStore::new(
+        tracing::info!("no ATC_DATABASE_URL configured; running in in-memory mode");
+        InMemoryStore::start(
             Arc::new(SystemClock),
             Duration::from_hours(1),
-            webhook_tx.clone(),
-        ));
-        // Spawn eviction only in in-memory mode (PG mode has no in-memory state to evict).
-        let ev_handle = spawn_eviction_task(
-            Arc::clone(&in_memory),
             Duration::from_mins(1),
             shutdown.clone(),
-        );
-        let persist: Arc<dyn atc_server::persist::PersistentStore> = in_memory;
-        (persist, Some(ev_handle), None, None)
+        )
     };
 
     let ws_tracker = TaskTracker::new();
 
-    // Build AppState with the five fields that survive the refactor.
+    // Build AppState with the four fields that survive the refactor.
     let app_state = Arc::new(AppState {
-        persist,
-        webhook_tx: webhook_tx.clone(),
+        persist: Arc::clone(&persist),
         webhook_secret: cfg.github.webhook_secret.clone(),
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
@@ -272,11 +191,11 @@ async fn main() {
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 
     // Clone the Arc into the router so `app_state` itself stays in this scope
-    // for the lifetime of `main`. With `app_state` still held here, AppState's
-    // embedded `webhook_tx` clone keeps the broadcast channel open through
-    // shutdown orchestration — WS handlers see `shutdown.cancelled()` and send
-    // Close(1001) rather than racing against a `RecvError::Closed` from a
-    // prematurely-dropped AppState.
+    // for the lifetime of `main`. With `app_state` still held here, the
+    // embedded `Arc<dyn PersistentStore>` keeps the store's broadcast sender
+    // open through shutdown orchestration — WS handlers see
+    // `shutdown.cancelled()` and send Close(1001) rather than racing against
+    // a `RecvError::Closed` from a prematurely-dropped store.
     let app = routes::api_routes()
         .with_state(app_state.clone())
         .fallback(assets::fallback_handler());
@@ -310,9 +229,7 @@ async fn main() {
         shutdown,
         ws_tracker,
         main_serve_task,
-        drain_handle,
-        listener_handle,
-        eviction_handle,
+        persist,
         metrics_handle,
         otel_handles,
     )

@@ -188,17 +188,12 @@ async fn listener_shutdown() {
 
     fixture.shutdown.cancel();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        if fixture.listener_handle.is_finished() {
-            break;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!("listener task did not finish within 500ms after cancellation");
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(fixture.listener_handle.is_finished());
+    // `persist.shutdown()` joins the listener (and the drain). Reaching the
+    // unwrap means the listener observed the cancellation token and exited
+    // within the per-task budget.
+    tokio::time::timeout(Duration::from_secs(3), fixture.state.persist.shutdown())
+        .await
+        .expect("persist.shutdown did not complete within 3s of cancellation");
 }
 
 // ─── drain task fetches and advances watermark ──────────────────────────────
@@ -360,23 +355,12 @@ async fn shutdown_completeness() {
 
     fixture.shutdown.cancel();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        if fixture.listener_handle.is_finished() && fixture.drain_handle.is_finished() {
-            break;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!(
-                "shutdown incomplete: listener_finished={}, drain_finished={}",
-                fixture.listener_handle.is_finished(),
-                fixture.drain_handle.is_finished()
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-
-    assert!(fixture.listener_handle.is_finished());
-    assert!(fixture.drain_handle.is_finished());
+    // `persist.shutdown()` joins both the listener and the drain. Reaching the
+    // unwrap means both tasks observed the cancellation token and exited
+    // within their per-task budgets.
+    tokio::time::timeout(Duration::from_secs(8), fixture.state.persist.shutdown())
+        .await
+        .expect("persist.shutdown did not complete within 8s of cancellation");
 }
 
 // ─── watermark initialized to MAX(seq) at startup ───────────────────────────

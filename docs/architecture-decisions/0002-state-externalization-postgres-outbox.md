@@ -123,6 +123,12 @@ single dedicated long-lived connection held by the listener task — pooling
 adds nothing for a process that does `LISTEN` once and then receives
 forever.
 
+> **Revised by ADR-0006:** The dedicated `PgListener` connection and the
+> listener / drain tasks that consume it are now owned by `PgStore`. Callers
+> pass `(pool, listener_conn)` into `PgStore::start` and receive an
+> `Arc<PgStore>` that internally holds the spawned task handles. The
+> pool-compatibility analysis above is unchanged.
+
 **Polling as an alternative to LISTEN was considered and rejected.** Polling
 the outbox on a fixed interval would eliminate the session-mode requirement
 but introduces a latency floor (typically 100ms+ per poll cycle) that

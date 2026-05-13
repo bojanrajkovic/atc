@@ -16,6 +16,7 @@ use crate::common;
 
 use std::sync::Arc;
 
+use atc_server::persist::PersistentStore;
 use atc_server::state::{AppState, SeqEvent};
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -34,23 +35,27 @@ fn notify_attrs(kind: &'static str) -> Vec<KeyValue> {
 
 /// Build a full router with a real PG pool mounted.
 ///
-/// Returns (router, app_state, broadcast_receiver).
-pub fn build_app_with_pg(
+/// Returns (router, app_state, broadcast_receiver). `app_state.shutdown` is
+/// the same cancellation token driving the store's listener+drain tasks, so
+/// `state.shutdown.cancel()` at end-of-test stops both the WS surface and
+/// the store's background tasks.
+pub async fn build_app_with_pg(
     pool: sqlx::PgPool,
+    db_url: &str,
 ) -> (
     axum::Router,
     Arc<AppState>,
     tokio::sync::broadcast::Receiver<SeqEvent>,
 ) {
     common::ensure_recorder_installed();
-    let (webhook_tx, rx) = tokio::sync::broadcast::channel::<SeqEvent>(256);
-    let persist = Arc::new(atc_server::persist::PgStore::new_for_test(pool.clone()))
-        as Arc<dyn atc_server::persist::PersistentStore>;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
+    let rx = store.subscribe();
+    let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
-        webhook_tx,
         webhook_secret: None,
-        shutdown: CancellationToken::new(),
+        shutdown,
         ws_tracker: TaskTracker::new(),
     });
     let app = atc_server::routes::api_routes()
@@ -95,8 +100,8 @@ async fn post_webhook(app: axum::Router, event_type: &str, body: &[u8]) -> Statu
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_run_lifecycle() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fixture run_id for workflow_run_requested.json (24290980517)
     let run_id = 24290980517i64;
@@ -180,14 +185,15 @@ async fn transactional_write_run_lifecycle() {
         .await
         .unwrap();
     assert_eq!(outbox_count, 3, "outbox should have 3 rows after Completed");
+    state.shutdown.cancel();
 }
 
 /// Job lifecycle with run pre-existing, both stores agree.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_job_lifecycle() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Pre-insert the run first
     let run_body = common::fixture_workflow_run_requested();
@@ -210,14 +216,15 @@ async fn transactional_write_job_lifecycle() {
         .await
         .unwrap();
     assert_eq!(outbox_count, 2, "outbox should have 2 rows (run + job)");
+    state.shutdown.cancel();
 }
 
 /// Job-before-run — fire job first, then run; assert stub then reconciliation.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_job_before_run_lifecycle() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Fire job first (before run)
     let job_body = common::fixture_workflow_job_queued();
@@ -262,14 +269,15 @@ async fn transactional_write_job_before_run_lifecycle() {
         .await
         .unwrap();
     assert_eq!(total_outbox, 2, "outbox should have 2 total rows");
+    state.shutdown.cancel();
 }
 
 /// Idempotent replay — same webhook twice → PG stable.
 #[tokio::test]
 #[serial_test::serial]
 async fn transactional_write_idempotent_replay() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     let body = common::fixture_workflow_run_requested();
 
@@ -288,6 +296,7 @@ async fn transactional_write_idempotent_replay() {
         .await
         .unwrap();
     assert_eq!(pg_count, 1, "exactly one run in PG");
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -302,8 +311,8 @@ async fn parity_metric_increments_when_pg_rejects() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // 1. Insert run through normal flow (Queued)
     post_webhook(
@@ -362,6 +371,7 @@ async fn parity_metric_increments_when_pg_rejects() {
         parity, 1,
         "parity counter should increment by 1; got {parity}"
     );
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -378,8 +388,8 @@ async fn transient_metric_increments_on_db_outage() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Close the pool BEFORE firing any webhook (simulate outage from the start).
     // This causes pool.begin() to fail immediately → 503 with transient counter.
@@ -420,6 +430,7 @@ async fn transient_metric_increments_on_db_outage() {
         transient, 1,
         "transient counter should increment by 1; got {transient}"
     );
+    state.shutdown.cancel();
 }
 
 /// Verify that PG write failure counters are emitted via the OTel pipeline.
@@ -430,8 +441,8 @@ async fn pg_write_failure_counters_are_registered() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Establish a Queued run in both stores.
     let body = common::fixture_workflow_run_requested();
@@ -458,6 +469,7 @@ async fn pg_write_failure_counters_are_registered() {
         common::metric_present(&snapshot, "atc_pg_write_failures_total"),
         "atc_pg_write_failures_total must appear in the metric snapshot after parity failure",
     );
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -498,8 +510,8 @@ async fn in_memory_mode_behavioral_invariance() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_invalid_transition_returns_rejected() {
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Establish a Queued run.
     let body = common::fixture_workflow_run_requested();
@@ -545,6 +557,7 @@ async fn pg_invalid_transition_returns_rejected() {
         outbox_after, outbox_before,
         "rejected InProgress must not write an outbox row (transaction rolled back)"
     );
+    state.shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -564,8 +577,8 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, _) = common::start_pg().await;
-    let (app, _state, _rx) = build_app_with_pg(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
     // Successful run event — should increment atc_pg_notify_emitted_total{kind="run"}.
     let (status, json) = post_webhook_full(
@@ -631,4 +644,5 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
         0,
         "atc_pg_notify_emitted_total{{kind=run}} must not increment for a rejected write",
     );
+    state.shutdown.cancel();
 }

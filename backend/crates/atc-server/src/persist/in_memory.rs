@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use atc_core::{
@@ -15,11 +16,18 @@ use atc_core::{
 };
 use atc_github::WebhookEvent;
 use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
+use crate::shutdown::{SHUTDOWN_TIMEOUT_EVICTION, join_with_timeout};
 use crate::state::{SeqEvent, StateSnapshot};
 use atc_core::types::RepoKey;
 
 use super::{LivenessError, PersistentStore};
+
+/// Default broadcast channel capacity. Matches the production setting and the
+/// `PgStore::start` capacity so both modes have identical lag semantics.
+const DEFAULT_BROADCAST_CAPACITY: usize = 256;
 
 // ---------------------------------------------------------------------------
 // StateData — mutable state behind the RwLock
@@ -72,22 +80,60 @@ pub struct InMemoryStore {
     completed_ttl: Duration,
     /// Broadcast sender for pushing domain events to WebSocket clients.
     broadcast_tx: broadcast::Sender<SeqEvent>,
+    /// JoinHandle for the eviction task. `Some` until the first `shutdown()`
+    /// call takes it. `None` after shutdown or when constructed via
+    /// `new_for_test` (which never spawns the task).
+    eviction_handle: StdMutex<Option<JoinHandle<()>>>,
 }
 
 impl InMemoryStore {
-    /// Create a new [`InMemoryStore`].
-    pub fn new(
+    /// Construct an [`InMemoryStore`] and spawn its eviction task.
+    ///
+    /// Returns `Arc<Self>` so the spawned task can hold a strong reference
+    /// without forcing the caller to wrap manually. Synchronous — no `.await`
+    /// at the call site.
+    pub fn start(
         clock: Arc<dyn Clock>,
         completed_ttl: Duration,
-        broadcast_tx: broadcast::Sender<SeqEvent>,
-    ) -> Self {
-        Self {
+        eviction_period: Duration,
+        shutdown: CancellationToken,
+    ) -> Arc<Self> {
+        let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(DEFAULT_BROADCAST_CAPACITY);
+        let store = Arc::new(Self {
             state: RwLock::new(StateData::new()),
             seq: Mutex::new(0u64),
             clock,
             completed_ttl,
             broadcast_tx,
-        }
+            eviction_handle: StdMutex::new(None),
+        });
+        let handle =
+            super::eviction::spawn_eviction_task(Arc::clone(&store), eviction_period, shutdown);
+        *store
+            .eviction_handle
+            .lock()
+            .expect("eviction_handle mutex poisoned") = Some(handle);
+        store
+    }
+
+    /// Test-only constructor that allows a custom broadcast capacity and skips
+    /// the eviction task. Used by lagging-client tests that need to trigger
+    /// `RecvError::Lagged` with a small buffer instead of 256.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_for_test(
+        clock: Arc<dyn Clock>,
+        completed_ttl: Duration,
+        broadcast_capacity: usize,
+    ) -> Arc<Self> {
+        let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(broadcast_capacity);
+        Arc::new(Self {
+            state: RwLock::new(StateData::new()),
+            seq: Mutex::new(0u64),
+            clock,
+            completed_ttl,
+            broadcast_tx,
+            eviction_handle: StdMutex::new(None),
+        })
     }
 
     /// Return a consistent snapshot of all state with the current seq.
@@ -209,6 +255,29 @@ impl PersistentStore for InMemoryStore {
     /// Always returns `Ok(())` — the in-memory store is always live.
     async fn liveness_check(&self) -> Result<(), LivenessError> {
         Ok(())
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<SeqEvent> {
+        self.broadcast_tx.subscribe()
+    }
+
+    async fn shutdown(&self) {
+        // Drop the std::sync::Mutex guard BEFORE awaiting — holding it across
+        // `.await` would `!Send` the future and break the `async_trait` bound.
+        //
+        // Callers must cancel the shutdown token they passed to `start()`
+        // before invoking `shutdown()` — otherwise the eviction task never
+        // observes cancellation and this method waits the full per-task
+        // timeout before aborting. Stores constructed via `new_for_test`
+        // hold `None` here and return immediately.
+        let handle = self
+            .eviction_handle
+            .lock()
+            .expect("eviction_handle mutex poisoned")
+            .take();
+        if let Some(handle) = handle {
+            join_with_timeout(handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
+        }
     }
 
     /// Apply a run event to the in-memory state and broadcast.

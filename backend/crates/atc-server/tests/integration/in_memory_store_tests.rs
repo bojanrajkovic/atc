@@ -25,19 +25,19 @@ use chrono::{DateTime, Utc};
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_store() -> InMemoryStore {
-    let (tx, _) = tokio::sync::broadcast::channel(256);
-    InMemoryStore::new(Arc::new(SystemClock), Duration::from_hours(1), tx)
+fn make_store() -> Arc<InMemoryStore> {
+    InMemoryStore::new_for_test(Arc::new(SystemClock), Duration::from_hours(1), 256)
 }
 
-fn make_store_with_clock(clock: Arc<dyn atc_core::Clock>) -> InMemoryStore {
-    let (tx, _) = tokio::sync::broadcast::channel(256);
-    InMemoryStore::new(clock, Duration::from_hours(1), tx)
+fn make_store_with_clock(clock: Arc<dyn atc_core::Clock>) -> Arc<InMemoryStore> {
+    InMemoryStore::new_for_test(clock, Duration::from_hours(1), 256)
 }
 
-fn make_store_with_clock_and_ttl(clock: Arc<dyn atc_core::Clock>, ttl: Duration) -> InMemoryStore {
-    let (tx, _) = tokio::sync::broadcast::channel(256);
-    InMemoryStore::new(clock, ttl, tx)
+fn make_store_with_clock_and_ttl(
+    clock: Arc<dyn atc_core::Clock>,
+    ttl: Duration,
+) -> Arc<InMemoryStore> {
+    InMemoryStore::new_for_test(clock, ttl, 256)
 }
 
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {

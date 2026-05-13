@@ -14,8 +14,9 @@ use atc_core::{
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     types::{JobId, RunId},
 };
-use atc_server::persist::{PersistentStore, PgStore};
+use atc_server::persist::PersistentStore;
 use chrono::{DateTime, Utc};
+use tokio_util::sync::CancellationToken;
 
 fn ts() -> DateTime<Utc> {
     Utc::now()
@@ -161,8 +162,9 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_first_sight_creates_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     let env = run_requested(1001);
     let result = store.apply_run_event(env).await;
@@ -176,14 +178,16 @@ async fn pg_run_first_sight_creates_row() {
     assert_eq!(row.id, 1001i64);
     assert_eq!(row.status, "Queued");
     assert_eq!(row.workflow_name.as_deref(), Some("CI"));
+    shutdown.cancel();
 }
 
 /// Queued → InProgress is valid; status updates, sticky COALESCE preserved.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_valid_transition_updates_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(1002)).await.unwrap();
 
@@ -200,14 +204,16 @@ async fn pg_run_valid_transition_updates_row() {
     // workflow_name was set on Requested, omitted on InProgress → COALESCE preserves it
     assert_eq!(row.workflow_name.as_deref(), Some("CI"));
     assert!(row.run_started_at.is_some(), "run_started_at should be set");
+    shutdown.cancel();
 }
 
 /// Completed → InProgress is invalid; PG returns Err(InvalidTransition) and row unchanged.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_invalid_transition_returns_err() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     // Bring run to Completed
     store.apply_run_event(run_requested(1003)).await.unwrap();
@@ -227,14 +233,16 @@ async fn pg_run_invalid_transition_returns_err() {
         .await
         .expect("row not found");
     assert_eq!(row.status, "Completed");
+    shutdown.cancel();
 }
 
 /// Queued → Queued is idempotent (same-status replay → Ok).
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_idempotent_same_status_replay() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(1004)).await.unwrap();
     let result = store.apply_run_event(run_requested(1004)).await;
@@ -248,6 +256,7 @@ async fn pg_run_idempotent_same_status_replay() {
         .await
         .expect("row not found");
     assert_eq!(row.status, "Queued");
+    shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -258,8 +267,9 @@ async fn pg_run_idempotent_same_status_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_first_sight_creates_row_with_existing_run() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     // Pre-insert real run
     store.apply_run_event(run_requested(2001)).await.unwrap();
@@ -281,14 +291,16 @@ async fn pg_job_first_sight_creates_row_with_existing_run() {
         .await
         .unwrap();
     assert_eq!(run_count, 1, "should be exactly one run row");
+    shutdown.cancel();
 }
 
 /// Valid job transition Queued → InProgress.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_valid_transition_updates_row() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(2002)).await.unwrap();
     store.apply_job_event(job_queued(3002, 2002)).await.unwrap();
@@ -303,14 +315,16 @@ async fn pg_job_valid_transition_updates_row() {
     assert_eq!(row.status, "InProgress");
     assert_eq!(row.runner_id, Some(42i64));
     assert_eq!(row.runner_name.as_deref(), Some("runner-1"));
+    shutdown.cancel();
 }
 
 /// Invalid transition Completed → InProgress → Err(InvalidTransition).
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_invalid_transition_returns_err() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(2003)).await.unwrap();
     store.apply_job_event(job_queued(3003, 2003)).await.unwrap();
@@ -335,14 +349,16 @@ async fn pg_job_invalid_transition_returns_err() {
         .await
         .expect("job row not found");
     assert_eq!(row.status, "Completed");
+    shutdown.cancel();
 }
 
 /// Same-status replay is idempotent.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_idempotent_same_status_replay() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(2004)).await.unwrap();
     store.apply_job_event(job_queued(3004, 2004)).await.unwrap();
@@ -352,6 +368,7 @@ async fn pg_job_idempotent_same_status_replay() {
         result.is_ok(),
         "same-status replay should be Ok: {result:?}"
     );
+    shutdown.cancel();
 }
 
 /// Queued → Completed is valid for jobs — GitHub sends this when a run is cancelled
@@ -359,8 +376,9 @@ async fn pg_job_idempotent_same_status_replay() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_queued_to_completed_accepted() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(2005)).await.unwrap();
     store.apply_job_event(job_queued(3005, 2005)).await.unwrap();
@@ -386,14 +404,16 @@ async fn pg_job_queued_to_completed_accepted() {
         preds.contains(&JobStatus::Queued),
         "Queued must be a predecessor of Completed for jobs"
     );
+    shutdown.cancel();
 }
 
 /// Job arrives before its run → stub run row created, job FK satisfied.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_before_run_creates_stub_run() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     // Fire job event for unknown run 9001
     let result = store.apply_job_event(job_queued(8001, 9001)).await;
@@ -415,14 +435,16 @@ async fn pg_job_before_run_creates_stub_run() {
         .expect("job row not found");
     assert_eq!(job_row.run_id, 9001i64);
     assert_eq!(job_row.status, "Queued");
+    shutdown.cancel();
 }
 
 /// Real run event after job-before-run reconciles the stub.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_real_run_event_reconciles_stub() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     // Job-before-run
     store.apply_job_event(job_queued(8002, 9002)).await.unwrap();
@@ -462,14 +484,16 @@ async fn pg_real_run_event_reconciles_stub() {
         .await
         .expect("job row not found");
     assert_eq!(job_row.run_id, 9002i64);
+    shutdown.cancel();
 }
 
 /// Two job events for same unknown run → exactly one stub run row.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_two_jobs_same_unknown_run_share_stub() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_job_event(job_queued(8003, 9003)).await.unwrap();
     store.apply_job_event(job_queued(8004, 9003)).await.unwrap();
@@ -479,6 +503,7 @@ async fn pg_two_jobs_same_unknown_run_share_stub() {
         .await
         .unwrap();
     assert_eq!(run_count, 1, "should be exactly one stub run row");
+    shutdown.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -489,8 +514,9 @@ async fn pg_two_jobs_same_unknown_run_share_stub() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_run_coalesce_preserves_workflow_name() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     // First event: workflow_name = Some("CI")
     store.apply_run_event(run_requested(4001)).await.unwrap();
@@ -508,14 +534,16 @@ async fn pg_run_coalesce_preserves_workflow_name() {
         Some("CI"),
         "workflow_name must be preserved by COALESCE"
     );
+    shutdown.cancel();
 }
 
 /// runner_* fields set on InProgress, preserved through second InProgress with same runner.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_runner() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(4002)).await.unwrap();
     store.apply_job_event(job_queued(5002, 4002)).await.unwrap();
@@ -557,6 +585,7 @@ async fn pg_job_coalesce_preserves_runner() {
         Some("runner-1"),
         "runner_name must be preserved by COALESCE"
     );
+    shutdown.cancel();
 }
 
 /// When a new event carries a runner with null group fields, those fields are cleared —
@@ -564,8 +593,9 @@ async fn pg_job_coalesce_preserves_runner() {
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_runner_group_cleared_when_runner_changes() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(4010)).await.unwrap();
     store.apply_job_event(job_queued(5010, 4010)).await.unwrap();
@@ -623,14 +653,16 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
         row.runner_group_name.is_none(),
         "runner_group_name must be cleared (was Some(\"default\"), new runner has None)"
     );
+    shutdown.cancel();
 }
 
 /// name, run_id, created_at are identity fields — never overwritten by job updates.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_job_coalesce_preserves_name_run_id_created_at() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool.clone());
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
 
     store.apply_run_event(run_requested(4003)).await.unwrap();
 
@@ -674,16 +706,19 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
         diff < 2,
         "created_at must not be overwritten (diff={diff}s)"
     );
+    shutdown.cancel();
 }
 
 /// PgStore::ping() succeeds against a healthy pool.
 #[tokio::test]
 #[serial_test::serial]
 async fn pg_store_ping_succeeds() {
-    let (pool, _c, _) = common::start_pg().await;
-    let store = PgStore::new_for_test(pool);
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
     assert!(
         store.ping().await.is_ok(),
         "ping should succeed with a healthy pool"
     );
+    shutdown.cancel();
 }

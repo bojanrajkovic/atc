@@ -23,7 +23,7 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let rx = state.webhook_tx.subscribe();
+    let rx = state.persist.subscribe();
     let shutdown = state.shutdown.clone();
     ws.on_upgrade(move |socket| {
         state
@@ -42,8 +42,9 @@ pub async fn ws_handler(
 /// `tokio::select! { biased; … }` evaluates arms top-down with
 /// `shutdown.cancelled()` first so the cancel signal is preferred over any
 /// concurrently-ready arm, keeping shutdown predictable for tests and
-/// operators. `main` keeps an `Arc<AppState>` alive through orchestration, so
-/// the broadcast channel stays open through the cancel-fire window — the
+/// operators. `main` keeps an `Arc<AppState>` alive (and therefore the
+/// `Arc<dyn PersistentStore>` inside it) through orchestration, so the
+/// store's broadcast sender stays open through the cancel-fire window — the
 /// `RecvError::Closed` arm is only reached in genuinely abnormal scenarios.
 async fn handle_socket(
     mut socket: WebSocket,

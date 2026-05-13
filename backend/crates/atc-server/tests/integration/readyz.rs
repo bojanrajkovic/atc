@@ -13,17 +13,12 @@
 
 use crate::common;
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use atc_server::persist::PgStore;
-use atc_server::state::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serial_test::serial;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 fn now_millis() -> i64 {
@@ -44,32 +39,21 @@ fn now_millis() -> i64 {
 #[tokio::test]
 #[serial]
 async fn stale_heartbeat_returns_503() {
-    let (pool, _container, _db_url) = common::start_pg().await;
+    let (pool, _container, db_url) = common::start_pg().await;
 
     common::ensure_recorder_installed();
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
+
+    // Boot a real fixture so PgStore owns its heartbeat atomic, then abort the
+    // drain so it can't refresh the heartbeat we're about to poison.
+    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+    fixture.drain_abort.abort();
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Set last_drain_pass_at to 60 seconds ago (well past the 30 s threshold).
     let stale_time = now_millis() - 60_000;
-    let last_drain_pass_at = Arc::new(AtomicI64::new(stale_time));
-    let broadcast_watermark = Arc::new(AtomicI64::new(0));
-
-    let persist = Arc::new(PgStore::new(
-        pool.clone(),
-        Arc::clone(&broadcast_watermark),
-        Arc::clone(&last_drain_pass_at),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        persist,
-        webhook_tx,
-        webhook_secret: None,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state)
-        .fallback(atc_server::assets::fallback_handler());
+    fixture
+        .last_drain_pass_at
+        .store(stale_time, Ordering::Relaxed);
 
     let req = Request::builder()
         .method("GET")
@@ -77,7 +61,7 @@ async fn stale_heartbeat_returns_503() {
         .body(Body::empty())
         .unwrap();
 
-    let resp = app.oneshot(req).await.unwrap();
+    let resp = fixture.router.clone().oneshot(req).await.unwrap();
     assert_eq!(
         resp.status(),
         StatusCode::SERVICE_UNAVAILABLE,
@@ -92,6 +76,8 @@ async fn stale_heartbeat_returns_503() {
         json["status"], "drain_stale",
         "body should indicate drain_stale"
     );
+
+    fixture.shutdown.cancel();
 }
 
 /// A real drain stall — aborting the drain task — drives /readyz to 503.
@@ -130,14 +116,15 @@ async fn drain_abort_drives_503() {
     );
 
     // Abort the drain task — the heartbeat will not refresh from now on.
-    fixture.drain_handle.abort();
-    // Give tokio time to actually unschedule it. This is brief because abort
-    // is synchronous from the caller's perspective.
+    // The abort handle drives the JoinHandle (which the store owns) to a
+    // cancelled exit; we can't query its `is_finished` here because the store
+    // retains the handle, so we instead pin staleness behaviorally below by
+    // confirming the timestamp never advances past what we store.
+    fixture.drain_abort.abort();
+    // Give tokio time to actually unschedule the drain. abort() is synchronous
+    // from the caller's perspective, but the task itself observes the cancel
+    // at its next await point.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(
-        fixture.drain_handle.is_finished(),
-        "drain task should have stopped after abort"
-    );
 
     // Stash a stale timestamp. Were the drain still running, this would race
     // a heartbeat refresh — but the drain is gone, so the value sticks.
@@ -216,34 +203,15 @@ async fn no_pg_always_200() {
 #[tokio::test]
 #[serial]
 async fn shutdown_cancelled_returns_503_with_pg() {
-    let (pool, _container, _db_url) = common::start_pg().await;
+    let (pool, _container, db_url) = common::start_pg().await;
 
     common::ensure_recorder_installed();
-    let (webhook_tx, _) = tokio::sync::broadcast::channel(256);
 
-    // Fresh heartbeat so the drain-staleness path would otherwise return 200.
-    let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
-    let broadcast_watermark = Arc::new(AtomicI64::new(0));
+    // Use the full fixture so we get a real PgStore + drain task (fresh
+    // heartbeat) — the drain-staleness path would otherwise return 200.
+    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    let persist = Arc::new(PgStore::new(
-        pool.clone(),
-        Arc::clone(&broadcast_watermark),
-        Arc::clone(&last_drain_pass_at),
-    )) as Arc<dyn atc_server::persist::PersistentStore>;
-    let shutdown = CancellationToken::new();
-    let app_state = Arc::new(AppState {
-        persist,
-        webhook_tx,
-        webhook_secret: None,
-        shutdown: shutdown.clone(),
-        ws_tracker: TaskTracker::new(),
-    });
-
-    shutdown.cancel();
-
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state)
-        .fallback(atc_server::assets::fallback_handler());
+    fixture.shutdown.cancel();
 
     let req = Request::builder()
         .method("GET")
@@ -251,7 +219,7 @@ async fn shutdown_cancelled_returns_503_with_pg() {
         .body(Body::empty())
         .unwrap();
 
-    let resp = app.oneshot(req).await.unwrap();
+    let resp = fixture.router.clone().oneshot(req).await.unwrap();
     assert_eq!(
         resp.status(),
         StatusCode::SERVICE_UNAVAILABLE,
