@@ -1,5 +1,7 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use metrics::{Counter, Gauge, Histogram};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -8,6 +10,13 @@ use tokio_util::sync::CancellationToken;
 /// Must be called after the global `metrics::Recorder` is installed (via
 /// `otel::init_otel`). When OTel is disabled, the macro resolves through the
 /// crate's no-op recorder; the describe/set pair becomes a cheap no-op.
+///
+/// This is the sole production emit site that retains the inline
+/// `metrics::gauge!(…).set(1.0)` form. It is a real emit (not metadata-only)
+/// but is fired exactly once at startup with compile-time labels and is never
+/// touched again — caching its handle would be pure ceremony. The `describe_*!`
+/// macros below have a separate exception rationale: they are genuinely
+/// metadata-only and do not need a cached handle.
 pub fn register_build_info() {
     metrics::describe_gauge!(
         "atc_build_info",
@@ -24,102 +33,207 @@ pub fn register_build_info() {
     .set(1.0);
 }
 
-/// Register the PG write failure and drift counters.
+/// Cached metric handles for every repeat-emit site in PG mode.
 ///
-/// Two labels distinguish failure kinds:
-/// - `kind="parity"` — PG rejected a write that in-memory accepted (`0 rows affected`).
-///   Page-worthy in production: the two stores have diverged.
-/// - `kind="transient"` — sqlx error (network, pool exhaustion, etc.).
-///   Alert on sustained rate.
-pub fn register_pg_write_counters() {
-    metrics::describe_counter!(
-        "atc_pg_write_failures_total",
-        "PG write failures by kind (parity or transient)"
-    );
-    metrics::describe_counter!(
-        "atc_pg_in_memory_drift_total",
-        "PG committed but in-memory apply diverged"
-    );
+/// Constructed once per `PgStore` via [`PgMetrics::register`] after the global
+/// `metrics::Recorder` is installed. Cloned cheaply (each handle is internally
+/// `Arc<dyn …Fn>`) into the listener and drain task closures so every emit on
+/// a hot path is a field access plus a single relaxed atomic update — no
+/// registry lookup, no `Arc` allocation.
+///
+/// The struct also stops a recurrence of the `metrics-util` hash-contract bug
+/// fixed in PR #153, where the inline `metrics::counter!()` form re-walked the
+/// registry on every emit and a faulty `Key::hash` / `KeyHasher` pairing let
+/// `metrics-exporter-otel` overwrite observable callbacks on every miss. A
+/// cached handle hits the registry exactly once at handle creation, so the
+/// entire bug class cannot reach hot-path emits.
+pub struct PgMetrics {
+    /// `atc_pg_write_failures_total{kind="parity"}` — PG rejected a write that
+    /// `in-memory` would have accepted (`0 rows affected` from the predicated
+    /// UPSERT). Page-worthy in production.
+    pub write_failures_parity: Counter,
+    /// `atc_pg_write_failures_total{kind="transient"}` — pool / commit / sqlx
+    /// failure inside the webhook handler transaction.
+    pub write_failures_transient: Counter,
+    /// `atc_pg_notify_emitted_total{kind="run"}` — emitted from
+    /// `PgStore::apply_run_event` after commit.
+    pub notify_emitted_run: Counter,
+    /// `atc_pg_notify_emitted_total{kind="job"}` — emitted from
+    /// `PgStore::apply_job_event` after commit.
+    pub notify_emitted_job: Counter,
+
+    /// `atc_pg_notify_received_total` — incremented per NOTIFY by the listener.
+    pub notify_received: Counter,
+    /// `atc_pg_listener_recv_errors_total` — listener `recv()` errors (sqlx
+    /// hides successful reconnects; this counts irrecoverable surfacings).
+    pub listener_recv_errors: Counter,
+    /// `atc_pg_wake_coalesced_total` — NOTIFYs observed while a drain pass
+    /// was already in flight.
+    pub wake_coalesced: Counter,
+
+    /// `atc_pg_drain_passes_total` — drain task pass count (one per wake-up).
+    pub drain_passes: Counter,
+    /// `atc_pg_drain_rows_total` — outbox rows fetched across all passes.
+    pub drain_rows: Counter,
+    /// `atc_pg_drain_duplicate_skipped_total` — broadcasts suppressed by the
+    /// ring-buffer dedup.
+    pub drain_duplicate_skipped: Counter,
+    /// `atc_pg_drain_unknown_kind_total` — outbox rows with an unrecognized
+    /// `kind` discriminator.
+    pub drain_unknown_kind: Counter,
+
+    /// `atc_pg_outbox_lag_seconds` — event age at broadcast.
+    pub outbox_lag: Histogram,
+    /// `atc_pg_drain_pass_duration_seconds` — wall time for one drain pass.
+    pub drain_pass_duration: Histogram,
+    /// `atc_pg_drain_startup_seconds` — startup readiness latency (one
+    /// observation per process).
+    pub drain_startup: Histogram,
+    /// `atc_pg_drain_shutdown_remaining_rows` — outbox rows past the drain's
+    /// watermark at drain task exit (one observation per process).
+    pub drain_shutdown_remaining_rows: Histogram,
+
+    /// `atc_pg_broadcast_watermark` — highest outbox seq broadcast by this
+    /// replica (commit-order cursor; per-replica).
+    pub broadcast_watermark: Gauge,
+    /// `atc_pg_min_pending_seq` — lowest pending NOTIFY seq registered with
+    /// the gap-healing backstop, or NaN when the drain has caught up.
+    pub min_pending_seq: Gauge,
 }
 
-/// Register listener and drain task metrics.
-///
-/// Counters:
-/// - atc_pg_notify_emitted_total{kind} — emitted from `PgStore::apply_*_event` after commit (ADR 0005)
-/// - atc_pg_notify_received_total — received by listener task
-/// - atc_pg_listener_recv_errors_total — recv() errors (sqlx hides successful reconnects)
-/// - atc_pg_drain_passes_total — drain task wake-ups
-/// - atc_pg_drain_rows_total — outbox rows fetched across all passes
-/// - atc_pg_drain_duplicate_skipped_total — broadcasts suppressed by ring-buffer dedup
-/// - atc_pg_drain_unknown_kind_total — outbox rows with an unrecognized kind discriminator
-/// - atc_pg_wake_coalesced_total — NOTIFYs observed while a drain pass was in flight
-///
-/// Histograms:
-/// - atc_pg_outbox_lag_seconds — wall time between outbox row insert and broadcast (one per row)
-/// - atc_pg_drain_pass_duration_seconds — wall time for one drain pass (including pagination)
-/// - atc_pg_drain_startup_seconds — wall time from watermark init through first drain pass exit
-/// - atc_pg_drain_shutdown_remaining_rows — outbox rows past this replica's watermark at drain task exit
-///
-/// Gauges:
-/// - atc_pg_broadcast_watermark — highest outbox seq broadcast by this replica
-/// - atc_pg_min_pending_seq — lowest pending NOTIFY seq below the watermark, NaN when caught up
-pub fn register_listener_metrics() {
-    metrics::describe_counter!(
-        "atc_pg_notify_emitted_total",
-        "Notifications emitted from the webhook handler, by event kind"
-    );
-    metrics::describe_counter!(
-        "atc_pg_notify_received_total",
-        "Notifications received by the listener task"
-    );
-    metrics::describe_counter!(
-        "atc_pg_listener_recv_errors_total",
-        "Listener task recv() error events (sqlx reconnects internally; this counts irrecoverable surfacings)"
-    );
-    metrics::describe_counter!(
-        "atc_pg_drain_passes_total",
-        "Drain task pass count (one per wake-up)"
-    );
-    metrics::describe_counter!(
-        "atc_pg_drain_rows_total",
-        "Total outbox rows fetched by the drain task across all passes"
-    );
-    metrics::describe_counter!(
-        "atc_pg_drain_duplicate_skipped_total",
-        "Outbox rows whose broadcast was suppressed by the dedup ring buffer"
-    );
-    metrics::describe_counter!(
-        "atc_pg_drain_unknown_kind_total",
-        "Outbox rows with an unrecognized kind discriminator"
-    );
-    metrics::describe_counter!(
-        "atc_pg_wake_coalesced_total",
-        "NOTIFY arrivals observed by the listener while a drain pass was in flight"
-    );
-    metrics::describe_histogram!(
-        "atc_pg_outbox_lag_seconds",
-        "Event age at broadcast: wall time between outbox row inserted_at and broadcast (one observation per broadcast row)"
-    );
-    metrics::describe_histogram!(
-        "atc_pg_drain_pass_duration_seconds",
-        "Wall time for one drain pass, including paginated batches; heartbeat-only wakes excluded"
-    );
-    metrics::describe_histogram!(
-        "atc_pg_drain_startup_seconds",
-        "Startup readiness latency: wall time from watermark init through first drain pass exit (one observation per process)"
-    );
-    metrics::describe_histogram!(
-        "atc_pg_drain_shutdown_remaining_rows",
-        "Outbox rows with seq above this replica's drain watermark at drain task exit (one observation per process; absent when the shutdown count query failed)"
-    );
-    metrics::describe_gauge!(
-        "atc_pg_broadcast_watermark",
-        "Highest outbox seq broadcast by this replica (commit-order cursor; per-replica)"
-    );
-    metrics::describe_gauge!(
-        "atc_pg_min_pending_seq",
-        "Lowest pending NOTIFY seq registered with the gap-healing backstop, or NaN when the drain has caught up (sentinel)"
-    );
+impl PgMetrics {
+    /// Describe every metric and cache its handle.
+    ///
+    /// MUST be called after the global `metrics::Recorder` is installed —
+    /// handles cached before recorder install bind permanently to the no-op
+    /// recorder and silently drop every emit. `PgStore::start` satisfies this
+    /// precondition: production `main.rs` runs `otel::init_otel` before
+    /// `PgStore::start`, and the integration test harness installs the
+    /// recorder once per binary via the `OnceLock` guard in
+    /// `tests/integration/common/mod.rs` before any test constructs a
+    /// `PgStore`.
+    ///
+    /// Safe to call multiple times — e.g. multiple `PgStore` instances across
+    /// integration tests in the same binary. `metrics-exporter-otel` keeps a
+    /// single `(KeyName, MetricKind)` entry in its metadata table that is
+    /// overwritten on each `describe_*!`, and the `metrics-util` registry
+    /// deduplicates handle creation by `Key` — so every call returns
+    /// equivalent handles bound to the same underlying registry entries.
+    ///
+    /// `atc_pg_in_memory_drift_total` is described here but no handle is
+    /// cached: the metric is part of the documented surface but has no
+    /// production emit site today.
+    pub(crate) fn register() -> Arc<Self> {
+        // Counters — write path (PgStore::apply_*_event).
+        metrics::describe_counter!(
+            "atc_pg_write_failures_total",
+            "PG write failures by kind (parity or transient)"
+        );
+        metrics::describe_counter!(
+            "atc_pg_in_memory_drift_total",
+            "PG committed but in-memory apply diverged"
+        );
+        metrics::describe_counter!(
+            "atc_pg_notify_emitted_total",
+            "Notifications emitted from the webhook handler, by event kind"
+        );
+
+        // Counters — listener and drain tasks.
+        metrics::describe_counter!(
+            "atc_pg_notify_received_total",
+            "Notifications received by the listener task"
+        );
+        metrics::describe_counter!(
+            "atc_pg_listener_recv_errors_total",
+            "Listener task recv() error events (sqlx reconnects internally; this counts irrecoverable surfacings)"
+        );
+        metrics::describe_counter!(
+            "atc_pg_wake_coalesced_total",
+            "NOTIFY arrivals observed by the listener while a drain pass was in flight"
+        );
+        metrics::describe_counter!(
+            "atc_pg_drain_passes_total",
+            "Drain task pass count (one per wake-up)"
+        );
+        metrics::describe_counter!(
+            "atc_pg_drain_rows_total",
+            "Total outbox rows fetched by the drain task across all passes"
+        );
+        metrics::describe_counter!(
+            "atc_pg_drain_duplicate_skipped_total",
+            "Outbox rows whose broadcast was suppressed by the dedup ring buffer"
+        );
+        metrics::describe_counter!(
+            "atc_pg_drain_unknown_kind_total",
+            "Outbox rows with an unrecognized kind discriminator"
+        );
+
+        // Histograms.
+        metrics::describe_histogram!(
+            "atc_pg_outbox_lag_seconds",
+            "Event age at broadcast: wall time between outbox row inserted_at and broadcast (one observation per broadcast row)"
+        );
+        metrics::describe_histogram!(
+            "atc_pg_drain_pass_duration_seconds",
+            "Wall time for one drain pass, including paginated batches; heartbeat-only wakes excluded"
+        );
+        metrics::describe_histogram!(
+            "atc_pg_drain_startup_seconds",
+            "Startup readiness latency: wall time from watermark init through first drain pass exit (one observation per process)"
+        );
+        metrics::describe_histogram!(
+            "atc_pg_drain_shutdown_remaining_rows",
+            "Outbox rows with seq above this replica's drain watermark at drain task exit (one observation per process; absent when the shutdown count query failed)"
+        );
+
+        // Gauges.
+        metrics::describe_gauge!(
+            "atc_pg_broadcast_watermark",
+            "Highest outbox seq broadcast by this replica (commit-order cursor; per-replica)"
+        );
+        metrics::describe_gauge!(
+            "atc_pg_min_pending_seq",
+            "Lowest pending NOTIFY seq registered with the gap-healing backstop, or NaN when the drain has caught up (sentinel)"
+        );
+
+        Arc::new(Self {
+            write_failures_parity: metrics::counter!(
+                "atc_pg_write_failures_total",
+                "kind" => "parity",
+            ),
+            write_failures_transient: metrics::counter!(
+                "atc_pg_write_failures_total",
+                "kind" => "transient",
+            ),
+            notify_emitted_run: metrics::counter!(
+                "atc_pg_notify_emitted_total",
+                "kind" => "run",
+            ),
+            notify_emitted_job: metrics::counter!(
+                "atc_pg_notify_emitted_total",
+                "kind" => "job",
+            ),
+
+            notify_received: metrics::counter!("atc_pg_notify_received_total"),
+            listener_recv_errors: metrics::counter!("atc_pg_listener_recv_errors_total"),
+            wake_coalesced: metrics::counter!("atc_pg_wake_coalesced_total"),
+
+            drain_passes: metrics::counter!("atc_pg_drain_passes_total"),
+            drain_rows: metrics::counter!("atc_pg_drain_rows_total"),
+            drain_duplicate_skipped: metrics::counter!("atc_pg_drain_duplicate_skipped_total"),
+            drain_unknown_kind: metrics::counter!("atc_pg_drain_unknown_kind_total"),
+
+            outbox_lag: metrics::histogram!("atc_pg_outbox_lag_seconds"),
+            drain_pass_duration: metrics::histogram!("atc_pg_drain_pass_duration_seconds"),
+            drain_startup: metrics::histogram!("atc_pg_drain_startup_seconds"),
+            drain_shutdown_remaining_rows: metrics::histogram!(
+                "atc_pg_drain_shutdown_remaining_rows"
+            ),
+
+            broadcast_watermark: metrics::gauge!("atc_pg_broadcast_watermark"),
+            min_pending_seq: metrics::gauge!("atc_pg_min_pending_seq"),
+        })
+    }
 }
 
 /// Describe process metrics and spawn a background collector that ticks every

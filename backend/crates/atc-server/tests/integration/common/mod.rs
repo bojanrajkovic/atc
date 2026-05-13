@@ -111,13 +111,12 @@ fn install_test_otel() -> OtelTestHarness {
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init();
 
-    // Register descriptions for every metric the production server emits. The
-    // first emission of a metric without a prior `describe_*!` would otherwise
-    // create the OTel instrument with an empty description, which is fine in
-    // production but defeats AC test inspection.
+    // `register_build_info` is the only describe call the harness needs to
+    // make eagerly — the cached PG metric handles are registered transitively
+    // by `PgStore::start` (via `PgMetrics::register`) when a test constructs a
+    // store. Tests that never build a `PgStore` (the in-memory routing tests)
+    // emit no `atc_pg_*` metrics and don't need them described.
     atc_server::metrics::register_build_info();
-    atc_server::metrics::register_pg_write_counters();
-    atc_server::metrics::register_listener_metrics();
 
     OtelTestHarness {
         span_exporter,

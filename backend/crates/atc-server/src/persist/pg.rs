@@ -18,6 +18,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::listener;
+use crate::metrics::PgMetrics;
 use crate::shutdown::{SHUTDOWN_TIMEOUT_DRAIN, SHUTDOWN_TIMEOUT_LISTENER, join_with_timeout};
 use crate::state::{SeqEvent, StateSnapshot};
 
@@ -168,6 +169,11 @@ pub struct PgStore {
     /// into the drain task at spawn time so the drain is the sole writer in
     /// PG mode.
     broadcast_tx: broadcast::Sender<SeqEvent>,
+    /// Cached metric handles for every `atc_pg_*` emit site. Constructed once
+    /// per store in `start_inner` (which requires the global recorder to be
+    /// installed first — see [`PgMetrics::register`]) and cloned into the
+    /// listener and drain task closures.
+    metrics: Arc<PgMetrics>,
     /// JoinHandles for the spawned listener and drain tasks. Consumed by the
     /// first `shutdown()` call; subsequent calls observe `None` and return
     /// immediately.
@@ -277,6 +283,14 @@ impl PgStore {
         // production subscribers come from `subscribe()`).
         let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(BROADCAST_CAPACITY);
 
+        // Register cached metric handles. Must happen before any emit. The
+        // recorder-install precondition is upheld by callers: production
+        // `main.rs` runs `otel::init_otel` before `PgStore::start`, and the
+        // integration harness installs the recorder once per binary via the
+        // `OnceLock` in `tests/integration/common/mod.rs` before any test
+        // constructs a `PgStore`.
+        let pg_metrics = PgMetrics::register();
+
         // Arcs the listener and drain need to coordinate.
         let broadcast_watermark = Arc::new(AtomicI64::new(0));
         let last_drain_pass_at = Arc::new(AtomicI64::new(now_millis()));
@@ -299,7 +313,7 @@ impl PgStore {
         // Mirror the watermark into the gauge so /metrics is immediately
         // consistent with the seeded atomic.
         #[allow(clippy::cast_precision_loss)]
-        metrics::gauge!("atc_pg_broadcast_watermark").set(initial_watermark as f64);
+        pg_metrics.broadcast_watermark.set(initial_watermark as f64);
 
         // Spawn listener.
         let listener_handle = listener::spawn_listener_task(
@@ -309,6 +323,7 @@ impl PgStore {
             Arc::clone(&drain_in_flight),
             shutdown.clone(),
             received_counter,
+            Arc::clone(&pg_metrics),
         );
 
         // Spawn drain.
@@ -326,6 +341,7 @@ impl PgStore {
             observed_passes,
             drain_started,
             drain_delay,
+            Arc::clone(&pg_metrics),
         );
 
         // After this point, no fallible operations remain. A future
@@ -337,6 +353,7 @@ impl PgStore {
             broadcast_watermark,
             last_drain_pass_at,
             broadcast_tx,
+            metrics: pg_metrics,
             handles: StdMutex::new(Some(PgStoreHandles {
                 listener: listener_handle,
                 drain: drain_handle,
@@ -482,40 +499,37 @@ impl PersistentStore for PgStore {
     )]
     async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<u64, PersistError> {
         let mut tx = self.pool.begin().await.map_err(|e| {
-            metrics::counter!("atc_pg_write_failures_total", "kind" => "transient").increment(1);
+            self.metrics.write_failures_transient.increment(1);
             PersistError::Backend(Box::new(e))
         })?;
         match upsert_run_in_txn(&mut tx, &env).await {
             Ok(()) => {}
             Err(PersistError::InvalidTransition) => {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "parity").increment(1);
+                self.metrics.write_failures_parity.increment(1);
                 return Err(PersistError::InvalidTransition);
             }
             Err(e) => {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                    .increment(1);
+                self.metrics.write_failures_transient.increment(1);
                 return Err(e);
             }
         }
         let seq_i64 = insert_outbox_run_in_txn(&mut tx, &env)
             .await
             .inspect_err(|_| {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                    .increment(1);
+                self.metrics.write_failures_transient.increment(1);
             })?;
         tracing::Span::current().record("seq", seq_i64);
         notify_outbox_seq_in_txn(&mut tx, "run", seq_i64)
             .await
             .inspect_err(|_| {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                    .increment(1);
+                self.metrics.write_failures_transient.increment(1);
             })?;
         tx.commit().await.map_err(|e| {
-            metrics::counter!("atc_pg_write_failures_total", "kind" => "transient").increment(1);
+            self.metrics.write_failures_transient.increment(1);
             PersistError::Backend(Box::new(e))
         })?;
         // Emit AFTER commit: PG delivers NOTIFYs on COMMIT; aborted txns drop them.
-        metrics::counter!("atc_pg_notify_emitted_total", "kind" => "run").increment(1);
+        self.metrics.notify_emitted_run.increment(1);
         // BIGSERIAL is always positive; conversion is infallible.
         Ok(u64::try_from(seq_i64).expect("BIGSERIAL is non-negative"))
     }
@@ -534,40 +548,37 @@ impl PersistentStore for PgStore {
     )]
     async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError> {
         let mut tx = self.pool.begin().await.map_err(|e| {
-            metrics::counter!("atc_pg_write_failures_total", "kind" => "transient").increment(1);
+            self.metrics.write_failures_transient.increment(1);
             PersistError::Backend(Box::new(e))
         })?;
         match upsert_job_in_txn(&mut tx, &env).await {
             Ok(()) => {}
             Err(PersistError::InvalidTransition) => {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "parity").increment(1);
+                self.metrics.write_failures_parity.increment(1);
                 return Err(PersistError::InvalidTransition);
             }
             Err(e) => {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                    .increment(1);
+                self.metrics.write_failures_transient.increment(1);
                 return Err(e);
             }
         }
         let seq_i64 = insert_outbox_job_in_txn(&mut tx, &env)
             .await
             .inspect_err(|_| {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                    .increment(1);
+                self.metrics.write_failures_transient.increment(1);
             })?;
         tracing::Span::current().record("seq", seq_i64);
         notify_outbox_seq_in_txn(&mut tx, "job", seq_i64)
             .await
             .inspect_err(|_| {
-                metrics::counter!("atc_pg_write_failures_total", "kind" => "transient")
-                    .increment(1);
+                self.metrics.write_failures_transient.increment(1);
             })?;
         tx.commit().await.map_err(|e| {
-            metrics::counter!("atc_pg_write_failures_total", "kind" => "transient").increment(1);
+            self.metrics.write_failures_transient.increment(1);
             PersistError::Backend(Box::new(e))
         })?;
         // Emit AFTER commit: PG delivers NOTIFYs on COMMIT; aborted txns drop them.
-        metrics::counter!("atc_pg_notify_emitted_total", "kind" => "job").increment(1);
+        self.metrics.notify_emitted_job.increment(1);
         // BIGSERIAL is always positive; conversion is infallible.
         Ok(u64::try_from(seq_i64).expect("BIGSERIAL is non-negative"))
     }

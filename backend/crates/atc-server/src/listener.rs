@@ -23,6 +23,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info_span};
 
+use crate::metrics::PgMetrics;
 use crate::state::SeqEvent;
 
 /// The PG LISTEN/NOTIFY channel name used by the outbox.
@@ -83,6 +84,7 @@ pub fn spawn_listener_task(
     drain_in_flight: Arc<AtomicBool>,
     cancel: CancellationToken,
     received_counter: Option<Arc<AtomicU64>>,
+    metrics: Arc<PgMetrics>,
 ) -> JoinHandle<()> {
     // Construct the task-lifetime span at spawn time. tokio::spawn does NOT
     // propagate parent spans automatically — the future is wrapped with
@@ -101,10 +103,11 @@ pub fn spawn_listener_task(
                                 min_pending_seq.as_ref(),
                                 drain_in_flight.as_ref(),
                                 received_counter.as_deref(),
+                                metrics.as_ref(),
                             );
                         }
                         Err(e) => {
-                            metrics::counter!("atc_pg_listener_recv_errors_total").increment(1);
+                            metrics.listener_recv_errors.increment(1);
                             tracing::warn!(error = %e, "pg listener recv error");
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
@@ -129,8 +132,9 @@ fn handle_listener_notification(
     min_pending_seq: &AtomicI64,
     drain_in_flight: &AtomicBool,
     received_counter: Option<&AtomicU64>,
+    metrics: &PgMetrics,
 ) {
-    metrics::counter!("atc_pg_notify_received_total").increment(1);
+    metrics.notify_received.increment(1);
     if let Some(c) = received_counter {
         c.fetch_add(1, Ordering::Relaxed);
     }
@@ -139,7 +143,7 @@ fn handle_listener_notification(
     // Notify still collapses the permits — this counter
     // reports arrival rate vs. drain pass rate.
     if drain_in_flight.load(Ordering::Acquire) {
-        metrics::counter!("atc_pg_wake_coalesced_total").increment(1);
+        metrics.wake_coalesced.increment(1);
     }
     match notification.payload().parse::<i64>() {
         Ok(seq) => {
@@ -152,7 +156,7 @@ fn handle_listener_notification(
             } else {
                 new_min as f64
             };
-            metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
+            metrics.min_pending_seq.set(gauge_value);
         }
         Err(e) => {
             tracing::warn!(
@@ -201,6 +205,7 @@ pub fn spawn_drain_task(
     observed_passes: Option<Arc<AtomicU64>>,
     drain_started: Option<Arc<Notify>>,
     drain_delay: Option<Duration>,
+    metrics: Arc<PgMetrics>,
 ) -> JoinHandle<()> {
     // Construct the task-lifetime span at spawn time so descendants
     // (`drain.pass`, `drain.broadcast`) attach to this root rather than
@@ -250,7 +255,7 @@ pub fn spawn_drain_task(
                 // as NaN so dashboards distinguish "no pending NOTIFY below
                 // watermark" from "pending NOTIFY at seq 0".
                 let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);
-                metrics::gauge!("atc_pg_min_pending_seq").set(f64::NAN);
+                metrics.min_pending_seq.set(f64::NAN);
                 let pass_start_floor = watermark.min(backstop.saturating_sub(1));
 
                 // Wake-coalesce instrumentation bracket: the listener counts
@@ -269,19 +274,22 @@ pub fn spawn_drain_task(
                     &mut recent_set,
                     &webhook_tx,
                     drain_delay,
+                    &metrics,
                 )
                 .await;
                 drain_in_flight.store(false, Ordering::Release);
-                metrics::histogram!("atc_pg_drain_pass_duration_seconds")
+                metrics
+                    .drain_pass_duration
                     .record(pass_start.elapsed().as_secs_f64());
 
                 if !startup_recorded {
-                    metrics::histogram!("atc_pg_drain_startup_seconds")
+                    metrics
+                        .drain_startup
                         .record(startup_at.elapsed().as_secs_f64());
                     startup_recorded = true;
                 }
 
-                metrics::counter!("atc_pg_drain_passes_total").increment(1);
+                metrics.drain_passes.increment(1);
                 if let Some(c) = observed_passes.as_deref() {
                     c.fetch_add(1, Ordering::Relaxed);
                 }
@@ -302,7 +310,7 @@ pub fn spawn_drain_task(
                     // hasn't materialised in a concurrent snapshot view.
                     broadcast_watermark.store(watermark, Ordering::Release);
                     #[allow(clippy::cast_precision_loss)]
-                    metrics::gauge!("atc_pg_broadcast_watermark").set(watermark as f64);
+                    metrics.broadcast_watermark.set(watermark as f64);
                 } else {
                     // Re-register the captured backstop so the next pass still has
                     // the gap-healing floor. Without this, a transient query
@@ -322,7 +330,7 @@ pub fn spawn_drain_task(
                         } else {
                             new_min as f64
                         };
-                        metrics::gauge!("atc_pg_min_pending_seq").set(gauge_value);
+                        metrics.min_pending_seq.set(gauge_value);
                     }
                     // Force the next iteration to attempt another drain pass.
                     // Without this, the loop would re-enter the `tokio::select!`
@@ -352,7 +360,7 @@ pub fn spawn_drain_task(
             // cannot stall process exit; on timeout or query error we log and
             // skip the observation rather than recording 0 (which would silently
             // mask the problem).
-            record_shutdown_remaining(&shutdown_pool, watermark).await;
+            record_shutdown_remaining(&shutdown_pool, watermark, &metrics).await;
         }
         .instrument(task_span),
     )
@@ -367,7 +375,7 @@ pub fn spawn_drain_task(
 /// signal arrival — the webhook handler keeps writing until axum's graceful
 /// shutdown drains in-flight requests, so the count includes anything
 /// committed during that window.
-async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64) {
+async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics: &PgMetrics) {
     let query = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!: i64" FROM outbox WHERE seq > $1"#,
         watermark,
@@ -377,7 +385,9 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64) {
     match tokio::time::timeout(SHUTDOWN_REMAINING_QUERY_TIMEOUT, query).await {
         Ok(Ok(remaining)) => {
             #[allow(clippy::cast_precision_loss)]
-            metrics::histogram!("atc_pg_drain_shutdown_remaining_rows").record(remaining as f64);
+            metrics
+                .drain_shutdown_remaining_rows
+                .record(remaining as f64);
         }
         Ok(Err(e)) => {
             tracing::warn!(
@@ -424,6 +434,7 @@ async fn drain_pass(
     recent_set: &mut HashSet<i64>,
     webhook_tx: &broadcast::Sender<SeqEvent>,
     drain_delay: Option<Duration>,
+    metrics: &PgMetrics,
 ) -> bool {
     if let Some(d) = drain_delay {
         tokio::time::sleep(d).await;
@@ -492,14 +503,14 @@ async fn drain_pass(
                     }
                 },
                 other => {
-                    metrics::counter!("atc_pg_drain_unknown_kind_total").increment(1);
+                    metrics.drain_unknown_kind.increment(1);
                     tracing::warn!(seq = row.seq, kind = %other, "unknown outbox kind discriminator");
                     continue;
                 }
             };
 
             if recent_set.contains(&row.seq) {
-                metrics::counter!("atc_pg_drain_duplicate_skipped_total").increment(1);
+                metrics.drain_duplicate_skipped.increment(1);
             } else {
                 // Event age at broadcast: now() - inserted_at, recorded once
                 // per broadcast row. The metric over-reports by the writer's
@@ -530,7 +541,7 @@ async fn drain_pass(
                         event,
                     });
 
-                    metrics::histogram!("atc_pg_outbox_lag_seconds").record(lag_seconds);
+                    metrics.outbox_lag.record(lag_seconds);
                 });
 
                 recent_ring.push_back(row.seq);
@@ -542,7 +553,7 @@ async fn drain_pass(
                 }
             }
         }
-        metrics::counter!("atc_pg_drain_rows_total").increment(fetched as u64);
+        metrics.drain_rows.increment(fetched as u64);
 
         if fetched < DRAIN_BATCH_SIZE as usize {
             break;
