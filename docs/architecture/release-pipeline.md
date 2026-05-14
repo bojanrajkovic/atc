@@ -63,11 +63,11 @@ Both workflows integrate with the conventional commits framework to provide full
 
 ---
 
-**Decision:** Per-platform GitHub Actions cache scopes — applies to `build-binaries` only
+**Decision:** No GitHub Actions cache on any release-pipeline build job
 
-**Alternatives considered:** Global cache; no caching; cache per job type
+**Alternatives considered:** Per-platform cargo cache (`Swatinem/rust-cache` keyed by target triple) on `build-binaries`; GHA layer cache (`cache-from: type=gha`) on `build-container`
 
-**Rationale:** GitHub Actions assigns cache writes per platform/runner type. Explicitly scoping caches per platform (linux-x86_64, linux-aarch64, macos) prevents cache misses from cross-platform differences and maximizes hit rates. Rust's target-specific build artifacts are inherently platform-sensitive. Note: `build-container` no longer participates in this scheme — since adopting `Dockerfile.release` (binary-handoff pattern, see Decision below), the container build is a single `COPY` with no compile work to cache.
+**Rationale:** Release artifacts are signed-and-attested binaries shipped to ghcr.io and GitHub Releases. zizmor's [`cache-poisoning`](https://docs.zizmor.sh/audits/#cache-poisoning) audit rule flags this exact pattern: "an attacker with access to a valid `GITHUB_TOKEN` can use it to poison the repository's GitHub Actions caches…When a release workflow then restores from these poisoned caches, it can retrieve malicious payloads, achieving code execution and potentially compromising artifacts before publication." `actions/cache` scopes by branch, but PR runs against any branch (including `main`) can write entries that a later tag build reads back through cache restore fallback. Cargo's registry cache in particular is a near-perfect injection surface (a poisoned crates.io index entry could swap a dependency to a malicious mirror without changing `Cargo.lock`). `build-binaries` accepts the cold cargo build (~3 minutes per matrix entry) as the price of trustworthy release artifacts. `build-container` is `FROM + COPY` only after the `Dockerfile.release` adoption (binary-handoff pattern, see Decision below), so there's no compile work to cache regardless — the no-cache posture is symmetric with the build-binaries decision rather than separately argued.
 
 ---
 
