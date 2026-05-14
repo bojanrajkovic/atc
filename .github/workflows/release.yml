@@ -56,9 +56,21 @@ jobs:
           install: false
           cache: false
 
-      - name: Read Node version from mise.toml
+      - name: Read Node and pnpm versions from mise.toml
         id: versions
-        run: echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$(mise config get tools.pnpm)" >> "$GITHUB_OUTPUT"
+
+      # pnpm/action-setup must run BEFORE setup-node. setup-node honors
+      # cache: pnpm only when a pnpm binary is already on PATH. Mirrors the
+      # frontend job in ci.yml — the corepack-based variant we tried first
+      # produced a "corepack: command not found" error because the
+      # mise-shims-first PATH on these self-hosted runners shadows the node
+      # bin directory that setup-node tries to prepend.
+      - uses: pnpm/action-setup@91ab88e2619ed1f46221f0ba42d1492c02baf788 # v6.0.6
+        with:
+          version: ${{ steps.versions.outputs.pnpm }}
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -67,12 +79,6 @@ jobs:
           # In a tag-triggered release workflow, a poisoned cache from an earlier
           # feature-branch run could end up baked into the published binary.
           package-manager-cache: false
-
-      # Corepack reads the pnpm version from frontend/package.json's
-      # "packageManager" field and auto-downloads the pinned version on first
-      # invocation. No pnpm/action-setup needed.
-      - name: Enable Corepack
-        run: corepack enable
 
       - name: Install dependencies
         working-directory: frontend
