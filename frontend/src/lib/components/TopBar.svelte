@@ -58,7 +58,7 @@
           ? `Reconnecting (attempt ${connectionStore.reconnectAttempt})...`
           : 'Connecting...'
       case 'disconnected':
-        return 'Disconnected'
+        return 'Disconnected — click to reconnect'
     }
   })
 
@@ -145,6 +145,10 @@
 
   <!-- Connection indicator: row 1 at <md (order-2 = next to Logo), row 1 at md+ (order-4) -->
   <div class="order-2 md:order-4">
-    <ConnectionIndicator state={indicatorState} detail={indicatorDetail} />
+    <ConnectionIndicator
+      state={indicatorState}
+      detail={indicatorDetail}
+      onreconnect={() => connectionStore.requestReconnect()}
+    />
   </div>
 </header>

@@ -326,4 +326,70 @@ describe('ConnectionManager', () => {
       vi.useRealTimers()
     })
   })
+
+  describe('Max reconnect attempts — give up after cap', () => {
+    it('stops scheduling reconnect timers once attempt count reaches MAX_RECONNECT_ATTEMPTS', async () => {
+      const { MAX_RECONNECT_ATTEMPTS } = await import('$lib/connection')
+
+      // Force the state fetch to fail so `connect()` never reaches the
+      // success path (where `reconnectAttempt` would be reset to 0) — the
+      // primed counter has to survive into `handleDisconnect`.
+      server.use(
+        http.get('http://localhost:*/v1/state', () => new HttpResponse(null, { status: 500 })),
+      )
+
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+      connectionStore.reconnectAttempt = MAX_RECONNECT_ATTEMPTS
+
+      const timeoutSpy = vi.spyOn(global, 'setTimeout')
+      const callsBefore = timeoutSpy.mock.calls.length
+
+      manager.connect().catch(() => {})
+      await vi.runAllTimersAsync()
+
+      // State fetch returned 500 → connect's catch closed the WS and called
+      // handleDisconnect. With the counter at the cap, no new timer should
+      // have been scheduled and the indicator should be `disconnected`.
+      const reconnectCalls = timeoutSpy.mock.calls.slice(callsBefore)
+      expect(reconnectCalls.length).toBe(0)
+      expect(connectionStore.status).toBe('disconnected')
+
+      timeoutSpy.mockRestore()
+      manager.destroy()
+      vi.useRealTimers()
+    })
+
+    it('manager.reconnect() re-arms the loop after the cap', async () => {
+      const { MAX_RECONNECT_ATTEMPTS } = await import('$lib/connection')
+
+      // Same setup as the previous test — fail state fetch so the cap trips.
+      server.use(
+        http.get('http://localhost:*/v1/state', () => new HttpResponse(null, { status: 500 })),
+      )
+
+      vi.useFakeTimers()
+
+      const manager = new ConnectionManager(baseUrl)
+      connectionStore.reconnectAttempt = MAX_RECONNECT_ATTEMPTS
+
+      manager.connect().catch(() => {})
+      await vi.runAllTimersAsync()
+
+      expect(connectionStore.status).toBe('disconnected')
+
+      // Operator clicks the indicator → store fires requestReconnect →
+      // ConnectionManager.svelte calls manager.reconnect(). Here we call it
+      // directly since we're outside the Svelte effect.
+      manager.reconnect()
+
+      // Counter resets and a fresh connect cycle starts.
+      expect(connectionStore.reconnectAttempt).toBe(0)
+      expect(connectionStore.status).toBe('connecting')
+
+      manager.destroy()
+      vi.useRealTimers()
+    })
+  })
 })

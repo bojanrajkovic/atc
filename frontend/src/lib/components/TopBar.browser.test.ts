@@ -88,8 +88,10 @@ describe('TopBar (browser mode)', () => {
   it('renders ConnectionIndicator with disconnected state by default', () => {
     render(TopBar)
 
-    // Default connectionStore.status is 'disconnected'
-    const indicator = screen.getByRole('status', { name: /disconnected/i })
+    // Default connectionStore.status is 'disconnected'. TopBar wires a
+    // requestReconnect callback so the indicator renders as a clickable
+    // button (per issue #24) rather than the inert role="status" span.
+    const indicator = screen.getByRole('button', { name: /disconnected/i })
     expect(indicator).toBeTruthy()
   })
 

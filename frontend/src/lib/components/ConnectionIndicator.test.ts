@@ -145,6 +145,39 @@ describe('ConnectionIndicator', () => {
       const style = innerDot.getAttribute('style')
       expect(style).toContain('--failed')
     })
+
+    it('renders as a clickable button when onreconnect is provided', async () => {
+      const { fireEvent } = await import('@testing-library/svelte')
+      let clicked = 0
+      render(ConnectionIndicator, {
+        props: {
+          state: 'disconnected',
+          detail: 'Disconnected — click to reconnect',
+          onreconnect: () => {
+            clicked++
+          },
+        },
+      })
+
+      const button = screen.getByRole('button', { name: /click to reconnect/i })
+      expect(button.tagName).toBe('BUTTON')
+      await fireEvent.click(button)
+      expect(clicked).toBe(1)
+    })
+
+    it('stays inert when state is not disconnected even with onreconnect provided', () => {
+      render(ConnectionIndicator, {
+        props: {
+          state: 'connecting',
+          detail: 'Connecting...',
+          onreconnect: () => {},
+        },
+      })
+
+      // Only the disconnected state promotes the indicator to a button.
+      expect(screen.queryByRole('button')).toBeNull()
+      expect(screen.getByRole('status')).toBeTruthy()
+    })
   })
 
   describe('dynamic updates', () => {

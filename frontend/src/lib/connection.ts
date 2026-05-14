@@ -5,6 +5,15 @@ import { runStore } from '$lib/stores/runs.svelte'
 import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
+/**
+ * Stop scheduling reconnect timers after this many consecutive failed attempts.
+ * Cumulative wait under the exponential schedule (1s, 2s, 4s, 8s, 16s, 30s×5)
+ * is ~3 minutes; the dashboard then sits in `disconnected` until the user
+ * clicks the indicator to retry. Prevents tabs left open against a
+ * permanently-gone backend from spinning the connect loop forever.
+ */
+export const MAX_RECONNECT_ATTEMPTS = 10
+
 export class ConnectionManager {
   private ws: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -149,6 +158,15 @@ export class ConnectionManager {
     // whose 200ms debounce timer has not yet fired; without this, closeBurst()
     // would announce a stale summary while the app is reconnecting.
     liveRegion.cancelBurst()
+
+    // Give up after the configured attempt cap. The indicator transitions to
+    // `disconnected` and the user can re-arm the loop by clicking it (which
+    // routes through `connectionStore.requestReconnect()` → manager.reconnect()).
+    if (connectionStore.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+      connectionStore.status = 'disconnected'
+      return
+    }
+
     connectionStore.status = 'reconnecting'
 
     // Exponential backoff: 1s, 2s, 4s, 8s, ..., capped at 30s

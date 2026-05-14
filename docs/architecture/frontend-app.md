@@ -532,6 +532,7 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 - Connection loss triggers exponential backoff (1s, 2s, 4s, ..., max 30s)
 - On reconnect, client re-fetches full state snapshot to ensure consistency
 - Event queue resumes from the new sequence number
+- After `MAX_RECONNECT_ATTEMPTS` (10 — exported from `connection.ts`, cumulative ~3 min) the manager **gives up**: `connectionStore.status` transitions to `'disconnected'`, no further timers are scheduled, and the `ConnectionIndicator` chip promotes to a `<button>` with the tooltip "Disconnected — click to reconnect" (issue #24). Clicking calls `connectionStore.requestReconnect()`, which the `ConnectionManager.svelte` `$effect` observes and routes to `manager.reconnect()` — the same path the command-palette "Reconnect" command uses. The retry resets the attempt counter to 0, so the operator can re-arm the loop indefinitely.
 
 ## ARIA Live Region
 
