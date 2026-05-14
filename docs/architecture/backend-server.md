@@ -160,6 +160,8 @@ If you find yourself wanting to run in-memory mode against more than one replica
 
 ### Startup behavior
 
+Immediately after tracing is initialized, `main.rs` emits a single `atc-server starting` INFO log line carrying the vergen-embedded build metadata: `version`, `git_describe`, `git_sha`, `rustc_version`, `build_timestamp`, `target_triple`. The same six fields populate the `atc_build_info` gauge (see `docs/architecture/metrics.md`). The log line is the operator's fallback diagnostic when the metrics endpoint isn't reachable — early startup crashes, OTel pipeline disabled, container logs as the only surface.
+
 | Scenario | Behavior |
 |---|---|
 | `ATC_DATABASE_URL` unset | In-memory mode; `pg_pool = None`; no migration step |

@@ -42,7 +42,8 @@ jobs:
     name: Build Frontend
     needs: create-release
     runs-on: [self-hosted, linux, amd64]
-    permissions: {}
+    permissions:
+      contents: read
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
@@ -55,9 +56,21 @@ jobs:
           install: false
           cache: false
 
-      - name: Read Node version from mise.toml
+      - name: Read Node and pnpm versions from mise.toml
         id: versions
-        run: echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "node=$(mise config get tools.node)" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$(mise config get tools.pnpm)" >> "$GITHUB_OUTPUT"
+
+      # pnpm/action-setup must run BEFORE setup-node. setup-node honors
+      # cache: pnpm only when a pnpm binary is already on PATH. Mirrors the
+      # frontend job in ci.yml — the corepack-based variant we tried first
+      # produced a "corepack: command not found" error because the
+      # mise-shims-first PATH on these self-hosted runners shadows the node
+      # bin directory that setup-node tries to prepend.
+      - uses: pnpm/action-setup@91ab88e2619ed1f46221f0ba42d1492c02baf788 # v6.0.6
+        with:
+          version: ${{ steps.versions.outputs.pnpm }}
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -66,12 +79,6 @@ jobs:
           # In a tag-triggered release workflow, a poisoned cache from an earlier
           # feature-branch run could end up baked into the published binary.
           package-manager-cache: false
-
-      # Corepack reads the pnpm version from frontend/package.json's
-      # "packageManager" field and auto-downloads the pinned version on first
-      # invocation. No pnpm/action-setup needed.
-      - name: Enable Corepack
-        run: corepack enable
 
       - name: Install dependencies
         working-directory: frontend
@@ -97,29 +104,83 @@ jobs:
       id-token: write
       attestations: write
     strategy:
-      fail-fast: true
+      # fail-fast: false so an independent matrix entry's failure (e.g.
+      # macOS-hosted billing rejection on aarch64-apple-darwin) doesn't
+      # cancel the Linux cross-compiles. Release artifacts are
+      # arch-independent; partial-success uploads are still useful.
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
             runner: [self-hosted, linux, amd64]
             rustflags: "-C target-feature=+crt-static"
-          # aarch64 Linux is cross-compiled from the amd64 self-hosted runner.
-          # Native code-gen via the gcc-aarch64-linux-gnu cross-toolchain;
-          # no QEMU emulation. CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
-          # is only consulted by cargo when building this target, so setting
-          # it unconditionally on every step in this matrix is harmless.
+          # aarch64 Linux is cross-compiled from the amd64 self-hosted runner;
+          # native code-gen, no QEMU. setup-cross-toolchain-action (below)
+          # extracts a true musl cross-toolchain (aarch64-unknown-linux-musl-gcc
+          # via ghcr.io/taiki-e/rust-cross-toolchain) and sets the corresponding
+          # CARGO_TARGET_*_LINKER + CC_* env vars. The previous attempt to
+          # reuse the runner image's gcc-aarch64-linux-gnu (glibc-targeting)
+          # linker for a +crt-static musl build broke aws-lc-sys at link time
+          # — its C objects emit glibc-internal symbols (__isoc23_*, __*_chk)
+          # that musl libc does not provide. See issue #75 for the empirical
+          # writeup; verified end-to-end in a homelab amd64 pod, with the
+          # resulting binary running cleanly on a linux/arm64 distroless image.
           - target: aarch64-unknown-linux-musl
             runner: [self-hosted, linux, amd64]
             rustflags: "-C target-feature=+crt-static"
           - target: aarch64-apple-darwin
             runner: macos-26
             rustflags: ""
-    env:
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
     steps:
+      # fetch-depth: 0 — vergen-gix in atc-server/build.rs runs `git describe
+      # --tags` to emit VERGEN_GIT_DESCRIBE, which `main.rs` and the
+      # `atc_build_info` gauge embed into the binary. A shallow clone fetches
+      # the tag ref but not the ancestry git describe walks to find the
+      # nearest tag, so on a shallow clone vergen falls back to an
+      # idempotent-output sentinel and the binary loses the tag label.
+      # Full history is a few seconds and only fires on tag pushes.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      # Provision a real aarch64-unknown-linux-musl cross-toolchain for the
+      # arm64 Linux matrix entry only.
+      #
+      # `setup-cross-toolchain-action` probes `rustc -vV` early to decide which
+      # rust-cross-toolchain image tag to pull (1.1 vs 1.2 musl sysroot), so
+      # Rust must already be on PATH when the action runs. The other matrix
+      # entries don't need this prelude because they let
+      # `upload-rust-binary-action` install rustup itself later; here the
+      # cross-toolchain step runs first.
+      #
+      # The action then extracts
+      # `ghcr.io/taiki-e/rust-cross-toolchain:aarch64-unknown-linux-musl1.2-dev-amd64`
+      # into /usr/local and exports the appropriate CARGO_TARGET_*_LINKER,
+      # CC_*, CXX_*, AR_*, RANLIB_* env vars so that aws-lc-sys, ring, and
+      # other native-code crates link against musl libc — not glibc.
+      - if: contains(matrix.target, 'linux-musl')
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
+        with:
+          toolchain: stable
+          # Explicitly install the matrix target via rustup so the build step
+          # below can use `cargo build --target ...` directly. Without this,
+          # upload-rust-binary-action's auto-detect chooses `cross` for
+          # x86_64-unknown-linux-musl on amd64-gnu host, which pins
+          # `cross v0.2.5` (2022). That old crate fails to compile on
+          # modern Rust ("cannot produce proc-macro for clap_derive...").
+          targets: ${{ matrix.target }}
+
+      - if: matrix.target == 'aarch64-unknown-linux-musl'
+        uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6 # v1.40.1
+        with:
+          target: ${{ matrix.target }}
+          # Skip QEMU emulation setup — we only build the binary in this job,
+          # not run it. The action's default for amd64 host targeting
+          # aarch64-musl installs qemu-aarch64 into /usr/local/bin via
+          # `rm -f` without sudo, which fails on the self-hosted runner
+          # (runner user has no write access to /usr/local/bin).
+          runner: none
 
       # rust-embed (in atc-server) reads ../../../frontend/dist at compile time
       # in release mode. Pull the artifact built once by build-frontend so the
@@ -135,6 +196,12 @@ jobs:
           target: ${{ matrix.target }}
           manifest-path: backend/Cargo.toml
           locked: true
+          # Force cargo to avoid the action's auto-detected `cross` for
+          # cross-compile-like targets — we already provide the proper
+          # toolchain via dtolnay/rust-toolchain (+ targets) and, for
+          # aarch64-musl, taiki-e/setup-cross-toolchain-action. cross v0.2.5
+          # (the pinned version in v1.30.2) fails to build on modern Rust.
+          build-tool: cargo
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
@@ -145,7 +212,14 @@ jobs:
           ARCHIVE=$(ls atc-server-${{ matrix.target }}.* 2>/dev/null | head -1)
           echo "path=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
+      # Skip attestation on pre-release tags. The actions/attest-build-
+      # provenance API rejects requests from user-owned private repos
+      # ("Feature not available for user-owned private repositories");
+      # rc/dev cycles should not fail on that. When the repo flips to
+      # public for v1.0, this guard becomes a no-op for the canonical
+      # release tag and attestation runs as before.
       - name: Attest binary
+        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: ${{ steps.archive.outputs.path }}
@@ -175,6 +249,16 @@ jobs:
   build-container:
     name: Build Container (${{ matrix.platform }})
     needs: build-binaries
+    # `build-binaries` runs three matrix entries; only the two linux-musl
+    # entries feed `build-container` (the darwin entry produces a binary
+    # for the GH Release tarball but never a container). With
+    # `fail-fast: false` on build-binaries, the matrix-level conclusion is
+    # `failure` whenever any one entry fails — including a darwin failure
+    # that doesn't affect us here. `!cancelled()` lets this job try as
+    # long as the upstream matrix ran to completion; the download-artifact
+    # step below errors loudly if the linux artifact this entry consumes
+    # isn't actually present.
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
@@ -214,11 +298,15 @@ jobs:
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # `flavor: latest=auto` (the action's default) sets `:latest` only
+          # for non-prerelease semver tags, so a pre-release tag like
+          # v0.99.0-rc1 publishes `0.99.0-rc1` / `0.99` / `0` but does NOT
+          # clobber `:latest`. The earlier `type=raw,value=latest` line
+          # forced `:latest` unconditionally — wrong for rc/pre-release tags.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest
 
       - name: Build and push
         id: build
@@ -254,11 +342,15 @@ jobs:
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # `flavor: latest=auto` (the action's default) sets `:latest` only
+          # for non-prerelease semver tags, so a pre-release tag like
+          # v0.99.0-rc1 publishes `0.99.0-rc1` / `0.99` / `0` but does NOT
+          # clobber `:latest`. The earlier `type=raw,value=latest` line
+          # forced `:latest` unconditionally — wrong for rc/pre-release tags.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest
 
       - name: Create multi-arch manifest
         run: |
@@ -289,16 +381,24 @@ jobs:
         env:
           STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
 
+      # Same private-repo limitation as the binary attestation above —
+      # skip on pre-release tags.
       - name: Attest container image
+        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
 
+  # Skipped on pre-release tags (e.g. v*-rc*, v*-beta*) so the rc/dev cycle
+  # doesn't push Helm chart versions to the OCI registry — those publish
+  # paths have weak retraction semantics and `skip_existing: true` in the
+  # downstream chart-releaser job would block reissuing a real release.
   publish-helm-chart:
     name: Publish Helm Chart
     needs: [create-release, build-container, merge-manifest]
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
@@ -370,6 +470,7 @@ jobs:
   publish-helm-pages:
     name: Publish Helm Chart to GitHub Pages
     needs: publish-helm-chart
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: [self-hosted, linux, amd64]
     permissions:
       # `contents: write` covers the gh-pages push and the per-chart GitHub
