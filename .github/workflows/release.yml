@@ -103,23 +103,38 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: [self-hosted, linux, amd64]
             rustflags: "-C target-feature=+crt-static"
-          # aarch64 Linux is cross-compiled from the amd64 self-hosted runner.
-          # Native code-gen via the gcc-aarch64-linux-gnu cross-toolchain;
-          # no QEMU emulation. CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER
-          # is only consulted by cargo when building this target, so setting
-          # it unconditionally on every step in this matrix is harmless.
+          # aarch64 Linux is cross-compiled from the amd64 self-hosted runner;
+          # native code-gen, no QEMU. setup-cross-toolchain-action (below)
+          # extracts a true musl cross-toolchain (aarch64-unknown-linux-musl-gcc
+          # via ghcr.io/taiki-e/rust-cross-toolchain) and sets the corresponding
+          # CARGO_TARGET_*_LINKER + CC_* env vars. The previous attempt to
+          # reuse the runner image's gcc-aarch64-linux-gnu (glibc-targeting)
+          # linker for a +crt-static musl build broke aws-lc-sys at link time
+          # — its C objects emit glibc-internal symbols (__isoc23_*, __*_chk)
+          # that musl libc does not provide. See issue #75 for the empirical
+          # writeup; verified end-to-end in a homelab amd64 pod, with the
+          # resulting binary running cleanly on a linux/arm64 distroless image.
           - target: aarch64-unknown-linux-musl
             runner: [self-hosted, linux, amd64]
             rustflags: "-C target-feature=+crt-static"
           - target: aarch64-apple-darwin
             runner: macos-26
             rustflags: ""
-    env:
-      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      # Provision a real aarch64-unknown-linux-musl cross-toolchain for the
+      # arm64 Linux matrix entry only. The action extracts
+      # `ghcr.io/taiki-e/rust-cross-toolchain:aarch64-unknown-linux-musl1.2-dev-amd64`
+      # into /usr/local and exports the appropriate CARGO_TARGET_*_LINKER,
+      # CC_*, CXX_*, AR_*, RANLIB_* env vars so that aws-lc-sys, ring, and
+      # other native-code crates link against musl libc — not glibc.
+      - if: matrix.target == 'aarch64-unknown-linux-musl'
+        uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6 # v1.40.1
+        with:
+          target: ${{ matrix.target }}
 
       # rust-embed (in atc-server) reads ../../../frontend/dist at compile time
       # in release mode. Pull the artifact built once by build-frontend so the
