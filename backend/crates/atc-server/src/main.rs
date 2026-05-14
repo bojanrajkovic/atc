@@ -114,6 +114,21 @@ async fn main() {
 
     init_tracing_subscriber(&cfg, otel_handles.as_ref());
 
+    // Build-info startup line. Mirrors the `atc_build_info` gauge labels
+    // (registered immediately below) so operators reading container logs
+    // see the same vergen-embedded metadata that's exposed via OTel metrics
+    // — useful when the metrics endpoint isn't accessible (early startup
+    // crashes, no OTel pipeline, etc.).
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        git_describe = env!("VERGEN_GIT_DESCRIBE"),
+        git_sha = env!("VERGEN_GIT_SHA"),
+        rustc_version = env!("VERGEN_RUSTC_SEMVER"),
+        build_timestamp = env!("VERGEN_BUILD_TIMESTAMP"),
+        target_triple = env!("VERGEN_CARGO_TARGET_TRIPLE"),
+        "atc-server starting",
+    );
+
     // `register_build_info` is the only describe call `main.rs` makes
     // eagerly. The cached `PgMetrics` handles (which carry every other
     // `describe_*!`) are registered inside `PgStore::start` so the PG-mode

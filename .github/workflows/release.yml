@@ -132,9 +132,17 @@ jobs:
             runner: macos-26
             rustflags: ""
     steps:
+      # fetch-depth: 0 — vergen-gix in atc-server/build.rs runs `git describe
+      # --tags` to emit VERGEN_GIT_DESCRIBE, which `main.rs` and the
+      # `atc_build_info` gauge embed into the binary. A shallow clone fetches
+      # the tag ref but not the ancestry git describe walks to find the
+      # nearest tag, so on a shallow clone vergen falls back to an
+      # idempotent-output sentinel and the binary loses the tag label.
+      # Full history is a few seconds and only fires on tag pushes.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       # Provision a real aarch64-unknown-linux-musl cross-toolchain for the
       # arm64 Linux matrix entry only.

@@ -148,12 +148,15 @@ The cross-format implication: when the OTLP collector translates an OTel exponen
 | Label | Source | Example |
 |---|---|---|
 | `version` | `CARGO_PKG_VERSION` | `0.2.0` |
+| `git_describe` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0` (exact tag for release-pipeline builds), `v1.0.0-3-gabc1234` (post-tag offset for local builds) |
 | `git_sha` | `VERGEN_GIT_SHA` (via `build.rs`) | `a1b2c3d...` |
 | `rustc_version` | `VERGEN_RUSTC_SEMVER` (via `build.rs`) | `1.94.0` |
 | `build_timestamp` | `VERGEN_BUILD_TIMESTAMP` (via `build.rs`) | `2026-04-08T...` |
 | `target_triple` | `VERGEN_CARGO_TARGET_TRIPLE` (via `build.rs`) | `x86_64-unknown-linux-gnu` |
 
-`build.rs` uses the `vergen-gix` crate (pure-Rust gix backend; no libgit2 dependency) and emits all five vars as `cargo:rustc-env=` instructions.
+`build.rs` uses the `vergen-gix` crate (pure-Rust gix backend; no libgit2 dependency) and emits all six vars as `cargo:rustc-env=` instructions. `release.yml`'s `actions/checkout` step uses `fetch-depth: 0` for the `build-binaries` job so vergen-gix's `git describe` walk has full ancestry (a shallow clone fetches the tag ref but not the history `git describe` traverses to find the nearest tag, and `VERGEN_GIT_DESCRIBE` falls back to an idempotent-output sentinel).
+
+`main.rs` also emits an `atc-server starting` INFO log line at process startup carrying the same six fields. The log surfaces build metadata when the metrics endpoint isn't available — early startup crashes, OTel pipeline disabled, container logs as the only diagnostic surface.
 
 ## HTTP request duration
 

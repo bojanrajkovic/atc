@@ -25,6 +25,13 @@ pub fn register_build_info() {
     metrics::gauge!(
         "atc_build_info",
         "version" => env!("CARGO_PKG_VERSION"),
+        // `git_describe` is `git describe --tags`: for ATC's release pipeline
+        // (which only fires on `v*` tags) this is always the exact tag (e.g.
+        // `v1.0.0`). For local builds it's `<latest-tag>-<offset>-g<sha>` or
+        // a vergen-gix fallback string if the build environment has no git
+        // history available (e.g. a tarball-sourced build). The startup log
+        // line in main.rs surfaces the same value for operator visibility.
+        "git_describe" => env!("VERGEN_GIT_DESCRIBE"),
         "git_sha" => env!("VERGEN_GIT_SHA"),
         "rustc_version" => env!("VERGEN_RUSTC_SEMVER"),
         "build_timestamp" => env!("VERGEN_BUILD_TIMESTAMP"),
