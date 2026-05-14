@@ -42,7 +42,8 @@ jobs:
     name: Build Frontend
     needs: create-release
     runs-on: [self-hosted, linux, amd64]
-    permissions: {}
+    permissions:
+      contents: read
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
@@ -243,11 +244,15 @@ jobs:
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # `flavor: latest=auto` (the action's default) sets `:latest` only
+          # for non-prerelease semver tags, so a pre-release tag like
+          # v0.99.0-rc1 publishes `0.99.0-rc1` / `0.99` / `0` but does NOT
+          # clobber `:latest`. The earlier `type=raw,value=latest` line
+          # forced `:latest` unconditionally — wrong for rc/pre-release tags.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest
 
       - name: Build and push
         id: build
@@ -283,11 +288,15 @@ jobs:
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ghcr.io/${{ github.repository }}
+          # `flavor: latest=auto` (the action's default) sets `:latest` only
+          # for non-prerelease semver tags, so a pre-release tag like
+          # v0.99.0-rc1 publishes `0.99.0-rc1` / `0.99` / `0` but does NOT
+          # clobber `:latest`. The earlier `type=raw,value=latest` line
+          # forced `:latest` unconditionally — wrong for rc/pre-release tags.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest
 
       - name: Create multi-arch manifest
         run: |
@@ -325,9 +334,14 @@ jobs:
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
 
+  # Skipped on pre-release tags (e.g. v*-rc*, v*-beta*) so the rc/dev cycle
+  # doesn't push Helm chart versions to the OCI registry — those publish
+  # paths have weak retraction semantics and `skip_existing: true` in the
+  # downstream chart-releaser job would block reissuing a real release.
   publish-helm-chart:
     name: Publish Helm Chart
     needs: [create-release, build-container, merge-manifest]
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
@@ -399,6 +413,7 @@ jobs:
   publish-helm-pages:
     name: Publish Helm Chart to GitHub Pages
     needs: publish-helm-chart
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: [self-hosted, linux, amd64]
     permissions:
       # `contents: write` covers the gh-pages push and the per-chart GitHub
