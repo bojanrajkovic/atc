@@ -38,6 +38,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
+        runner_pool_capacities: Vec::new(),
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });

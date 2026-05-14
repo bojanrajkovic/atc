@@ -12,7 +12,7 @@ Pure domain types, state machine transition rules, and business logic for ATC. S
 
 | Module | Role |
 |--------|------|
-| `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; `RunnerPoolStats` struct |
+| `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; `RunnerPoolStats` struct (frontend-derived); `RunnerPoolCapacity { labels: LabelSet, capacity: u32 }` (operator-declared, surfaced on `StateSnapshot.runnerPoolCapacities`) |
 | `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`; `RunStatus::predecessors_of(target)` |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`; `JobStatus::predecessors_of(target)` |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |

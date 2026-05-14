@@ -163,12 +163,14 @@ describe('ConnectionManager', () => {
         lastSeq: 5n,
         runs: [],
         jobs: [],
+        runnerPoolCapacities: [],
       }
 
       const snapshot2: StateSnapshot = {
         lastSeq: 10n,
         runs: [],
         jobs: [],
+        runnerPoolCapacities: [],
       }
 
       server.use(

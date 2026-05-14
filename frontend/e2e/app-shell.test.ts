@@ -72,8 +72,13 @@ test.describe('App shell', () => {
       })
     })
     await page.goto('/')
-    // Wait for state fetch to resolve and stores to populate
-    await expect(page.getByText('Default')).toBeVisible()
+    // Wait for state fetch to resolve and stores to populate.
+    //
+    // The first pool's runner reports groupName "Default", which is GitHub's
+    // placeholder for "no custom runner group". Per issue #143, that placeholder
+    // is treated as if no group were set, so the chip falls back to the joined
+    // label list. The second pool's "macOS" is a real group name and renders as-is.
+    await expect(page.getByText('linux, x86_64')).toBeVisible()
     await expect(page.getByText('macOS')).toBeVisible()
   })
 

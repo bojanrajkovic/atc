@@ -6,6 +6,7 @@ import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
+import type { RunnerPoolCapacity } from '$lib/types/generated/RunnerPoolCapacity'
 import type { Step } from '$lib/types/generated/Step'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
@@ -18,6 +19,15 @@ export interface JobStats {
 class RunStore {
   runs = new SvelteMap<bigint, WorkflowRun>()
   jobsByRun = new SvelteMap<bigint, Job[]>()
+  /**
+   * Operator-declared runner-pool capacities loaded from the latest snapshot.
+   *
+   * Replaced atomically by `loadSnapshot()`. Empty by default and on snapshots
+   * that lack `runnerPoolCapacities` (older replicas during a rolling deploy)
+   * — the wire field is `#[serde(default)]` on the backend, so a missing field
+   * decodes to `[]` and the merge in `computePoolStats` is a no-op.
+   */
+  runnerPoolCapacities = $state<RunnerPoolCapacity[]>([])
 
   queuedRuns = $derived(
     [...this.runs.values()]
@@ -262,7 +272,11 @@ class RunStore {
     this.jobsByRun.set(runId, jobs)
   }
 
-  loadSnapshot(runs: WorkflowRun[], jobs: Job[]): void {
+  loadSnapshot(
+    runs: WorkflowRun[],
+    jobs: Job[],
+    runnerPoolCapacities: RunnerPoolCapacity[] = [],
+  ): void {
     this.runs.clear()
     for (const r of runs) this.runs.set(r.id, r)
 
@@ -278,11 +292,14 @@ class RunStore {
 
     this.jobsByRun.clear()
     for (const [runId, arr] of grouped) this.jobsByRun.set(runId, arr)
+
+    this.runnerPoolCapacities = runnerPoolCapacities
   }
 
   clear(): void {
     this.runs.clear()
     this.jobsByRun.clear()
+    this.runnerPoolCapacities = []
   }
 }
 

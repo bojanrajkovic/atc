@@ -428,6 +428,9 @@ impl PersistentStore for PgStore {
             last_seq,
             runs,
             jobs,
+            // Operator-declared capacities live in `AppState`, not the store —
+            // composed into the response by `routes::state_handler`.
+            runner_pool_capacities: Vec::new(),
         };
         let span = tracing::Span::current();
         span.record("last_seq", snap.last_seq);

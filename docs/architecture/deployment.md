@@ -116,6 +116,38 @@ When `otel.enabled: false` (the default), none of the `OTEL_*` env vars are inje
 
 **Breaking change vs prior chart versions.** Charts before 0.2 carried a `metrics.*` values block, a `config.metricsAddr` field, a dedicated `metrics` Service port, and a `templates/servicemonitor.yaml`. All of these are gone. `values.schema.json` rejects unknown properties (`additionalProperties: false`), so any operator overriding `metrics.*` or `config.metricsAddr` will see schema validation failures at install/upgrade time. Migration: remove those overrides; configure your collector to receive OTLP at `otel.endpoint`; if your monitoring stack still scrapes Prometheus exposition, configure the collector to re-expose it.
 
+## File-based configuration
+
+`atc-server` loads its config through the [`figment`](https://docs.rs/figment) crate with a three-layer chain, lowest precedence to highest:
+
+1. **Defaults** — struct-field defaults baked into the binary (`Config::default()` in `backend/crates/atc-server/src/config.rs`).
+2. **YAML file** at `$ATC_CONFIG_FILE` (default `/etc/atc/config.yaml`). Missing file is benign — the layer contributes nothing.
+3. **Environment** — variables prefixed `ATC_` (e.g. `ATC_HTTP_ADDR`, `ATC_DATABASE_URL`, `ATC_GITHUB__WEBHOOK_SECRET`).
+
+Env carries **scalar overrides only**. Structured config — currently the `runner_pools` block — is file-only by design: figment's `Env::prefixed("ATC_").split("__")` provider does not natively decode arrays of objects from env vars, and adding a JSON-decoding shim is deferred (tracked in the [out-of-scope follow-up](#) for the runner-pool-capacity feature).
+
+### Canonical mount path
+
+The mount path defaults to `/etc/atc/config.yaml`. POSIX-conventional, plays cleanly with `readOnlyRootFilesystem: true`. Override with `ATC_CONFIG_FILE` if a different location is needed (useful for tests).
+
+### `runnerPools` Helm values
+
+The chart renders a `ConfigMap` and a read-only `volumeMount` only when `runnerPools` is non-empty:
+
+```yaml
+runnerPools:
+  - labels: [self-hosted, linux, x64]
+    capacity: 10
+  - labels: [ubuntu-latest]
+    capacity: 20
+```
+
+Empty list (the default) ⇒ no `ConfigMap`, no volume, no behavior change. The in-memory dev mode and existing single-replica deployments stay byte-identical.
+
+`values.schema.json` enforces the per-entry shape: `labels` is a non-empty array of unique strings, `capacity` is an integer ≥ 1, both required. Server-side validation additionally canonicalizes labels (sort + dedup) and rejects two entries that canonicalize to the same set — silently last-one-wins would be a deployment-time footgun. All three failures are fatal at startup.
+
+The parsed pool list is composed onto every `/v1/state` snapshot response as `runnerPoolCapacities` (ADR 0004 — frontend remains the single derivation point for pool stats; capacity arrives as inert config, never as a server-side metric). The frontend merges the wire field into `RunnerPoolStats.total` keyed by canonical label-set, lighting up `CapacityBar.svelte` with the appropriate color band per saturation threshold.
+
 ## Multi-replica
 
 `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard at the top of `templates/deployment.yaml`. The same template also rejects any non-PostgreSQL scheme on the inline `config.databaseUrl` path (`postgres://` and `postgresql://` are the only accepted prefixes); the `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`) that exits with a remediation-naming log line before any sqlx connect call. The chart's ephemeral in-memory mode is single-replica only.

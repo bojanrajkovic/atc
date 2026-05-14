@@ -31,7 +31,9 @@ groupName: string | null,
  */
 isElastic: boolean, 
 /**
- * Total runner capacity for this pool, if known.
- * Always `None` until operator capacity configuration is implemented.
+ * Total runner capacity for this pool, populated by the frontend by
+ * merging operator-declared `RunnerPoolCapacity` entries from the
+ * snapshot rail. `None` when the operator has not declared a capacity
+ * for this label set.
  */
 total: number | null, };

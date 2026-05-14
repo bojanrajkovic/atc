@@ -354,6 +354,32 @@
           "description": "Whether to include the helm test hook Pod."
         }
       }
+    },
+    "runnerPools": {
+      "type": "array",
+      "description": "Operator-declared runner-pool capacities. Empty (default) renders no ConfigMap and no volume mount. Non-empty renders a ConfigMap consumed by atc-server at /etc/atc/config.yaml, populating the StateSnapshot.runnerPoolCapacities wire field so the frontend can render saturation bars per pool.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["labels", "capacity"],
+        "properties": {
+          "labels": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Runner labels identifying this pool (e.g. ['self-hosted', 'linux', 'x64']). Canonicalized server-side to a sorted, deduplicated set."
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Declared upper-bound runner count for the pool. Must be >= 1."
+          }
+        }
+      }
     }
   }
 }

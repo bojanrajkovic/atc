@@ -73,6 +73,7 @@ export const defaultSnapshot: StateSnapshot = {
   lastSeq: 5n,
   runs: [],
   jobs: [],
+  runnerPoolCapacities: [],
 }
 
 // Setup test server with WebSocket mock

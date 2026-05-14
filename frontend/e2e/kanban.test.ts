@@ -25,7 +25,7 @@ test.describe('Kanban board', () => {
     await stateRoute!.fulfill({
       contentType: 'application/json',
       body: JSON.stringify(
-        { lastSeq: 1n, runs: [], jobs: [] } satisfies StateSnapshot,
+        { lastSeq: 1n, runs: [], jobs: [], runnerPoolCapacities: [] } satisfies StateSnapshot,
         bigintReplacer,
       ),
     })
@@ -85,6 +85,7 @@ test.describe('Kanban board', () => {
               },
             ],
             jobs: [],
+            runnerPoolCapacities: [],
           } satisfies StateSnapshot,
           bigintReplacer,
         ),
@@ -180,6 +181,7 @@ test.describe('Kanban board', () => {
               },
             ],
             jobs: [],
+            runnerPoolCapacities: [],
           } satisfies StateSnapshot,
           bigintReplacer,
         ),

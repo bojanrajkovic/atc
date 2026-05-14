@@ -62,28 +62,41 @@
     }
   })
 
+  // GitHub uses the literal string "Default" as the runner-group name for
+  // every job that isn't placed in a custom runner group. It carries no
+  // operator-meaningful information — treat it as if no group were set so the
+  // chip label falls back to the runner labels (issue #143).
+  function displayGroupName(groupName: string | null): string | null {
+    return groupName === 'Default' ? null : groupName
+  }
+
   // Map RunnerPoolStats to RunnerPoolDisplay for RunnerBar
   const pools = $derived.by(() => {
     const allPools = runnerStore.pools
 
-    // Count occurrences of each non-null groupName across the current pool array.
+    // Count occurrences of each display group name across the current pool
+    // array. Using `displayGroupName` here keeps the count consistent with
+    // the label decision below so a single "Default" pool still renders its
+    // labels rather than the placeholder name.
     const groupNameCounts = new SvelteMap<string, number>()
     for (const pool of allPools) {
-      if (pool.groupName !== null) {
-        groupNameCounts.set(pool.groupName, (groupNameCounts.get(pool.groupName) ?? 0) + 1)
+      const name = displayGroupName(pool.groupName)
+      if (name !== null) {
+        groupNameCounts.set(name, (groupNameCounts.get(name) ?? 0) + 1)
       }
     }
 
     const activeFilter = uiStore.activePoolFilter
 
     return allPools.map((pool) => {
+      const displayName = displayGroupName(pool.groupName)
       let label: string
-      if (pool.groupName === null) {
+      if (displayName === null) {
         label = pool.labels.join(', ')
-      } else if ((groupNameCounts.get(pool.groupName) ?? 0) >= 2) {
-        label = `${pool.groupName} · ${pool.labels.join(', ')}`
+      } else if ((groupNameCounts.get(displayName) ?? 0) >= 2) {
+        label = `${displayName} · ${pool.labels.join(', ')}`
       } else {
-        label = pool.groupName
+        label = displayName
       }
 
       return {

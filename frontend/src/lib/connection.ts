@@ -103,7 +103,7 @@ export class ConnectionManager {
       eventDispatcher.clear()
 
       // Step 5: Load snapshot into stores
-      runStore.loadSnapshot(snapshot.runs, snapshot.jobs)
+      runStore.loadSnapshot(snapshot.runs, snapshot.jobs, snapshot.runnerPoolCapacities ?? [])
       this.snapshotLastSeq = snapshot.lastSeq
 
       // Step 6: Flush buffered events, discarding stale ones

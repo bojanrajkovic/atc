@@ -435,6 +435,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
+        runner_pool_capacities: Vec::new(),
         shutdown,
         ws_tracker: TaskTracker::new(),
     });
