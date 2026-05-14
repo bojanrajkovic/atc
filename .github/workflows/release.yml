@@ -126,11 +126,25 @@ jobs:
           persist-credentials: false
 
       # Provision a real aarch64-unknown-linux-musl cross-toolchain for the
-      # arm64 Linux matrix entry only. The action extracts
+      # arm64 Linux matrix entry only.
+      #
+      # `setup-cross-toolchain-action` probes `rustc -vV` early to decide which
+      # rust-cross-toolchain image tag to pull (1.1 vs 1.2 musl sysroot), so
+      # Rust must already be on PATH when the action runs. The other matrix
+      # entries don't need this prelude because they let
+      # `upload-rust-binary-action` install rustup itself later; here the
+      # cross-toolchain step runs first.
+      #
+      # The action then extracts
       # `ghcr.io/taiki-e/rust-cross-toolchain:aarch64-unknown-linux-musl1.2-dev-amd64`
       # into /usr/local and exports the appropriate CARGO_TARGET_*_LINKER,
       # CC_*, CXX_*, AR_*, RANLIB_* env vars so that aws-lc-sys, ring, and
       # other native-code crates link against musl libc — not glibc.
+      - if: matrix.target == 'aarch64-unknown-linux-musl'
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
+        with:
+          toolchain: stable
+
       - if: matrix.target == 'aarch64-unknown-linux-musl'
         uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6 # v1.40.1
         with:
