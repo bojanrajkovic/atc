@@ -307,10 +307,11 @@ impl PgStore {
         // integration harness installs an in-memory meter provider once per
         // binary via the `OnceLock` in `tests/integration/common/mod.rs`
         // before any test constructs a `PgStore`.
-        let pg_metrics = PgMetrics::register(
-            Arc::clone(&broadcast_watermark),
-            Arc::clone(&min_pending_seq),
-        );
+        // PgMetrics' observable gauges take Weak references so callbacks from
+        // prior PgStore instances in the same process (integration tests)
+        // become no-ops once their tasks drop their strong references — see
+        // `PgMetrics::register_with_meter`.
+        let pg_metrics = PgMetrics::register(&broadcast_watermark, &min_pending_seq);
 
         // Capture startup_at BEFORE the seed query so the drain startup
         // histogram includes the cold-pool query cost.

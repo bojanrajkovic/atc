@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use opentelemetry::KeyValue;
@@ -147,20 +148,38 @@ impl PgMetrics {
     /// emit site today. Future writers that add an emit site MUST cache a
     /// handle here.
     pub(crate) fn register(
-        broadcast_watermark: Arc<AtomicI64>,
-        min_pending_seq: Arc<AtomicI64>,
+        broadcast_watermark: &Arc<AtomicI64>,
+        min_pending_seq: &Arc<AtomicI64>,
     ) -> Arc<Self> {
         let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
-        Self::register_with_meter(&meter, broadcast_watermark, min_pending_seq)
+        Self::register_with_meter(
+            &meter,
+            Arc::downgrade(broadcast_watermark),
+            Arc::downgrade(min_pending_seq),
+        )
     }
 
     /// Variant that builds instruments against a caller-supplied meter. Used
     /// internally by [`PgMetrics::register`]; exposed only for symmetry with
     /// future test seams.
+    ///
+    /// The observable gauges take `Weak<AtomicI64>` instead of `Arc<…>` so
+    /// callbacks for prior `PgStore` instances (e.g. earlier integration
+    /// tests sharing the same process-global meter) become no-ops once the
+    /// store and its listener/drain tasks finish dropping their strong
+    /// references. OTel SDK 0.31's `pipeline::register_callback` appends to
+    /// a `Vec<GenericCallback>` with no dedup, so multiple registrations
+    /// against the same meter would otherwise produce one observation per
+    /// historical store on every collection cycle, and the LAST_VALUE
+    /// aggregator would expose a value from whichever callback the SDK
+    /// happens to invoke last — non-deterministic and likely sourced from a
+    /// dead store. The Weak upgrade fails the moment the active store's
+    /// listener and drain tasks join, so only the most recently constructed
+    /// store ever observes a value.
     fn register_with_meter(
         meter: &Meter,
-        broadcast_watermark: Arc<AtomicI64>,
-        min_pending_seq: Arc<AtomicI64>,
+        broadcast_watermark: Weak<AtomicI64>,
+        min_pending_seq: Weak<AtomicI64>,
     ) -> Arc<Self> {
         let write_failures = meter
             .u64_counter("atc_pg_write_failures_total")
@@ -240,8 +259,12 @@ impl PgMetrics {
 
         // Observable gauges read from the listener/drain-owned atomics on
         // every collection cycle. No call site needs to record() — updating
-        // the AtomicI64 IS the metric update.
-        let watermark_observer = Arc::clone(&broadcast_watermark);
+        // the AtomicI64 IS the metric update. The Weak upgrade short-circuits
+        // the callback to a no-op once the store and its tasks finish
+        // dropping their strong refs, so only the active store ever observes
+        // a value (see the `register_with_meter` doc for the multi-store
+        // accumulation story).
+        let watermark_observer = broadcast_watermark;
         let _broadcast_watermark = meter
             .f64_observable_gauge("atc_pg_broadcast_watermark")
             .with_description(
@@ -249,13 +272,15 @@ impl PgMetrics {
                  (commit-order cursor; per-replica)",
             )
             .with_callback(move |observer| {
-                #[allow(clippy::cast_precision_loss)]
-                let value = watermark_observer.load(Ordering::Acquire) as f64;
-                observer.observe(value, &[]);
+                if let Some(atomic) = watermark_observer.upgrade() {
+                    #[allow(clippy::cast_precision_loss)]
+                    let value = atomic.load(Ordering::Acquire) as f64;
+                    observer.observe(value, &[]);
+                }
             })
             .build();
 
-        let min_pending_observer = Arc::clone(&min_pending_seq);
+        let min_pending_observer = min_pending_seq;
         let _min_pending_seq = meter
             .f64_observable_gauge("atc_pg_min_pending_seq")
             .with_description(
@@ -263,14 +288,16 @@ impl PgMetrics {
                  or NaN when the drain has caught up (sentinel)",
             )
             .with_callback(move |observer| {
-                let raw = min_pending_observer.load(Ordering::Acquire);
-                #[allow(clippy::cast_precision_loss)]
-                let value = if raw == i64::MAX {
-                    f64::NAN
-                } else {
-                    raw as f64
-                };
-                observer.observe(value, &[]);
+                if let Some(atomic) = min_pending_observer.upgrade() {
+                    let raw = atomic.load(Ordering::Acquire);
+                    #[allow(clippy::cast_precision_loss)]
+                    let value = if raw == i64::MAX {
+                        f64::NAN
+                    } else {
+                        raw as f64
+                    };
+                    observer.observe(value, &[]);
+                }
             })
             .build();
 
