@@ -241,6 +241,16 @@ jobs:
   build-container:
     name: Build Container (${{ matrix.platform }})
     needs: build-binaries
+    # `build-binaries` runs three matrix entries; only the two linux-musl
+    # entries feed `build-container` (the darwin entry produces a binary
+    # for the GH Release tarball but never a container). With
+    # `fail-fast: false` on build-binaries, the matrix-level conclusion is
+    # `failure` whenever any one entry fails — including a darwin failure
+    # that doesn't affect us here. `!cancelled()` lets this job try as
+    # long as the upstream matrix ran to completion; the download-artifact
+    # step below errors loudly if the linux artifact this entry consumes
+    # isn't actually present.
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, linux, amd64]
     permissions:
       contents: read
