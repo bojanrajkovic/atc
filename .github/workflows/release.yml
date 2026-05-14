@@ -104,7 +104,11 @@ jobs:
       id-token: write
       attestations: write
     strategy:
-      fail-fast: true
+      # fail-fast: false so an independent matrix entry's failure (e.g.
+      # macOS-hosted billing rejection on aarch64-apple-darwin) doesn't
+      # cancel the Linux cross-compiles. Release artifacts are
+      # arch-independent; partial-success uploads are still useful.
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
