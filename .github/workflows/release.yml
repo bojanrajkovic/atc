@@ -151,7 +151,7 @@ jobs:
       # into /usr/local and exports the appropriate CARGO_TARGET_*_LINKER,
       # CC_*, CXX_*, AR_*, RANLIB_* env vars so that aws-lc-sys, ring, and
       # other native-code crates link against musl libc — not glibc.
-      - if: matrix.target == 'aarch64-unknown-linux-musl'
+      - if: contains(matrix.target, 'linux-musl')
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: stable
@@ -160,6 +160,12 @@ jobs:
         uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6 # v1.40.1
         with:
           target: ${{ matrix.target }}
+          # Skip QEMU emulation setup — we only build the binary in this job,
+          # not run it. The action's default for amd64 host targeting
+          # aarch64-musl installs qemu-aarch64 into /usr/local/bin via
+          # `rm -f` without sudo, which fails on the self-hosted runner
+          # (runner user has no write access to /usr/local/bin).
+          runner: none
 
       # rust-embed (in atc-server) reads ../../../frontend/dist at compile time
       # in release mode. Pull the artifact built once by build-frontend so the
