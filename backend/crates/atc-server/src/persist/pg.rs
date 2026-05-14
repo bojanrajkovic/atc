@@ -292,39 +292,39 @@ impl PgStore {
         // production subscribers come from `subscribe()`).
         let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(BROADCAST_CAPACITY);
 
-        // Register cached metric handles. Must happen before any emit. The
-        // recorder-install precondition is upheld by callers: production
-        // `main.rs` runs `otel::init_otel` before `PgStore::start`, and the
-        // integration harness installs the recorder once per binary via the
-        // `OnceLock` in `tests/integration/common/mod.rs` before any test
-        // constructs a `PgStore`.
-        let pg_metrics = PgMetrics::register();
-
-        // Arcs the listener and drain need to coordinate.
+        // Arcs the listener and drain need to coordinate. Created before
+        // `PgMetrics::register` so the observable gauges' callbacks close
+        // over the actual atomics.
         let broadcast_watermark = Arc::new(AtomicI64::new(0));
         let last_drain_pass_at = Arc::new(AtomicI64::new(clock.now().timestamp_millis()));
         let min_pending_seq = Arc::new(AtomicI64::new(i64::MAX));
         let drain_in_flight = Arc::new(AtomicBool::new(false));
         let drain_notify = Arc::new(Notify::new());
 
+        // Register cached metric handles. Must happen before any emit. The
+        // OTel global meter precondition is upheld by callers: production
+        // `main.rs` runs `otel::init_otel` before `PgStore::start`, and the
+        // integration harness installs an in-memory meter provider once per
+        // binary via the `OnceLock` in `tests/integration/common/mod.rs`
+        // before any test constructs a `PgStore`.
+        let pg_metrics = PgMetrics::register(
+            Arc::clone(&broadcast_watermark),
+            Arc::clone(&min_pending_seq),
+        );
+
         // Capture startup_at BEFORE the seed query so the drain startup
         // histogram includes the cold-pool query cost.
         let startup_at = Instant::now();
 
-        // Seed the watermark. Last fallible step before the spawns.
+        // Seed the watermark. Last fallible step before the spawns. The
+        // observable `atc_pg_broadcast_watermark` gauge reads this atomic on
+        // every collection cycle, so no separate gauge `record` is needed.
         let initial_watermark: i64 =
             sqlx::query_scalar!("SELECT COALESCE(MAX(seq), 0) AS \"max!: i64\" FROM outbox")
                 .fetch_one(&pool)
                 .await
                 .map_err(PgStoreStartError::Watermark)?;
         broadcast_watermark.store(initial_watermark, Ordering::Release);
-
-        // Mirror the watermark into the gauge so /metrics is immediately
-        // consistent with the seeded atomic.
-        #[allow(clippy::cast_precision_loss)]
-        pg_metrics
-            .broadcast_watermark
-            .record(initial_watermark as f64, &[]);
 
         // Spawn listener.
         let listener_handle = listener::spawn_listener_task(

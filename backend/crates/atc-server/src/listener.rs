@@ -142,15 +142,10 @@ fn handle_listener_notification(
     match notification.payload().parse::<i64>() {
         Ok(seq) => {
             tracing::Span::current().record("notify.payload.seq", seq);
-            let prev = min_pending_seq.fetch_min(seq, Ordering::Release);
-            let new_min = prev.min(seq);
-            #[allow(clippy::cast_precision_loss)]
-            let gauge_value = if new_min == i64::MAX {
-                f64::NAN
-            } else {
-                new_min as f64
-            };
-            metrics.min_pending_seq.record(gauge_value, &[]);
+            // The observable `atc_pg_min_pending_seq` gauge reads this atomic
+            // on every collection cycle (NaN when MAX, raw seq otherwise), so
+            // no separate gauge update is needed here.
+            min_pending_seq.fetch_min(seq, Ordering::Release);
         }
         Err(e) => {
             tracing::warn!(
@@ -245,12 +240,12 @@ pub fn spawn_drain_task(
 
                 // Capture the gap-healing backstop and reset the atomic. AcqRel
                 // pairs with the listener's Release fetch_min so any registration
-                // visible before this swap is observed here. Mirror the swap into
-                // the gauge: the post-swap value is i64::MAX (sentinel), rendered
-                // as NaN so dashboards distinguish "no pending NOTIFY below
-                // watermark" from "pending NOTIFY at seq 0".
+                // visible before this swap is observed here. The post-swap
+                // sentinel (`i64::MAX`) is rendered as NaN by the
+                // `atc_pg_min_pending_seq` observable gauge's callback so
+                // dashboards distinguish "no pending NOTIFY below watermark"
+                // from "pending NOTIFY at seq 0".
                 let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);
-                metrics.min_pending_seq.record(f64::NAN, &[]);
                 let pass_start_floor = watermark.min(backstop.saturating_sub(1));
 
                 // Wake-coalesce instrumentation bracket: the listener counts
@@ -304,29 +299,22 @@ pub fn spawn_drain_task(
                     // BIGSERIAL is allocated pre-commit and can commit out of
                     // order, which would let `MAX(seq)` advance past data that
                     // hasn't materialised in a concurrent snapshot view.
+                    // The observable `atc_pg_broadcast_watermark` gauge reads
+                    // this atomic on every collection cycle; no separate
+                    // gauge `record` is needed.
                     broadcast_watermark.store(watermark, Ordering::Release);
-                    #[allow(clippy::cast_precision_loss)]
-                    metrics.broadcast_watermark.record(watermark as f64, &[]);
                 } else {
                     // Re-register the captured backstop so the next pass still has
                     // the gap-healing floor. Without this, a transient query
                     // failure between two NOTIFYs (one carrying the low seq) would
                     // permanently lose the rescan signal: the swap zeroed the
                     // atomic and the failed pass never delivered the floor to the
-                    // SELECT. Mirror the gauge alongside the atomic — the swap at
-                    // pass start cleared the gauge to NaN, so without this re-mirror
-                    // the gauge would advertise "drain caught up" while a pending
-                    // backstop is queued for the next attempt.
+                    // SELECT. The observable `atc_pg_min_pending_seq` gauge
+                    // reads the atomic on its next collection so dashboards
+                    // see the re-registered backstop without a separate
+                    // mirror call.
                     if backstop != i64::MAX {
-                        let prev = min_pending_seq.fetch_min(backstop, Ordering::Release);
-                        let new_min = prev.min(backstop);
-                        #[allow(clippy::cast_precision_loss)]
-                        let gauge_value = if new_min == i64::MAX {
-                            f64::NAN
-                        } else {
-                            new_min as f64
-                        };
-                        metrics.min_pending_seq.record(gauge_value, &[]);
+                        min_pending_seq.fetch_min(backstop, Ordering::Release);
                     }
                     // Force the next iteration to attempt another drain pass.
                     // Without this, the loop would re-enter the `tokio::select!`

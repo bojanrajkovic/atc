@@ -81,21 +81,21 @@ Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are
 
 ### Cached instrument convention
 
-Every repeat-emit metric in `atc-server` MUST go through a cached OTel `Counter` / `Gauge` / `Histogram` instrument held on the `PgMetrics` struct in `backend/crates/atc-server/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register()` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.add(N, &[])`) instead of building an instrument inline at every call.
+Every repeat-emit metric in `atc-server` MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `backend/crates/atc-server/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.add(N, &[])`) instead of building an instrument inline at every call.
 
 For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores **one instrument per metric name** plus pre-built `[KeyValue; N]` attribute slices alongside it (e.g. `attrs_parity: [KeyValue; 1]`). Emit sites read `counter.add(1, &self.attrs_parity)` so neither the instrument lookup nor the `KeyValue` allocation happens on a webhook path. Dedicated helpers (`write_failure_parity()`, `notify_emitted_run()`, etc.) wrap each `(instrument, slice)` pair so call sites never duplicate the `&self.attrs_*` reference.
+
+Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics. The two PG-mode observable gauges (`atc_pg_broadcast_watermark`, `atc_pg_min_pending_seq`) take their atomics as parameters to `PgMetrics::register`; `register_build_info` registers an `atc_build_info` observable gauge whose callback always observes `1.0` with the compile-time label set.
 
 This is **defense-in-depth, not micro-perf**. The hash-contract correctness fix from PR #153 was rooted in `metrics-util` / `metrics-exporter-otel`; with both crates retired in favor of direct OTel meters that bug class is gone at the SDK seam. The cached-instrument pattern still earns its keep by keeping hot-path emits allocation-free and making the metric surface a single grep-able struct.
 
 **TODO(otel-0.32):** once `tracing-opentelemetry` and `axum-otel-metrics` publish releases targeting `opentelemetry 0.32` (upstream PRs `tokio-rs/tracing-opentelemetry#258` and `ttys3/axum-otel-metrics#196`), bump the SDK pin, enable the `experimental_metrics_bound_instruments` feature, and replace each `(instrument, [KeyValue; N])` pair with a real `BoundCounter<u64>` / `BoundHistogram<f64>` obtained via `Counter::bind(&[…])`. Emit-site shape stays identical; the wrapper helpers (`write_failure_parity` etc.) hide the swap.
 
-One inline exception remains: `register_build_info()` builds an `f64_gauge` and records `1.0` against it exactly once at startup with compile-time labels. The instrument is unique to that call site, so caching would be pure ceremony. Future contributors must not generalize this exception — it is a one-shot startup emit, not a "metadata-only" carve-out.
-
 Mechanical check (run before merging changes that touch `atc-server/src/`):
 
 ```sh
 rg -nU --multiline \
-   'meter[^"]*"\)\s*\.(u64_counter|f64_(?:counter|gauge|histogram)|i64_(?:counter|gauge|histogram)|u64_(?:gauge|histogram))\([^)]+\)' \
+   'meter[^"]*"\)\s*\.(u64_counter|u64_observable_(?:counter|gauge|up_down_counter)|f64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter))|i64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter)))\([^)]+\)' \
    backend/crates/atc-server/src/ \
    | rg -v 'crates/atc-server/src/metrics\.rs'
 ```
@@ -339,7 +339,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_broadcast_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Mirrors the per-replica `Arc<AtomicI64>` after each successful drain pass; seeded at startup from `COALESCE(MAX(seq),0)`.
+- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `broadcast_watermark: Arc<AtomicI64>` on every collection cycle; seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass. The atomic update IS the metric update — no separate `record()` call.
 - **Per-replica vs cluster:** Per-replica — each replica advances its watermark independently.
 - **Aggregation:** Display per-pod (`atc_pg_broadcast_watermark`); for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)` (or equivalently `min without (pod, instance)`). Note: `min by (pod) (atc_pg_broadcast_watermark)` would just preserve one series per pod — same as the per-pod display.
 - **Example PromQL:** `atc_pg_broadcast_watermark`
@@ -349,7 +349,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_min_pending_seq`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Mirrors the per-replica `min_pending_seq: Arc<AtomicI64>` after each listener `fetch_min`; reset to `f64::NAN` (the sentinel state) when the drain swaps the atomic to `i64::MAX` after catching up. NaN is preferred over `i64::MAX as f64` (≈ 9.22e18) because the float64 representation would push the y-axis of dashboards displaying watermark and min_pending_seq together to ~9e18, hiding the actual divergence signal at the watermark level.
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`; non-sentinel values pass through as-is. NaN is preferred over `i64::MAX as f64` (≈ 9.22e18) because the float64 representation would push the y-axis of dashboards displaying watermark and min_pending_seq together to ~9e18, hiding the actual divergence signal at the watermark level. The atomic update IS the metric update — no separate `record()` call.
 - **Per-replica vs cluster:** Per-replica.
 - **Aggregation:** Display per-pod alongside `atc_pg_broadcast_watermark`. Filter NaN with `... unless on() (atc_pg_min_pending_seq != atc_pg_min_pending_seq)` if needed.
 - **Example PromQL:** `atc_pg_min_pending_seq` (Grafana renders NaN as gaps)

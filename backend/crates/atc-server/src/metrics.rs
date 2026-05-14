@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Counter, Gauge, Histogram, Meter};
+use opentelemetry::metrics::{Counter, Histogram, Meter};
 use tokio::task::{AbortHandle, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -10,37 +11,38 @@ use tokio_util::sync::CancellationToken;
 /// test harness share one scope.
 pub const METER_SCOPE: &str = "atc";
 
-/// Set the `atc_build_info` gauge with compile-time labels.
+/// Register the `atc_build_info` observable gauge with compile-time labels.
 ///
-/// One-shot emit at startup against the global meter installed by
-/// `otel::init_otel`. When OTel is disabled the global meter is a no-op meter
-/// and the gauge `record` is a cheap no-op. The labels (`version`,
-/// `git_describe`, `git_sha`, `rustc_version`, `build_timestamp`,
-/// `target_triple`) are baked at compile time via `env!` so this site is
-/// allocation-free.
+/// Built once at startup against the global meter installed by
+/// `otel::init_otel`. The instrument is an `ObservableGauge` whose callback
+/// re-reports `1.0` with the compile-time label set on every collection cycle
+/// — the OTLP→Prometheus path needs the value to be emitted on every scrape
+/// regardless of how long ago `register_build_info` ran. A sync `Gauge` would
+/// only emit on `record()`, so under delta-temporality readers the value
+/// would vanish from the second collection onward. When OTel is disabled the
+/// global meter is a no-op meter and the observable callback is never
+/// invoked.
 pub fn register_build_info() {
     let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
-    let gauge = meter
-        .f64_gauge("atc_build_info")
+    let attrs: [KeyValue; 6] = [
+        KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+        // `git_describe` is `git describe --tags`: for ATC's release pipeline
+        // (which only fires on `v*` tags) this is always the exact tag (e.g.
+        // `v1.0.0`). For local builds it's `<latest-tag>-<offset>-g<sha>` or
+        // a vergen-gix fallback string if the build environment has no git
+        // history available (e.g. a tarball-sourced build). The startup log
+        // line in main.rs surfaces the same value for operator visibility.
+        KeyValue::new("git_describe", env!("VERGEN_GIT_DESCRIBE")),
+        KeyValue::new("git_sha", env!("VERGEN_GIT_SHA")),
+        KeyValue::new("rustc_version", env!("VERGEN_RUSTC_SEMVER")),
+        KeyValue::new("build_timestamp", env!("VERGEN_BUILD_TIMESTAMP")),
+        KeyValue::new("target_triple", env!("VERGEN_CARGO_TARGET_TRIPLE")),
+    ];
+    let _gauge = meter
+        .f64_observable_gauge("atc_build_info")
         .with_description("ATC build metadata (always 1; use labels for values)")
+        .with_callback(move |observer| observer.observe(1.0, &attrs))
         .build();
-    gauge.record(
-        1.0,
-        &[
-            KeyValue::new("version", env!("CARGO_PKG_VERSION")),
-            // `git_describe` is `git describe --tags`: for ATC's release pipeline
-            // (which only fires on `v*` tags) this is always the exact tag (e.g.
-            // `v1.0.0`). For local builds it's `<latest-tag>-<offset>-g<sha>` or
-            // a vergen-gix fallback string if the build environment has no git
-            // history available (e.g. a tarball-sourced build). The startup log
-            // line in main.rs surfaces the same value for operator visibility.
-            KeyValue::new("git_describe", env!("VERGEN_GIT_DESCRIBE")),
-            KeyValue::new("git_sha", env!("VERGEN_GIT_SHA")),
-            KeyValue::new("rustc_version", env!("VERGEN_RUSTC_SEMVER")),
-            KeyValue::new("build_timestamp", env!("VERGEN_BUILD_TIMESTAMP")),
-            KeyValue::new("target_triple", env!("VERGEN_CARGO_TARGET_TRIPLE")),
-        ],
-    );
 }
 
 /// Cached OTel instruments and pre-built attribute slices for every repeat-emit
@@ -58,6 +60,14 @@ pub fn register_build_info() {
 /// `Counter<u64>` instrument and a pre-built `[KeyValue; 1]` attribute slice
 /// for each `kind`. Emit sites read `counter.add(1, &attrs_parity)` so the
 /// `KeyValue` itself is never reallocated on a webhook path.
+///
+/// `atc_pg_broadcast_watermark` and `atc_pg_min_pending_seq` are
+/// `ObservableGauge<f64>` instruments whose callbacks close over the
+/// `Arc<AtomicI64>` atomics that the listener and drain manipulate. The
+/// SDK invokes the callbacks on every collection cycle, so the value
+/// re-surfaces on every scrape even under delta-temporality readers.
+/// Production code does not call `record()` on these gauges directly —
+/// updating the underlying atomic is sufficient.
 ///
 /// TODO(otel-0.32): once `tracing-opentelemetry` and `axum-otel-metrics`
 /// publish releases targeting `opentelemetry 0.32` (upstream PRs
@@ -112,17 +122,11 @@ pub struct PgMetrics {
     /// `atc_pg_drain_shutdown_remaining_rows` — outbox rows past the drain's
     /// watermark at drain task exit (one observation per process).
     pub drain_shutdown_remaining_rows: Histogram<f64>,
-
-    /// `atc_pg_broadcast_watermark` — highest outbox seq broadcast by this
-    /// replica (commit-order cursor; per-replica).
-    pub broadcast_watermark: Gauge<f64>,
-    /// `atc_pg_min_pending_seq` — lowest pending NOTIFY seq registered with
-    /// the gap-healing backstop, or NaN when the drain has caught up.
-    pub min_pending_seq: Gauge<f64>,
 }
 
 impl PgMetrics {
-    /// Build every PG-mode instrument against the global meter.
+    /// Build every PG-mode instrument against the global meter, backing the
+    /// two observable gauges with the supplied atomics.
     ///
     /// MUST be called after `otel::init_otel` has installed the global meter
     /// provider. Production `main.rs` upholds this ordering; the integration
@@ -142,15 +146,22 @@ impl PgMetrics {
     /// the metric is part of the documented surface but has no production
     /// emit site today. Future writers that add an emit site MUST cache a
     /// handle here.
-    pub(crate) fn register() -> Arc<Self> {
+    pub(crate) fn register(
+        broadcast_watermark: Arc<AtomicI64>,
+        min_pending_seq: Arc<AtomicI64>,
+    ) -> Arc<Self> {
         let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
-        Self::register_with_meter(&meter)
+        Self::register_with_meter(&meter, broadcast_watermark, min_pending_seq)
     }
 
     /// Variant that builds instruments against a caller-supplied meter. Used
     /// internally by [`PgMetrics::register`]; exposed only for symmetry with
     /// future test seams.
-    fn register_with_meter(meter: &Meter) -> Arc<Self> {
+    fn register_with_meter(
+        meter: &Meter,
+        broadcast_watermark: Arc<AtomicI64>,
+        min_pending_seq: Arc<AtomicI64>,
+    ) -> Arc<Self> {
         let write_failures = meter
             .u64_counter("atc_pg_write_failures_total")
             .with_description("PG write failures by kind (parity or transient)")
@@ -227,19 +238,40 @@ impl PgMetrics {
             )
             .build();
 
-        let broadcast_watermark = meter
-            .f64_gauge("atc_pg_broadcast_watermark")
+        // Observable gauges read from the listener/drain-owned atomics on
+        // every collection cycle. No call site needs to record() — updating
+        // the AtomicI64 IS the metric update.
+        let watermark_observer = Arc::clone(&broadcast_watermark);
+        let _broadcast_watermark = meter
+            .f64_observable_gauge("atc_pg_broadcast_watermark")
             .with_description(
                 "Highest outbox seq broadcast by this replica \
                  (commit-order cursor; per-replica)",
             )
+            .with_callback(move |observer| {
+                #[allow(clippy::cast_precision_loss)]
+                let value = watermark_observer.load(Ordering::Acquire) as f64;
+                observer.observe(value, &[]);
+            })
             .build();
-        let min_pending_seq = meter
-            .f64_gauge("atc_pg_min_pending_seq")
+
+        let min_pending_observer = Arc::clone(&min_pending_seq);
+        let _min_pending_seq = meter
+            .f64_observable_gauge("atc_pg_min_pending_seq")
             .with_description(
                 "Lowest pending NOTIFY seq registered with the gap-healing backstop, \
                  or NaN when the drain has caught up (sentinel)",
             )
+            .with_callback(move |observer| {
+                let raw = min_pending_observer.load(Ordering::Acquire);
+                #[allow(clippy::cast_precision_loss)]
+                let value = if raw == i64::MAX {
+                    f64::NAN
+                } else {
+                    raw as f64
+                };
+                observer.observe(value, &[]);
+            })
             .build();
 
         Arc::new(Self {
@@ -260,8 +292,6 @@ impl PgMetrics {
             drain_pass_duration,
             drain_startup,
             drain_shutdown_remaining_rows,
-            broadcast_watermark,
-            min_pending_seq,
         })
     }
 
