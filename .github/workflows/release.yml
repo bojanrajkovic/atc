@@ -155,6 +155,13 @@ jobs:
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
           toolchain: stable
+          # Explicitly install the matrix target via rustup so the build step
+          # below can use `cargo build --target ...` directly. Without this,
+          # upload-rust-binary-action's auto-detect chooses `cross` for
+          # x86_64-unknown-linux-musl on amd64-gnu host, which pins
+          # `cross v0.2.5` (2022). That old crate fails to compile on
+          # modern Rust ("cannot produce proc-macro for clap_derive...").
+          targets: ${{ matrix.target }}
 
       - if: matrix.target == 'aarch64-unknown-linux-musl'
         uses: taiki-e/setup-cross-toolchain-action@129361238c06ff2cc1c4ca5c5d2217af441ffdf6 # v1.40.1
@@ -181,6 +188,12 @@ jobs:
           target: ${{ matrix.target }}
           manifest-path: backend/Cargo.toml
           locked: true
+          # Force cargo to avoid the action's auto-detected `cross` for
+          # cross-compile-like targets — we already provide the proper
+          # toolchain via dtolnay/rust-toolchain (+ targets) and, for
+          # aarch64-musl, taiki-e/setup-cross-toolchain-action. cross v0.2.5
+          # (the pinned version in v1.30.2) fails to build on modern Rust.
+          build-tool: cargo
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
@@ -191,7 +204,14 @@ jobs:
           ARCHIVE=$(ls atc-server-${{ matrix.target }}.* 2>/dev/null | head -1)
           echo "path=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
+      # Skip attestation on pre-release tags. The actions/attest-build-
+      # provenance API rejects requests from user-owned private repos
+      # ("Feature not available for user-owned private repositories");
+      # rc/dev cycles should not fail on that. When the repo flips to
+      # public for v1.0, this guard becomes a no-op for the canonical
+      # release tag and attestation runs as before.
       - name: Attest binary
+        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: ${{ steps.archive.outputs.path }}
@@ -343,7 +363,10 @@ jobs:
         env:
           STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
 
+      # Same private-repo limitation as the binary attestation above —
+      # skip on pre-release tags.
       - name: Attest container image
+        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
