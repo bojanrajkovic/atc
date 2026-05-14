@@ -322,7 +322,9 @@ impl PgStore {
         // Mirror the watermark into the gauge so /metrics is immediately
         // consistent with the seeded atomic.
         #[allow(clippy::cast_precision_loss)]
-        pg_metrics.broadcast_watermark.set(initial_watermark as f64);
+        pg_metrics
+            .broadcast_watermark
+            .record(initial_watermark as f64, &[]);
 
         // Spawn listener.
         let listener_handle = listener::spawn_listener_task(
@@ -501,37 +503,37 @@ impl PersistentStore for PgStore {
     )]
     async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<u64, PersistError> {
         let mut tx = self.pool.begin().await.map_err(|e| {
-            self.metrics.write_failures_transient.increment(1);
+            self.metrics.write_failure_transient();
             PersistError::Backend(Box::new(e))
         })?;
         match upsert_run_in_txn(&mut tx, &env).await {
             Ok(()) => {}
             Err(PersistError::InvalidTransition) => {
-                self.metrics.write_failures_parity.increment(1);
+                self.metrics.write_failure_parity();
                 return Err(PersistError::InvalidTransition);
             }
             Err(e) => {
-                self.metrics.write_failures_transient.increment(1);
+                self.metrics.write_failure_transient();
                 return Err(e);
             }
         }
         let seq_i64 = insert_outbox_run_in_txn(&mut tx, &env)
             .await
             .inspect_err(|_| {
-                self.metrics.write_failures_transient.increment(1);
+                self.metrics.write_failure_transient();
             })?;
         tracing::Span::current().record("seq", seq_i64);
         notify_outbox_seq_in_txn(&mut tx, "run", seq_i64)
             .await
             .inspect_err(|_| {
-                self.metrics.write_failures_transient.increment(1);
+                self.metrics.write_failure_transient();
             })?;
         tx.commit().await.map_err(|e| {
-            self.metrics.write_failures_transient.increment(1);
+            self.metrics.write_failure_transient();
             PersistError::Backend(Box::new(e))
         })?;
         // Emit AFTER commit: PG delivers NOTIFYs on COMMIT; aborted txns drop them.
-        self.metrics.notify_emitted_run.increment(1);
+        self.metrics.notify_emitted_run();
         // BIGSERIAL is always positive; conversion is infallible.
         Ok(u64::try_from(seq_i64).expect("BIGSERIAL is non-negative"))
     }
@@ -550,37 +552,37 @@ impl PersistentStore for PgStore {
     )]
     async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError> {
         let mut tx = self.pool.begin().await.map_err(|e| {
-            self.metrics.write_failures_transient.increment(1);
+            self.metrics.write_failure_transient();
             PersistError::Backend(Box::new(e))
         })?;
         match upsert_job_in_txn(&mut tx, &env).await {
             Ok(()) => {}
             Err(PersistError::InvalidTransition) => {
-                self.metrics.write_failures_parity.increment(1);
+                self.metrics.write_failure_parity();
                 return Err(PersistError::InvalidTransition);
             }
             Err(e) => {
-                self.metrics.write_failures_transient.increment(1);
+                self.metrics.write_failure_transient();
                 return Err(e);
             }
         }
         let seq_i64 = insert_outbox_job_in_txn(&mut tx, &env)
             .await
             .inspect_err(|_| {
-                self.metrics.write_failures_transient.increment(1);
+                self.metrics.write_failure_transient();
             })?;
         tracing::Span::current().record("seq", seq_i64);
         notify_outbox_seq_in_txn(&mut tx, "job", seq_i64)
             .await
             .inspect_err(|_| {
-                self.metrics.write_failures_transient.increment(1);
+                self.metrics.write_failure_transient();
             })?;
         tx.commit().await.map_err(|e| {
-            self.metrics.write_failures_transient.increment(1);
+            self.metrics.write_failure_transient();
             PersistError::Backend(Box::new(e))
         })?;
         // Emit AFTER commit: PG delivers NOTIFYs on COMMIT; aborted txns drop them.
-        self.metrics.notify_emitted_job.increment(1);
+        self.metrics.notify_emitted_job();
         // BIGSERIAL is always positive; conversion is infallible.
         Ok(u64::try_from(seq_i64).expect("BIGSERIAL is non-negative"))
     }

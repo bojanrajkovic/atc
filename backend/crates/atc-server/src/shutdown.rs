@@ -145,7 +145,9 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// - `persist`: The active `PersistentStore`. Its `shutdown()` joins every
 ///   background task the store owns (listener + drain in PG mode; eviction in
 ///   in-memory mode).
-/// - `metrics_handle`: Always `Some`.
+/// - `metrics_handle`: Process metrics collector handle. `shutdown()` aborts
+///   the underlying observer task and returns a `JoinHandle<()>` joined under
+///   `SHUTDOWN_TIMEOUT_METRICS`.
 /// - `otel_handles`: `Some` when `init_otel` returned a configured pipeline
 ///   (i.e., `OTEL_EXPORTER_OTLP_ENDPOINT` was set); `None` when OTel is
 ///   disabled. Consumed so the providers cannot leak past the flush.
@@ -154,7 +156,7 @@ pub async fn run_shutdown_orchestration(
     ws_tracker: TaskTracker,
     main_serve_task: JoinHandle<io::Result<()>>,
     persist: Arc<dyn PersistentStore>,
-    metrics_handle: JoinHandle<()>,
+    metrics_handle: crate::metrics::ProcessCollectorHandle,
     otel_handles: Option<OtelHandles>,
 ) -> bool {
     // Step 1: Wait for the shutdown trigger — signal handler OR an early
@@ -213,7 +215,12 @@ pub async fn run_shutdown_orchestration(
     // bounded by its own per-task timeout constant (defined alongside the
     // store implementation). Then join the process metrics collector.
     persist.shutdown().await;
-    join_with_timeout(metrics_handle, SHUTDOWN_TIMEOUT_METRICS, "metrics").await;
+    join_with_timeout(
+        metrics_handle.shutdown(),
+        SHUTDOWN_TIMEOUT_METRICS,
+        "metrics",
+    )
+    .await;
 
     // OTel pipeline tear-down. The shutdown flush exports any spans/metrics
     // still buffered inside `BatchSpanProcessor` / `PeriodicReader`; running it
@@ -222,7 +229,9 @@ pub async fn run_shutdown_orchestration(
     // step:
     //   1. PersistentStore tasks (drain + listener in PG mode, eviction in
     //      in-memory mode) — joined via `persist.shutdown()` above.
-    //   2. Process collector    (`metrics::spawn_process_collector` JoinHandle)
+    //   2. Process collector    (`metrics::ProcessCollectorHandle` wrapping
+    //      the `opentelemetry-system-metrics` observer task; aborted via
+    //      `metrics_handle.shutdown()` immediately above this comment)
     //   3. axum graceful drain  (`main_serve_task` plus `axum-otel-metrics`)
     // A new emitter category MUST be joined before this point and named here
     // so the "no live emitter" property holds for it too.
@@ -295,7 +304,8 @@ mod tests {
 
         // Stub metrics handle that exits immediately. The store's own
         // background tasks are joined via `persist.shutdown()`.
-        let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
+        let metrics_handle =
+            crate::metrics::ProcessCollectorHandle::from_join_handle(tokio::spawn(async {}));
         let persist = test_persist(shutdown.clone());
 
         // Bound the whole orchestration with a generous test timeout. The
@@ -340,7 +350,8 @@ mod tests {
         // Main serve completes cleanly with Ok(()) immediately.
         let main_serve_task: JoinHandle<io::Result<()>> = tokio::spawn(async { Ok(()) });
 
-        let metrics_handle: JoinHandle<()> = tokio::spawn(async {});
+        let metrics_handle =
+            crate::metrics::ProcessCollectorHandle::from_join_handle(tokio::spawn(async {}));
         let persist = test_persist(shutdown.clone());
 
         let result = tokio::time::timeout(

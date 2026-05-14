@@ -1,11 +1,11 @@
 //! Tests for the OTel SDK gating contract.
 //!
-//! `init_otel` installs PROCESS-GLOBAL providers, recorder, and propagator —
-//! it cannot safely run inside this integration binary because the providers
-//! it sets up persist across tests and a subsequent `shutdown()` would render
-//! the globals unusable for every later test (including the OTel test harness
-//! installed by `common::ensure_recorder_installed`). The "Some when endpoint
-//! set" verification is therefore done against the side-effect-free
+//! `init_otel` installs PROCESS-GLOBAL providers and propagator — it cannot
+//! safely run inside this integration binary because the providers it sets up
+//! persist across tests and a subsequent `shutdown()` would render the globals
+//! unusable for every later test (including the OTel test harness installed by
+//! `common::ensure_recorder_installed`). The "Some when endpoint set"
+//! verification is therefore done against the side-effect-free
 //! `endpoint_configured()` gate; the "None when endpoint unset" path is safe
 //! to exercise because it short-circuits before any global mutation. The
 //! production code path is covered end-to-end by deployment + the homelab
@@ -16,13 +16,21 @@ use atc_server::otel::{endpoint_configured, init_otel};
 
 #[test]
 #[serial_test::serial]
-fn metrics_macro_is_noop_with_no_endpoint() {
+fn otel_meter_is_noop_with_no_endpoint() {
+    // Without OTEL_EXPORTER_OTLP_ENDPOINT, init_otel never installs a meter
+    // provider — the global stays at the SDK's no-op default. Construct an
+    // instrument and emit through it to assert the no-op path does not panic
+    // or trip any debug assertions.
     unsafe {
         std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
     }
-    metrics::counter!("atc_otel_init_test_counter").increment(1);
-    metrics::gauge!("atc_otel_init_test_gauge").set(1.0);
-    metrics::histogram!("atc_otel_init_test_histogram").record(0.5);
+    let meter = opentelemetry::global::meter_provider().meter("atc-otel-init-test");
+    let counter = meter.u64_counter("atc_otel_init_test_counter").build();
+    let gauge = meter.f64_gauge("atc_otel_init_test_gauge").build();
+    let histogram = meter.f64_histogram("atc_otel_init_test_histogram").build();
+    counter.add(1, &[]);
+    gauge.record(1.0, &[]);
+    histogram.record(0.5, &[]);
 }
 
 #[test]

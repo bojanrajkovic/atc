@@ -129,11 +129,11 @@ async fn main() {
         "atc-server starting",
     );
 
-    // `register_build_info` is the only describe call `main.rs` makes
-    // eagerly. The cached `PgMetrics` handles (which carry every other
-    // `describe_*!`) are registered inside `PgStore::start` so the PG-mode
-    // describes only fire when a `PgStore` is constructed. Under a no-op
-    // recorder (OTel disabled) the describe/set pair is cheap.
+    // `register_build_info` is the only eager metric registration `main.rs`
+    // performs. The `PgMetrics` instruments are constructed inside
+    // `PgStore::start` so PG-mode metrics only register when a `PgStore` is
+    // built. Under a no-op meter (OTel disabled) the gauge build + record
+    // pair is cheap.
     metrics::register_build_info();
 
     if let Some(ref db_url) = cfg.database_url {
@@ -213,9 +213,9 @@ async fn main() {
         ws_tracker: ws_tracker.clone(),
     });
 
-    // Spawn the process-metrics collector. Metric descriptions for the
-    // listener/drain/build-info instruments were registered earlier in `main`
-    // (before any emission).
+    // Spawn the process-metrics observer (wraps `opentelemetry-system-metrics`).
+    // Returns a `ProcessCollectorHandle` whose `shutdown()` aborts the loop and
+    // surfaces a `JoinHandle` for the orchestration to await under a timeout.
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 
     // Clone the Arc into the router so `app_state` itself stays in this scope

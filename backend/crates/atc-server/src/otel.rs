@@ -19,7 +19,6 @@ const DEFAULT_SERVICE_NAME: &str = "atc";
 const HISTOGRAM_MAX_SIZE: u32 = 160;
 const HISTOGRAM_MAX_SCALE: i8 = 20;
 const TRACER_SCOPE_NAME: &str = "atc";
-const METER_SCOPE_NAME: &str = "atc";
 
 pub struct OtelHandles {
     pub tracer_provider: SdkTracerProvider,
@@ -104,8 +103,6 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     opentelemetry::global::set_meter_provider(meter_provider.clone());
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
-
-    install_metrics_recorder(&meter_provider);
 
     Some(OtelHandles {
         tracer_provider,
@@ -206,22 +203,6 @@ pub fn exponential_histogram_view(inst: &Instrument) -> Option<Stream> {
             .ok()
     } else {
         None
-    }
-}
-
-/// Install the `metrics-rs` global recorder backed by the OTel meter provider.
-///
-/// Tolerates `SetRecorderError` so a process that already has a recorder
-/// installed (e.g. an integration-test binary that wired the OTel test harness
-/// in `tests/integration/common/mod.rs` before `init_otel` ran) does not
-/// abort. The existing recorder remains in place; the new meter is unreachable
-/// from the `metrics-rs` facade in that case.
-fn install_metrics_recorder(meter_provider: &SdkMeterProvider) {
-    use opentelemetry::metrics::MeterProvider as _;
-    let meter = meter_provider.meter(METER_SCOPE_NAME);
-    let recorder = metrics_exporter_otel::OpenTelemetryRecorder::new(meter);
-    if let Err(err) = metrics::set_global_recorder(recorder) {
-        tracing::debug!(%err, "global metrics recorder already installed; reusing existing");
     }
 }
 
