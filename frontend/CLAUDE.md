@@ -20,7 +20,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `playwright.config.ts` | Playwright E2E config; webServer auto-start; `@bgotink/playwright-coverage` reporter writes V8 coverage to `coverage/e2e/lcov.info` |
 | `e2e/lib/fixtures.ts` | Re-exports `test`/`expect` from `@bgotink/playwright-coverage` so the V8 capture hook fires; all e2e tests import from here |
 | `e2e/lib/ws-mock.ts` | Shared Playwright WebSocket harness: `makeRunEvent`, `makeJobSeqEvent`, `sendWS`, `sendWSBatch` |
-| `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts`, `palette.svelte.ts` |
+| `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts`, `palette.svelte.ts`. `runs.svelte.ts:RunStore` carries a `runnerPoolCapacities: RunnerPoolCapacity[]` `$state` slice replaced atomically by `loadSnapshot(runs, jobs, runnerPoolCapacities = [])` (third arg defaults to `[]` for rolling-deploy tolerance and back-compat with existing callers). `runners.svelte.ts:computePoolStats(jobs, capacities = [])` takes the second argument and merges declared capacities into `RunnerPoolStats.total` keyed by canonical label-set via `poolKey()`. |
 | `src/lib/dispatcher.ts` | EventDispatcher — routes WebSocket events to `runStore`; batches via requestAnimationFrame; `setOnFlush` post-flush hook for the ARIA live region |
 | `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
 | `src/lib/filters/pool.ts` | `PoolKey` branded type + `poolKey()` factory + `filterRunsByPool()` (ADR 0001) |

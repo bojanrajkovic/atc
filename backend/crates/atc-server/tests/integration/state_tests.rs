@@ -45,6 +45,104 @@ async fn test_empty_state() {
     );
     assert_eq!(json["runs"], serde_json::json!([]), "runs should be empty");
     assert_eq!(json["jobs"], serde_json::json!([]), "jobs should be empty");
+    // Default `AppState` carries no operator-declared pools — surface as
+    // an empty array so the frontend's merge step is a no-op.
+    assert_eq!(
+        json["runnerPoolCapacities"],
+        serde_json::json!([]),
+        "runnerPoolCapacities should be empty when no operator config is loaded"
+    );
+}
+
+/// Snapshot composition: with operator-declared capacities in `AppState`,
+/// `GET /v1/state` returns them in the canonical sorted-labels form so the
+/// frontend can merge directly against `RunnerPoolStats.labels`.
+#[tokio::test]
+#[serial_test::serial]
+async fn snapshot_carries_runner_pool_capacities_from_app_state() {
+    use atc_core::{LabelSet, RunnerPoolCapacity};
+    use atc_server::state::AppState;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    use tokio_util::task::TaskTracker;
+
+    common::ensure_recorder_installed();
+
+    let persist = atc_server::persist::InMemoryStore::new_for_test(
+        Arc::new(atc_core::SystemClock),
+        Duration::from_secs(3600),
+        256,
+    ) as Arc<dyn atc_server::persist::PersistentStore>;
+
+    // Capacities are populated post-validation in `main.rs`; here we hand-build
+    // the same shape to exercise the route-layer composition without going
+    // through file IO.
+    let app_state = Arc::new(AppState {
+        persist,
+        webhook_secret: None,
+        runner_pool_capacities: vec![
+            RunnerPoolCapacity {
+                labels: LabelSet::new(["self-hosted", "linux", "x64"]),
+                capacity: 10,
+            },
+            RunnerPoolCapacity {
+                labels: LabelSet::new(["ubuntu-latest"]),
+                capacity: 20,
+            },
+        ],
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
+    });
+
+    let app = atc_server::routes::api_routes()
+        .with_state(app_state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/v1/state"))
+        .send()
+        .await
+        .expect("GET /v1/state failed");
+    assert_eq!(resp.status(), 200);
+
+    let json: serde_json::Value = resp.json().await.unwrap();
+    let caps = json["runnerPoolCapacities"]
+        .as_array()
+        .expect("runnerPoolCapacities should be an array");
+    assert_eq!(caps.len(), 2, "expected two declared pools, got {caps:?}");
+
+    // First pool: labels canonicalize to sorted order on the wire so the
+    // frontend can match against any insertion order.
+    assert_eq!(
+        caps[0]["labels"],
+        serde_json::json!(["linux", "self-hosted", "x64"])
+    );
+    assert_eq!(caps[0]["capacity"], 10);
+    assert_eq!(caps[1]["labels"], serde_json::json!(["ubuntu-latest"]));
+    assert_eq!(caps[1]["capacity"], 20);
+}
+
+/// Rolling-deploy tolerance: a snapshot serialized without
+/// `runnerPoolCapacities` (e.g., from an older replica's struct shape) still
+/// deserializes to an empty vec via `#[serde(default)]`.
+#[test]
+fn state_snapshot_deserializes_without_runner_pool_capacities_field() {
+    let payload = serde_json::json!({
+        "lastSeq": 7,
+        "runs": [],
+        "jobs": [],
+    });
+    let snap: atc_server::state::StateSnapshot =
+        serde_json::from_value(payload).expect("missing field should default to empty vec");
+    assert_eq!(snap.last_seq, 7);
+    assert!(snap.runner_pool_capacities.is_empty());
 }
 
 /// GET /v1/state after workflow_run_requested webhook returns seq: 1, run in runs

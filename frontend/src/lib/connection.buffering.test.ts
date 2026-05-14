@@ -127,6 +127,7 @@ describe('ConnectionManager', () => {
         lastSeq: 10n,
         runs: [],
         jobs: [],
+        runnerPoolCapacities: [],
       }
 
       let resolveStateFetch: (() => void) | undefined
@@ -205,6 +206,7 @@ describe('ConnectionManager', () => {
         lastSeq: 10n,
         runs: [],
         jobs: [],
+        runnerPoolCapacities: [],
       }
 
       let resolveStateFetch: (() => void) | undefined
@@ -283,6 +285,7 @@ describe('ConnectionManager', () => {
         lastSeq: 0n,
         runs: [],
         jobs: [],
+        runnerPoolCapacities: [],
       }
 
       let resolveStateFetch: (() => void) | undefined

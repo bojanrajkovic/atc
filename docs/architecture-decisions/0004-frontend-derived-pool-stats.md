@@ -114,3 +114,16 @@ required.
   invoked from a `$derived.by(...)` computed over `runStore.jobs`. The previous
   imperative `loadPools(snapshot.poolStats)` and per-event `if (seqEvent.poolStatsAfter)`
   dispatch sites are gone.
+
+## Footnote — operator-declared capacity (issue #16)
+
+Issue #16 (closed by [`docs/design-plans/2026-05-13-issue-16-runner-pool-capacity.md`](../design-plans/2026-05-13-issue-16-runner-pool-capacity.md)) introduces operator-declared pool capacity. This does **not** undo this ADR: capacity is operator config, not derived state.
+
+The delivery path:
+
+1. Loaded server-side from `/etc/atc/config.yaml` via figment.
+2. Held in `AppState::runner_pool_capacities` (single source of truth) — the `PersistentStore` trait stays untouched.
+3. Composed onto `StateSnapshot.runner_pool_capacities` at the route layer in `routes::state_handler` — not in the store.
+4. Merged frontend-side by `computePoolStats(jobs, capacities)` into `RunnerPoolStats.total`, keyed by canonical label set.
+
+No backend `atc_runner_pool_*` Prometheus gauge is reintroduced — that path would force re-derivation server-side and invalidate this ADR. The frontend remains the single derivation site for all pool stats; capacity arrives as inert config alongside the entity data, not as a computed sidecar.

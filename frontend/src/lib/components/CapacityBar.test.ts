@@ -48,4 +48,11 @@ describe('CapacityBar', () => {
     const fillBar = container.querySelector('[style*="width"]')
     expect(fillBar?.getAttribute('style')).toContain('width: 0%')
   })
+
+  it('clamps fill width at 100% and stays --failed when over capacity', () => {
+    const { container } = render(CapacityBar, { props: { used: 12, total: 10 } })
+    const fillBar = container.querySelector('[style*="width"]')
+    expect(fillBar?.getAttribute('style')).toContain('width: 100%')
+    expect(fillBar?.getAttribute('style')).toContain('var(--failed)')
+  })
 })

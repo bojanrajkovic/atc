@@ -184,6 +184,9 @@ impl InMemoryStore {
             last_seq,
             runs,
             jobs,
+            // Operator-declared capacities live in `AppState`, not the store —
+            // composed into the response by `routes::state_handler`.
+            runner_pool_capacities: Vec::new(),
         }
     }
 

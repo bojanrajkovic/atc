@@ -101,6 +101,21 @@ Key sections:
 - `serviceAccount` — ServiceAccount creation and annotations
 - `service` — Service type and port configuration
 - `ingress` / `gateway` — Optional routing configuration
+- `runnerPools` — Operator-declared runner-pool capacities. When non-empty, the chart renders a `ConfigMap` mounted read-only at `/etc/atc/config.yaml`; `atc-server` reads the file at startup and surfaces the declared capacities on `/v1/state` so the frontend can render saturation bars per pool. Default `[]` keeps in-memory dev mode and existing deployments byte-identical.
+
+### Runner-pool capacities
+
+Declare known pool sizes per label set:
+
+```yaml
+runnerPools:
+  - labels: [self-hosted, linux, x64]
+    capacity: 10
+  - labels: [ubuntu-latest]
+    capacity: 20
+```
+
+`labels` is a non-empty array of unique strings (server-side canonicalized to sorted + deduplicated form). `capacity` is an integer ≥ 1. `values.schema.json` rejects malformed entries at `helm install` / `helm upgrade` time; the server additionally rejects duplicate canonicalized label sets across the list at startup. Empty list (the default) renders no `ConfigMap` and no volume mount. Hot-reload is not supported — pool changes require a Pod restart in this chart version.
 
 ### OpenTelemetry export
 

@@ -325,3 +325,18 @@ podDisruptionBudget:
   # string like "50%". The chart fails template rendering when both are set.
   minAvailable: 1
   maxUnavailable: null
+
+# -- Operator-declared runner-pool capacities. When non-empty, the chart
+# renders a ConfigMap and a read-only volume mount at /etc/atc/config.yaml
+# that atc-server reads at startup; the parsed capacities flow onto
+# StateSnapshot.runnerPoolCapacities so the frontend renders a saturation
+# bar (running/capacity) for each declared pool. Labels are canonicalized
+# server-side (sort + dedup); duplicate canonicalized label sets fail
+# startup. Empty list (the default) renders no ConfigMap and no volume.
+# Example:
+#   runnerPools:
+#     - labels: [self-hosted, linux, x64]
+#       capacity: 10
+#     - labels: [ubuntu-latest]
+#       capacity: 20
+runnerPools: []

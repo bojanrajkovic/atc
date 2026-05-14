@@ -128,9 +128,26 @@ pub struct RunnerPoolStats {
     /// Whether this pool uses GitHub-hosted (elastic) runners.
     /// Derived from `RunnerInfo.group_id == Some(0)` for any observed runner.
     pub is_elastic: bool,
-    /// Total runner capacity for this pool, if known.
-    /// Always `None` until operator capacity configuration is implemented.
+    /// Total runner capacity for this pool, populated by the frontend by
+    /// merging operator-declared `RunnerPoolCapacity` entries from the
+    /// snapshot rail. `None` when the operator has not declared a capacity
+    /// for this label set.
     pub total: Option<u32>,
+}
+
+/// Operator-declared capacity for a runner pool, keyed by label set.
+///
+/// Loaded server-side from the YAML config file's `runner_pools` block,
+/// composed into each `StateSnapshot` response, and merged by the frontend
+/// into the `total` field of the matching derived `RunnerPoolStats`.
+/// Unaffected by webhook events — this is configuration, not observed state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RunnerPoolCapacity {
+    /// Canonical (sorted, deduped) label set identifying the pool.
+    pub labels: LabelSet,
+    /// Declared upper-bound runner count for the pool.
+    pub capacity: u32,
 }
 
 #[cfg(test)]
@@ -342,5 +359,31 @@ mod tests {
         let labels = vec!["a", "b", "a", "c", "b", "a", "d"];
         let set = LabelSet::new(labels);
         assert_eq!(set.len(), 4, "Should have 4 unique labels");
+    }
+
+    #[test]
+    fn runner_pool_capacity_serde_round_trip() {
+        let capacity = RunnerPoolCapacity {
+            labels: LabelSet::new(["self-hosted", "linux", "x64"]),
+            capacity: 10,
+        };
+        let json = serde_json::to_string(&capacity).expect("serialize");
+        let back: RunnerPoolCapacity = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(capacity, back);
+    }
+
+    #[test]
+    fn runner_pool_capacity_serializes_labels_in_canonical_order() {
+        // Wire payload must reflect BTreeSet's sorted order so frontend
+        // consumers see canonical-form labels regardless of insertion order.
+        let capacity = RunnerPoolCapacity {
+            labels: LabelSet::new(["x64", "self-hosted", "linux"]),
+            capacity: 5,
+        };
+        let json = serde_json::to_string(&capacity).expect("serialize");
+        assert!(
+            json.contains(r#"["linux","self-hosted","x64"]"#),
+            "labels should serialize sorted, got: {json}"
+        );
     }
 }

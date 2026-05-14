@@ -1,6 +1,13 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-14
+Last verified: 2026-05-13
+
+> **Note on issue #16 (runner-pool capacities).** The wire field
+> `StateSnapshot.runner_pool_capacities` carries operator-declared capacity
+> from `AppState` onto the snapshot response. It is **not** a metric and
+> introduces no new `atc_runner_pool_*` instrument — ADR 0004 keeps pool
+> stats derivation on the frontend. See `docs/architecture-decisions/0004-frontend-derived-pool-stats.md` and the
+> design plan at `docs/design-plans/2026-05-13-issue-16-runner-pool-capacity.md`.
 
 ## Purpose
 

@@ -56,6 +56,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
     let state = Arc::new(AppState {
         persist: Arc::clone(&persist),
         webhook_secret: None,
+        runner_pool_capacities: Vec::new(),
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
     });

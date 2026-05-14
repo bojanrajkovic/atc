@@ -104,6 +104,56 @@ describe('computePoolStats (pure function)', () => {
     expect(pools[0]?.labels).toEqual(['a'])
     expect(pools[1]?.labels).toEqual(['z'])
   })
+
+  it('merges declared capacity into total when label sets match', () => {
+    const jobs = [
+      makeJob({
+        id: 1n,
+        runId: 1n,
+        status: 'InProgress',
+        labels: ['self-hosted', 'linux', 'x64'],
+      }),
+    ]
+    const pools = computePoolStats(jobs, [
+      { labels: ['linux', 'self-hosted', 'x64'], capacity: 10 },
+    ])
+    expect(pools).toHaveLength(1)
+    expect(pools[0]?.total).toBe(10)
+    expect(pools[0]?.running).toBe(1)
+  })
+
+  it('leaves total null for pools without a declared capacity', () => {
+    const jobs = [
+      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
+      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['self-hosted', 'linux'] }),
+    ]
+    const pools = computePoolStats(jobs, [{ labels: ['ubuntu-latest'], capacity: 20 }])
+    const declared = pools.find((p) => p.labels[0] === 'ubuntu-latest')
+    const undeclared = pools.find((p) => p.labels.includes('self-hosted'))
+    expect(declared?.total).toBe(20)
+    expect(undeclared?.total).toBeNull()
+  })
+
+  it('matches capacity declared with labels in any order via canonicalization', () => {
+    // Capacities arrive from the wire pre-sorted by the backend's BTreeSet, but
+    // poolKey() re-sorts on the frontend so unsorted input still matches.
+    const jobs = [
+      makeJob({
+        id: 1n,
+        runId: 1n,
+        status: 'InProgress',
+        labels: ['self-hosted', 'linux', 'x64'],
+      }),
+    ]
+    const pools = computePoolStats(jobs, [{ labels: ['x64', 'linux', 'self-hosted'], capacity: 5 }])
+    expect(pools[0]?.total).toBe(5)
+  })
+
+  it('omitting capacities argument keeps existing zero-config behavior', () => {
+    const jobs = [makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] })]
+    const pools = computePoolStats(jobs)
+    expect(pools[0]?.total).toBeNull()
+  })
 })
 
 // Minimal WorkflowRun factory

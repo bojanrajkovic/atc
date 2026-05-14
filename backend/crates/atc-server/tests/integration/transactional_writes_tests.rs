@@ -55,6 +55,7 @@ pub async fn build_app_with_pg(
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
+        runner_pool_capacities: Vec::new(),
         shutdown,
         ws_tracker: TaskTracker::new(),
     });

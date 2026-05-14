@@ -128,6 +128,7 @@ test.describe('run-cards', () => {
           lastSeq: 1 as unknown as bigint,
           runs: STATUS_FIXTURE.map(makeWorkflowRun),
           jobs: [],
+          runnerPoolCapacities: [],
         } satisfies StateSnapshot),
       })
     })
@@ -178,6 +179,7 @@ test.describe('run-cards', () => {
             },
           ],
           jobs: [],
+          runnerPoolCapacities: [],
         } satisfies StateSnapshot),
       })
     })
@@ -259,6 +261,7 @@ test.describe('run-cards', () => {
               completedAt: null,
             },
           ],
+          runnerPoolCapacities: [],
         } satisfies StateSnapshot),
       })
     })
@@ -321,6 +324,7 @@ test.describe('run-cards', () => {
             },
           ],
           jobs: [],
+          runnerPoolCapacities: [],
         } satisfies StateSnapshot),
       })
     })

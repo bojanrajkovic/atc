@@ -1,0 +1,114 @@
+suite: Operator-declared runner-pool capacities
+
+templates:
+  - configmap.yaml
+  - deployment.yaml
+
+tests:
+  - it: omits the ConfigMap when runnerPools is the default empty list
+    template: configmap.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: omits the runner-pool-config volume mount when runnerPools is empty
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: runner-pool-config
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: runner-pool-config
+
+  - it: renders a ConfigMap with both pools when runnerPools is non-empty
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: [self-hosted, linux, x64]
+          capacity: 10
+        - labels: [ubuntu-latest]
+          capacity: 20
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-atc-config
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "runner_pools:"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "self-hosted"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "ubuntu-latest"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "capacity: 10"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "capacity: 20"
+
+  - it: mounts the ConfigMap read-only at /etc/atc/config.yaml when runnerPools is non-empty
+    template: deployment.yaml
+    set:
+      runnerPools:
+        - labels: [self-hosted, linux, x64]
+          capacity: 10
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: runner-pool-config
+            mountPath: /etc/atc/config.yaml
+            subPath: config.yaml
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: runner-pool-config
+            configMap:
+              name: RELEASE-NAME-atc-config
+              defaultMode: 0444
+
+  - it: rejects a pool with empty labels via values.schema.json
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: []
+          capacity: 1
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects a pool with capacity 0 via values.schema.json
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: [a]
+          capacity: 0
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects a pool missing capacity via values.schema.json
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: [a]
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects a pool with unknown fields via values.schema.json
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: [a]
+          capacity: 1
+          elastic: true
+    asserts:
+      - failedTemplate: {}

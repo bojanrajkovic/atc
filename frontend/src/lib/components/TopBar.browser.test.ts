@@ -202,6 +202,33 @@ describe('TopBar (browser mode)', () => {
     expect(screen.queryByText('GitHub Actions')).toBeNull()
   })
 
+  it('chip label falls back to labels when groupName is "Default" (issue #143)', async () => {
+    render(TopBar)
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['self-hosted', 'linux', 'amd64'], makeRunner('Default', 1n)),
+    ])
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(screen.getByText('amd64, linux, self-hosted')).toBeTruthy()
+    expect(screen.queryByText('Default')).toBeNull()
+  })
+
+  it('"Default" group is treated as null when disambiguating shared groupName', async () => {
+    // Two pools both named "Default" should NOT get the disambiguation suffix —
+    // the count loop excludes "Default" so both fall through to the labels-only
+    // branch, matching the rule "Default is treated as null".
+    render(TopBar)
+    runStore.jobsByRun.set(1n, [
+      makeInProgressJob(1n, 1n, ['self-hosted', 'linux'], makeRunner('Default', 1n)),
+      makeInProgressJob(2n, 1n, ['self-hosted', 'macos'], makeRunner('Default', 1n)),
+    ])
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(screen.getByText('linux, self-hosted')).toBeTruthy()
+    expect(screen.getByText('macos, self-hosted')).toBeTruthy()
+    expect(screen.queryByText(/^Default ·/)).toBeNull()
+  })
+
   it('mixed ambiguous and unambiguous pools', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [

@@ -41,6 +41,7 @@ async function setupWithRuns(page: Page) {
           lastSeq: 1n,
           runs: [makeRun(1, 'Queued'), makeRun(2, 'InProgress'), makeRun(3, 'Completed')],
           jobs: [],
+          runnerPoolCapacities: [],
         } satisfies StateSnapshot,
         bigintReplacer,
       ),

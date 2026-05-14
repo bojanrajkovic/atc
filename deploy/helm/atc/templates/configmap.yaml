@@ -1,0 +1,24 @@
+{{- /*
+Operator-declared runner-pool capacities.
+
+Rendered only when `runnerPools` is non-empty. The resulting ConfigMap is
+mounted read-only at /etc/atc/config.yaml inside the atc-server container
+(see deployment.yaml). atc-server's figment chain reads it at startup; the
+parsed `runner_pools` block populates `StateSnapshot.runnerPoolCapacities`
+on every /v1/state response so the frontend can render saturation per pool.
+
+Empty list ⇒ no ConfigMap, no volume, no behavior change. The default keeps
+in-memory dev mode and existing single-replica deployments byte-identical.
+*/}}
+{{- if gt (len .Values.runnerPools) 0 }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "atc.fullname" . }}-config
+  labels:
+    {{- include "atc.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    runner_pools:
+{{ toYaml .Values.runnerPools | indent 6 }}
+{{- end }}

@@ -87,7 +87,13 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     );
     async move {
         match state.persist.read_snapshot().await {
-            Ok(snap) => {
+            Ok(mut snap) => {
+                // Compose operator-declared pool capacities from `AppState`
+                // onto the persistent-store-derived snapshot. The store trait
+                // owns event-derived state only; capacity is config, surfaced
+                // here so the snapshot rail carries everything the frontend
+                // needs for its first render.
+                snap.runner_pool_capacities = state.runner_pool_capacities.clone();
                 let current = tracing::Span::current();
                 current.record("snapshot.runs_count", snap.runs.len());
                 current.record("snapshot.jobs_count", snap.jobs.len());

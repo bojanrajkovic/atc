@@ -179,10 +179,21 @@ async fn main() {
 
     let ws_tracker = TaskTracker::new();
 
-    // Build AppState with the four fields that survive the refactor.
+    // Build AppState. Capacity entries are flattened from the validated
+    // `Config::runner_pools` into the wire-shaped `RunnerPoolCapacity` form
+    // here, so the request path can clone the canonical struct directly.
+    let runner_pool_capacities = cfg
+        .runner_pools
+        .iter()
+        .map(|p| atc_core::RunnerPoolCapacity {
+            labels: atc_core::LabelSet::new(p.labels.iter().cloned()),
+            capacity: p.capacity,
+        })
+        .collect();
     let app_state = Arc::new(AppState {
         persist: Arc::clone(&persist),
         webhook_secret: cfg.github.webhook_secret.clone(),
+        runner_pool_capacities,
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
     });

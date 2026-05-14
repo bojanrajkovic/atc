@@ -106,9 +106,9 @@ Runner pool statistics are derived views over the current job state. They are co
 - `running: u32` — Count of currently running jobs in this pool
 - `queued: u32` — Count of queued jobs waiting for a runner in this pool
 - `is_elastic: bool` — Derived from runner `group_id == Some(0)`. Indicates whether the pool auto-scales (true) or has fixed capacity (false).
-- `total: Option<u32>` — Maximum capacity of the pool. Always `None` until operator capacity configuration is implemented. Used to render capacity bars and thresholds in the frontend.
+- `total: Option<u32>` — Maximum capacity of the pool. Populated frontend-side via the merge in `computePoolStats`, keyed by canonical label-set against `StateSnapshot.runner_pool_capacities`. `None` for any pool the operator hasn't declared. Drives capacity-bar rendering and saturation-threshold colors.
 
-The snapshot returns `StateSnapshot { last_seq, runs, jobs }` only (no inline pool-stats computation). The wire carries no `pool_stats` or `pool_stats_after` fields (see ADR 0004). The lexicographic sort by `labels` is the responsibility of `computePoolStats` on the frontend.
+The snapshot returns `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` (no inline pool-stats computation). The wire carries no `pool_stats` or `pool_stats_after` fields (see ADR 0004). The lexicographic sort by `labels` is the responsibility of `computePoolStats` on the frontend, which also performs the capacity merge.
 
 ## Key Decisions
 
@@ -344,10 +344,16 @@ struct StateSnapshot {
     last_seq: u64,            // Highest committed seq; serializes as "lastSeq"
     runs: Vec<WorkflowRun>,
     jobs: Vec<Job>,
+    runner_pool_capacities: Vec<RunnerPoolCapacity>,
+                              // Operator-declared pool ceilings.
+                              // serde(default) → empty vec on missing field
+                              // (rolling-deploy tolerance for older replicas).
 }
 ```
 
 **Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `SeqEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
+
+**Capacity composition:** `runner_pool_capacities` is operator config, not observed state. `PersistentStore` (Postgres + InMemory) leaves the field as `Vec::new()` when constructing a snapshot. `routes::state_handler` clones `AppState::runner_pool_capacities` (built once at startup from `Config::runner_pools`) onto the response after the persist call returns. Two consequences: (1) the `PersistentStore` trait stays single-purpose — it owns event-derived state only — and (2) capacity changes require a process restart to take effect (a hot-reload follow-up is tracked separately).
 
 Return 200 with the JSON snapshot.
 
@@ -355,9 +361,12 @@ Return 200 with the JSON snapshot.
 
 ### Configuration
 
-Server wiring configuration extends the existing figment-based config:
+Server wiring configuration uses figment with three layers, lowest precedence to highest: `defaults → Yaml::file($ATC_CONFIG_FILE | "/etc/atc/config.yaml") → Env::prefixed("ATC_").split("__")`. Missing file is benign (figment's `Yaml::file` is auto-optional). Env carries scalar overrides only — structured config (currently `runner_pools`) is file-only by design.
+
+Notable fields:
 
 - **`github.webhook_secret`** (`ATC_GITHUB__WEBHOOK_SECRET` env var) — Optional string. If present, all webhook requests must carry a valid HMAC-SHA256 signature. If absent, signatures are not required or verified.
+- **`runner_pools`** (file-only, no env override) — Operator-declared `Vec<RunnerPoolConfig { labels: Vec<String>, capacity: u32 }>`. Each entry's labels are canonicalized at load (sort + dedup). Validation rejects empty labels, `capacity == 0`, and duplicate canonicalized label sets. The validated list flows into `AppState::runner_pool_capacities` and is composed onto every `/v1/state` snapshot. See `docs/architecture/deployment.md` § "File-based configuration" for the operator-facing surface.
 
 ### Lifecycle Wiring
 
@@ -369,7 +378,7 @@ In `main.rs`:
 5. Construct `persist: Arc<dyn PersistentStore>` via the mode-appropriate `start` constructor:
     - **PG mode** (`ATC_DATABASE_URL` set): `db::init_pool(url)` → `listener::connect_listener(listener_url)` → `PgStore::start(pool, listener_conn, shutdown.clone())`. `PgStore::start` runs `SELECT COALESCE(MAX(seq), 0) FROM outbox` to seed the watermark (last fallible step), then spawns the listener and drain tasks internally and stores their `JoinHandle`s on the returned `Arc<PgStore>` (ADR 0006).
     - **In-memory mode**: `InMemoryStore::start(clock, completed_ttl, eviction_period, shutdown.clone())`. The store constructs its own `broadcast::channel(256)`, spawns the eviction task internally, and stores the `JoinHandle` on the returned `Arc<InMemoryStore>` (ADR 0006).
-6. Create `AppState { persist, webhook_secret, shutdown, ws_tracker }` and pass to Axum via `.with_state()`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not branch on storage mode. WS handlers obtain their broadcast receiver via `state.persist.subscribe()`.
+6. Create `AppState { persist, webhook_secret, runner_pool_capacities, shutdown, ws_tracker }` and pass to Axum via `.with_state()`. The `runner_pool_capacities` field is built once at startup by walking `Config::runner_pools` (already validated and canonicalized by `Config::load`) and converting each entry into the wire-shaped `RunnerPoolCapacity { labels: LabelSet, capacity: u32 }`. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not branch on storage mode. WS handlers obtain their broadcast receiver via `state.persist.subscribe()`.
 7. Bind the server to `http_addr` via `axum::serve`.
 8. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
 
@@ -496,8 +505,8 @@ Aggregate worst-case shutdown: ~13 seconds.
 
 ### Modules
 
-- **`state.rs`** — `AppState` struct (fields: `persist: Arc<dyn PersistentStore>`, `webhook_secret`, `shutdown: CancellationToken`, `ws_tracker: TaskTracker`) and the `SeqEvent { seq, event }` broadcast type (ADR 0004); `StateSnapshot { last_seq, runs, jobs }` (ADR 0005). WS handlers obtain their receiver via `state.persist.subscribe()` (ADR 0006).
-- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`, `/healthz`, `/readyz`; defines `StateSnapshot { last_seq, runs, jobs }`; webhook handler dispatches through `state.persist.apply_*_event(env)` uniformly for both modes (ADR 0005), returns `{"status":"accepted","seq":<u64>}` on success; state handler uses REPEATABLE READ in PG mode; `/readyz` checks drain heartbeat staleness in PG mode
+- **`state.rs`** — `AppState` struct (fields: `persist: Arc<dyn PersistentStore>`, `webhook_secret`, `runner_pool_capacities: Vec<RunnerPoolCapacity>`, `shutdown: CancellationToken`, `ws_tracker: TaskTracker`) and the `SeqEvent { seq, event }` broadcast type (ADR 0004); `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` (ADR 0005, capacity field added for issue #16). WS handlers obtain their receiver via `state.persist.subscribe()` (ADR 0006).
+- **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`, `/healthz`, `/readyz`; webhook handler dispatches through `state.persist.apply_*_event(env)` uniformly for both modes (ADR 0005), returns `{"status":"accepted","seq":<u64>}` on success; state handler reads `read_snapshot` from `PersistentStore`, then composes `runner_pool_capacities` from `AppState` onto the response (capacity is config, not store-owned state); uses REPEATABLE READ in PG mode; `/readyz` checks drain heartbeat staleness in PG mode
 - **`ws.rs`** — WebSocket connection handling and message broadcast logic. Subscribes via `state.persist.subscribe()` (ADR 0006).
 - **`persist.rs`** (module at `src/persist/`) — `pub trait PersistentStore` with `apply_run_event`, `apply_job_event`, `read_snapshot`, `liveness_check`, `subscribe`, `shutdown`; `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its connection pool, broadcast sender, `broadcast_watermark` / `last_drain_pass_at` atomics, and the listener + drain `JoinHandle`s (ADR 0006). Constructed via `PgStore::start(pool, listener_conn, shutdown)` / `PgStore::start_with_test_hooks(...)`; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — owns full state (`RwLock<StateData>`, seq `Mutex<u64>`, clock, TTL), broadcast sender, and the eviction `JoinHandle` (ADR 0006). Constructed via `InMemoryStore::start(clock, ttl, eviction_period, shutdown)`; delegates mutation to `atc_core::state_machine` free functions, maintains secondary indexes, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the PG state handler (ADR 0005)
 
@@ -507,7 +516,7 @@ Aggregate worst-case shutdown: ~13 seconds.
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
 - `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
-- `backend/crates/atc-server/src/state.rs` — AppState struct (4 fields: `persist`, `webhook_secret`, `shutdown`, `ws_tracker` per ADR 0006) and `SeqEvent { seq, event }` type; `StateSnapshot { last_seq, runs, jobs }` also lives here
+- `backend/crates/atc-server/src/state.rs` — AppState struct (5 fields: `persist`, `webhook_secret`, `runner_pool_capacities`, `shutdown`, `ws_tracker`) and `SeqEvent { seq, event }` type; `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` also lives here
 - `backend/crates/atc-server/src/ws.rs` — WebSocket handler. Subscribes via `state.persist.subscribe()` (ADR 0006); per-connection event forwarding and SeqEvent serialization unchanged.
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/otel.rs` — `init_otel`: builds the OTLP/HTTP tracer + meter providers (when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), installs `TraceContextPropagator` globally, registers the shared `exponential_histogram_view` so all histograms emit as base-2 exponential aggregations, and installs the `metrics-exporter-otel` recorder behind the `metrics` facade. `shutdown(handles)`: flushes both providers; called from `run_shutdown_orchestration` after every emitter has joined.

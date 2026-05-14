@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use atc_core::{Job, WorkflowRun};
+use atc_core::{Job, RunnerPoolCapacity, WorkflowRun};
 use atc_github::WebhookEvent;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -24,6 +24,11 @@ pub struct AppState {
     /// HMAC-SHA256 secret for verifying GitHub webhook signatures.
     /// `None` means verification is skipped.
     pub webhook_secret: Option<String>,
+    /// Operator-declared runner-pool capacities loaded from the YAML config
+    /// at startup. Single source of truth — composed into every
+    /// `StateSnapshot` response by `routes::state_handler`. Empty when the
+    /// operator has not declared any pools.
+    pub runner_pool_capacities: Vec<RunnerPoolCapacity>,
     /// Cancellation token for cooperative shutdown.
     ///
     /// Cloned from `main`'s `shutdown` token. WS handlers observe it via the
@@ -63,11 +68,20 @@ pub struct SeqEvent {
 /// Returned by `GET /v1/state`. `last_seq` is the highest committed sequence
 /// number — clients discard buffered WS events with `seq <= last_seq`.
 /// A snapshot at `last_seq: N` reflects all committed events with event seq <= N.
-#[derive(Serialize, Deserialize, ts_rs::TS)]
+///
+/// `runner_pool_capacities` carries operator-declared pool ceilings (loaded
+/// from the YAML config and composed into the response by
+/// `routes::state_handler`, **not** by the persistent store). It is annotated
+/// `#[serde(default)]` so a snapshot from an older replica that does not
+/// emit the field still deserializes — the field defaults to `Vec::new()`
+/// and the frontend behaves as if no capacities were declared.
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct StateSnapshot {
     pub last_seq: u64,
     pub runs: Vec<WorkflowRun>,
     pub jobs: Vec<Job>,
+    #[serde(default)]
+    pub runner_pool_capacities: Vec<RunnerPoolCapacity>,
 }
