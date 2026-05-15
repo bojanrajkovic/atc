@@ -418,7 +418,7 @@ The phases below are **migration checkpoints**, not red/green TDD steps.
    - Phase 0 lands the annotation skeletons (header callouts on ADR-0005/0006). Phases 1/2/3 update individual doc surfaces as they touch them. Phase 3's PR body confirms the broader sweep is complete and documents any deliberate exceptions.
 
 9. Update `docs/architecture/release-pipeline.md` (if it exists) to enumerate the four new packages.
-10. Run `cd /Users/brajkovic/Projects/atc && bash scripts/doc-mapping.sh backend/crates/atc-store-pg/src/listener.rs` — must print BOTH `docs/architecture/backend-server.md` AND `docs/architecture/metrics.md` (verifies straddler ordering).
+10. Run `cd /Users/brajkovic/Projects/atc && bash -c 'source scripts/doc-mapping.sh && get_docs_for_file backend/crates/atc-store-pg/src/listener.rs'` — must print BOTH `docs/architecture/backend-server.md` AND `docs/architecture/metrics.md` (verifies straddler ordering). `scripts/doc-mapping.sh` only *defines* `get_docs_for_file`; it does not invoke it when run directly with a path argument, so the verification command must source the script and call the function explicitly.
 
 **Estimated diff:** ~80-100 lines, ~6-8 files, **zero source changes**.
 
@@ -562,7 +562,7 @@ This is the largest phase. Step 2's goal is a single irreducible PR — the move
     - `docs/architecture/metrics.md` — update `PgMetrics` location reference. The struct and its emit sites are now in `atc-store-pg/src/metrics.rs`. `register_build_info` reference unchanged.
     - `backend/crates/atc-server/CLAUDE.md` — update the persist-module description to reflect that pg-mode code now lives in `atc-store-pg`.
 
-26. **Run `cd /Users/brajkovic/Projects/atc && bash scripts/doc-mapping.sh backend/crates/atc-store-pg/src/store/writes.rs`** — must print `docs/architecture/backend-server.md`.
+26. **Run `cd /Users/brajkovic/Projects/atc && bash -c 'source scripts/doc-mapping.sh && get_docs_for_file backend/crates/atc-store-pg/src/store/writes.rs'`** — must print `docs/architecture/backend-server.md`.
 
 **Estimated diff:** ~3,800-4,000 lines, ~30-40 files. Largest single PR in the series.
 
@@ -617,8 +617,8 @@ Numbered for explicit checkoff. Each AC has either a unique automated check or a
 
 - **AC1**: `release-please-config.json`'s `packages` **object** (keyed by path) contains entries for all four new crate paths: `backend/crates/atc-wire`, `backend/crates/atc-persist`, `backend/crates/atc-store-pg`, `backend/crates/atc-store-mem`. The existing `linked-versions` "atc" group's `components` **array** lists all 8 components (4 new + atc-core, atc-github, atc-server, frontend).
 - **AC2**: `.release-please-manifest.json` has 9 entries total (8 listed in the linked-versions group + helm, which exists separately at `deploy/helm/atc`). The four NEW entries are exactly `"0.1.0"` (`cd /Users/brajkovic/Projects/atc && grep '"0.0.0"' .release-please-manifest.json` returns zero hits for the new crates).
-- **AC3**: `cd /Users/brajkovic/Projects/atc && bash scripts/doc-mapping.sh backend/crates/atc-store-pg/src/listener.rs` prints both `docs/architecture/backend-server.md` AND `docs/architecture/metrics.md` on separate lines.
-- **AC4**: `cd /Users/brajkovic/Projects/atc && bash scripts/doc-mapping.sh backend/crates/atc-store-pg/src/store/writes.rs` prints `docs/architecture/backend-server.md` (catch-all reachable for non-straddler paths).
+- **AC3**: `cd /Users/brajkovic/Projects/atc && bash -c 'source scripts/doc-mapping.sh && get_docs_for_file backend/crates/atc-store-pg/src/listener.rs'` prints both `docs/architecture/backend-server.md` AND `docs/architecture/metrics.md` on separate lines.
+- **AC4**: `cd /Users/brajkovic/Projects/atc && bash -c 'source scripts/doc-mapping.sh && get_docs_for_file backend/crates/atc-store-pg/src/store/writes.rs'` prints `docs/architecture/backend-server.md` (catch-all reachable for non-straddler paths).
 - **AC5**: `cd /Users/brajkovic/Projects/atc && git grep -E "must have a slim CLAUDE\.md" CLAUDE.md` returns content with the two-tier framing (skeleton + reactive). Same for `CONTRIBUTING.md` "Directory-Level CLAUDE.md Files".
 - **AC6**: `docs/architecture-decisions/0005-persistentstore-trait-relocation.md` contains a `> **Revised by ADR-0008:**` annotation block.
 - **AC-fail-1**: `release-please-config.json`'s `linked-versions` "atc" group's `components` array does NOT have any unrelated package added (regression check — verify only the 4 new crates joined the existing 4).
