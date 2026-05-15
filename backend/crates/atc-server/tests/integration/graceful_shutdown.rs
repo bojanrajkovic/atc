@@ -31,11 +31,12 @@ use tokio_util::task::TaskTracker;
 use atc_server::metrics;
 use atc_server::routes;
 use atc_server::shutdown::{
-    SHUTDOWN_TIMEOUT_DRAIN, SHUTDOWN_TIMEOUT_LISTENER, SHUTDOWN_TIMEOUT_METRICS,
-    SHUTDOWN_TIMEOUT_SERVES, SHUTDOWN_TIMEOUT_WS, run_shutdown_orchestration,
+    SHUTDOWN_TIMEOUT_METRICS, SHUTDOWN_TIMEOUT_SERVES, SHUTDOWN_TIMEOUT_WS,
+    run_shutdown_orchestration,
 };
 use atc_server::state::AppState;
 use atc_store_mem::EVICTION_SHUTDOWN_TIMEOUT;
+use atc_store_pg::store::{SHUTDOWN_TIMEOUT_DRAIN, SHUTDOWN_TIMEOUT_LISTENER};
 
 /// Full-stack fixture with real TCP listeners, PG pool, and all background tasks.
 struct FullServerFixture {

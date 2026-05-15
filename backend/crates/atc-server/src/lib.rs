@@ -1,10 +1,7 @@
 pub mod assets;
 pub mod config;
-pub mod db;
-pub mod listener;
 pub mod metrics;
 pub mod otel;
-pub mod persist;
 pub mod routes;
 pub mod shutdown;
 pub mod state;

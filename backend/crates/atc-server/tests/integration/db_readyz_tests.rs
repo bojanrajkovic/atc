@@ -1,7 +1,7 @@
 //! Integration tests for the PostgreSQL-backed readyz probe and pool initialization.
 //!
 //! Boots ephemeral PostgreSQL containers via testcontainers, runs migrations via
-//! `atc_server::db::init_pool`, and verifies GET /readyz behavior in healthy and
+//! `atc_store_pg::db::init_pool`, and verifies GET /readyz behavior in healthy and
 //! unreachable DB states. Requires Docker (or OrbStack) to be running.
 
 use crate::common;
@@ -55,7 +55,7 @@ async fn readyz_returns_ok_with_healthy_db() {
         .expect("failed to get port");
     let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    let pool = atc_server::db::init_pool(&db_url)
+    let pool = atc_store_pg::db::init_pool(&db_url)
         .await
         .expect("init_pool failed");
 
@@ -92,7 +92,7 @@ async fn migrations_create_runs_and_jobs_tables() {
         .expect("failed to get port");
     let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    let pool = atc_server::db::init_pool(&db_url)
+    let pool = atc_store_pg::db::init_pool(&db_url)
         .await
         .expect("init_pool failed");
 
@@ -107,7 +107,7 @@ async fn migrations_create_runs_and_jobs_tables() {
         .expect("jobs table missing or query failed");
 
     // Verify migration is idempotent
-    sqlx::migrate!("./migrations")
+    atc_store_pg::db::MIGRATOR
         .run(&pool)
         .await
         .expect("second migration run failed");
@@ -133,7 +133,7 @@ async fn readyz_returns_503_when_db_unreachable() {
         .connect(&db_url)
         .await
         .expect("failed to connect to PG");
-    sqlx::migrate!("./migrations")
+    atc_store_pg::db::MIGRATOR
         .run(&pool)
         .await
         .expect("migrations failed");

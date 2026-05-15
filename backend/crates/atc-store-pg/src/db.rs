@@ -1,0 +1,164 @@
+//! Pool initialization and embedded-migration runner for the PG store.
+//!
+//! [`init_pool`] connects an [`sqlx::PgPool`] to the supplied URL and runs the
+//! four embedded migrations under `migrations/` against it. Failures fan out
+//! into [`DbInitError`] so callers can distinguish "migration ran but failed"
+//! from "could not connect" without naming the `sqlx::Error` enum directly —
+//! this is how `atc-server` keeps `sqlx` out of its production-source dep set
+//! after the PG-store extraction (#169, ADR-0008).
+
+use std::error::Error;
+use std::fmt;
+
+use sqlx::PgPool;
+use sqlx::migrate::Migrator;
+
+/// The embedded migrator, anchored on the four SQL files under
+/// `atc-store-pg/migrations/`. Exposed publicly so test fixtures can run
+/// migrations against a caller-managed pool (e.g. one configured with
+/// `PgPoolOptions::acquire_timeout(...)` for readyz-down tests) without
+/// re-deriving the migrator path. `init_pool` uses this same migrator
+/// internally.
+pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// Discriminated error surface for [`init_pool`].
+///
+/// `sqlx 0.8.6` defines `Error::Migrate(Box<MigrateError>)`, so the boxed
+/// shape is preserved here. `Connect` covers every non-migration `sqlx::Error`
+/// the pool's connect path can surface.
+#[derive(Debug)]
+pub enum DbInitError {
+    /// Embedded-migration application failed. The boxed [`sqlx::migrate::MigrateError`]
+    /// is preserved verbatim so `error.source()` exposes the inner cause for log
+    /// formatters and operator runbooks.
+    Migrate(Box<sqlx::migrate::MigrateError>),
+    /// Pool connect (or any other non-migration error path inside
+    /// [`PgPool::connect`]) failed.
+    Connect(sqlx::Error),
+}
+
+impl fmt::Display for DbInitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DbInitError::Migrate(e) => write!(f, "database migration failed: {e}"),
+            DbInitError::Connect(e) => write!(f, "database connection failed: {e}"),
+        }
+    }
+}
+
+impl Error for DbInitError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            DbInitError::Migrate(e) => Some(e.as_ref()),
+            DbInitError::Connect(e) => Some(e),
+        }
+    }
+}
+
+/// Connect to PostgreSQL and run the embedded migrations.
+///
+/// On success returns a `PgPool` ready for the rest of `atc-store-pg` to use.
+/// On failure returns a [`DbInitError`] whose discriminant tells the caller
+/// whether migrations or the connect path was at fault.
+///
+/// `sqlx::migrate!("./migrations")` resolves the migration directory relative
+/// to `CARGO_MANIFEST_DIR` at compile time, so this anchor binds to the four
+/// SQL files co-located with this crate (`backend/crates/atc-store-pg/migrations/`).
+pub async fn init_pool(database_url: &str) -> Result<PgPool, DbInitError> {
+    let pool = PgPool::connect(database_url)
+        .await
+        .map_err(DbInitError::Connect)?;
+    MIGRATOR
+        .run(&pool)
+        .await
+        .map_err(|e| DbInitError::Migrate(Box::new(e)))?;
+    Ok(pool)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `DbInitError::Migrate` must surface its inner `sqlx::migrate::MigrateError`
+    /// via [`std::error::Error::source`] so log formatters and operator
+    /// dashboards can reach the underlying migration failure without naming
+    /// the variant directly.
+    #[test]
+    fn migrate_variant_exposes_inner_via_source() {
+        // `MigrateError::VersionTooNew(latest, current)` is one of the
+        // cheapest publicly-constructible variants — two `i64`s with no
+        // runtime context. We pick (latest=42, current=7) so the rendered
+        // string contains the version we assert on.
+        let inner = sqlx::migrate::MigrateError::VersionTooNew(42, 7);
+        let err = DbInitError::Migrate(Box::new(inner));
+
+        let source = std::error::Error::source(&err)
+            .expect("Migrate variant must expose its inner error via source()");
+        let rendered = source.to_string();
+        assert!(
+            rendered.contains("42"),
+            "source() should surface the inner MigrateError details; got {rendered:?}",
+        );
+
+        // Discriminator must be observable via the variant pattern — this is
+        // how `atc-server::main` decides whether to log "migrations failed" vs
+        // "connect failed".
+        assert!(
+            matches!(err, DbInitError::Migrate(_)),
+            "Migrate variant must be matchable as DbInitError::Migrate(_)",
+        );
+        assert!(
+            !matches!(err, DbInitError::Connect(_)),
+            "Migrate variant must NOT match the Connect arm",
+        );
+    }
+
+    /// `DbInitError::Connect` must surface its inner `sqlx::Error` via
+    /// [`std::error::Error::source`] for the same operator-visibility reason.
+    #[test]
+    fn connect_variant_exposes_inner_via_source() {
+        // `sqlx::Error::PoolTimedOut` is a no-payload variant — the cheapest
+        // way to fabricate a `sqlx::Error` in a unit test.
+        let inner = sqlx::Error::PoolTimedOut;
+        let err = DbInitError::Connect(inner);
+
+        let source = std::error::Error::source(&err)
+            .expect("Connect variant must expose its inner error via source()");
+        // The rendered string content is sqlx's responsibility; we just verify
+        // the source is reachable and non-empty.
+        assert!(
+            !source.to_string().is_empty(),
+            "source() should yield a non-empty rendering of the inner sqlx::Error",
+        );
+
+        assert!(
+            matches!(err, DbInitError::Connect(_)),
+            "Connect variant must be matchable as DbInitError::Connect(_)",
+        );
+        assert!(
+            !matches!(err, DbInitError::Migrate(_)),
+            "Connect variant must NOT match the Migrate arm",
+        );
+    }
+
+    /// `Display` impls must mention the failure category — this is the string
+    /// `main.rs` logs under `error = %e`. The inner-error contents come through
+    /// `source()`, not `Display`, so we only check the leading label here.
+    #[test]
+    fn display_includes_failure_category() {
+        let migrate_err =
+            DbInitError::Migrate(Box::new(sqlx::migrate::MigrateError::VersionTooNew(7, 0)));
+        let migrate_str = format!("{migrate_err}");
+        assert!(
+            migrate_str.starts_with("database migration failed"),
+            "Migrate Display must lead with the category; got {migrate_str:?}",
+        );
+
+        let connect_err = DbInitError::Connect(sqlx::Error::PoolTimedOut);
+        let connect_str = format!("{connect_err}");
+        assert!(
+            connect_str.starts_with("database connection failed"),
+            "Connect Display must lead with the category; got {connect_str:?}",
+        );
+    }
+}

@@ -1,0 +1,33 @@
+[package]
+name = "atc-store-pg"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+# Enables inspection helpers and `PgStore::start_with_test_hooks` for
+# integration and unit tests. Activated automatically via the self-referential
+# dev-dependency below and the cross-crate dev-dep from `atc-server`.
+test-support = []
+
+[dependencies]
+atc-core = { path = "../atc-core" }
+atc-github = { path = "../atc-github" }
+atc-persist = { path = "../atc-persist" }
+atc-wire = { path = "../atc-wire" }
+async-trait = { workspace = true }
+chrono = "=0.4.44"
+opentelemetry = { version = "=0.31.0", features = ["metrics", "trace"] }
+serde_json = "=1.0.149"
+sqlx = { version = "=0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "chrono", "migrate", "macros", "json"] }
+tokio = { version = "=1.52.3", features = ["sync", "time", "rt", "macros"] }
+tokio-util = { version = "=0.7.18", features = ["rt"] }
+tracing = { workspace = true }
+uuid = { version = "=1.23.1", features = ["v4", "fast-rng"] }
+
+[dev-dependencies]
+# Self-referential dev-dependency enables the `test-support` feature when
+# building unit tests inside this crate, mirroring the `atc-core`/`atc-server`
+# convention.
+atc-store-pg = { path = ".", features = ["test-support"] }

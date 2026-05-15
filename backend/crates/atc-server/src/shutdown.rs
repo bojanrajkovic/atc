@@ -25,20 +25,16 @@ use tokio_util::task::TaskTracker;
 
 use crate::otel::{self, OtelHandles};
 
-/// Per-task timeout budgets. Aggregate worst-case shutdown: ~13 seconds.
-/// K8s `terminationGracePeriodSeconds` defaults to 30; well within budget.
-pub const SHUTDOWN_TIMEOUT_DRAIN: Duration = Duration::from_secs(5);
+/// Per-task timeout budgets for the orchestration's non-store surfaces.
+/// Per-store-task budgets (drain, listener, outbox heartbeat, outbox sweep,
+/// eviction) live with the store crates that own those tasks
+/// (`atc-store-pg::store` and `atc-store-mem`).
+/// Aggregate worst-case shutdown: ~6 seconds plus whatever each store
+/// crate's `shutdown()` impl spends. K8s `terminationGracePeriodSeconds`
+/// defaults to 30; well within budget.
 pub const SHUTDOWN_TIMEOUT_WS: Duration = Duration::from_secs(2);
 pub const SHUTDOWN_TIMEOUT_SERVES: Duration = Duration::from_secs(3);
-pub const SHUTDOWN_TIMEOUT_LISTENER: Duration = Duration::from_secs(1);
 pub const SHUTDOWN_TIMEOUT_METRICS: Duration = Duration::from_secs(1);
-/// Outbox heartbeat task — cooperative on the shared cancellation token; each
-/// tick is bounded by `OUTBOX_HEARTBEAT_INTERVAL` so 2 s is generous.
-pub const SHUTDOWN_TIMEOUT_OUTBOX_HEARTBEAT: Duration = Duration::from_secs(2);
-/// Outbox sweep task — same cooperative shape as the heartbeat. A sweep can
-/// run a multi-second statement under contention, so 2 s is the join budget
-/// for cooperative exit, not for the in-flight statement.
-pub const SHUTDOWN_TIMEOUT_OUTBOX_SWEEP: Duration = Duration::from_secs(2);
 
 /// Log an unexpected early exit of a spawned axum serve task. Used by the
 /// trigger select arm: if a serve resolves before any signal, we log and

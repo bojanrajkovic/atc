@@ -42,7 +42,7 @@ async fn notify_fires_on_commit() {
 
     // Subscribe an out-of-band listener BEFORE firing webhooks.
     let mut oob = PgListener::connect(&db_url).await.unwrap();
-    oob.listen(atc_server::listener::NOTIFY_CHANNEL)
+    oob.listen(atc_store_pg::listener::NOTIFY_CHANNEL)
         .await
         .unwrap();
 
@@ -73,7 +73,7 @@ async fn no_notify_on_rollback() {
 
     // Subscribe the out-of-band listener before any webhook so all NOTIFYs are visible.
     let mut oob = PgListener::connect(&db_url).await.unwrap();
-    oob.listen(atc_server::listener::NOTIFY_CHANNEL)
+    oob.listen(atc_store_pg::listener::NOTIFY_CHANNEL)
         .await
         .unwrap();
 
@@ -310,7 +310,7 @@ async fn notify_payload_is_seq() {
     let (pool, _container, db_url) = common::start_pg().await;
 
     let mut oob = PgListener::connect(&db_url).await.unwrap();
-    oob.listen(atc_server::listener::NOTIFY_CHANNEL)
+    oob.listen(atc_store_pg::listener::NOTIFY_CHANNEL)
         .await
         .unwrap();
 
