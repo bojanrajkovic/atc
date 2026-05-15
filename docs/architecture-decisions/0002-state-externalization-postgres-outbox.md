@@ -4,6 +4,8 @@
 
 Last verified: 2026-05-04
 
+> **Geographic note (per ADR-0008):** This ADR's references to `atc-server::persist` reflect the layout that held through ADR-0005 and ADR-0006. After issue #169 ships its phase 2 PR, the `upsert_*_in_txn` / `insert_outbox_*_in_txn` helpers move into `atc-store-pg`. The transactional outbox semantics described below are unchanged. See `docs/architecture-decisions/0008-persistence-crate-split.md`.
+
 ## Context
 
 ATC's backend currently keeps all live state in process memory. `atc-server`

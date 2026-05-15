@@ -197,7 +197,7 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 | `fix:` | Patch (0.0.x) | Bug fix |
 | `feat!:` or `BREAKING CHANGE:` | Major (x.0.0) | Breaking change |
 
-All packages (3 Rust crates + frontend) version in lockstep via the `linked-versions` plugin.
+All packages (7 Rust crates + frontend) version in lockstep via the `linked-versions` plugin.
 
 **Container image:** `docker pull ghcr.io/bojanrajkovic/atc:latest`
 
@@ -384,13 +384,20 @@ Exception: citing a *committed* document (rollout doc, ADR, prior design plan) b
 
 ### Directory-Level CLAUDE.md Files
 
-Created only for high-risk directories where AI agents make costly mistakes. Each must reference its canonical source:
+Every subdirectory that represents a distinct domain (crates, frontend, helm chart, `.github`, etc.) gets a slim `CLAUDE.md`. The file follows a **two-tier** structure:
 
-```markdown
-<!-- Derived from docs/architecture/<topic>.md -->
-```
+**Tier 1 — Mandatory skeleton.** Created when the directory is established. Required content:
 
-Do not create these speculatively — wait until agents encounter sharp edges in a specific directory, then create a targeted directive extract.
+- Purpose statement — one or two sentences naming what this domain owns.
+- Pointer to the canonical architecture doc(s) in `docs/architecture/` — never duplicate doc content.
+- An `AGENTS.md` symlink (`ln -s CLAUDE.md AGENTS.md`) in the same directory; both files together or neither.
+- Reference its canonical source where relevant:
+
+  ```markdown
+  <!-- Derived from docs/architecture/<topic>.md -->
+  ```
+
+**Tier 2 — Sharp-edges sections.** Added **reactively** when agents encounter friction in that directory — costly mistakes, non-obvious testing gotchas, foot-guns, file-specific guidance. Do not pre-author sharp edges speculatively; let them accrete from observed agent failures. The root `CLAUDE.md` invariant "Slim CLAUDE.md in every domain directory (two-tier)" is the authoritative version of this rule.
 
 ### Observability
 

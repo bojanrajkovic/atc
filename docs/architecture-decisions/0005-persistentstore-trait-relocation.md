@@ -2,7 +2,9 @@
 
 **Status:** Accepted (issue #50, 2026-05-07)
 
-Last verified: 2026-05-07
+Last verified: 2026-05-15
+
+> **Revised by ADR-0008:** The `PersistentStore` trait moves out of `atc-server::persist` into a dedicated `atc-persist` crate, alongside `atc-wire` (data types) and the per-implementation `atc-store-pg` / `atc-store-mem` crates. The geographic claim ("trait lives in `atc-server::persist`") is superseded; the architectural reasoning (trait owned by the layer that wires it, with each backend owning its own transaction lifecycle) is preserved by the four-crate split. See `docs/architecture-decisions/0008-persistence-crate-split.md` (introduced in issue #169 phase 1).
 
 ## Context
 
