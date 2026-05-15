@@ -2,7 +2,7 @@ import { liveRegion } from '$lib/aria/live-region.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
 /**
@@ -20,7 +20,7 @@ export class ConnectionManager {
   private abortController: AbortController | null = null
   private baseUrl: string
   private snapshotLastSeq: bigint = 0n
-  private preConnectBuffer: SeqEvent[] = []
+  private preConnectBuffer: CommittedEvent[] = []
   private connected = false
 
   constructor(baseUrl: string) {
@@ -57,15 +57,15 @@ export class ConnectionManager {
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onmessage = (event) => {
-      const seqEvent: SeqEvent = JSON.parse(event.data, (key, value) =>
+      const committedEvent: CommittedEvent = JSON.parse(event.data, (key, value) =>
         this.jsonReviver(key, value),
       )
       connectionStore.recordEvent()
 
       if (this.connected) {
-        eventDispatcher.dispatch(seqEvent)
+        eventDispatcher.dispatch(committedEvent)
       } else {
-        this.preConnectBuffer.push(seqEvent)
+        this.preConnectBuffer.push(committedEvent)
       }
     }
 

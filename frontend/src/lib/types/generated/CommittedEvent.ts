@@ -6,13 +6,17 @@ import type { WebhookEvent } from "./WebhookEvent";
  *
  * Carried over the broadcast channel and sent to WebSocket clients as JSON.
  * Clients use `seq` to reconcile the REST snapshot with the live event stream.
+ *
+ * At the point of emission the event has been validated, applied to state,
+ * and assigned a monotonic `seq` by the store's commit-order allocator —
+ * hence "committed event" rather than the older "seq event" framing.
  */
-export type SeqEvent = { 
+export type CommittedEvent = { 
 /**
- * Monotonic sequence number assigned at ingestion time.
+ * Monotonic sequence number assigned at commit time.
  */
 seq: bigint, 
 /**
- * The domain event that was ingested.
+ * The domain event that was committed.
  */
 event: WebhookEvent, };

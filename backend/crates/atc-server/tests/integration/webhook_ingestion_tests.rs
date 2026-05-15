@@ -212,7 +212,7 @@ async fn webhook_ingestion_backward_transition_returns_200_no_broadcast() {
     let json2: serde_json::Value = serde_json::from_slice(&body2).expect("response is valid JSON");
     assert_eq!(json2["status"], "rejected");
 
-    // Verify the rejected transition does NOT produce a SeqEvent.
+    // Verify the rejected transition does NOT produce a CommittedEvent.
     // A short timeout on recv() should return Err, confirming no broadcast occurred.
     let no_event = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
     assert!(
@@ -221,7 +221,7 @@ async fn webhook_ingestion_backward_transition_returns_200_no_broadcast() {
     );
 }
 
-/// Processed event is broadcast as SeqEvent with seq value
+/// Processed event is broadcast as CommittedEvent with seq value
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_ingestion_broadcast_single_event_with_seq() {
@@ -414,9 +414,10 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     common::ensure_recorder_installed();
 
     // Build a custom InMemoryStore with a pre-subscribed broadcast receiver so
-    // we can assert the seq on the emitted SeqEvent.
+    // we can assert the seq on the emitted CommittedEvent.
     use atc_core::SystemClock;
-    use atc_server::persist::{InMemoryStore, PersistentStore};
+    use atc_persist::PersistentStore;
+    use atc_server::persist::InMemoryStore;
     use atc_server::state::AppState;
     use std::sync::Arc;
     use std::time::Duration;
@@ -472,7 +473,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
 ///
 /// Drive a job to Completed via Queued → Completed (valid: GitHub cancellation path),
 /// then attempt a backward transition (Completed → Queued, which is invalid).
-/// Assert the backward POST does NOT cause a broadcast — no SeqEvent is emitted for
+/// Assert the backward POST does NOT cause a broadcast — no CommittedEvent is emitted for
 /// rejected transitions.
 #[tokio::test]
 #[serial_test::serial]
@@ -529,7 +530,7 @@ async fn failed_job_transition_produces_no_broadcast() {
 
     // POST workflow_job_queued again: Completed → Queued is a backward transition.
     // predecessors_of(Queued) = [Queued]; Completed is not in that set → InvalidTransition.
-    // The handler must NOT broadcast a SeqEvent for this rejected transition.
+    // The handler must NOT broadcast a CommittedEvent for this rejected transition.
     let resp4 = app
         .clone()
         .oneshot(
@@ -548,7 +549,7 @@ async fn failed_job_transition_produces_no_broadcast() {
         "rejected transition still returns 200"
     );
 
-    // No SeqEvent must have been broadcast for the rejected backward transition.
+    // No CommittedEvent must have been broadcast for the rejected backward transition.
     assert!(
         rx.try_recv().is_err(),
         "expected no broadcast for rejected job backward transition (Completed → Queued), but received an event"
@@ -567,7 +568,7 @@ async fn in_memory_invalid_transition_returns_rejected() {
 
     // Subscribe to broadcasts BEFORE firing any webhooks so we observe every
     // emission. The contract: a successful Completed apply emits exactly one
-    // SeqEvent; a subsequent rejected InProgress apply emits zero.
+    // CommittedEvent; a subsequent rejected InProgress apply emits zero.
     let mut rx = state.persist.subscribe();
 
     // Advance to Completed via the route handler.
@@ -589,7 +590,7 @@ async fn in_memory_invalid_transition_returns_rejected() {
     // Drain the broadcast for the successful apply and snapshot seq.
     let first_event = rx
         .try_recv()
-        .expect("Completed apply must broadcast exactly one SeqEvent");
+        .expect("Completed apply must broadcast exactly one CommittedEvent");
     let seq_after_success = first_event.seq;
     assert!(
         rx.try_recv().is_err(),
@@ -639,7 +640,7 @@ async fn in_memory_invalid_transition_returns_rejected() {
     // bump the seq counter.
     assert!(
         rx.try_recv().is_err(),
-        "rejected InProgress must not broadcast a SeqEvent"
+        "rejected InProgress must not broadcast a CommittedEvent"
     );
     let snap_after_reject = state
         .persist

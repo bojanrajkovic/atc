@@ -23,8 +23,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 
 const BATCH_SIZE = 100
 const BATCH_COUNT = 10
@@ -89,8 +89,8 @@ describe('deterministic 1000-event burst coalescing', () => {
     vi.resetModules()
   })
 
-  /** Build a Requested SeqEvent for a unique run id. */
-  function makeRequestedEvent(id: number): SeqEvent {
+  /** Build a Requested CommittedEvent for a unique run id. */
+  function makeRequestedEvent(id: number): CommittedEvent {
     const envelope: RunEventEnvelope = {
       runId: BigInt(id),
       org: 'test-org',

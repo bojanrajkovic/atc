@@ -9,12 +9,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::{Clock, SystemClock};
+use atc_persist::PersistentStore;
 use atc_server::config;
 use atc_server::db;
 use atc_server::listener;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
-use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
+use atc_server::persist::{InMemoryStore, PgStore};
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::AppState;

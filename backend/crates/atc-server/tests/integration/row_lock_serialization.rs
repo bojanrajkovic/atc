@@ -81,7 +81,7 @@ async fn concurrent_same_entity_commits_in_seq_order() {
         "webhook B must be accepted (idempotent requested replay); body={body_b}"
     );
 
-    // Collect 2 SeqEvents from the drain (one per committed outbox row).
+    // Collect 2 CommittedEvents from the drain (one per committed outbox row).
     let mut broadcast_seqs: Vec<u64> = Vec::new();
     timeout(Duration::from_secs(10), async {
         while broadcast_seqs.len() < 2 {
@@ -98,7 +98,7 @@ async fn concurrent_same_entity_commits_in_seq_order() {
     assert_eq!(
         broadcast_seqs.len(),
         2,
-        "drain must broadcast exactly 2 SeqEvents; got {broadcast_seqs:?}"
+        "drain must broadcast exactly 2 CommittedEvents; got {broadcast_seqs:?}"
     );
 
     // Seqs must be strictly monotonically increasing — drain emits in ORDER BY seq.

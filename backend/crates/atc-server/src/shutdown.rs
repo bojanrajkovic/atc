@@ -18,12 +18,12 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
+use atc_persist::{PersistentStore, join_with_timeout};
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::otel::{self, OtelHandles};
-use crate::persist::PersistentStore;
 
 /// Per-task timeout budgets. Aggregate worst-case shutdown: ~13 seconds.
 /// K8s `terminationGracePeriodSeconds` defaults to 30; well within budget.
@@ -40,32 +40,6 @@ pub const SHUTDOWN_TIMEOUT_OUTBOX_HEARTBEAT: Duration = Duration::from_secs(2);
 /// run a multi-second statement under contention, so 2 s is the join budget
 /// for cooperative exit, not for the in-flight statement.
 pub const SHUTDOWN_TIMEOUT_OUTBOX_SWEEP: Duration = Duration::from_secs(2);
-
-/// Join a `JoinHandle<()>` within the given timeout. On timeout, log an error
-/// and call `AbortHandle::abort()` (best-effort; task may run until its next
-/// await point). On task panic, log the error and continue. A task that was
-/// externally cancelled (e.g. by a test's `AbortHandle::abort()`) is treated
-/// as a clean exit and logged at `warn` rather than `error` — the join itself
-/// is the intended outcome.
-pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: &'static str) {
-    let abort = handle.abort_handle();
-    match tokio::time::timeout(timeout, handle).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) if e.is_cancelled() => {
-            tracing::warn!(task = name, "task was cancelled before clean exit");
-        }
-        Ok(Err(e)) => {
-            tracing::error!(task = name, error = %e, "task ended with error");
-        }
-        Err(_elapsed) => {
-            tracing::error!(
-                task = name,
-                "shutdown timeout exceeded; aborting (best-effort)"
-            );
-            abort.abort();
-        }
-    }
-}
 
 /// Log an unexpected early exit of a spawned axum serve task. Used by the
 /// trigger select arm: if a serve resolves before any signal, we log and

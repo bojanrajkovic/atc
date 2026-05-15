@@ -44,7 +44,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // InMemoryStore: always Ok.
     match state.persist.liveness_check().await {
         Ok(()) => (StatusCode::OK, Json(HealthResponse { status: "ok" })).into_response(),
-        Err(crate::persist::LivenessError::DbUnreachable(e)) => {
+        Err(atc_persist::LivenessError::DbUnreachable(e)) => {
             tracing::warn!(error = %e, "readyz: db check failed");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -54,7 +54,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             )
                 .into_response()
         }
-        Err(crate::persist::LivenessError::DrainStale { age_ms }) => {
+        Err(atc_persist::LivenessError::DrainStale { age_ms }) => {
             tracing::warn!(age_ms, "readyz: drain heartbeat stale");
             (
                 StatusCode::SERVICE_UNAVAILABLE,

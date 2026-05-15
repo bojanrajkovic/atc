@@ -12,8 +12,9 @@ use crate::common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use atc_server::persist::PersistentStore;
-use atc_server::state::{AppState, SeqEvent};
+use atc_persist::PersistentStore;
+use atc_server::state::AppState;
+use atc_wire::CommittedEvent;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -34,13 +35,13 @@ async fn build_app_with_pg(
 ) -> (
     axum::Router,
     Arc<AppState>,
-    tokio::sync::broadcast::Receiver<SeqEvent>,
+    tokio::sync::broadcast::Receiver<CommittedEvent>,
 ) {
     common::ensure_recorder_installed();
     let shutdown = CancellationToken::new();
     let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
     let rx = store.subscribe();
-    let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = store as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
@@ -273,14 +274,14 @@ async fn payload_roundtrips_as_envelope() {
         "deserialized run_id must match fixture"
     );
 
-    // Must NOT contain SeqEvent-specific top-level keys
+    // Must NOT contain CommittedEvent-specific top-level keys
     assert!(
         payload.get("pool_stats_after").is_none(),
-        "payload must not contain pool_stats_after (would indicate SeqEvent serialization)"
+        "payload must not contain pool_stats_after (would indicate CommittedEvent serialization)"
     );
     assert!(
         payload.get("seq").is_none(),
-        "payload must not contain seq (would indicate SeqEvent serialization)"
+        "payload must not contain seq (would indicate CommittedEvent serialization)"
     );
     state.shutdown.cancel();
 }
@@ -674,11 +675,11 @@ async fn job_webhook_creates_stub_run_and_outbox() {
 }
 
 // ---------------------------------------------------------------------------
-// Payload is RunEventEnvelope / JobEventEnvelope, NOT SeqEvent
+// Payload is RunEventEnvelope / JobEventEnvelope, NOT CommittedEvent
 // ---------------------------------------------------------------------------
 
 /// Both a run and a job outbox payload deserialize as their respective
-/// envelope types and do NOT contain SeqEvent top-level keys.
+/// envelope types and do NOT contain CommittedEvent top-level keys.
 #[tokio::test]
 #[serial_test::serial]
 async fn payload_is_envelope_not_seq_event() {
@@ -718,15 +719,15 @@ async fn payload_is_envelope_not_seq_event() {
     for row in &rows {
         let payload = &row.payload;
 
-        // No SeqEvent top-level keys in any payload
+        // No CommittedEvent top-level keys in any payload
         assert!(
             payload.get("seq").is_none(),
-            "kind='{}' payload must not contain 'seq' key (would indicate SeqEvent)",
+            "kind='{}' payload must not contain 'seq' key (would indicate CommittedEvent)",
             row.kind
         );
         assert!(
             payload.get("pool_stats_after").is_none(),
-            "kind='{}' payload must not contain 'pool_stats_after' key (would indicate SeqEvent)",
+            "kind='{}' payload must not contain 'pool_stats_after' key (would indicate CommittedEvent)",
             row.kind
         );
 
@@ -852,7 +853,7 @@ async fn no_in_memory_drift_in_pg_mode() {
 ///
 /// Because all payloads are identical (same run_id → same content in broadcast and
 /// outbox), we assert count-level invariants instead of run_id ordering: exactly N
-/// SeqEvents broadcast with strictly increasing seq values, exactly N outbox rows
+/// CommittedEvents broadcast with strictly increasing seq values, exactly N outbox rows
 /// created.
 ///
 /// Uses `build_app_with_pg_and_listener` (full fixture with drain task)
@@ -904,14 +905,14 @@ async fn concurrent_run_requested_broadcast_matches_durable_order() {
         .collect();
     join_all(handles).await;
 
-    // Collect N SeqEvents from the broadcast channel in arrival order. The
+    // Collect N CommittedEvents from the broadcast channel in arrival order. The
     // drain may emit them across one or more passes depending on coalescing,
     // but the cumulative count must hit N within the timeout.
     let mut broadcast_seqs: Vec<u64> = Vec::new();
     for _ in 0..N {
         let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
-            .expect("timed out waiting for SeqEvent")
+            .expect("timed out waiting for CommittedEvent")
             .expect("broadcast channel closed unexpectedly");
         broadcast_seqs.push(ev.seq);
     }
@@ -924,7 +925,7 @@ async fn concurrent_run_requested_broadcast_matches_durable_order() {
     assert_eq!(
         broadcast_seqs.len(),
         N,
-        "must broadcast exactly N SeqEvents"
+        "must broadcast exactly N CommittedEvents"
     );
     assert_eq!(outbox_count as usize, N, "outbox must have exactly N rows");
 
@@ -932,7 +933,7 @@ async fn concurrent_run_requested_broadcast_matches_durable_order() {
     for w in broadcast_seqs.windows(2) {
         assert!(
             w[0] < w[1],
-            "broadcast SeqEvent.seq must be strictly increasing: {w:?}"
+            "broadcast CommittedEvent.seq must be strictly increasing: {w:?}"
         );
     }
 
@@ -1005,12 +1006,12 @@ async fn concurrent_different_runs_broadcast_matches_durable_order() {
         .collect();
     join_all(handles).await;
 
-    // Collect N SeqEvents from the broadcast channel in arrival order.
+    // Collect N CommittedEvents from the broadcast channel in arrival order.
     let mut broadcast_run_ids: Vec<i64> = Vec::new();
     for _ in 0..N {
         let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
-            .expect("timed out waiting for SeqEvent")
+            .expect("timed out waiting for CommittedEvent")
             .expect("broadcast channel closed unexpectedly");
         let run_id = match &ev.event {
             atc_github::WebhookEvent::Run(env) => env.run_id.0,

@@ -14,8 +14,8 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use atc_core::{Clock, SystemClock};
+use atc_persist::PersistentStore;
 use atc_server::listener;
-use atc_server::persist::PersistentStore;
 use atc_server::persist::pg::{
     OUTBOX_RETENTION_FLOOR, PgStore, PgStoreStartError, PgStoreTestHooks,
 };

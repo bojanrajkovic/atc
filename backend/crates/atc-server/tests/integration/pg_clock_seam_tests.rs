@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use atc_core::{Clock, TestClock, fixed_test_timestamp};
-use atc_server::persist::LivenessError;
+use atc_persist::LivenessError;
 use chrono::TimeDelta;
 use serial_test::serial;
 use tokio::time::timeout;

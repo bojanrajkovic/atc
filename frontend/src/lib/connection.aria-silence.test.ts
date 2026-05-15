@@ -21,12 +21,12 @@ import { ConnectionManager } from '$lib/connection'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
-/** Build a minimal RunEvent SeqEvent (Requested action triggers an announcement). */
-function makeRequestedRunEvent(runId: bigint, seq: bigint): SeqEvent {
+/** Build a minimal RunEvent CommittedEvent (Requested action triggers an announcement). */
+function makeRequestedRunEvent(runId: bigint, seq: bigint): CommittedEvent {
   return {
     seq,
     event: {
@@ -52,8 +52,8 @@ function makeRequestedRunEvent(runId: bigint, seq: bigint): SeqEvent {
   }
 }
 
-/** Serialize a SeqEvent to JSON with bigint → string (matching the wire format). */
-function serializeEvent(event: SeqEvent): string {
+/** Serialize a CommittedEvent to JSON with bigint → string (matching the wire format). */
+function serializeEvent(event: CommittedEvent): string {
   return JSON.stringify(event, (_key, value) => {
     if (typeof value === 'bigint') return value.toString()
     return value

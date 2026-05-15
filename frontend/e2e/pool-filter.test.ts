@@ -1,5 +1,5 @@
 import { expect, test } from './lib/fixtures'
-import { makeJobSeqEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { makeJobCommittedEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /**
  * Pool filter integration E2E.
@@ -58,7 +58,7 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
   )
   await sendWS(
     page,
-    makeJobSeqEvent(3, {
+    makeJobCommittedEvent(3, {
       jobData: {
         runId: 1n,
         jobId: 100n,
@@ -94,7 +94,7 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
   )
   await sendWS(
     page,
-    makeJobSeqEvent(5, {
+    makeJobCommittedEvent(5, {
       jobData: {
         runId: 3n,
         jobId: 200n,

@@ -479,7 +479,7 @@ async fn drain_skips_bogus_payload_rows() {
     // ── Assert: no broadcast events emitted for bad rows ─────────────────────
     assert!(
         rx.try_recv().is_err(),
-        "no SeqEvents should be broadcast for rows with bogus payloads"
+        "no CommittedEvents should be broadcast for rows with bogus payloads"
     );
 
     // ── Assert metric counters ────────────────────────────────────────────────

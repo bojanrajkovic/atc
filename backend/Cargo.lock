@@ -119,13 +119,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "atc-persist"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "atc-core",
+ "atc-wire",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "atc-server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "atc-core",
  "atc-github",
+ "atc-persist",
  "atc-server",
+ "atc-wire",
  "axum",
  "axum-otel-metrics",
  "chrono",
@@ -162,6 +175,16 @@ dependencies = [
  "ts-rs",
  "uuid",
  "vergen-gix",
+]
+
+[[package]]
+name = "atc-wire"
+version = "0.1.0"
+dependencies = [
+ "atc-core",
+ "atc-github",
+ "serde",
+ "ts-rs",
 ]
 
 [[package]]

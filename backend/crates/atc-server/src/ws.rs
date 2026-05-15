@@ -1,11 +1,12 @@
 //! WebSocket event stream.
 //!
 //! Each connection subscribes to the broadcast channel and receives
-//! `SeqEvent`s as JSON text frames. One-way push only —
+//! `CommittedEvent`s as JSON text frames. One-way push only —
 //! client-to-server messages are ignored.
 
 use std::sync::Arc;
 
+use atc_wire::CommittedEvent;
 use axum::{
     extract::{
         State,
@@ -16,7 +17,7 @@ use axum::{
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-use crate::state::{AppState, SeqEvent};
+use crate::state::AppState;
 
 /// Axum handler: upgrade HTTP to WebSocket, subscribe to broadcast channel.
 pub async fn ws_handler(
@@ -48,7 +49,7 @@ pub async fn ws_handler(
 /// `RecvError::Closed` arm is only reached in genuinely abnormal scenarios.
 async fn handle_socket(
     mut socket: WebSocket,
-    mut rx: broadcast::Receiver<SeqEvent>,
+    mut rx: broadcast::Receiver<CommittedEvent>,
     shutdown: CancellationToken,
 ) {
     tracing::info!("WebSocket client connected");
@@ -65,18 +66,18 @@ async fn handle_socket(
             }
             result = rx.recv() => {
                 match result {
-                    Ok(seq_event) => {
-                        let json = match serde_json::to_string(&seq_event) {
+                    Ok(committed_event) => {
+                        let json = match serde_json::to_string(&committed_event) {
                             Ok(j) => j,
                             Err(e) => {
-                                tracing::error!(error = %e, "failed to serialize SeqEvent");
+                                tracing::error!(error = %e, "failed to serialize CommittedEvent");
                                 continue;
                             }
                         };
                         if socket.send(Message::Text(json.into())).await.is_err() {
                             break "send failed";
                         }
-                        tracing::debug!(seq = seq_event.seq, "forwarded event to WS client");
+                        tracing::debug!(seq = committed_event.seq, "forwarded event to WS client");
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // The subscriber missed `n` events because the

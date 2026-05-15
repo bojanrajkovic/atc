@@ -72,7 +72,7 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
         Arc::new(atc_core::SystemClock),
         Duration::from_secs(3600),
         256,
-    ) as Arc<dyn atc_server::persist::PersistentStore>;
+    ) as Arc<dyn atc_persist::PersistentStore>;
 
     // Capacities are populated post-validation in `main.rs`; here we hand-build
     // the same shape to exercise the route-layer composition without going
@@ -139,7 +139,7 @@ fn state_snapshot_deserializes_without_runner_pool_capacities_field() {
         "runs": [],
         "jobs": [],
     });
-    let snap: atc_server::state::StateSnapshot =
+    let snap: atc_wire::StateSnapshot =
         serde_json::from_value(payload).expect("missing field should default to empty vec");
     assert_eq!(snap.last_seq, 7);
     assert!(snap.runner_pool_capacities.is_empty());

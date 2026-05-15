@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runStore } from '$lib/stores/runs.svelte'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { LiveRegion } from './live-region.svelte'
 
@@ -10,14 +10,14 @@ import { LiveRegion } from './live-region.svelte'
 
 let seqCounter = 0
 
-function makeRunSeqEvent(opts: {
+function makeRunCommittedEvent(opts: {
   runId: bigint
   action: 'Requested' | 'InProgress' | { Completed: { conclusion: string } }
   displayTitle?: string
   branch?: string | null
   org?: string
   repo?: string
-}): SeqEvent {
+}): CommittedEvent {
   seqCounter++
   let actionPayload: { type: string; data?: unknown }
   if (opts.action === 'Requested') {
@@ -54,7 +54,7 @@ function makeRunSeqEvent(opts: {
   }
 }
 
-function makeJobSeqEvent(runId: bigint): SeqEvent {
+function makeJobCommittedEvent(runId: bigint): CommittedEvent {
   seqCounter++
   return {
     seq: BigInt(seqCounter),
@@ -126,7 +126,7 @@ describe('LiveRegion', () => {
   describe('observeFlush event walking', () => {
     it('counts a Requested (queued) transition as 1 announcement', () => {
       setupRun(1n)
-      liveRegion.observeFlush([makeRunSeqEvent({ runId: 1n, action: 'Requested' })])
+      liveRegion.observeFlush([makeRunCommittedEvent({ runId: 1n, action: 'Requested' })])
       expect(liveRegion.message).toContain('queued')
       expect(liveRegion.busy).toBe(false)
     })
@@ -134,7 +134,7 @@ describe('LiveRegion', () => {
     it('counts a Completed transition as 1 announcement', () => {
       setupRun(1n)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 1n, action: { Completed: { conclusion: 'Success' } } }),
       ])
       expect(liveRegion.message).toContain('succeeded')
       expect(liveRegion.busy).toBe(false)
@@ -142,13 +142,13 @@ describe('LiveRegion', () => {
 
     it('skips InProgress events (no announcement)', () => {
       setupRun(1n)
-      liveRegion.observeFlush([makeRunSeqEvent({ runId: 1n, action: 'InProgress' })])
+      liveRegion.observeFlush([makeRunCommittedEvent({ runId: 1n, action: 'InProgress' })])
       expect(liveRegion.message).toBe('')
       expect(liveRegion.busy).toBe(false)
     })
 
     it('skips Job events (no announcement)', () => {
-      liveRegion.observeFlush([makeJobSeqEvent(1n)])
+      liveRegion.observeFlush([makeJobCommittedEvent(1n)])
       expect(liveRegion.message).toBe('')
       expect(liveRegion.busy).toBe(false)
     })
@@ -175,8 +175,8 @@ describe('LiveRegion', () => {
       })
 
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 1n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: { Completed: { conclusion: 'Success' } } }),
       ])
 
       expect(liveRegion.message).toContain('queued')
@@ -189,8 +189,8 @@ describe('LiveRegion', () => {
       setupRun(1n)
       setupRun(2n)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: { Completed: { conclusion: 'Failure' } } }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: { Completed: { conclusion: 'Failure' } } }),
       ])
       expect(liveRegion.message).toContain('queued')
       expect(liveRegion.message).toContain('failed')
@@ -201,9 +201,9 @@ describe('LiveRegion', () => {
       setupRun(2n)
       setupRun(3n)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
       ])
       expect(liveRegion.message).toContain('queued')
       expect(liveRegion.busy).toBe(false)
@@ -223,10 +223,10 @@ describe('LiveRegion', () => {
       setupRun(3n)
       setupRun(4n)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
       expect(liveRegion.busy).toBe(true)
     })
@@ -237,10 +237,10 @@ describe('LiveRegion', () => {
       setupRun(3n)
       setupRun(4n)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
 
       expect(liveRegion.busy).toBe(true)
@@ -261,17 +261,17 @@ describe('LiveRegion', () => {
 
       // 4-transition flush opens burst
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
 
       // 2-transition flush within window — also added to burst even though <3
       vi.advanceTimersByTime(100)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 5n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 6n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 5n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 6n, action: 'Requested' }),
       ])
 
       vi.advanceTimersByTime(200)
@@ -289,11 +289,11 @@ describe('LiveRegion', () => {
       setupRun(5n)
 
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 3n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 4n, action: { Completed: { conclusion: 'Failure' } } }),
-        makeRunSeqEvent({ runId: 5n, action: { Completed: { conclusion: 'Failure' } } }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 3n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 4n, action: { Completed: { conclusion: 'Failure' } } }),
+        makeRunCommittedEvent({ runId: 5n, action: { Completed: { conclusion: 'Failure' } } }),
       ])
 
       vi.advanceTimersByTime(200)
@@ -312,10 +312,10 @@ describe('LiveRegion', () => {
       setupRun(4n)
 
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 2n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 3n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 4n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 1n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 2n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 3n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 4n, action: { Completed: { conclusion: 'Success' } } }),
       ])
 
       vi.advanceTimersByTime(200)
@@ -334,10 +334,10 @@ describe('LiveRegion', () => {
 
       // First burst
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
       vi.advanceTimersByTime(200)
 
@@ -351,10 +351,10 @@ describe('LiveRegion', () => {
       setupRun(8n)
 
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 5n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 6n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 7n, action: { Completed: { conclusion: 'Success' } } }),
-        makeRunSeqEvent({ runId: 8n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 5n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 6n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 7n, action: { Completed: { conclusion: 'Success' } } }),
+        makeRunCommittedEvent({ runId: 8n, action: { Completed: { conclusion: 'Success' } } }),
       ])
       vi.advanceTimersByTime(200)
 
@@ -374,7 +374,7 @@ describe('LiveRegion', () => {
       setupRun(2n)
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-      const badEvent = makeRunSeqEvent({
+      const badEvent = makeRunCommittedEvent({
         runId: 1n,
         action: { Completed: { conclusion: 'null_conclusion' as 'Success' } },
       })
@@ -382,7 +382,7 @@ describe('LiveRegion', () => {
       // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
       ;(badEvent.event as any).data.action = { type: 'Completed', data: { conclusion: null } }
 
-      liveRegion.observeFlush([badEvent, makeRunSeqEvent({ runId: 2n, action: 'Requested' })])
+      liveRegion.observeFlush([badEvent, makeRunCommittedEvent({ runId: 2n, action: 'Requested' })])
 
       // The good event should still be announced
       expect(liveRegion.message).toContain('queued')
@@ -395,7 +395,7 @@ describe('LiveRegion', () => {
     it('logs the offending event payload on error', () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-      const badEvent = makeRunSeqEvent({
+      const badEvent = makeRunCommittedEvent({
         runId: 99n,
         action: 'Requested',
       })
@@ -429,10 +429,10 @@ describe('LiveRegion', () => {
       setupRun(4n)
 
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
 
       expect(liveRegion.busy).toBe(true)
@@ -453,10 +453,10 @@ describe('LiveRegion', () => {
       setupRun(4n)
 
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
       // Burst is open; debounce has not fired yet (timers are faked)
       expect(liveRegion.busy).toBe(true)
@@ -482,10 +482,10 @@ describe('LiveRegion', () => {
 
       // Open burst, cancel it
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 1n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 2n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 3n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 4n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 2n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 3n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 4n, action: 'Requested' }),
       ])
       liveRegion.cancelBurst()
 
@@ -495,10 +495,10 @@ describe('LiveRegion', () => {
       setupRun(7n)
       setupRun(8n)
       liveRegion.observeFlush([
-        makeRunSeqEvent({ runId: 5n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 6n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 7n, action: 'Requested' }),
-        makeRunSeqEvent({ runId: 8n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 5n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 6n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 7n, action: 'Requested' }),
+        makeRunCommittedEvent({ runId: 8n, action: 'Requested' }),
       ])
       vi.advanceTimersByTime(200)
 

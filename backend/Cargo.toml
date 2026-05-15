@@ -7,6 +7,8 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [workspace.dependencies]
+async-trait = "=0.1.89"
+tracing = "=0.1.44"
 ts-rs = { version = "=12.0.1", features = ["serde-compat", "chrono-impl"] }
 
 # Test/dev binaries on Linux bundle DWARF debug info inside the binary by

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import { classifyEvent, VERB_BY_CONCLUSION } from './transition-kinds'
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ export type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, Run
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeRunSeqEvent(action: { type: string; data?: unknown }): SeqEvent {
+function makeRunCommittedEvent(action: { type: string; data?: unknown }): CommittedEvent {
   return {
     seq: 1n,
     event: {
@@ -47,7 +47,7 @@ function makeRunSeqEvent(action: { type: string; data?: unknown }): SeqEvent {
   }
 }
 
-function makeJobSeqEvent(): SeqEvent {
+function makeJobCommittedEvent(): CommittedEvent {
   return {
     seq: 2n,
     event: {
@@ -107,12 +107,12 @@ describe('VERB_BY_CONCLUSION', () => {
 describe('classifyEvent', () => {
   describe('non-announcement events return null', () => {
     it('returns null for InProgress RunEvent', () => {
-      const event = makeRunSeqEvent({ type: 'InProgress' })
+      const event = makeRunCommittedEvent({ type: 'InProgress' })
       expect(classifyEvent(event)).toBeNull()
     })
 
     it('returns null for Job events', () => {
-      const event = makeJobSeqEvent()
+      const event = makeJobCommittedEvent()
       expect(classifyEvent(event)).toBeNull()
     })
   })
@@ -123,14 +123,14 @@ describe('classifyEvent', () => {
 
   describe('Requested events', () => {
     it('returns {kind:"queued"} for a Requested RunEvent', () => {
-      const event = makeRunSeqEvent({ type: 'Requested' })
+      const event = makeRunCommittedEvent({ type: 'Requested' })
       const result = classifyEvent(event)
       expect(result).not.toBeNull()
       expect(result?.kind).toBe('queued')
     })
 
     it('result satisfies TransitionKind type narrowing', () => {
-      const event = makeRunSeqEvent({ type: 'Requested' })
+      const event = makeRunCommittedEvent({ type: 'Requested' })
       const result = classifyEvent(event)
       if (result === null) throw new Error('Expected non-null')
       // Narrow to queued branch
@@ -149,7 +149,7 @@ describe('classifyEvent', () => {
 
   describe('Completed events', () => {
     it('returns {kind:"completed", conclusion:"Success"} for a Completed/Success RunEvent', () => {
-      const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion: 'Success' } })
+      const event = makeRunCommittedEvent({ type: 'Completed', data: { conclusion: 'Success' } })
       const result = classifyEvent(event)
       expect(result).not.toBeNull()
       expect(result?.kind).toBe('completed')
@@ -171,7 +171,7 @@ describe('classifyEvent', () => {
         'StartupFailure',
       ]
       for (const conclusion of allConclusions) {
-        const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion } })
+        const event = makeRunCommittedEvent({ type: 'Completed', data: { conclusion } })
         const result = classifyEvent(event)
         expect(result?.kind).toBe('completed')
         if (result?.kind === 'completed') {
@@ -188,13 +188,13 @@ describe('classifyEvent', () => {
   describe('throws on invariant violation', () => {
     it('throws when Completed RunEvent has conclusion === null', () => {
       // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
-      const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion: null } as any })
+      const event = makeRunCommittedEvent({ type: 'Completed', data: { conclusion: null } as any })
       expect(() => classifyEvent(event)).toThrow()
     })
 
     it('throws when Completed RunEvent has conclusion === undefined', () => {
       // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
-      const event = makeRunSeqEvent({ type: 'Completed', data: {} as any })
+      const event = makeRunCommittedEvent({ type: 'Completed', data: {} as any })
       expect(() => classifyEvent(event)).toThrow()
     })
   })
@@ -216,14 +216,17 @@ describe('classifyEvent', () => {
 
     it('returns null for lowercase "success" (canonical off-shape case)', () => {
       // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
-      const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion: 'success' } as any })
+      const event = makeRunCommittedEvent({
+        type: 'Completed',
+        data: { conclusion: 'success' } as any,
+      })
       const result = classifyEvent(event)
       expect(result).toBeNull()
     })
 
     it('emits console.warn with the unknown value and does not warn again (dedupe)', () => {
       // Use a unique value so module-scope dedup state from other tests doesn't interfere.
-      const event = makeRunSeqEvent({
+      const event = makeRunCommittedEvent({
         type: 'Completed',
         // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
         data: { conclusion: 'off_shape_unique' } as any,
@@ -240,7 +243,10 @@ describe('classifyEvent', () => {
 
     it('valid PascalCase conclusions still classify correctly (no regression)', () => {
       // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input — cast needed for the test fixture
-      const event = makeRunSeqEvent({ type: 'Completed', data: { conclusion: 'Success' } as any })
+      const event = makeRunCommittedEvent({
+        type: 'Completed',
+        data: { conclusion: 'Success' } as any,
+      })
       const result = classifyEvent(event)
       expect(result).not.toBeNull()
       expect(result?.kind).toBe('completed')
