@@ -16,7 +16,7 @@ Pure domain types, state machine transition rules, and business logic for ATC. S
 | `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`; `RunStatus::predecessors_of(target)` |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`; `JobStatus::predecessors_of(target)` |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |
-| `state_machine` | Pure free functions: `apply_run_event(Option<WorkflowRun>, RunEventEnvelope) -> Result<WorkflowRun, StateMachineError>`, `apply_job_event(Option<Job>, JobEventEnvelope) -> Result<Job, StateMachineError>`, and `is_evictable(&Job, DateTime<Utc>, Duration) -> bool`. No locks, no async, no shared state — `atc-server::persist::InMemoryStore` wraps these with its HashMap + RwLock. |
+| `state_machine` | Pure free functions: `apply_run_event(Option<WorkflowRun>, RunEventEnvelope) -> Result<WorkflowRun, StateMachineError>`, `apply_job_event(Option<Job>, JobEventEnvelope) -> Result<Job, StateMachineError>`, and `is_evictable(&Job, DateTime<Utc>, Duration) -> bool`. No locks, no async, no shared state — `atc_store_mem::InMemoryStore` wraps these with its HashMap + RwLock. |
 | `persist` | `PersistError` with `InvalidTransition` and `Backend(Box<dyn Error>)` variants. The `PersistentStore` trait lives in `atc-server::persist` (ADR 0005). |
 | `clock` | `Clock` trait (wall-clock only — monotonic latency stays direct, see the trait doc-comment), `SystemClock`, `TestClock` and `fixed_test_timestamp` (both behind `test-support` feature) |
 
@@ -32,11 +32,11 @@ Enforced by the pure transition functions and verified by tests including propte
 - **Idempotent same-status:** Re-applying the current status succeeds (handles duplicate webhooks).
 - **First-sight creation:** `apply_*_event(None, env)` creates a new entity from the envelope (handles out-of-order delivery — jobs may arrive before runs).
 - **Snapshot step semantics:** `Vec<Step>` is fully replaced on each `JobEvent`, never appended.
-- **Eviction predicate:** `is_evictable(&Job, now, ttl)` returns `true` only for jobs whose status is `Completed` AND whose `completed_at + ttl < now`. Active jobs (queued/waiting/in-progress) are never evictable regardless of age. Server-side iteration + index updates live in `atc-server::persist::InMemoryStore::evict_expired`.
+- **Eviction predicate:** `is_evictable(&Job, now, ttl)` returns `true` only for jobs whose status is `Completed` AND whose `completed_at + ttl < now`. Active jobs (queued/waiting/in-progress) are never evictable regardless of age. Server-side iteration + index updates live in `atc_store_mem::InMemoryStore::evict_expired`.
 - **Conclusion ↔ status invariant:** If `conclusion.is_some()` then `status == Completed`. Verified by atc-core property tests over random event sequences.
 - **Predecessor predicates:** `predecessors_of(target)` returns `&'static [Self]` including the target itself. `atc-server::persist::PgStore` parameterizes SQL WHERE clauses with this slice for predicated UPSERTs; including the target enables idempotent replay.
 
-Index-consistency invariants (every job in `jobs_by_run` under its `run_id`, every job in exactly one `jobs_by_repo` set, no empty index entries) are now owned by `InMemoryStore` and verified by its test-only `assert_invariants()` impl in `atc-server`.
+Index-consistency invariants (every job in `jobs_by_run` under its `run_id`, every job in exactly one `jobs_by_repo` set, no empty index entries) are owned by `InMemoryStore` and verified by its test-only `assert_invariants()` impl in `atc-store-mem` (gated behind the `test-support` feature).
 
 ## Testing
 

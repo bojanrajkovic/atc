@@ -6,14 +6,17 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-# Enables inspection helpers on `InMemoryStore` for integration and unit tests.
-# Activated automatically via the self-referential dev-dependency below.
+# Enables `ProcessCollectorHandle::from_join_handle` for unit tests inside this
+# crate. Activated automatically via the self-referential dev-dependency below.
+# Retirement is tracked alongside narrowing `metrics.rs`'s cfg gate to
+# `#[cfg(test)]` (its only consumers are unit tests in the same crate).
 test-support = []
 
 [dependencies]
 atc-core = { path = "../atc-core" }
 atc-github = { path = "../atc-github" }
 atc-persist = { path = "../atc-persist" }
+atc-store-mem = { path = "../atc-store-mem" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
 axum = { version = "=0.8.9", features = ["ws"] }
@@ -44,8 +47,11 @@ humantime-serde = "=1.1.1"
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }
-# Self-referential dev-dependency enables the test-support feature when building
-# integration tests, making InMemoryStore inspection helpers available.
+atc-store-mem = { path = "../atc-store-mem", features = ["test-support"] }
+# Self-referential dev-dependency enables the local `test-support` feature
+# when building integration tests, making `ProcessCollectorHandle::from_join_handle`
+# available. Retire this once Phase 2 narrows the `metrics.rs` cfg gate to
+# `#[cfg(test)]` (its only consumers are unit tests inside the same crate).
 atc-server = { path = ".", features = ["test-support"] }
 chrono = { version = "=0.4.44", features = ["serde"] }
 const-hex = "=1.19.0"

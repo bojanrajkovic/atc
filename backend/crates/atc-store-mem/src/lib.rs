@@ -15,14 +15,22 @@ use atc_core::{
     event::{JobEventEnvelope, RunEventEnvelope},
 };
 use atc_github::WebhookEvent;
-use atc_persist::{LivenessError, PersistentStore, join_with_timeout};
+use atc_persist::{LivenessError, PersistentStore};
 use atc_wire::{CommittedEvent, StateSnapshot};
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::shutdown::SHUTDOWN_TIMEOUT_EVICTION;
 use atc_core::types::RepoKey;
+
+#[cfg(any(test, feature = "test-support"))]
+mod invariants;
+
+/// Per-task shutdown timeout for the eviction sweep task. Public so the
+/// shutdown-orchestration test in `atc-server` can include this value in its
+/// aggregate-budget assertion alongside `atc-server::shutdown`'s remaining
+/// timeouts.
+pub const EVICTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Default broadcast channel capacity. Matches the production setting and the
 /// `PgStore::start` capacity so both modes have identical lag semantics.
@@ -32,15 +40,15 @@ const DEFAULT_BROADCAST_CAPACITY: usize = 256;
 // StateData — mutable state behind the RwLock
 // ---------------------------------------------------------------------------
 
-pub(super) struct StateData {
+pub(crate) struct StateData {
     /// Primary map of runs by ID.
-    pub(super) runs: HashMap<RunId, WorkflowRun>,
+    pub(crate) runs: HashMap<RunId, WorkflowRun>,
     /// Primary map of jobs by ID.
-    pub(super) jobs: HashMap<JobId, Job>,
+    pub(crate) jobs: HashMap<JobId, Job>,
     /// Jobs grouped by parent run.
-    pub(super) jobs_by_run: HashMap<RunId, HashSet<JobId>>,
+    pub(crate) jobs_by_run: HashMap<RunId, HashSet<JobId>>,
     /// Jobs grouped by repository.
-    pub(super) jobs_by_repo: HashMap<RepoKey, HashSet<JobId>>,
+    pub(crate) jobs_by_repo: HashMap<RepoKey, HashSet<JobId>>,
 }
 
 impl StateData {
@@ -68,11 +76,11 @@ impl StateData {
 /// Wrap in `Arc` for sharing across async tasks and Axum handlers.
 pub struct InMemoryStore {
     /// All domain state behind a read-write lock.
-    state: RwLock<StateData>,
+    pub(crate) state: RwLock<StateData>,
     /// Monotonic event counter. Locked before state writes so WS event order
     /// matches ingestion order, and across snapshot + seq read so the cursor
     /// matches snapshot content.
-    seq: Mutex<u64>,
+    pub(crate) seq: Mutex<u64>,
     /// Clock for determining current time during eviction.
     clock: Arc<dyn Clock>,
     /// How long to retain completed jobs before eviction.
@@ -330,7 +338,7 @@ impl PersistentStore for InMemoryStore {
             .expect("eviction_handle mutex poisoned")
             .take();
         if let Some(handle) = handle {
-            join_with_timeout(handle, SHUTDOWN_TIMEOUT_EVICTION, "eviction").await;
+            atc_persist::join_with_timeout(handle, EVICTION_SHUTDOWN_TIMEOUT, "eviction").await;
         }
     }
 
@@ -421,128 +429,5 @@ impl PersistentStore for InMemoryStore {
             event: WebhookEvent::Job(env),
         });
         Ok(allocated)
-    }
-}
-
-/// Inspection helpers for tests.
-///
-/// Enabled under `#[cfg(test)]` (unit tests) and the `test-support` feature
-/// (integration tests compiled as a separate crate). All methods are `pub` so
-/// integration test binaries can call them; the feature gate is the only guard
-/// against inclusion in production builds.
-#[cfg(any(test, feature = "test-support"))]
-impl InMemoryStore {
-    /// Return a snapshot of a job by ID (for test assertions).
-    pub async fn get_job(&self, job_id: &JobId) -> Option<Job> {
-        self.state.read().await.jobs.get(job_id).cloned()
-    }
-
-    /// Return a snapshot of a run by ID (for test assertions).
-    pub async fn get_run(&self, run_id: &RunId) -> Option<WorkflowRun> {
-        self.state.read().await.runs.get(run_id).cloned()
-    }
-
-    /// Return the set of job IDs for a given run (for test assertions).
-    pub async fn jobs_for_run(&self, run_id: &RunId) -> HashSet<JobId> {
-        self.state
-            .read()
-            .await
-            .jobs_by_run
-            .get(run_id)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// Return the set of job IDs for a given repository (for test assertions).
-    pub async fn jobs_for_repo(&self, repo_key: &RepoKey) -> HashSet<JobId> {
-        self.state
-            .read()
-            .await
-            .jobs_by_repo
-            .get(repo_key)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// Return the current seq value (for test assertions).
-    pub async fn current_seq(&self) -> u64 {
-        *self.seq.lock().await
-    }
-
-    /// Assert all store invariants hold. Panics with a descriptive
-    /// message if any invariant is violated.
-    pub async fn assert_invariants(&self) {
-        use atc_core::JobStatus;
-        let state = self.state.read().await;
-
-        // Every job in jobs_by_repo exists in jobs map
-        for (repo, job_ids) in &state.jobs_by_repo {
-            for job_id in job_ids {
-                assert!(
-                    state.jobs.contains_key(job_id),
-                    "jobs_by_repo[{repo}] contains {job_id:?} not in jobs map"
-                );
-            }
-        }
-
-        // Every job in jobs map exists in exactly one jobs_by_repo set
-        for job_id in state.jobs.keys() {
-            let count = state
-                .jobs_by_repo
-                .values()
-                .filter(|set| set.contains(job_id))
-                .count();
-            assert!(
-                count == 1,
-                "job {job_id:?} appears in {count} jobs_by_repo sets (expected 1)"
-            );
-        }
-
-        // Every job in jobs_by_run exists in jobs map
-        for (run_id, job_ids) in &state.jobs_by_run {
-            for job_id in job_ids {
-                assert!(
-                    state.jobs.contains_key(job_id),
-                    "jobs_by_run[{run_id:?}] contains {job_id:?} not in jobs map"
-                );
-            }
-        }
-
-        // Every job in jobs map exists in jobs_by_run under its run_id
-        for (job_id, job) in &state.jobs {
-            let in_run_index = state
-                .jobs_by_run
-                .get(&job.run_id)
-                .is_some_and(|set| set.contains(job_id));
-            assert!(
-                in_run_index,
-                "job {job_id:?} not in jobs_by_run[{:?}]",
-                job.run_id
-            );
-        }
-
-        // Active jobs are never evicted — verify symmetrically with the indexes.
-        for (job_id, job) in &state.jobs {
-            if matches!(
-                job.status,
-                JobStatus::Queued | JobStatus::Waiting | JobStatus::InProgress
-            ) {
-                let in_run = state
-                    .jobs_by_run
-                    .get(&job.run_id)
-                    .is_some_and(|set| set.contains(job_id));
-                let in_repo = state.jobs_by_repo.values().any(|set| set.contains(job_id));
-                assert!(in_run, "active job {job_id:?} missing from jobs_by_run");
-                assert!(in_repo, "active job {job_id:?} missing from jobs_by_repo");
-            }
-        }
-
-        // No empty index entries (cleanup correctness)
-        for (key, set) in &state.jobs_by_repo {
-            assert!(!set.is_empty(), "empty jobs_by_repo entry for {key}");
-        }
-        for (key, set) in &state.jobs_by_run {
-            assert!(!set.is_empty(), "empty jobs_by_run entry for {key:?}");
-        }
     }
 }

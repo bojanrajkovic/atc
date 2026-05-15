@@ -8,7 +8,8 @@
 //!
 //! All functions are synchronous and side-effect-free; locking, sequencing,
 //! indexing, and broadcasting are the responsibility of the caller (typically
-//! `atc_server::persist::InMemoryStore` or `PgStore`).
+//! the `InMemoryStore` in `atc-store-mem` or `PgStore` in the in-tree PG
+//! backend).
 
 use std::fmt;
 

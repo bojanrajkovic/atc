@@ -16,7 +16,7 @@ use atc_core::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use atc_core::types::{JobId, RunId};
 use atc_core::{JobConclusion, fixed_test_timestamp};
 use atc_persist::PersistentStore;
-use atc_server::persist::InMemoryStore;
+use atc_store_mem::InMemoryStore;
 use chrono::TimeDelta;
 use opentelemetry_sdk::trace::SpanData;
 use serial_test::serial;

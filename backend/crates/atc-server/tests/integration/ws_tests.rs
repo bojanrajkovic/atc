@@ -12,9 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::SystemClock;
-use atc_server::persist::InMemoryStore;
 use atc_server::routes;
 use atc_server::state::AppState;
+use atc_store_mem::InMemoryStore;
 use atc_wire::CommittedEvent;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;

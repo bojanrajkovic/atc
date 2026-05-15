@@ -9,9 +9,10 @@ use atc_core::SystemClock;
 use atc_persist::PersistentStore;
 use atc_server::listener;
 use atc_server::otel::exponential_histogram_view;
+use atc_server::persist::PgStore;
 use atc_server::persist::pg::PgStoreTestHooks;
-use atc_server::persist::{InMemoryStore, PgStore};
 use atc_server::state::AppState;
+use atc_store_mem::InMemoryStore;
 use opentelemetry::KeyValue;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::metrics::data::{

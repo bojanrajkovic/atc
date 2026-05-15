@@ -31,7 +31,6 @@ pub const SHUTDOWN_TIMEOUT_DRAIN: Duration = Duration::from_secs(5);
 pub const SHUTDOWN_TIMEOUT_WS: Duration = Duration::from_secs(2);
 pub const SHUTDOWN_TIMEOUT_SERVES: Duration = Duration::from_secs(3);
 pub const SHUTDOWN_TIMEOUT_LISTENER: Duration = Duration::from_secs(1);
-pub const SHUTDOWN_TIMEOUT_EVICTION: Duration = Duration::from_secs(1);
 pub const SHUTDOWN_TIMEOUT_METRICS: Duration = Duration::from_secs(1);
 /// Outbox heartbeat task — cooperative on the shared cancellation token; each
 /// tick is bounded by `OUTBOX_HEARTBEAT_INTERVAL` so 2 s is generous.
@@ -227,8 +226,8 @@ pub async fn run_shutdown_orchestration(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persist::InMemoryStore;
     use atc_core::SystemClock;
+    use atc_store_mem::InMemoryStore;
 
     /// Construct an `InMemoryStore` whose eviction task observes the same
     /// `shutdown` token the orchestrator drives — long completed-job TTL,
