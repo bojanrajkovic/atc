@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH victims AS (\n            SELECT seq FROM outbox\n            WHERE inserted_at < $1\n              AND seq <= (\n                  SELECT COALESCE(MIN(broadcast_watermark), 0)\n                  FROM outbox_watermarks\n                  WHERE updated_at > $2\n              )\n            ORDER BY seq\n            LIMIT $3\n            FOR UPDATE SKIP LOCKED\n        )\n        DELETE FROM outbox WHERE seq IN (SELECT seq FROM victims)\n        RETURNING seq\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "45e8edacdfc61c599b1a6c0aae6b825626ffb4009dfdac73e5a23126602c44b7"
+}

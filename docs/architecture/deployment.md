@@ -88,6 +88,31 @@ The chart wires Helm values to two distinct env-var surfaces: the application's 
 
 When neither is set, the listener falls back to `ATC_DATABASE_URL` and no `ATC_DATABASE_LISTENER_URL` env entry is injected into the pod.
 
+### `ATC_OUTBOX_RETENTION`
+
+| Property | Value |
+|----------|-------|
+| Type | humantime-parseable duration string (`7d`, `24h`, `90m`) |
+| Default | `7d` |
+| Minimum supported | `1h` — values below the floor fail process startup |
+
+**When to set:** Override the default retention age for the PG-mode outbox sweep. Shorter values reclaim disk earlier; longer values give more headroom against replica outages (the sweep's safety floor never deletes rows below `MIN(broadcast_watermark)` across non-stale replicas).
+
+**1 h hard floor.** `PgStore::start_inner` returns `PgStoreStartError::RetentionTooShort` and the process exits with a clear error message if `ATC_OUTBOX_RETENTION < 1h`. The floor exists because Postgres `inserted_at` defaults to `transaction_timestamp()` (transaction-start), not commit time — sub-floor retention is unsafe under MVCC for any non-instantaneous writer transaction. Operators needing shorter retention should file an issue and propose partition rotation instead.
+
+**Rolling-deploy assumption.** Sub-hour retention is blocked at the 1 h floor, and the heartbeat task's `stale_threshold` is 90 s, so a Helm rolling update must complete within 1 h to avoid the edge case of an old-version replica having its uncommitted broadcasts retired by a new-version replica. Default `terminationGracePeriodSeconds` (30 s) and `maxSurge=1 maxUnavailable=0` ensure rolling updates complete in minutes, well under that budget. Default `7d` retention removes the constraint entirely.
+
+**Helm:** Set via `config.outboxRetention` (default `"7d"`).
+
+**Observability:** Three metrics watch retention health — see [`metrics.md`](metrics.md):
+- `atc_pg_outbox_rows_deleted_total` (counter; per-replica share of cluster-wide deletion rate)
+- `atc_pg_outbox_min_replica_watermark` (gauge; cluster-wide safety floor, NaN when no live replicas)
+- `atc_pg_outbox_oldest_row_age_seconds` (gauge; oscillates near `outbox_retention` at steady state, NaN when empty)
+
+Two per-tick root spans (`outbox.heartbeat.tick`, `outbox.sweep.tick`) carry replica id, watermark, and rows-deleted attributes for trace-based investigation.
+
+See [ADR 0007](../architecture-decisions/0007-outbox-retention-policy.md) for the design rationale.
+
 ### OpenTelemetry (`OTEL_*`)
 
 The deployment template injects five spec-standard env vars when `otel.enabled: true`:

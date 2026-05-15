@@ -33,6 +33,13 @@ pub const SHUTDOWN_TIMEOUT_SERVES: Duration = Duration::from_secs(3);
 pub const SHUTDOWN_TIMEOUT_LISTENER: Duration = Duration::from_secs(1);
 pub const SHUTDOWN_TIMEOUT_EVICTION: Duration = Duration::from_secs(1);
 pub const SHUTDOWN_TIMEOUT_METRICS: Duration = Duration::from_secs(1);
+/// Outbox heartbeat task — cooperative on the shared cancellation token; each
+/// tick is bounded by `OUTBOX_HEARTBEAT_INTERVAL` so 2 s is generous.
+pub const SHUTDOWN_TIMEOUT_OUTBOX_HEARTBEAT: Duration = Duration::from_secs(2);
+/// Outbox sweep task — same cooperative shape as the heartbeat. A sweep can
+/// run a multi-second statement under contention, so 2 s is the join budget
+/// for cooperative exit, not for the in-flight statement.
+pub const SHUTDOWN_TIMEOUT_OUTBOX_SWEEP: Duration = Duration::from_secs(2);
 
 /// Join a `JoinHandle<()>` within the given timeout. On timeout, log an error
 /// and call `AbortHandle::abort()` (best-effort; task may run until its next
@@ -227,8 +234,9 @@ pub async fn run_shutdown_orchestration(
     // here — after every emitter has joined — preserves the "no live emitter
     // when shutdown fires" invariant. Emitters whose joins must precede this
     // step:
-    //   1. PersistentStore tasks (drain + listener in PG mode, eviction in
-    //      in-memory mode) — joined via `persist.shutdown()` above.
+    //   1. PersistentStore tasks — joined via `persist.shutdown()` above.
+    //      In PG mode: listener, drain, outbox heartbeat, and outbox sweep.
+    //      In in-memory mode: eviction.
     //   2. Process collector    (`metrics::ProcessCollectorHandle` wrapping
     //      the `opentelemetry-system-metrics` observer task; aborted via
     //      `metrics_handle.shutdown()` immediately above this comment)

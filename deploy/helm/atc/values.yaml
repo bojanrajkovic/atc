@@ -154,6 +154,17 @@ config:
   # -- Log output format. Null means the binary decides based on build type
   # (pretty in debug builds, JSON in release builds). Override with "pretty" or "json".
   logFormat: null
+  # -- Outbox retention age (humantime: "7d", "24h", "90m"). Maps to
+  # ATC_OUTBOX_RETENTION. Default 7 days.
+  #
+  # The PG-mode retention sweep deletes outbox rows older than this AND with
+  # seq <= MIN(broadcast_watermark) across non-stale replicas. The minimum
+  # supported value is "1h"; sub-floor values fail process startup because
+  # Postgres `inserted_at` is transaction-start time, not commit time, and
+  # shorter retention is unsafe under MVCC.
+  #
+  # See docs/architecture-decisions/0007-outbox-retention-policy.md.
+  outboxRetention: "7d"
 
 # -- Reference an existing Kubernetes Secret for the database URL instead of
 # providing it in plain text in values. When set, config.databaseUrl is ignored

@@ -87,6 +87,8 @@ spec:
             - name: ATC_LOG_FORMAT
               value: {{ .Values.config.logFormat | quote }}
             {{- end }}
+            - name: ATC_OUTBOX_RETENTION
+              value: {{ .Values.config.outboxRetention | quote }}
             {{- if .Values.existingSecret.name }}
             - name: ATC_DATABASE_URL
               valueFrom:

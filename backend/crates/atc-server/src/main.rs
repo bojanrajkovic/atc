@@ -176,12 +176,18 @@ async fn main() {
                 process::exit(1);
             });
 
-        PgStore::start(Arc::clone(&clock), pool, pg_listener, shutdown.clone())
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "failed to start PgStore");
-                process::exit(1);
-            })
+        PgStore::start(
+            Arc::clone(&clock),
+            pool,
+            pg_listener,
+            shutdown.clone(),
+            cfg.outbox_retention,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "failed to start PgStore");
+            process::exit(1);
+        })
     } else {
         tracing::info!("no ATC_DATABASE_URL configured; running in in-memory mode");
         InMemoryStore::start(

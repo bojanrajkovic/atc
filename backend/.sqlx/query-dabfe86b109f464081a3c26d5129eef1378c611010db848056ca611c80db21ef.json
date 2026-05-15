@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO outbox (kind, run_id, payload, inserted_at)\n        VALUES ('run', $1, '{}'::jsonb, $2)\n        RETURNING seq\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "dabfe86b109f464081a3c26d5129eef1378c611010db848056ca611c80db21ef"
+}

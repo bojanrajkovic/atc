@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO outbox_watermarks (replica_id, broadcast_watermark, updated_at)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (replica_id) DO UPDATE SET\n            broadcast_watermark = GREATEST(EXCLUDED.broadcast_watermark, outbox_watermarks.broadcast_watermark),\n            updated_at = GREATEST(EXCLUDED.updated_at, outbox_watermarks.updated_at)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3dbd95133112d3a8b255384c69c342016b9829ea72e6fb1a22a91fcc7c663229"
+}

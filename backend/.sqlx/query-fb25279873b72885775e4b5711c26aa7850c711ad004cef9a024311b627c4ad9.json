@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM outbox_watermarks WHERE updated_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fb25279873b72885775e4b5711c26aa7850c711ad004cef9a024311b627c4ad9"
+}
