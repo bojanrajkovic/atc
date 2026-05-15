@@ -3,7 +3,7 @@ catalog:
   '@bgotink/playwright-coverage': 0.3.2
   '@biomejs/biome': 2.4.15
   '@internationalized/date': 3.12.1
-  '@playwright/test': 1.59.1
+  '@playwright/test': 1.60.0
   '@sveltejs/vite-plugin-svelte': 7.1.2
   '@tailwindcss/vite': 4.3.0
   '@testing-library/svelte': 5.3.1
