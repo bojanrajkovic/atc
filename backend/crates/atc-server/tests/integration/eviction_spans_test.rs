@@ -1,11 +1,12 @@
 //! Span-side instrumentation tests for the in-memory eviction task.
 //!
 //! Each `evict_expired` call emits its own `eviction.sweep` root span carrying
-//! `jobs.evicted`, `runs.evicted`, and `elapsed.micros` fields. Unlike
-//! `listener.task` / `drain.task`, eviction deliberately has no task-lifetime
-//! parent: a long-lived root would never end until process shutdown, so each
-//! tick would attach to a span the SDK couldn't export until then. Per-tick
-//! roots mean every sweep is one tidy trace that exports on tick.
+//! `jobs.evicted`, `runs.evicted`, and `elapsed.micros` fields. Per-tick roots
+//! are the shared convention across the long-lived background tasks
+//! (`eviction.sweep`, `listener.recv`, `drain.pass`): a task-lifetime parent
+//! would never end until process shutdown, so each tick would attach to a span
+//! the SDK couldn't export until then. Per-tick roots mean every sweep is one
+//! tidy trace that exports on tick.
 
 use std::sync::Arc;
 use std::time::Duration;
