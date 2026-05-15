@@ -1,13 +1,13 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-05-10
+Last verified: 2026-05-15
 
 
 ## Purpose
 
 The release pipeline automates versioning, artifact generation, and publication for the ATC project. It follows a two-phase design:
 
-1. **Version management (release-please.yml)** — Monitors conventional commits on main and automatically creates/updates a release PR that bumps versions across all packages (3 Rust crates + frontend in lockstep), updates CHANGELOG files, and manages git tags. When merged, the release PR creates a git tag that triggers the release workflow.
+1. **Version management (release-please.yml)** — Monitors conventional commits on main and automatically creates/updates a release PR that bumps versions across all packages (7 Rust crates + frontend in lockstep), updates CHANGELOG files, and manages git tags. When merged, the release PR creates a git tag that triggers the release workflow. The seven Rust crates are: `atc-core`, `atc-github`, `atc-wire`, `atc-persist`, `atc-store-pg`, `atc-store-mem`, and `atc-server`. The four persistence-related crates (`atc-wire`, `atc-persist`, `atc-store-pg`, `atc-store-mem`) join the linked-versions group at registration time (issue #169 pre-flight); their source layouts ship across phases 1–3 of that work.
 
 2. **Artifact production and publication (release.yml)** — Triggered by git tags (v*), builds `atc-server` binaries for Linux (x86_64, aarch64) and macOS (Apple Silicon), creates a multi-arch Docker image, and publishes all artifacts with Sigstore attestation for supply chain security.
 

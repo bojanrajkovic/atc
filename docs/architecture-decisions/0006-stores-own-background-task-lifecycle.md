@@ -2,7 +2,9 @@
 
 **Status:** Accepted (issue #104, 2026-05-13)
 
-Last verified: 2026-05-13
+Last verified: 2026-05-15
+
+> **Revised by ADR-0008:** Geographic claims in this ADR (the trait lives in `atc-server::persist`; `PgStore::start` spawns listener and drain from inside `atc-server`; the per-task `SHUTDOWN_TIMEOUT_*` constants are atc-server-internal) are superseded by the four-crate split. The lifecycle ownership reasoning (each store owns its background tasks and exposes one `shutdown()` join point) is preserved — only the source locations move: `PersistentStore` to `atc-persist`, `PgStore` machinery to `atc-store-pg`, `InMemoryStore` machinery to `atc-store-mem`, and the per-store shutdown timeouts move into the store crates that consume them. See `docs/architecture-decisions/0008-persistence-crate-split.md` (introduced in issue #169 phase 1).
 
 ## Context
 

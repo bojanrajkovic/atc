@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-05-13
+Last verified: 2026-05-15
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -89,7 +89,7 @@ This project uses a five-layer documentation model with a strict non-duplication
 - **Doc-staleness gate:** `scripts/check-docs-lefthook.sh` blocks push if source files changed without updating their mapped architecture doc. Mappings live in `scripts/doc-mapping.sh`.
 - **CI gates PRs:** All PRs must pass CI checks (lint, type-check, test, build) before merge. Path-filtered on PRs; full matrix on pushes to main. See `docs/architecture/ci-pipeline.md`.
 - **Non-duplication rule:** Each piece of documentation has exactly one canonical home. CLAUDE.md points to docs; it does not duplicate them.
-- **Slim CLAUDE.md in every domain directory:** Every subdirectory that represents a distinct domain (crates, frontend, helm chart, .github, etc.) must have a slim `CLAUDE.md` that states its purpose, points to canonical architecture docs, and provides domain-specific guidance. Do not duplicate architecture doc content — reference it. Follow the pattern established in `backend/crates/atc-core/CLAUDE.md`.
+- **Slim CLAUDE.md in every domain directory (two-tier):** Every subdirectory that represents a distinct domain (crates, frontend, helm chart, .github, etc.) must have a slim `CLAUDE.md` providing the **mandatory skeleton** — purpose, pointer to the canonical architecture doc, AGENTS.md symlink. **Sharp-edges sections** (testing gotchas, common foot-guns, file-specific guidance) are added **reactively** when agents encounter friction in that directory; do not pre-author sharp edges speculatively. Do not duplicate architecture-doc content — reference it. Follow the pattern established in `backend/crates/atc-core/CLAUDE.md`. See `CONTRIBUTING.md` § "Directory-Level CLAUDE.md Files" for the matching human-facing description.
 - **AGENTS.md symlinks:** Every `CLAUDE.md` must have a corresponding `AGENTS.md` symlink (`ln -s CLAUDE.md AGENTS.md`) in the same directory. This ensures tools that look for either filename find the same content. Create both files together — never one without the other.
 - **Implementation reads the plan:** When starting implementation from a design plan in `docs/design-plans/`, read `docs/implementation-guidance.md` before writing any code.
 - **Cargo and workspace-rooted tools need absolute paths:** `cargo`, `cargo nextest`, `git grep`, `rg` invocations from the implementing agent must be prefixed with `cd /Users/brajkovic/Projects/atc/backend && ...` (cargo) or `cd /Users/brajkovic/Projects/atc && ...` (workspace-rooted greps). The Bash tool resets cwd between calls — relative `cd backend &&` is bug-prone because the prior cwd may have moved.
