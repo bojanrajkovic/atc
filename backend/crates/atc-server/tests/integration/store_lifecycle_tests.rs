@@ -136,6 +136,7 @@ async fn pg_start_with_test_hooks_exposes_handles() {
         pool,
         pg_listener,
         shutdown.clone(),
+        Duration::from_secs(7 * 24 * 60 * 60),
         Default::default(),
     )
     .await
@@ -194,6 +195,7 @@ async fn pg_shutdown_is_idempotent() {
         pool,
         pg_listener,
         shutdown.clone(),
+        Duration::from_secs(7 * 24 * 60 * 60),
         Default::default(),
     )
     .await
@@ -224,6 +226,7 @@ async fn pg_shutdown_handles_aborted_drain_cleanly() {
         pool,
         pg_listener,
         shutdown.clone(),
+        Duration::from_secs(7 * 24 * 60 * 60),
         Default::default(),
     )
     .await

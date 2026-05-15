@@ -1,12 +1,19 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use atc_core::LabelSet;
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Yaml},
 };
+
+/// Default outbox retention: 7 days. See ADR 0007 § Default for the
+/// calendar-time rationale.
+fn default_outbox_retention() -> Duration {
+    Duration::from_secs(7 * 24 * 60 * 60)
+}
 
 /// Environment variable that overrides the path of the YAML configuration file.
 const CONFIG_FILE_ENV: &str = "ATC_CONFIG_FILE";
@@ -60,6 +67,14 @@ pub struct Config {
     pub github: GitHubConfig,
     #[serde(default)]
     pub runner_pools: Vec<RunnerPoolConfig>,
+    /// Outbox retention age. Operator-tunable via `ATC_OUTBOX_RETENTION`
+    /// (humantime-parseable: `7d`, `24h`, etc.). Default 7 days. Must be at
+    /// least 1 hour — `PgStore::start_inner` rejects shorter values because
+    /// `inserted_at` is transaction-start time and a long-held writer
+    /// transaction could commit a row past the retention cutoff before any
+    /// replica has drained it. See ADR 0007 for the floor rationale.
+    #[serde(default = "default_outbox_retention", with = "humantime_serde")]
+    pub outbox_retention: Duration,
 }
 
 impl Default for Config {
@@ -72,6 +87,7 @@ impl Default for Config {
             log_format: LogFormat::default(),
             github: GitHubConfig::default(),
             runner_pools: Vec::new(),
+            outbox_retention: default_outbox_retention(),
         }
     }
 }

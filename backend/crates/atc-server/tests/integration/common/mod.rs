@@ -610,10 +610,16 @@ async fn build_app_inner(
         drain_delay,
     };
 
-    let (pg_store, handles) =
-        PgStore::start_with_test_hooks(clock, pool.clone(), pg_listener, shutdown.clone(), hooks)
-            .await
-            .expect("PgStore::start_with_test_hooks");
+    let (pg_store, handles) = PgStore::start_with_test_hooks(
+        clock,
+        pool.clone(),
+        pg_listener,
+        shutdown.clone(),
+        Duration::from_secs(7 * 24 * 60 * 60),
+        hooks,
+    )
+    .await
+    .expect("PgStore::start_with_test_hooks");
 
     let broadcast_rx = pg_store.subscribe();
     let persist = pg_store as Arc<dyn atc_server::persist::PersistentStore>;
@@ -685,6 +691,26 @@ pub async fn start_pg_store_for_test_with_clock(
     db_url: &str,
     shutdown: CancellationToken,
 ) -> Arc<atc_server::persist::PgStore> {
+    start_pg_store_for_test_with_clock_and_retention(
+        clock,
+        pool,
+        db_url,
+        shutdown,
+        Duration::from_secs(7 * 24 * 60 * 60),
+    )
+    .await
+}
+
+/// Like [`start_pg_store_for_test_with_clock`] but with a caller-supplied
+/// outbox retention. Used by retention-floor and sweep tests that need to
+/// drive the retention path with a non-default value.
+pub async fn start_pg_store_for_test_with_clock_and_retention(
+    clock: Arc<dyn atc_core::Clock>,
+    pool: sqlx::PgPool,
+    db_url: &str,
+    shutdown: CancellationToken,
+    outbox_retention: Duration,
+) -> Arc<atc_server::persist::PgStore> {
     let pg_listener = listener::connect_listener(db_url)
         .await
         .expect("connect_listener failed");
@@ -693,6 +719,7 @@ pub async fn start_pg_store_for_test_with_clock(
         pool,
         pg_listener,
         shutdown,
+        outbox_retention,
         atc_server::persist::pg::PgStoreTestHooks::default(),
     )
     .await

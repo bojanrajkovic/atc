@@ -123,6 +123,16 @@ pub struct PgMetrics {
     /// `atc_pg_drain_shutdown_remaining_rows` — outbox rows past the drain's
     /// watermark at drain task exit (one observation per process).
     pub drain_shutdown_remaining_rows: Histogram<f64>,
+
+    /// `atc_pg_outbox_rows_deleted_total` — outbox rows deleted by this
+    /// replica's sweep task. Counter; no attributes. See `metrics.md`
+    /// § Outbox retention.
+    pub outbox_rows_deleted: Counter<u64>,
+    // The two observable gauges below (`atc_pg_outbox_min_replica_watermark`,
+    // `atc_pg_outbox_oldest_row_age_seconds`) have no field here because their
+    // callbacks close over `Weak<AtomicI64>` references registered with the
+    // meter — production code does not call `record()` on them; updating the
+    // heartbeat-owned atomics IS the metric update.
 }
 
 impl PgMetrics {
@@ -150,12 +160,16 @@ impl PgMetrics {
     pub(crate) fn register(
         broadcast_watermark: &Arc<AtomicI64>,
         min_pending_seq: &Arc<AtomicI64>,
+        min_replica_watermark: &Arc<AtomicI64>,
+        oldest_row_age_seconds: &Arc<AtomicI64>,
     ) -> Arc<Self> {
         let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
         Self::register_with_meter(
             &meter,
             Arc::downgrade(broadcast_watermark),
             Arc::downgrade(min_pending_seq),
+            Arc::downgrade(min_replica_watermark),
+            Arc::downgrade(oldest_row_age_seconds),
         )
     }
 
@@ -180,6 +194,8 @@ impl PgMetrics {
         meter: &Meter,
         broadcast_watermark: Weak<AtomicI64>,
         min_pending_seq: Weak<AtomicI64>,
+        min_replica_watermark: Weak<AtomicI64>,
+        oldest_row_age_seconds: Weak<AtomicI64>,
     ) -> Arc<Self> {
         let write_failures = meter
             .u64_counter("atc_pg_write_failures_total")
@@ -257,6 +273,14 @@ impl PgMetrics {
             )
             .build();
 
+        let outbox_rows_deleted = meter
+            .u64_counter("atc_pg_outbox_rows_deleted_total")
+            .with_description(
+                "Outbox rows deleted by this replica's retention sweep task \
+                 (counted via the sweep CTE's RETURNING seq)",
+            )
+            .build();
+
         // Observable gauges read from the listener/drain-owned atomics on
         // every collection cycle. No call site needs to record() — updating
         // the AtomicI64 IS the metric update. The Weak upgrade short-circuits
@@ -301,6 +325,47 @@ impl PgMetrics {
             })
             .build();
 
+        // Outbox retention gauges. Atomic-mirrored — the heartbeat task is
+        // the writer; the observable-gauge callbacks read synchronously from
+        // `Weak<AtomicI64>` so callbacks belonging to dropped stores
+        // short-circuit to no-ops once the active store's heartbeat task
+        // joins. -1 in the underlying atomic is the NaN sentinel; rendered
+        // as NaN on dashboards.
+        let min_replica_observer = min_replica_watermark;
+        let _min_replica_watermark = meter
+            .f64_observable_gauge("atc_pg_outbox_min_replica_watermark")
+            .with_description(
+                "MIN(broadcast_watermark) across non-stale replicas (cluster-wide outbox \
+                 retention floor). NaN when no live replicas have heartbeated yet. \
+                 Refreshed every 30 s by the outbox heartbeat task.",
+            )
+            .with_callback(move |observer| {
+                if let Some(atomic) = min_replica_observer.upgrade() {
+                    let raw = atomic.load(Ordering::Acquire);
+                    #[allow(clippy::cast_precision_loss)]
+                    let value = if raw < 0 { f64::NAN } else { raw as f64 };
+                    observer.observe(value, &[]);
+                }
+            })
+            .build();
+
+        let oldest_row_age_observer = oldest_row_age_seconds;
+        let _oldest_row_age = meter
+            .f64_observable_gauge("atc_pg_outbox_oldest_row_age_seconds")
+            .with_description(
+                "Age in seconds of the oldest outbox row (clock-bound). NaN when the \
+                 outbox is empty. Refreshed every 30 s by the outbox heartbeat task.",
+            )
+            .with_callback(move |observer| {
+                if let Some(atomic) = oldest_row_age_observer.upgrade() {
+                    let raw = atomic.load(Ordering::Acquire);
+                    #[allow(clippy::cast_precision_loss)]
+                    let value = if raw < 0 { f64::NAN } else { raw as f64 };
+                    observer.observe(value, &[]);
+                }
+            })
+            .build();
+
         Arc::new(Self {
             write_failures,
             attrs_parity: [KeyValue::new("kind", "parity")],
@@ -319,6 +384,7 @@ impl PgMetrics {
             drain_pass_duration,
             drain_startup,
             drain_shutdown_remaining_rows,
+            outbox_rows_deleted,
         })
     }
 

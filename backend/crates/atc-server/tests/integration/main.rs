@@ -31,6 +31,7 @@ mod metrics_wake_coalesced_test;
 mod no_metrics_endpoint_test;
 mod notify_listener_tests;
 mod otel_init_test;
+mod outbox_retention_tests;
 mod outbox_tests;
 mod persist_pg_tests;
 mod pg_clock_seam_tests;
