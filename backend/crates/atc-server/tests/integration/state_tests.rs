@@ -68,7 +68,7 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
 
     common::ensure_recorder_installed();
 
-    let persist = atc_server::persist::InMemoryStore::new_for_test(
+    let persist = atc_store_mem::InMemoryStore::new_for_test(
         Arc::new(atc_core::SystemClock),
         Duration::from_secs(3600),
         256,

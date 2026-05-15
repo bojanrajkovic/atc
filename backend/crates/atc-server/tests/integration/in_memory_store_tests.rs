@@ -20,7 +20,7 @@ use atc_core::{
     types::RepoKey,
 };
 use atc_persist::PersistentStore;
-use atc_server::persist::InMemoryStore;
+use atc_store_mem::InMemoryStore;
 use chrono::{DateTime, Utc};
 
 // ---------------------------------------------------------------------------

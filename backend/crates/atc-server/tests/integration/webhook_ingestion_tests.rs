@@ -417,8 +417,8 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     // we can assert the seq on the emitted CommittedEvent.
     use atc_core::SystemClock;
     use atc_persist::PersistentStore;
-    use atc_server::persist::InMemoryStore;
     use atc_server::state::AppState;
+    use atc_store_mem::InMemoryStore;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;

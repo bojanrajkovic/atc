@@ -1,0 +1,28 @@
+[package]
+name = "atc-store-mem"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+# Enables inspection helpers (`get_job`, `get_run`, `jobs_for_run`,
+# `jobs_for_repo`, `current_seq`, `assert_invariants`, `new_for_test`) for
+# integration tests in `atc-server` and other downstream consumers.
+test-support = []
+
+[dependencies]
+atc-core = { path = "../atc-core" }
+atc-wire = { path = "../atc-wire" }
+atc-persist = { path = "../atc-persist" }
+# atc-github is required because `apply_run_event` / `apply_job_event`
+# construct `WebhookEvent::Run(env)` / `WebhookEvent::Job(env)` to populate
+# `CommittedEvent.event` before broadcasting. Not a transitive dep.
+atc-github = { path = "../atc-github" }
+async-trait = { workspace = true }
+tokio = { version = "=1.52.3", features = ["sync", "time", "rt", "macros"] }
+tokio-util = { version = "=0.7.18", features = ["rt"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+atc-store-mem = { path = ".", features = ["test-support"] }
