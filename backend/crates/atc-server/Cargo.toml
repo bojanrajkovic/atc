@@ -16,8 +16,6 @@ atc-github = { path = "../atc-github" }
 async-trait = "=0.1.89"
 axum = { version = "=0.8.9", features = ["ws"] }
 figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }
-metrics = "=0.24.5"
-metrics-process = "=2.4.3"
 reqwest = { version = "=0.13.3", default-features = false, features = ["rustls"] }
 rust-embed = "=8.11.0"
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -36,9 +34,9 @@ opentelemetry-otlp = { version = "=0.31.1", features = ["http-proto", "reqwest-b
 tracing-opentelemetry = { version = "=0.32.1", features = ["metrics"] }
 opentelemetry-http = "=0.31.0"
 opentelemetry-semantic-conventions = "=0.31.0"
+opentelemetry-system-metrics = "=0.31.0"
 http = "=1.4.0"
 axum-otel-metrics = "=0.13.0"
-metrics-exporter-otel = "=0.3.1"
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }

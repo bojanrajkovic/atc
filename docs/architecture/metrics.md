@@ -1,6 +1,6 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-13
+Last verified: 2026-05-14
 
 > **Note on issue #16 (runner-pool capacities).** The wire field
 > `StateSnapshot.runner_pool_capacities` carries operator-declared capacity
@@ -11,7 +11,7 @@ Last verified: 2026-05-13
 
 ## Purpose
 
-ATC emits structured telemetry — metrics, spans, and JSON logs — through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes a tracer provider and a meter provider that export over OTLP/HTTP (HTTP/protobuf) to an operator-run collector (Grafana Alloy, OpenTelemetry Collector, etc.). The collector decides the downstream destination — Tempo for traces, Mimir or Prometheus for metrics, Loki for logs — and re-exposes whichever scrape format the monitoring stack consumes. When the env var is unset, the SDK is never initialized: the `metrics::counter!()` / `gauge!()` / `histogram!()` macros resolve through the `metrics` facade's no-op recorder, `tracing` events flow only to the JSON / pretty stderr subscriber, and there is no provider, no exporter, and no background-task overhead. An invalid `OTEL_EXPORTER_OTLP_ENDPOINT` (typo, missing scheme, unparseable URL) is treated as unset — `init_otel` parses the value as a URI before installing the SDK so misconfiguration disables OTel with a clear stderr warning instead of silently routing telemetry to the OTel SDK's default `http://localhost:4318` fallback.
+ATC emits structured telemetry — metrics, spans, and JSON logs — through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes a tracer provider and a meter provider that export over OTLP/HTTP (HTTP/protobuf) to an operator-run collector (Grafana Alloy, OpenTelemetry Collector, etc.). The collector decides the downstream destination — Tempo for traces, Mimir or Prometheus for metrics, Loki for logs — and re-exposes whichever scrape format the monitoring stack consumes. When the env var is unset, the SDK is never initialized: the OTel global meter provider stays at the SDK's no-op default, every instrument built against it is a no-op, `tracing` events flow only to the JSON / pretty stderr subscriber, and there is no provider, no exporter, and no background-task overhead. An invalid `OTEL_EXPORTER_OTLP_ENDPOINT` (typo, missing scheme, unparseable URL) is treated as unset — `init_otel` parses the value as a URI before installing the SDK so misconfiguration disables OTel with a clear stderr warning instead of silently routing telemetry to the OTel SDK's default `http://localhost:4318` fallback.
 
 This document is the canonical home for ATC's metric and span contract. Every metric ATC emits is documented here with the seven-element interpretation block defined under [Metric and span authoring contract](#metric-and-span-authoring-contract). Every span boundary is enumerated under [Span inventory](#span-inventory). Cross-references from other docs (backend-server architecture, deployment runbooks, dashboard descriptions, alert rules) link here rather than duplicating per-metric or per-span prose.
 
@@ -79,27 +79,30 @@ New instrumentation goes at one of these boundaries:
 
 Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph. If a function is not load-bearing for an operator reading a flame graph, leave it uninstrumented and let it inherit the surrounding span.
 
-### Cached handle convention
+### Cached instrument convention
 
-Every repeat-emit metric in `atc-server` MUST go through a cached `Counter` / `Gauge` / `Histogram` handle held on the `PgMetrics` struct in `backend/crates/atc-server/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register()` once after the global recorder is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.increment(N)`) instead of a fresh `metrics::counter!("…").increment(N)` invocation.
+Every repeat-emit metric in `atc-server` MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `backend/crates/atc-server/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.add(N, &[])`) instead of building an instrument inline at every call.
 
-This is **defense-in-depth, not micro-perf**. PR #153 fixed a real correctness bug where a `metrics-util` hash-contract mismatch let `metrics-exporter-otel` reinstall observable callbacks on every inline emit — the cached form hits the registry exactly once at handle creation, so the entire bug class cannot reach hot-path emits. The performance side is a happy side effect.
+For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores **one instrument per metric name** plus pre-built `[KeyValue; N]` attribute slices alongside it (e.g. `attrs_parity: [KeyValue; 1]`). Emit sites read `counter.add(1, &self.attrs_parity)` so neither the instrument lookup nor the `KeyValue` allocation happens on a webhook path. Dedicated helpers (`write_failure_parity()`, `notify_emitted_run()`, etc.) wrap each `(instrument, slice)` pair so call sites never duplicate the `&self.attrs_*` reference.
 
-Two inline exceptions remain, with **distinct rationale**:
+Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics. The two PG-mode observable gauges (`atc_pg_broadcast_watermark`, `atc_pg_min_pending_seq`) take their atomics as parameters to `PgMetrics::register`; `register_build_info` registers an `atc_build_info` observable gauge whose callback always observes `1.0` with the compile-time label set.
 
-1. **`describe_*!` macros** — metadata only. They register a metric name, type, and description with the recorder; no instrument is created and no value is emitted. Caching is meaningless because there is no handle to cache.
-2. **`register_build_info()`'s `metrics::gauge!(…).set(1.0)`** — a real emit, not metadata. It is safe to leave inline because it runs **exactly once at startup** with compile-time labels and is never invoked again. The handle would be unique to that single call site, so caching would be pure ceremony. Future contributors must not generalize this exception to "metadata-only" — it is one-shot at startup, which is a separate carve-out.
+This is **defense-in-depth, not micro-perf**. The hash-contract correctness fix from PR #153 was rooted in `metrics-util` / `metrics-exporter-otel`; with both crates retired in favor of direct OTel meters that bug class is gone at the SDK seam. The cached-instrument pattern still earns its keep by keeping hot-path emits allocation-free and making the metric surface a single grep-able struct.
+
+**TODO(otel-0.32):** once `tracing-opentelemetry` and `axum-otel-metrics` publish releases targeting `opentelemetry 0.32` (upstream PRs `tokio-rs/tracing-opentelemetry#258` and `ttys3/axum-otel-metrics#196`), bump the SDK pin, enable the `experimental_metrics_bound_instruments` feature, and replace each `(instrument, [KeyValue; N])` pair with a real `BoundCounter<u64>` / `BoundHistogram<f64>` obtained via `Counter::bind(&[…])`. Emit-site shape stays identical; the wrapper helpers (`write_failure_parity` etc.) hide the swap.
 
 Mechanical check (run before merging changes that touch `atc-server/src/`):
 
 ```sh
-rg -U --multiline 'metrics::(counter|gauge|histogram)!\([\s\S]*?\)\s*\.(increment|set|record)' \
-   backend/crates/atc-server/src/
+rg -nU --multiline \
+   'meter[^"]*"\)\s*\.(u64_counter|u64_observable_(?:counter|gauge|up_down_counter)|f64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter))|i64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter)))\([^)]+\)' \
+   backend/crates/atc-server/src/ \
+   | rg -v 'crates/atc-server/src/metrics\.rs'
 ```
 
-The grep should return only the `register_build_info` emit in `metrics.rs` (the macro spans multiple lines, so use `-U --multiline`). A new hit anywhere else in `backend/crates/atc-server/src/` is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register` and the metric documented under [Operational metrics](#operational-metrics)).
+The grep should return no matches: the only sites that build OTel instruments live inside `metrics.rs` (`register_build_info` plus `PgMetrics::register_with_meter`). A new hit anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
 
-`atc_pg_in_memory_drift_total` is described in `PgMetrics::register` but no handle is cached: the metric is part of the documented surface but has no production emit site today. If a future writer adds an emit, the cached-handle field MUST be added in the same change.
+`atc_pg_in_memory_drift_total` is registered in `PgMetrics::register_with_meter` but no field is cached: the metric is part of the documented surface but has no production emit site today. If a future writer adds an emit, the cached-instrument field MUST be added in the same change.
 
 ### W3C trace context propagation
 
@@ -171,9 +174,19 @@ The middleware records into the global meter installed by `init_otel`. When OTel
 
 ## Process collector
 
-`spawn_process_collector(cancel: CancellationToken) -> JoinHandle<()>` starts a supervised tokio task that calls `metrics_process::Collector::default().collect()` every 10 seconds and returns a `JoinHandle<()>` to the caller. It records into the same global recorder installed by `init_otel`. Emitted families include `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_virtual_memory_bytes`, `process_open_fds`, `process_max_fds`, `process_start_time_seconds`, and `process_threads`.
+`spawn_process_collector(_cancel: CancellationToken) -> ProcessCollectorHandle` spawns the `opentelemetry-system-metrics` observer (`init_process_observer`) under a tokio task and returns a wrapper handle. The observer ticks on the standard `OTEL_METRIC_EXPORT_INTERVAL` interval (default 30 s, configurable via env), reads `sysinfo` snapshots of the current process, and records gauges against the global meter installed by `init_otel`. Emitted instruments (OTel dotted names; the OTLP→Prometheus collector translates dots to underscores so the scrape names are the `process_*` variants shown):
 
-The task exits cooperatively when `cancel` is cancelled. Because `Collector::collect()` is a synchronous function (reads from `/proc` on Linux or equivalent OS APIs), the cancel arm fires between ticks rather than mid-collect. A single collect call typically completes in microseconds, so shutdown latency attributable to this behavior is negligible. `main.rs` passes the cooperative shutdown token and joins the handle during graceful shutdown.
+| OTel name | Scrape name | Type | Unit | Attributes |
+|---|---|---|---|---|
+| `process.cpu.usage` | `process_cpu_usage` | f64 gauge | percent | none |
+| `process.cpu.utilization` | `process_cpu_utilization` | f64 gauge | percent | `process.pid`, `process.executable.name`, `process.executable.path`, `process.command` |
+| `process.memory.usage` | `process_memory_usage` | i64 gauge | byte | same four `process.*` |
+| `process.memory.virtual` | `process_memory_virtual` | i64 gauge | byte | same four `process.*` |
+| `process.disk.io` | `process_disk_io` | i64 gauge | byte | same four `process.*` plus `direction=read\|write` |
+
+This surface differs from the `metrics_process` exposition the prior recorder emitted (no `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds`, or `process_threads`). Dashboards that filtered on those names need to be updated; ATC's bundled Grafana dashboard (`deploy/grafana/atc-postgres-overview.json`) only queries `atc_pg_*` and is unaffected. Operators relying on host- or container-level fd / start-time metrics should source them from the node exporter or container runtime sidecar instead.
+
+The observer's `init_process_observer` loop runs forever — there is no cooperative shutdown surface on the upstream crate. `ProcessCollectorHandle::shutdown()` calls `tokio::task::AbortHandle::abort()` and returns the underlying `JoinHandle<()>` so the orchestration in `shutdown.rs` can await it under `SHUTDOWN_TIMEOUT_METRICS`. The observer does no DB/network work, so an abort between ticks is the common case and an abort mid-tick is safe.
 
 ## Operational metrics
 
@@ -326,7 +339,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_broadcast_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Mirrors the per-replica `Arc<AtomicI64>` after each successful drain pass; seeded at startup from `COALESCE(MAX(seq),0)`.
+- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `broadcast_watermark: Arc<AtomicI64>` on every collection cycle; seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass. The atomic update IS the metric update — no separate `record()` call.
 - **Per-replica vs cluster:** Per-replica — each replica advances its watermark independently.
 - **Aggregation:** Display per-pod (`atc_pg_broadcast_watermark`); for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)` (or equivalently `min without (pod, instance)`). Note: `min by (pod) (atc_pg_broadcast_watermark)` would just preserve one series per pod — same as the per-pod display.
 - **Example PromQL:** `atc_pg_broadcast_watermark`
@@ -336,7 +349,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_min_pending_seq`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Mirrors the per-replica `min_pending_seq: Arc<AtomicI64>` after each listener `fetch_min`; reset to `f64::NAN` (the sentinel state) when the drain swaps the atomic to `i64::MAX` after catching up. NaN is preferred over `i64::MAX as f64` (≈ 9.22e18) because the float64 representation would push the y-axis of dashboards displaying watermark and min_pending_seq together to ~9e18, hiding the actual divergence signal at the watermark level.
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`; non-sentinel values pass through as-is. NaN is preferred over `i64::MAX as f64` (≈ 9.22e18) because the float64 representation would push the y-axis of dashboards displaying watermark and min_pending_seq together to ~9e18, hiding the actual divergence signal at the watermark level. The atomic update IS the metric update — no separate `record()` call.
 - **Per-replica vs cluster:** Per-replica.
 - **Aggregation:** Display per-pod alongside `atc_pg_broadcast_watermark`. Filter NaN with `... unless on() (atc_pg_min_pending_seq != atc_pg_min_pending_seq)` if needed.
 - **Example PromQL:** `atc_pg_min_pending_seq` (Grafana renders NaN as gaps)

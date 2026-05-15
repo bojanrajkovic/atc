@@ -101,7 +101,7 @@ pub fn spawn_listener_task(
                             );
                         }
                         Err(e) => {
-                            metrics.listener_recv_errors.increment(1);
+                            metrics.listener_recv_errors.add(1, &[]);
                             tracing::warn!(error = %e, "pg listener recv error");
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         }
@@ -128,7 +128,7 @@ fn handle_listener_notification(
     received_counter: Option<&AtomicU64>,
     metrics: &PgMetrics,
 ) {
-    metrics.notify_received.increment(1);
+    metrics.notify_received.add(1, &[]);
     if let Some(c) = received_counter {
         c.fetch_add(1, Ordering::Relaxed);
     }
@@ -137,20 +137,15 @@ fn handle_listener_notification(
     // Notify still collapses the permits — this counter
     // reports arrival rate vs. drain pass rate.
     if drain_in_flight.load(Ordering::Acquire) {
-        metrics.wake_coalesced.increment(1);
+        metrics.wake_coalesced.add(1, &[]);
     }
     match notification.payload().parse::<i64>() {
         Ok(seq) => {
             tracing::Span::current().record("notify.payload.seq", seq);
-            let prev = min_pending_seq.fetch_min(seq, Ordering::Release);
-            let new_min = prev.min(seq);
-            #[allow(clippy::cast_precision_loss)]
-            let gauge_value = if new_min == i64::MAX {
-                f64::NAN
-            } else {
-                new_min as f64
-            };
-            metrics.min_pending_seq.set(gauge_value);
+            // The observable `atc_pg_min_pending_seq` gauge reads this atomic
+            // on every collection cycle (NaN when MAX, raw seq otherwise), so
+            // no separate gauge update is needed here.
+            min_pending_seq.fetch_min(seq, Ordering::Release);
         }
         Err(e) => {
             tracing::warn!(
@@ -245,12 +240,12 @@ pub fn spawn_drain_task(
 
                 // Capture the gap-healing backstop and reset the atomic. AcqRel
                 // pairs with the listener's Release fetch_min so any registration
-                // visible before this swap is observed here. Mirror the swap into
-                // the gauge: the post-swap value is i64::MAX (sentinel), rendered
-                // as NaN so dashboards distinguish "no pending NOTIFY below
-                // watermark" from "pending NOTIFY at seq 0".
+                // visible before this swap is observed here. The post-swap
+                // sentinel (`i64::MAX`) is rendered as NaN by the
+                // `atc_pg_min_pending_seq` observable gauge's callback so
+                // dashboards distinguish "no pending NOTIFY below watermark"
+                // from "pending NOTIFY at seq 0".
                 let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);
-                metrics.min_pending_seq.set(f64::NAN);
                 let pass_start_floor = watermark.min(backstop.saturating_sub(1));
 
                 // Wake-coalesce instrumentation bracket: the listener counts
@@ -276,16 +271,16 @@ pub fn spawn_drain_task(
                 drain_in_flight.store(false, Ordering::Release);
                 metrics
                     .drain_pass_duration
-                    .record(pass_start.elapsed().as_secs_f64());
+                    .record(pass_start.elapsed().as_secs_f64(), &[]);
 
                 if !startup_recorded {
                     metrics
                         .drain_startup
-                        .record(startup_at.elapsed().as_secs_f64());
+                        .record(startup_at.elapsed().as_secs_f64(), &[]);
                     startup_recorded = true;
                 }
 
-                metrics.drain_passes.increment(1);
+                metrics.drain_passes.add(1, &[]);
                 if let Some(c) = observed_passes.as_deref() {
                     c.fetch_add(1, Ordering::Relaxed);
                 }
@@ -304,29 +299,22 @@ pub fn spawn_drain_task(
                     // BIGSERIAL is allocated pre-commit and can commit out of
                     // order, which would let `MAX(seq)` advance past data that
                     // hasn't materialised in a concurrent snapshot view.
+                    // The observable `atc_pg_broadcast_watermark` gauge reads
+                    // this atomic on every collection cycle; no separate
+                    // gauge `record` is needed.
                     broadcast_watermark.store(watermark, Ordering::Release);
-                    #[allow(clippy::cast_precision_loss)]
-                    metrics.broadcast_watermark.set(watermark as f64);
                 } else {
                     // Re-register the captured backstop so the next pass still has
                     // the gap-healing floor. Without this, a transient query
                     // failure between two NOTIFYs (one carrying the low seq) would
                     // permanently lose the rescan signal: the swap zeroed the
                     // atomic and the failed pass never delivered the floor to the
-                    // SELECT. Mirror the gauge alongside the atomic — the swap at
-                    // pass start cleared the gauge to NaN, so without this re-mirror
-                    // the gauge would advertise "drain caught up" while a pending
-                    // backstop is queued for the next attempt.
+                    // SELECT. The observable `atc_pg_min_pending_seq` gauge
+                    // reads the atomic on its next collection so dashboards
+                    // see the re-registered backstop without a separate
+                    // mirror call.
                     if backstop != i64::MAX {
-                        let prev = min_pending_seq.fetch_min(backstop, Ordering::Release);
-                        let new_min = prev.min(backstop);
-                        #[allow(clippy::cast_precision_loss)]
-                        let gauge_value = if new_min == i64::MAX {
-                            f64::NAN
-                        } else {
-                            new_min as f64
-                        };
-                        metrics.min_pending_seq.set(gauge_value);
+                        min_pending_seq.fetch_min(backstop, Ordering::Release);
                     }
                     // Force the next iteration to attempt another drain pass.
                     // Without this, the loop would re-enter the `tokio::select!`
@@ -383,7 +371,7 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics:
             #[allow(clippy::cast_precision_loss)]
             metrics
                 .drain_shutdown_remaining_rows
-                .record(remaining as f64);
+                .record(remaining as f64, &[]);
         }
         Ok(Err(e)) => {
             tracing::warn!(
@@ -500,14 +488,14 @@ async fn drain_pass(
                     }
                 },
                 other => {
-                    metrics.drain_unknown_kind.increment(1);
+                    metrics.drain_unknown_kind.add(1, &[]);
                     tracing::warn!(seq = row.seq, kind = %other, "unknown outbox kind discriminator");
                     continue;
                 }
             };
 
             if recent_set.contains(&row.seq) {
-                metrics.drain_duplicate_skipped.increment(1);
+                metrics.drain_duplicate_skipped.add(1, &[]);
             } else {
                 // Event age at broadcast: now() - inserted_at, recorded once
                 // per broadcast row. The metric over-reports by the writer's
@@ -538,7 +526,7 @@ async fn drain_pass(
                         event,
                     });
 
-                    metrics.outbox_lag.record(lag_seconds);
+                    metrics.outbox_lag.record(lag_seconds, &[]);
                 });
 
                 recent_ring.push_back(row.seq);
@@ -550,7 +538,7 @@ async fn drain_pass(
                 }
             }
         }
-        metrics.drain_rows.increment(fetched as u64);
+        metrics.drain_rows.add(fetched as u64, &[]);
 
         if fetched < DRAIN_BATCH_SIZE as usize {
             break;

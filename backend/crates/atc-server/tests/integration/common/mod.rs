@@ -12,7 +12,6 @@ use atc_server::persist::pg::PgStoreTestHooks;
 use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
 use atc_server::state::AppState;
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::metrics::data::{
     AggregatedMetrics, MetricData, ResourceMetrics, ScopeMetrics,
@@ -33,10 +32,9 @@ use tokio_util::task::TaskTracker;
 
 /// Shared in-memory OTel pipeline for the test binary.
 ///
-/// One install per process: the OTel global tracer/meter provider and the
-/// `metrics-rs` global recorder are all process-singletons. Tests that read
-/// snapshots must be marked `#[serial_test::serial]` because the buffers and
-/// the recorder accumulators are shared across every test.
+/// One install per process: the OTel global tracer/meter providers are
+/// process-singletons. Tests that read snapshots must be marked
+/// `#[serial_test::serial]` because the buffers are shared across every test.
 ///
 /// Histograms use the same exponential aggregation view as production (via
 /// `atc_server::otel::exponential_histogram_view`) so tests observe the same
@@ -88,27 +86,17 @@ fn install_test_otel() -> OtelTestHarness {
     opentelemetry::global::set_meter_provider(meter_provider.clone());
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let meter = meter_provider.meter("atc");
-    let recorder = metrics_exporter_otel::OpenTelemetryRecorder::new(meter);
-    if metrics::set_global_recorder(recorder).is_err() {
-        // Another test (e.g. otel_init_test::init_otel_returns_some_with_endpoint)
-        // installed a recorder first. The first installer wins; our metric
-        // emissions still resolve through it but won't reach this exporter.
-        // Tests that depend on the metric exporter must call
-        // `ensure_recorder_installed` early so this branch is not taken.
-    }
-
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
     let _ = tracing_subscriber::registry()
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init();
 
-    // `register_build_info` is the only describe call the harness needs to
-    // make eagerly — the cached PG metric handles are registered transitively
-    // by `PgStore::start` (via `PgMetrics::register`) when a test constructs a
-    // store. Tests that never build a `PgStore` (the in-memory routing tests)
-    // emit no `atc_pg_*` metrics and don't need them described.
+    // `register_build_info` is the only metric the harness has to register
+    // eagerly — `PgMetrics` instruments are constructed transitively by
+    // `PgStore::start` when a test builds a store. Tests that never build a
+    // `PgStore` (the in-memory routing tests) emit no `atc_pg_*` metrics and
+    // don't need the PgMetrics instruments to exist.
     atc_server::metrics::register_build_info();
 
     OtelTestHarness {
