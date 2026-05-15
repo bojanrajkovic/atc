@@ -347,6 +347,36 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Aggregation:** Display per-pod alongside `atc_pg_broadcast_watermark`. Filter NaN with `... unless on() (atc_pg_min_pending_seq != atc_pg_min_pending_seq)` if needed.
 - **Example PromQL:** `atc_pg_min_pending_seq` (Grafana renders NaN as gaps)
 
+### `atc_pg_outbox_rows_deleted_total`
+
+- **Name:** `atc_pg_outbox_rows_deleted_total`
+- **Type:** counter
+- **Attributes:** none emitted; `pod`, `instance` (injected)
+- **Measures:** Outbox rows deleted by this replica's retention sweep task on each tick. Counted via the sweep statement's `DELETE ... RETURNING seq` row count, so the value reflects rows the replica actually deleted under `FOR UPDATE SKIP LOCKED` semantics — concurrent sweepers on other replicas account for disjoint candidate subsets, so the per-replica counter is the per-replica share, not a cluster-wide tally. Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica count. Sustained-zero rate after at least one full retention window indicates either the sweep predicate is rejecting everything (sub-floor retention misconfigured, no fresh heartbeats — see `atc_pg_outbox_min_replica_watermark`) or the outbox is not growing (no incoming webhooks).
+- **Per-replica vs cluster:** Per-replica. Sum across replicas (`sum without (pod, instance)`) for total cluster-wide deletion rate.
+- **Aggregation:** `sum without (pod, instance) (rate(atc_pg_outbox_rows_deleted_total[5m]))` for cluster-wide rate; `rate(atc_pg_outbox_rows_deleted_total[5m])` per pod to compare contention shares.
+- **Example PromQL:** `sum without (pod, instance) (rate(atc_pg_outbox_rows_deleted_total[5m]))`
+
+### `atc_pg_outbox_min_replica_watermark`
+
+- **Name:** `atc_pg_outbox_min_replica_watermark`
+- **Type:** gauge
+- **Attributes:** none emitted; `pod`, `instance` (injected)
+- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_replica_watermark_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN`. `-1` is the NaN sentinel for two states: (a) the heartbeat task hasn't run yet (just-started replica), (b) no live replicas have heartbeated recently (cluster partition / shutdown). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence; this is a cluster-state observation, not a per-event measurement.
+- **Per-replica vs cluster:** Per-replica observation of a cluster-wide quantity. All replicas should observe the same value (within the 30 s heartbeat skew); divergence indicates one replica's heartbeat task is stalled.
+- **Aggregation:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` for the cluster-wide signal; per-pod comparison surfaces stalled replicas.
+- **Example PromQL:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` (Grafana renders NaN as gaps)
+
+### `atc_pg_outbox_oldest_row_age_seconds`
+
+- **Name:** `atc_pg_outbox_oldest_row_age_seconds`
+- **Type:** gauge
+- **Attributes:** none emitted; `pod`, `instance` (injected)
+- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `oldest_row_age_seconds_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained. Useful as the retention-headroom signal: under healthy steady state the value oscillates near `outbox_retention` and rate-of-change matches the sweep rate. A monotonically rising value past `outbox_retention` indicates the sweep is not deleting (verify `atc_pg_outbox_rows_deleted_total` rate; check for sub-floor retention or absent heartbeats).
+- **Per-replica vs cluster:** Per-replica observation of a cluster-wide quantity (the outbox is shared). All replicas observe the same value within the heartbeat skew.
+- **Aggregation:** `max without (pod, instance) (atc_pg_outbox_oldest_row_age_seconds)` for the cluster-wide signal.
+- **Example PromQL:** `max without (pod, instance) (atc_pg_outbox_oldest_row_age_seconds)` (Grafana renders NaN as gaps)
+
 ## Span inventory
 
 Spans declared by ATC, grouped by the boundary they decorate.
@@ -394,3 +424,10 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 | Span | Source | Attributes |
 |---|---|---|
 | `eviction.sweep` | `InMemoryStore::evict_expired` in `persist/in_memory.rs` — per-tick root span. Spawned from `InMemoryStore::spawn_eviction`, which deliberately omits a task-lifetime parent (`.instrument(...)`): a long-lived root would never end until process shutdown, so each tick would attach to a span the SDK couldn't export until then. Per-tick roots mean every sweep exports as one tidy trace on tick. | `jobs.evicted` (u64; recorded after the sweep), `runs.evicted` (u64), `elapsed.micros` (u64). Recorded on both the eviction and the no-op-sweep code paths. |
+
+### Outbox retention path (PG mode only)
+
+| Span | Source | Attributes |
+|---|---|---|
+| `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `persist/pg.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
+| `outbox.sweep.tick` | `outbox_sweep_tick` in `persist/pg.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |

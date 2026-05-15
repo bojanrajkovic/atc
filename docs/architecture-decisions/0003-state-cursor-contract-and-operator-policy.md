@@ -115,6 +115,8 @@ tests. It is no longer a documented production deployment shape.
 
 ### 4. Retention is decided separately from current-state TTL
 
+> **Postscript (2026-05-14):** outbox retention is now specified in [ADR 0007](0007-outbox-retention-policy.md) — time-based retention (default 7 d) with a multi-replica watermark floor coordinated through a new `outbox_watermarks` table, swept symmetrically on every replica via an ordered-CTE + `FOR UPDATE SKIP LOCKED` statement. The 1 h hard floor in ADR 0007 is the operational complement to this decision's "decided separately" principle.
+
 Current-state TTL eviction continues to behave as it does today (completed
 runs/jobs evicted after a configurable interval). Outbox row retention is a
 separate decision deferred to Phase 5, because the constraints differ:
