@@ -15,10 +15,9 @@ use std::time::Duration;
 
 use atc_core::{Clock, SystemClock};
 use atc_persist::PersistentStore;
-use atc_server::listener;
-use atc_server::persist::pg::{
-    OUTBOX_RETENTION_FLOOR, PgStore, PgStoreStartError, PgStoreTestHooks,
-};
+use atc_store_pg::listener;
+use atc_store_pg::store::{OUTBOX_RETENTION_FLOOR, PgStoreTestHooks};
+use atc_store_pg::{PgStore, PgStoreStartError};
 use serial_test::serial;
 use sqlx::Row;
 use tokio::time::timeout;

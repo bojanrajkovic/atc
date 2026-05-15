@@ -11,15 +11,13 @@ use std::time::Duration;
 use atc_core::{Clock, SystemClock};
 use atc_persist::PersistentStore;
 use atc_server::config;
-use atc_server::db;
-use atc_server::listener;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
-use atc_server::persist::PgStore;
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
+use atc_store_pg::{DbInitError, PgStore, db, listener};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing_subscriber::layer::SubscriberExt;
@@ -32,7 +30,7 @@ use tracing_subscriber::{EnvFilter, Layer};
 /// Called eagerly at startup for both `ATC_DATABASE_URL` and
 /// `ATC_DATABASE_LISTENER_URL` (when set) so that misconfigurations fail fast
 /// with a remediation-naming message instead of bottoming out as
-/// `sqlx::Error::Configuration` deep inside `PgPool::connect` or
+/// a misclassified `Connect` error deep inside `PgPool::connect` or
 /// `connect_listener`. Mirrors the chart-time guard in
 /// `deploy/helm/atc/templates/deployment.yaml`, which catches the same
 /// misconfiguration at `helm template/install` time on the inline
@@ -158,7 +156,7 @@ async fn main() {
     // PersistentStore>`.
     let persist: Arc<dyn PersistentStore> = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
-            if matches!(e, sqlx::Error::Migrate(_)) {
+            if matches!(e, DbInitError::Migrate(_)) {
                 tracing::error!(error = %e, "failed to run database migrations");
             } else {
                 tracing::error!(error = %e, "failed to connect to PostgreSQL");

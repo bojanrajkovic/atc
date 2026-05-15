@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use atc_core::SystemClock;
 use atc_persist::PersistentStore;
-use atc_server::listener;
 use atc_server::otel::exponential_histogram_view;
-use atc_server::persist::PgStore;
-use atc_server::persist::pg::PgStoreTestHooks;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
+use atc_store_pg::PgStore;
+use atc_store_pg::listener;
+use atc_store_pg::store::PgStoreTestHooks;
 use opentelemetry::KeyValue;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::metrics::data::{
@@ -510,7 +510,7 @@ pub async fn start_pg() -> (sqlx::PgPool, impl Drop, String) {
     }
 
     let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/{db_name}");
-    let pool = atc_server::db::init_pool(&db_url)
+    let pool = atc_store_pg::db::init_pool(&db_url)
         .await
         .expect("init_pool failed");
     (pool, container, db_url)
@@ -681,7 +681,7 @@ pub async fn start_pg_store_for_test(
     pool: sqlx::PgPool,
     db_url: &str,
     shutdown: CancellationToken,
-) -> Arc<atc_server::persist::PgStore> {
+) -> Arc<atc_store_pg::PgStore> {
     start_pg_store_for_test_with_clock(Arc::new(SystemClock), pool, db_url, shutdown).await
 }
 
@@ -692,7 +692,7 @@ pub async fn start_pg_store_for_test_with_clock(
     pool: sqlx::PgPool,
     db_url: &str,
     shutdown: CancellationToken,
-) -> Arc<atc_server::persist::PgStore> {
+) -> Arc<atc_store_pg::PgStore> {
     start_pg_store_for_test_with_clock_and_retention(
         clock,
         pool,
@@ -712,17 +712,17 @@ pub async fn start_pg_store_for_test_with_clock_and_retention(
     db_url: &str,
     shutdown: CancellationToken,
     outbox_retention: Duration,
-) -> Arc<atc_server::persist::PgStore> {
+) -> Arc<atc_store_pg::PgStore> {
     let pg_listener = listener::connect_listener(db_url)
         .await
         .expect("connect_listener failed");
-    let (store, _handles) = atc_server::persist::PgStore::start_with_test_hooks(
+    let (store, _handles) = atc_store_pg::PgStore::start_with_test_hooks(
         clock,
         pool,
         pg_listener,
         shutdown,
         outbox_retention,
-        atc_server::persist::pg::PgStoreTestHooks::default(),
+        PgStoreTestHooks::default(),
     )
     .await
     .expect("PgStore::start_with_test_hooks");

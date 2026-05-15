@@ -83,14 +83,14 @@ Span names are stable identifiers — operators build dashboards and alerts that
 New instrumentation goes at one of these boundaries:
 
 - **API boundaries.** Every public HTTP route handler that performs work worth tracing (today: `webhook_handler`). The `axum-otel-metrics` middleware is the duration / status-code surface for *every* HTTP route automatically; per-route span instrumentation only needs to be added when the handler does enough work that the operator wants to see its internal structure.
-- **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `persist/pg.rs`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
+- **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `atc-store-pg/src/store/writes.rs`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
 - **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` do NOT take a task-lifetime root span. Decorate the per-tick handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(...)]` directly, so each iteration emits its own root that exports on completion. A wrapper at the spawn site is an anti-pattern — see [Task-lifetime root spans are an anti-pattern](#task-lifetime-root-spans-are-an-anti-pattern) below.
 
 Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph. If a function is not load-bearing for an operator reading a flame graph, leave it uninstrumented and let it inherit the surrounding span.
 
 ### Cached instrument convention
 
-Every repeat-emit metric in `atc-server` MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `backend/crates/atc-server/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.add(N, &[])`) instead of building an instrument inline at every call.
+Every repeat-emit metric in PG mode MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `backend/crates/atc-store-pg/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.add(N, &[])`) instead of building an instrument inline at every call.
 
 For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores **one instrument per metric name** plus pre-built `[KeyValue; N]` attribute slices alongside it (e.g. `attrs_parity: [KeyValue; 1]`). Emit sites read `counter.add(1, &self.attrs_parity)` so neither the instrument lookup nor the `KeyValue` allocation happens on a webhook path. Dedicated helpers (`write_failure_parity()`, `notify_emitted_run()`, etc.) wrap each `(instrument, slice)` pair so call sites never duplicate the `&self.attrs_*` reference.
 
@@ -100,16 +100,16 @@ This is **defense-in-depth, not micro-perf**. The hash-contract correctness fix 
 
 **TODO(otel-0.32):** once `tracing-opentelemetry` and `axum-otel-metrics` publish releases targeting `opentelemetry 0.32` (upstream PRs `tokio-rs/tracing-opentelemetry#258` and `ttys3/axum-otel-metrics#196`), bump the SDK pin, enable the `experimental_metrics_bound_instruments` feature, and replace each `(instrument, [KeyValue; N])` pair with a real `BoundCounter<u64>` / `BoundHistogram<f64>` obtained via `Counter::bind(&[…])`. Emit-site shape stays identical; the wrapper helpers (`write_failure_parity` etc.) hide the swap.
 
-Mechanical check (run before merging changes that touch `atc-server/src/`):
+Mechanical check (run before merging changes that touch backend sources):
 
 ```sh
 rg -nU --multiline \
    'meter[^"]*"\)\s*\.(u64_counter|u64_observable_(?:counter|gauge|up_down_counter)|f64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter))|i64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter)))\([^)]+\)' \
-   backend/crates/atc-server/src/ \
-   | rg -v 'crates/atc-server/src/metrics\.rs'
+   backend/crates/atc-server/src/ backend/crates/atc-store-pg/src/ \
+   | rg -v 'crates/(atc-server/src/metrics|atc-store-pg/src/metrics)\.rs'
 ```
 
-The grep should return no matches: the only sites that build OTel instruments live inside `metrics.rs` (`register_build_info` plus `PgMetrics::register_with_meter`). A new hit anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
+The grep should return no matches: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new hit anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
 
 `atc_pg_in_memory_drift_total` is registered in `PgMetrics::register_with_meter` but no field is cached: the metric is part of the documented surface but has no production emit site today. If a future writer adds an emit, the cached-instrument field MUST be added in the same change.
 
@@ -132,7 +132,7 @@ async move { /* handler body */ }.instrument(span).await
 
 `tracing-opentelemetry` only exports a span to the OTel pipeline when it closes. A span attached to a `tokio::spawn`-ed future via `.instrument(span)` closes when the task ends — for long-lived background tasks (the listener loop, the drain loop, the eviction loop) that means "at process shutdown." Under normal operation the span never exports, and a SIGKILL or OOM kill loses it entirely along with every per-tick child that was waiting on it.
 
-The fix is per-tick roots: decorate the handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(name = "...", ...)]` directly. Each iteration is then a fresh root that exports as soon as it returns. `drain.broadcast` stays a child of `drain.pass` because it is constructed inside the instrumented `drain_pass` function via `info_span!("drain.broadcast").in_scope(...)`. The reference implementations are `backend/crates/atc-server/src/listener.rs` and `backend/crates/atc-server/src/persist/in_memory.rs`. The rationale was first written down in `docs/design-plans/2026-05-13-eviction-fold-into-in-memory-store.md` (§ "Postscript") and extended to listener/drain in issue #170.
+The fix is per-tick roots: decorate the handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(name = "...", ...)]` directly. Each iteration is then a fresh root that exports as soon as it returns. `drain.broadcast` stays a child of `drain.pass` because it is constructed inside the instrumented `drain_pass` function via `info_span!("drain.broadcast").in_scope(...)`. The reference implementations are `backend/crates/atc-store-pg/src/listener.rs` and `backend/crates/atc-server/src/persist/in_memory.rs`. The rationale was first written down in `docs/design-plans/2026-05-13-eviction-fold-into-in-memory-store.md` (§ "Postscript") and extended to listener/drain in issue #170.
 
 ### Shutdown ordering
 
@@ -395,7 +395,7 @@ Spans declared by ATC, grouped by the boundary they decorate.
 | Span | Source | Attributes |
 |---|---|---|
 | `state.snapshot` | `backend/crates/atc-server/src/routes.rs` (`state_handler`) — root request span for `GET /v1/state`. Built manually (not via `#[instrument]`) so span fields can be recorded from the snapshot response before the handler returns. No `traceparent` extraction: `/v1/state` is a client-pull endpoint with no upstream trace context today. | `http.route="/v1/state"`, `snapshot.runs_count` (usize; late-bound, recorded after snapshot is read), `snapshot.jobs_count` (usize; late-bound), `snapshot.last_seq` (u64; late-bound). |
-| `persist.read.snapshot` | `PgStore::read_snapshot` in `persist/pg.rs` and `InMemoryStore::read_snapshot` in `persist/in_memory.rs` — via `#[tracing::instrument]`, child of `state.snapshot`. | `last_seq` (u64; late-bound), `runs_count` (usize; late-bound), `jobs_count` (usize; late-bound). |
+| `persist.read.snapshot` | `PgStore::read_snapshot` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::read_snapshot` in `persist/in_memory.rs` — via `#[tracing::instrument]`, child of `state.snapshot`. | `last_seq` (u64; late-bound), `runs_count` (usize; late-bound), `jobs_count` (usize; late-bound). |
 
 ### Webhook ingestion path
 
@@ -409,9 +409,9 @@ Spans declared by ATC, grouped by the boundary they decorate.
 
 | Span | Source | Attributes |
 |---|---|---|
-| `persist.apply.run_event` | `PgStore::apply_run_event` in `persist/pg.rs` and `InMemoryStore::apply_run_event` in `persist/in_memory.rs` | `run_id` (i64); `seq` (i64; late-bound, recorded after the outbox row's `BIGSERIAL` is allocated). |
-| `persist.apply.job_event` | `PgStore::apply_job_event` in `persist/pg.rs` and `InMemoryStore::apply_job_event` in `persist/in_memory.rs` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
-| `persist.notify.emit` | `notify_outbox_seq_in_txn` in `persist/pg.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
+| `persist.apply.run_event` | `PgStore::apply_run_event` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::apply_run_event` in `persist/in_memory.rs` | `run_id` (i64); `seq` (i64; late-bound, recorded after the outbox row's `BIGSERIAL` is allocated). |
+| `persist.apply.job_event` | `PgStore::apply_job_event` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::apply_job_event` in `persist/in_memory.rs` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
+| `persist.notify.emit` | `notify_outbox_seq_in_txn` in `atc-store-pg/src/store/writes.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
 
 Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`) carry default `#[tracing::instrument(skip_all)]` spans and inherit context from the surrounding `persist.apply.*` span.
 
@@ -438,5 +438,5 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 
 | Span | Source | Attributes |
 |---|---|---|
-| `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `persist/pg.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
-| `outbox.sweep.tick` | `outbox_sweep_tick` in `persist/pg.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |
+| `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
+| `outbox.sweep.tick` | `outbox_sweep_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |
