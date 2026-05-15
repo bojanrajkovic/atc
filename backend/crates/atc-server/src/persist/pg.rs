@@ -247,23 +247,36 @@ pub struct PgStore {
     /// outbox seq range. Format: `hostname-<8-hex-uuid>`. UUID suffix
     /// prevents collision when two `PgStore` instances run against the same
     /// database with the same hostname (multi-instance dev / integration
-    /// tests).
+    /// tests). Production code reads this only via the heartbeat task's
+    /// spawn-time `Arc::clone`; the cfg-gated `replica_id()` accessor reads
+    /// it back off `self` for test inspection.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub(crate) replica_id: Arc<str>,
     /// Configured retention age for the outbox. Validated `>= OUTBOX_RETENTION_FLOOR`
-    /// in `start_inner`. Used by the sweep task to compute the `inserted_at`
-    /// cutoff Rust-side from `Clock::now() - outbox_retention`.
+    /// in `start_inner`. Production code reads this only at spawn time (the
+    /// sweep task captures it by value); the `#[cfg(any(test, feature =
+    /// "test-support"))] outbox_sweep_once()` entry point reads it back off
+    /// `self`, so production builds correctly flag the field as never
+    /// re-read after construction.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub(crate) outbox_retention: Duration,
     /// Atomic mirror of `MIN(broadcast_watermark)` across non-stale replicas.
     /// Refreshed by the heartbeat task on every tick; read by the
-    /// `atc_pg_outbox_min_replica_watermark` observable gauge callback. `-1`
-    /// is the NaN sentinel — rendered as NaN by the gauge so dashboards
-    /// distinguish "no live replicas seen" from "min watermark is 0".
+    /// `atc_pg_outbox_min_replica_watermark` observable gauge callback via a
+    /// `Weak<AtomicI64>` registered with the meter. `-1` is the NaN sentinel
+    /// — rendered as NaN by the gauge so dashboards distinguish "no live
+    /// replicas seen" from "min watermark is 0". Production keeps the
+    /// strong reference alive through the heartbeat task's spawn-time
+    /// Arc::clone; this field is read directly by the cfg-gated test
+    /// accessors.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub(crate) min_replica_watermark_atomic: Arc<AtomicI64>,
     /// Atomic mirror of `clock.now() - MIN(inserted_at) FROM outbox`, in
     /// seconds. Refreshed by the heartbeat task on every tick; read by the
-    /// `atc_pg_outbox_oldest_row_age_seconds` observable gauge callback. `-1`
-    /// is the NaN sentinel — rendered as NaN by the gauge when the outbox is
-    /// empty.
+    /// `atc_pg_outbox_oldest_row_age_seconds` observable gauge callback via
+    /// a `Weak<AtomicI64>`. `-1` is the NaN sentinel — rendered as NaN by
+    /// the gauge when the outbox is empty.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub(crate) oldest_row_age_seconds_atomic: Arc<AtomicI64>,
 }
 
