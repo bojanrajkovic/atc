@@ -1180,13 +1180,24 @@ async fn outbox_heartbeat_tick(
     // (1) UPSERT this replica's heartbeat row. `updated_at` is Rust-bound so
     // `TestClock`-driven tests are deterministic; SQL `now()` would route
     // through the DB's wall-clock instead.
+    //
+    // `GREATEST(...)` on both columns enforces per-replica monotonicity. In
+    // production this is a no-op — `broadcast_watermark` only advances and
+    // `updated_at` is bound from a monotonic clock per task. But two
+    // heartbeats can race against each other (the spawn-time unconditional
+    // first tick vs. a test's synchronous `outbox_heartbeat_once`, or a
+    // future opt-in heartbeat trigger): without `GREATEST`, the later
+    // commit's potentially-stale `wm` could overwrite the newer one, since
+    // the SQL value was bound from `broadcast_watermark.load(Acquire)`
+    // earlier and the in-process atomic may have advanced since. Monotonic
+    // semantics in the UPSERT make this race a no-op.
     sqlx::query!(
         r#"
         INSERT INTO outbox_watermarks (replica_id, broadcast_watermark, updated_at)
         VALUES ($1, $2, $3)
         ON CONFLICT (replica_id) DO UPDATE SET
-            broadcast_watermark = EXCLUDED.broadcast_watermark,
-            updated_at = EXCLUDED.updated_at
+            broadcast_watermark = GREATEST(EXCLUDED.broadcast_watermark, outbox_watermarks.broadcast_watermark),
+            updated_at = GREATEST(EXCLUDED.updated_at, outbox_watermarks.updated_at)
         "#,
         replica_id,
         wm,
