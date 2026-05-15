@@ -134,8 +134,12 @@ async fn drain_pass_is_root_with_drain_broadcast_child() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
-    // Fire a webhook so the drain has work to do — pass and broadcast spans
-    // are only emitted when an outbox row exists.
+    // Subscribe BEFORE firing the webhook. `tokio::sync::broadcast::Receiver`
+    // only observes messages sent after subscription, so a `subscribe()` call
+    // placed after `post_webhook_to_router` can race the drain task and miss
+    // the only broadcast the test is waiting on (5s timeout trips, test fails).
+    let mut rx = fixture.state.persist.subscribe();
+
     let (status, _body) = common::post_webhook_to_router(
         fixture.router.clone(),
         "workflow_run",
@@ -145,7 +149,6 @@ async fn drain_pass_is_root_with_drain_broadcast_child() {
     assert_eq!(status, StatusCode::OK);
 
     // Wait for the drain to broadcast at least one event.
-    let mut rx = fixture.state.persist.subscribe();
     let _ = timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timed out waiting for drain broadcast");
@@ -210,6 +213,12 @@ async fn listener_recv_is_root() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
 
+    // Subscribe BEFORE firing the webhook. `tokio::sync::broadcast::Receiver`
+    // only observes messages sent after subscription, so a `subscribe()` call
+    // placed after `post_webhook_to_router` can race the drain task and miss
+    // the only broadcast the test is waiting on (5s timeout trips, test fails).
+    let mut rx = fixture.state.persist.subscribe();
+
     // Fire a webhook so the listener receives a NOTIFY for the outbox row.
     let (status, _body) = common::post_webhook_to_router(
         fixture.router.clone(),
@@ -221,7 +230,6 @@ async fn listener_recv_is_root() {
 
     // Wait for the drain to broadcast — proves the listener picked the NOTIFY
     // up before we poll the exporter.
-    let mut rx = fixture.state.persist.subscribe();
     let _ = timeout(Duration::from_secs(5), rx.recv())
         .await
         .expect("timed out waiting for drain broadcast");
