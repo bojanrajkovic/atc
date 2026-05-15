@@ -1,6 +1,6 @@
 import type { JobEventEnvelope } from '../src/lib/types/generated/JobEventEnvelope'
 import { expect, test } from './lib/fixtures'
-import { makeJobSeqEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { makeJobCommittedEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 test.describe('Pool indicators update live', () => {
   test.beforeEach(async ({ page }) => {
@@ -35,7 +35,7 @@ test.describe('Pool indicators update live', () => {
       },
     }
 
-    await sendWS(page, makeJobSeqEvent(10, { jobData: queuedJobEnvelope }))
+    await sendWS(page, makeJobCommittedEvent(10, { jobData: queuedJobEnvelope }))
 
     // Pool indicator shows 'ubuntu-latest' (no groupName yet — derived from labels)
     const queuedPoolIndicator = page.getByTestId('runner-pool-ubuntu-latest')
@@ -68,7 +68,7 @@ test.describe('Pool indicators update live', () => {
       },
     }
 
-    await sendWS(page, makeJobSeqEvent(11, { jobData: inProgressJobEnvelope }))
+    await sendWS(page, makeJobCommittedEvent(11, { jobData: inProgressJobEnvelope }))
 
     // Pool indicator now shows 'GitHub Actions' (groupName takes over as display name)
     const runningPoolIndicator = page.getByTestId('runner-pool-GitHub Actions')
@@ -104,7 +104,7 @@ test.describe('Pool indicators update live', () => {
       },
     }
 
-    await sendWS(page, makeJobSeqEvent(12, { jobData: completedJobEnvelope }))
+    await sendWS(page, makeJobCommittedEvent(12, { jobData: completedJobEnvelope }))
 
     // Pool indicator is gone — no active jobs remain
     await expect(runningPoolIndicator).not.toBeVisible()

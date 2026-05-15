@@ -16,8 +16,9 @@ use crate::common;
 
 use std::sync::Arc;
 
-use atc_server::persist::PersistentStore;
-use atc_server::state::{AppState, SeqEvent};
+use atc_persist::PersistentStore;
+use atc_server::state::AppState;
+use atc_wire::CommittedEvent;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use opentelemetry::KeyValue;
@@ -45,13 +46,13 @@ pub async fn build_app_with_pg(
 ) -> (
     axum::Router,
     Arc<AppState>,
-    tokio::sync::broadcast::Receiver<SeqEvent>,
+    tokio::sync::broadcast::Receiver<CommittedEvent>,
 ) {
     common::ensure_recorder_installed();
     let shutdown = CancellationToken::new();
     let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
     let rx = store.subscribe();
-    let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = store as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,

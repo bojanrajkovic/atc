@@ -15,15 +15,14 @@ use atc_core::{
     event::{JobEventEnvelope, RunEventEnvelope},
 };
 use atc_github::WebhookEvent;
+use atc_persist::{LivenessError, PersistentStore, join_with_timeout};
+use atc_wire::{CommittedEvent, StateSnapshot};
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::shutdown::{SHUTDOWN_TIMEOUT_EVICTION, join_with_timeout};
-use crate::state::{SeqEvent, StateSnapshot};
+use crate::shutdown::SHUTDOWN_TIMEOUT_EVICTION;
 use atc_core::types::RepoKey;
-
-use super::{LivenessError, PersistentStore};
 
 /// Default broadcast channel capacity. Matches the production setting and the
 /// `PgStore::start` capacity so both modes have identical lag semantics.
@@ -79,7 +78,7 @@ pub struct InMemoryStore {
     /// How long to retain completed jobs before eviction.
     completed_ttl: Duration,
     /// Broadcast sender for pushing domain events to WebSocket clients.
-    broadcast_tx: broadcast::Sender<SeqEvent>,
+    broadcast_tx: broadcast::Sender<CommittedEvent>,
     /// JoinHandle for the eviction task. `Some` until the first `shutdown()`
     /// call takes it. `None` after shutdown or when constructed via
     /// `new_for_test` (which never spawns the task).
@@ -98,7 +97,8 @@ impl InMemoryStore {
         eviction_period: Duration,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
-        let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(DEFAULT_BROADCAST_CAPACITY);
+        let (broadcast_tx, _sentinel) =
+            broadcast::channel::<CommittedEvent>(DEFAULT_BROADCAST_CAPACITY);
         let store = Arc::new(Self {
             state: RwLock::new(StateData::new()),
             seq: Mutex::new(0u64),
@@ -158,7 +158,7 @@ impl InMemoryStore {
         completed_ttl: Duration,
         broadcast_capacity: usize,
     ) -> Arc<Self> {
-        let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(broadcast_capacity);
+        let (broadcast_tx, _sentinel) = broadcast::channel::<CommittedEvent>(broadcast_capacity);
         Arc::new(Self {
             state: RwLock::new(StateData::new()),
             seq: Mutex::new(0u64),
@@ -311,7 +311,7 @@ impl PersistentStore for InMemoryStore {
         Ok(())
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<SeqEvent> {
+    fn subscribe(&self) -> broadcast::Receiver<CommittedEvent> {
         self.broadcast_tx.subscribe()
     }
 
@@ -363,7 +363,7 @@ impl PersistentStore for InMemoryStore {
         drop(state);
 
         tracing::Span::current().record("seq", allocated);
-        let _ = self.broadcast_tx.send(SeqEvent {
+        let _ = self.broadcast_tx.send(CommittedEvent {
             seq: allocated,
             event: WebhookEvent::Run(env),
         });
@@ -416,7 +416,7 @@ impl PersistentStore for InMemoryStore {
         drop(state);
 
         tracing::Span::current().record("seq", allocated);
-        let _ = self.broadcast_tx.send(SeqEvent {
+        let _ = self.broadcast_tx.send(CommittedEvent {
             seq: allocated,
             event: WebhookEvent::Job(env),
         });

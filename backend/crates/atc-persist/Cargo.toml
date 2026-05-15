@@ -1,0 +1,13 @@
+[package]
+name = "atc-persist"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atc-core = { path = "../atc-core" }
+atc-wire = { path = "../atc-wire" }
+async-trait = { workspace = true }
+tokio = { version = "=1.52.3", features = ["sync", "time", "rt"] }
+tracing = { workspace = true }

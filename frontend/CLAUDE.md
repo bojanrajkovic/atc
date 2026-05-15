@@ -19,7 +19,7 @@ Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system. Produces a static buil
 | `vitest.config.{ts,unit.ts,browser.ts}` | Vitest workspace + jsdom unit project + Playwright-chromium browser project; coverage to `coverage/vitest/lcov.info` |
 | `playwright.config.ts` | Playwright E2E config; webServer auto-start; `@bgotink/playwright-coverage` reporter writes V8 coverage to `coverage/e2e/lcov.info` |
 | `e2e/lib/fixtures.ts` | Re-exports `test`/`expect` from `@bgotink/playwright-coverage` so the V8 capture hook fires; all e2e tests import from here |
-| `e2e/lib/ws-mock.ts` | Shared Playwright WebSocket harness: `makeRunEvent`, `makeJobSeqEvent`, `sendWS`, `sendWSBatch` |
+| `e2e/lib/ws-mock.ts` | Shared Playwright WebSocket harness: `makeRunEvent`, `makeJobCommittedEvent`, `sendWS`, `sendWSBatch` |
 | `src/lib/stores/` | Svelte 5 rune-class stores: `connection.svelte.ts`, `runs.svelte.ts`, `runners.svelte.ts`, `ui.svelte.ts`, `palette.svelte.ts`. `runs.svelte.ts:RunStore` carries a `runnerPoolCapacities: RunnerPoolCapacity[]` `$state` slice replaced atomically by `loadSnapshot(runs, jobs, runnerPoolCapacities = [])` (third arg defaults to `[]` for rolling-deploy tolerance and back-compat with existing callers). `runners.svelte.ts:computePoolStats(jobs, capacities = [])` takes the second argument and merges declared capacities into `RunnerPoolStats.total` keyed by canonical label-set via `poolKey()`. |
 | `src/lib/dispatcher.ts` | EventDispatcher — routes WebSocket events to `runStore`; batches via requestAnimationFrame; `setOnFlush` post-flush hook for the ARIA live region |
 | `src/lib/connection.ts` | ConnectionManager — WS-first protocol with pre-connect buffering and exponential backoff reconnect |
@@ -48,7 +48,7 @@ pnpm test:e2e     # Playwright E2E tests
 
 **Typed-union switches need runtime exhaustiveness, not just compile-time.** Functions that `switch` over a generated typed union (e.g. `RunConclusion`, `StatusKey` in `src/lib/format/status-key.ts`) MUST include a `default: const _: never = value; throw new Error(...)` branch. Without it, off-shape values from boundaries — test fixtures with loose `Record<string, unknown>` typing, JSON over the wire, raw `evaluate` injections in Playwright — silently return `undefined` and cascade into broken downstream renders that look like reactivity bugs.
 
-**E2E fixture typing.** `frontend/e2e/lib/ws-mock.ts` helpers (`makeRunEvent`, `makeJobSeqEvent`) should use the generated discriminated-union types, not `Record<string, unknown>`, so casing mismatches surface at edit time rather than after a multi-hour debug.
+**E2E fixture typing.** `frontend/e2e/lib/ws-mock.ts` helpers (`makeRunEvent`, `makeJobCommittedEvent`) should use the generated discriminated-union types, not `Record<string, unknown>`, so casing mismatches surface at edit time rather than after a multi-hour debug.
 
 Debugging heuristic: when a page becomes unresponsive after a `page.evaluate(...)` store mutation and the snapshot shows an unrelated empty state, suspect a downstream render error from a mismatched value shape, NOT a reactivity propagation bug.
 

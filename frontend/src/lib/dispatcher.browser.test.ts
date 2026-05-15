@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 
 describe('pool-stats derivation: dispatcher + runnerStore integration (browser mode)', () => {
   let eventDispatcher: typeof import('$lib/dispatcher')['eventDispatcher']
@@ -25,7 +25,7 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     jobId: bigint,
     runId: bigint,
     action: JobEventEnvelope['action'],
-  ): SeqEvent => ({
+  ): CommittedEvent => ({
     seq: jobId,
     event: {
       type: 'Job',

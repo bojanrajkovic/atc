@@ -51,7 +51,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
     let ws_tracker = TaskTracker::new();
 
     let store = common::start_pg_store_for_test(pool, &db_url, shutdown.clone()).await;
-    let persist = Arc::clone(&store) as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = Arc::clone(&store) as Arc<dyn atc_persist::PersistentStore>;
 
     let state = Arc::new(AppState {
         persist: Arc::clone(&persist),

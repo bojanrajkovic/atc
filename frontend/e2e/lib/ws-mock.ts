@@ -78,7 +78,7 @@ export const WS_MOCK_INIT_SCRIPT = `
 })();
 `
 
-/** Helper: build a SeqEvent JSON payload for a Run event (wire format). */
+/** Helper: build a CommittedEvent JSON payload for a Run event (wire format). */
 export function makeRunEvent(
   seq: number,
   fields: {
@@ -119,8 +119,8 @@ export function makeRunEvent(
   })
 }
 
-/** Helper: build a SeqEvent JSON payload for a Job event. */
-export function makeJobSeqEvent(
+/** Helper: build a CommittedEvent JSON payload for a Job event. */
+export function makeJobCommittedEvent(
   seq: number,
   opts: {
     jobData: JobEventEnvelope
@@ -172,9 +172,9 @@ export async function sendWS(page: Page, msg: string): Promise<void> {
       }
       return value
     }
-    const seqEvent = JSON.parse(data, reviver)
+    const committedEvent = JSON.parse(data, reviver)
 
-    dispatcher.dispatch(seqEvent)
+    dispatcher.dispatch(committedEvent)
     dispatcher.flush()
 
     return JSON.stringify({ result: 'dispatched' })
@@ -214,8 +214,8 @@ export async function sendWSBatch(page: Page, msgs: string[]): Promise<void> {
     }
 
     for (const data of dataList) {
-      const seqEvent = JSON.parse(data, reviver)
-      dispatcher.dispatch(seqEvent)
+      const committedEvent = JSON.parse(data, reviver)
+      dispatcher.dispatch(committedEvent)
     }
     // Do NOT flush here — let RAF batch naturally
   }, msgs)

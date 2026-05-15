@@ -118,7 +118,7 @@ async fn webhook_to_rest_state() {
 // Webhook → WebSocket e2e test
 // ============================================================================
 
-/// POST webhook → WS client receives SeqEvent with matching domain event
+/// POST webhook → WS client receives CommittedEvent with matching domain event
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_to_websocket() {
@@ -157,19 +157,19 @@ async fn webhook_to_websocket() {
         _ => panic!("expected text frame from WebSocket"),
     };
 
-    // Deserialize as SeqEvent
-    let seq_event: atc_server::state::SeqEvent =
-        serde_json::from_str(&text).expect("should deserialize SeqEvent");
+    // Deserialize as CommittedEvent
+    let committed_event: atc_wire::CommittedEvent =
+        serde_json::from_str(&text).expect("should deserialize CommittedEvent");
 
     // Assert seq is 1 (first event)
-    assert_eq!(seq_event.seq, 1, "first event should have seq=1");
+    assert_eq!(committed_event.seq, 1, "first event should have seq=1");
 
     // Assert event is a Run variant
-    match seq_event.event {
+    match committed_event.event {
         atc_github::WebhookEvent::Run(_) => {
             // Expected
         }
-        _ => panic!("expected Run variant in SeqEvent"),
+        _ => panic!("expected Run variant in CommittedEvent"),
     }
 }
 
@@ -228,7 +228,7 @@ async fn multi_event_sequence() {
     // Allow a brief moment for events to be processed
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Collect 3 SeqEvents from WS
+    // Collect 3 CommittedEvents from WS
     let mut seq_values = Vec::new();
     for _ in 0..3 {
         let frame = tokio::time::timeout(Duration::from_secs(5), ws_read.next())
@@ -242,9 +242,9 @@ async fn multi_event_sequence() {
             _ => panic!("expected text frame from WebSocket"),
         };
 
-        let seq_event: atc_server::state::SeqEvent =
-            serde_json::from_str(&text).expect("should deserialize SeqEvent");
-        seq_values.push(seq_event.seq);
+        let committed_event: atc_wire::CommittedEvent =
+            serde_json::from_str(&text).expect("should deserialize CommittedEvent");
+        seq_values.push(committed_event.seq);
     }
 
     // Assert seq values are 1, 2, 3 (strictly increasing)

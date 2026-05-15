@@ -13,8 +13,9 @@ use atc_core::SystemClock;
 use atc_core::event::{RunEvent, RunEventEnvelope};
 use atc_core::fixed_test_timestamp;
 use atc_core::types::RunId;
+use atc_persist::PersistentStore;
 use atc_server::listener;
-use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
+use atc_server::persist::{InMemoryStore, PgStore};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 

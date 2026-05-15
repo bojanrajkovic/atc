@@ -177,7 +177,7 @@ Migrations live in `backend/crates/atc-server/migrations/`. They are embedded in
 
 Current schema:
 - `0001_initial_runs_jobs.sql` — Creates `runs` and `jobs` tables with columns, FK, CHECK constraints, and indexes to support the read patterns and TTL eviction.
-- `0002_outbox.sql` — Creates `outbox` table with `BIGSERIAL seq` primary key (durable monotonic-not-gapless cursor), `kind TEXT CHECK('run','job')`, `run_id BIGINT`, `job_id BIGINT NULL`, `payload JSONB` (stores `RunEventEnvelope` / `JobEventEnvelope` — NOT `SeqEvent`), `inserted_at TIMESTAMPTZ DEFAULT now()`. Index on `run_id` for the drain forwarder. No FK to `runs` (append-only log; eviction is independent).
+- `0002_outbox.sql` — Creates `outbox` table with `BIGSERIAL seq` primary key (durable monotonic-not-gapless cursor), `kind TEXT CHECK('run','job')`, `run_id BIGINT`, `job_id BIGINT NULL`, `payload JSONB` (stores `RunEventEnvelope` / `JobEventEnvelope` — NOT `CommittedEvent`), `inserted_at TIMESTAMPTZ DEFAULT now()`. Index on `run_id` for the drain forwarder. No FK to `runs` (append-only log; eviction is independent).
 - `0003_runs_placeholder.sql` — Adds `placeholder BOOLEAN NOT NULL DEFAULT false` to the `runs` table. The job-stub INSERT in `upsert_job_in_txn` writes `placeholder = true` to satisfy the FK constraint when a job event arrives before its parent run event. Real workflow_run UPSERTs leave `placeholder = false`, and the `ON CONFLICT UPDATE` clause explicitly sets `placeholder = false` to promote stubs to real rows. `/v1/state` reads `WHERE placeholder = false` to exclude stub rows from snapshots.
 - `0004_outbox_watermarks.sql` — Creates `outbox_watermarks(replica_id TEXT PK, broadcast_watermark BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL)`. Each PgStore replica heartbeats its current `broadcast_watermark` here every 30 s; the retention sweep reads `MIN(broadcast_watermark)` across non-stale replicas as the multi-replica deletion floor. `updated_at` has no `DEFAULT now()` on purpose — every retention-path timestamp is bound Rust-side from `Clock::now()` so `TestClock`-driven tests can advance time deterministically (see [ADR 0007](../architecture-decisions/0007-outbox-retention-policy.md)).
 
@@ -228,7 +228,7 @@ A shared `AppState` struct is passed to all handlers via Axum's `State` extracto
 ```rust
 struct AppState {
     persist: Arc<dyn PersistentStore>,
-    webhook_tx: broadcast::Sender<SeqEvent>,
+    webhook_tx: broadcast::Sender<CommittedEvent>,
     webhook_secret: Option<String>,
     shutdown: CancellationToken,
     ws_tracker: TaskTracker,
@@ -245,12 +245,12 @@ PG-mode operational fields (`pg_pool`, `min_pending_seq`, `last_drain_pass_at`, 
 
 Task handles live in `main.rs` scope; `AppState` does not own them.
 
-### SeqEvent Wire Contract
+### CommittedEvent Wire Contract
 
-`SeqEvent` is the broadcast envelope carrying a domain event and the seq it was assigned at commit time:
+`CommittedEvent` is the broadcast envelope carrying a domain event and the seq it was assigned at commit time:
 
 ```rust
-pub struct SeqEvent {
+pub struct CommittedEvent {
     pub seq: u64,
     pub event: WebhookEvent,
 }
@@ -258,8 +258,8 @@ pub struct SeqEvent {
 
 The frontend derives `RunnerPoolStats` from the underlying job state via `computePoolStats(runStore.jobs)` — see `frontend/src/lib/stores/runners.svelte.ts` (ADR 0004). The webhook handler does not take a pool-stats snapshot under the seq mutex.
 
-- **All successful events (Run or Job):** `SeqEvent { seq, event }` is broadcast. `seq` is the value of the AppState `seq` counter after pre-increment (first commit broadcasts `seq=1`).
-- **Failed transitions:** No broadcast occurs and no `SeqEvent` is emitted. Clients never receive events that are not reflected in the store.
+- **All successful events (Run or Job):** `CommittedEvent { seq, event }` is broadcast. `seq` is the value of the AppState `seq` counter after pre-increment (first commit broadcasts `seq=1`).
+- **Failed transitions:** No broadcast occurs and no `CommittedEvent` is emitted. Clients never receive events that are not reflected in the store.
 
 **Wire format:** Serialized via `#[serde(rename_all = "camelCase")]`; TypeScript type emitted by ts-rs as `{ seq: bigint, event: WebhookEvent }`.
 
@@ -287,7 +287,7 @@ The frontend derives `RunnerPoolStats` from the underlying job state via `comput
    - **`InMemoryStore` path** (when `ATC_DATABASE_URL` is unset):
      - `InMemoryStore::apply_*_event` acquires `seq` mutex **before** any mutation (ordering invariant).
      - Calls `atc_core::state_machine::apply_*_event` (pure free function) to compute the updated entity. On `StateMachineError::InvalidTransition` → `PersistError::InvalidTransition`. No broadcast emitted for rejected transitions.
-     - Pre-increments seq (`*seq_guard += 1; let seq = *seq_guard`) and broadcasts `SeqEvent { seq, event }` under the mutex.
+     - Pre-increments seq (`*seq_guard += 1; let seq = *seq_guard`) and broadcasts `CommittedEvent { seq, event }` under the mutex.
      - Returns `Ok(seq)` on success.
 5. Match the result:
    - `Ok(seq)` → 200 `{"status": "accepted", "seq": <seq>}`.
@@ -306,14 +306,14 @@ The frontend derives `RunnerPoolStats` from the underlying job state via `comput
 
 ### WebSocket Event Stream (`GET /v1/ws`)
 
-**Responsibility:** Accept WebSocket upgrades and push `SeqEvent`s to connected clients in real time.
+**Responsibility:** Accept WebSocket upgrades and push `CommittedEvent`s to connected clients in real time.
 
 **Flow:**
 1. Accept WebSocket upgrade request via Axum's `WebSocketUpgrade` extractor
 2. Create a new broadcast receiver: `webhook_tx.subscribe()`
 3. Spawn a task that:
    - Awaits messages from the receiver in a loop
-   - Serializes each `SeqEvent` to JSON
+   - Serializes each `CommittedEvent` to JSON
    - Sends the JSON as a text frame to the WebSocket client
    - On `RecvError::Lagged` (buffer overflow), logs warning but does not disconnect — the client can recover by fetching `/v1/state` to resync
 4. If the client disconnects, the task exits cleanly (no crash; other clients unaffected)
@@ -354,13 +354,13 @@ struct StateSnapshot {
 }
 ```
 
-**Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `SeqEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
+**Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `CommittedEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
 
 **Capacity composition:** `runner_pool_capacities` is operator config, not observed state. `PersistentStore` (Postgres + InMemory) leaves the field as `Vec::new()` when constructing a snapshot. `routes::state_handler` clones `AppState::runner_pool_capacities` (built once at startup from `Config::runner_pools`) onto the response after the persist call returns. Two consequences: (1) the `PersistentStore` trait stays single-purpose — it owns event-derived state only — and (2) capacity changes require a process restart to take effect (a hot-reload follow-up is tracked separately).
 
 Return 200 with the JSON snapshot.
 
-**Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `lastSeq`, then connect to `GET /v1/ws` and filter incoming `SeqEvent`s to those with `seq > lastSeq` (strictly greater than — buffered events with `seq <= lastSeq` are already reflected in the snapshot and discarded). This protocol allows robust reconnection and bootstrap.
+**Snapshot/stream reconciliation:** A client can call `GET /v1/state` to establish baseline state, note the returned `lastSeq`, then connect to `GET /v1/ws` and filter incoming `CommittedEvent`s to those with `seq > lastSeq` (strictly greater than — buffered events with `seq <= lastSeq` are already reflected in the snapshot and discarded). This protocol allows robust reconnection and bootstrap.
 
 ### Configuration
 
@@ -495,7 +495,7 @@ Aggregate worst-case shutdown: ~13 seconds.
    - **Pagination loop:** fetches pages of `DRAIN_BATCH_SIZE=500` rows `WHERE seq > page_cursor ORDER BY seq`, advancing `page_cursor` on each page until a partial page is returned.
    - For each row: decodes the JSONB payload as `RunEventEnvelope` or `JobEventEnvelope`. On decode failure, logs an error and skips. On unknown `kind`, increments `atc_pg_drain_unknown_kind_total` and skips.
    - **Ring-buffer dedup:** Before broadcasting a seq, checks `recent_set` (HashSet over the ring buffer of capacity `DEDUP_CAP=2048`). If already seen, increments `atc_pg_drain_duplicate_skipped_total` and skips. If new, inserts into ring and set; evicts the oldest entry if the ring is full.
-   - **Broadcasts** `SeqEvent { seq: u64, event: WebhookEvent }` on `webhook_tx` for each row that passes dedup. The outbox-lag histogram observation (`atc_pg_outbox_lag_seconds`) reads `clock.now() - row.inserted_at` through the same `PgStore.clock`, so under `TestClock` it is deterministic — see [`metrics.md`](metrics.md) § "Operational metrics".
+   - **Broadcasts** `CommittedEvent { seq: u64, event: WebhookEvent }` on `webhook_tx` for each row that passes dedup. The outbox-lag histogram observation (`atc_pg_outbox_lag_seconds`) reads `clock.now() - row.inserted_at` through the same `PgStore.clock`, so under `TestClock` it is deterministic — see [`metrics.md`](metrics.md) § "Operational metrics".
    - After the full pagination loop, advances `watermark` to the highest seq seen. Refreshes `last_drain_pass_at` again.
 
 **Wall-clock seam.** Every wall-clock read on the PG hot path — heartbeat refresh, liveness staleness comparison, outbox-lag broadcast observation — flows through `PgStore.clock: Arc<dyn Clock>` (production: `SystemClock`; tests: `TestClock` with `advance()`). Monotonic latency measurements (drain-pass duration, drain startup, eviction-sweep elapsed) intentionally bypass this seam and use `std::time::Instant` directly — wall-clock would be semantically wrong (it can jump backward under NTP) and tests do not assert on those histogram values. See the trait doc-comment in `backend/crates/atc-core/src/clock.rs` for the canonical rationale. A `disallowed-methods` clippy lint in `backend/clippy.toml` blocks new direct `chrono::Utc::now` / `std::time::SystemTime::now` callers across the workspace.
@@ -508,10 +508,10 @@ Aggregate worst-case shutdown: ~13 seconds.
 
 ### Modules
 
-- **`state.rs`** — `AppState` struct (fields: `persist: Arc<dyn PersistentStore>`, `webhook_secret`, `runner_pool_capacities: Vec<RunnerPoolCapacity>`, `shutdown: CancellationToken`, `ws_tracker: TaskTracker`) and the `SeqEvent { seq, event }` broadcast type (ADR 0004); `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` (ADR 0005, capacity field added for issue #16). WS handlers obtain their receiver via `state.persist.subscribe()` (ADR 0006).
+- **`state.rs`** — `AppState` struct (fields: `persist: Arc<dyn PersistentStore>`, `webhook_secret`, `runner_pool_capacities: Vec<RunnerPoolCapacity>`, `shutdown: CancellationToken`, `ws_tracker: TaskTracker`). The broadcast envelope `CommittedEvent { seq, event }` and the REST baseline `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` live in the `atc-wire` crate (ADR 0008); WS handlers obtain their receiver via `state.persist.subscribe()` (ADR 0006).
 - **`routes.rs`** — Route handlers for `/v1/webhooks/github`, `/v1/ws`, `/v1/state`, `/healthz`, `/readyz`; webhook handler dispatches through `state.persist.apply_*_event(env)` uniformly for both modes (ADR 0005), returns `{"status":"accepted","seq":<u64>}` on success; state handler reads `read_snapshot` from `PersistentStore`, then composes `runner_pool_capacities` from `AppState` onto the response (capacity is config, not store-owned state); uses REPEATABLE READ in PG mode; `/readyz` checks drain heartbeat staleness in PG mode
 - **`ws.rs`** — WebSocket connection handling and message broadcast logic. Subscribes via `state.persist.subscribe()` (ADR 0006).
-- **`persist.rs`** (module at `src/persist/`) — `pub trait PersistentStore` with `apply_run_event`, `apply_job_event`, `read_snapshot`, `liveness_check`, `subscribe`, `shutdown`; `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its connection pool, broadcast sender, `broadcast_watermark` / `last_drain_pass_at` atomics, and the listener + drain `JoinHandle`s (ADR 0006). Constructed via `PgStore::start(pool, listener_conn, shutdown)` / `PgStore::start_with_test_hooks(...)`; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — owns full state (`RwLock<StateData>`, seq `Mutex<u64>`, clock, TTL), broadcast sender, and the eviction `JoinHandle` (ADR 0006). Constructed via `InMemoryStore::start(clock, ttl, eviction_period, shutdown)`; delegates mutation to `atc_core::state_machine` free functions, maintains secondary indexes, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the PG state handler (ADR 0005)
+- **`persist.rs`** (module at `src/persist/`) — In-tree home of `PgStore` and `InMemoryStore` until per-store crate extractions land. The `PersistentStore` trait itself, `LivenessError`, the `PersistError` re-export, and the shared `join_with_timeout` helper live in the `atc-persist` crate (ADR 0008). `pub struct PgStore` + `impl PersistentStore for PgStore` — owns its connection pool, broadcast sender, `broadcast_watermark` / `last_drain_pass_at` atomics, and the listener + drain `JoinHandle`s (ADR 0006). Constructed via `PgStore::start(pool, listener_conn, shutdown)` / `PgStore::start_with_test_hooks(...)`; `pub struct InMemoryStore` + `impl PersistentStore for InMemoryStore` — owns full state (`RwLock<StateData>`, seq `Mutex<u64>`, clock, TTL), broadcast sender, and the eviction `JoinHandle` (ADR 0006). Constructed via `InMemoryStore::start(clock, ttl, eviction_period, shutdown)`; delegates mutation to `atc_core::state_machine` free functions, maintains secondary indexes, broadcasts; `pub(crate)` transaction helpers `upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`, `notify_outbox_seq_in_txn`; `pub(crate)` read helpers `read_all_runs`, `read_all_jobs` used by the PG state handler (ADR 0005)
 
 ## Files
 
@@ -519,13 +519,13 @@ Aggregate worst-case shutdown: ~13 seconds.
 - `backend/crates/atc-server/src/config.rs` — figment-based Config struct, LogFormat enum, GitHubConfig with webhook_secret, Config::load()
 - `backend/crates/atc-server/src/db.rs` — `init_pool(url)`: connects sqlx PgPool and runs embedded migrations; extracted from main so it is reachable by integration tests
 - `backend/crates/atc-server/src/routes.rs` — API route definitions (healthz, readyz, webhook, state, ws endpoints)
-- `backend/crates/atc-server/src/state.rs` — AppState struct (5 fields: `persist`, `webhook_secret`, `runner_pool_capacities`, `shutdown`, `ws_tracker`) and `SeqEvent { seq, event }` type; `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` also lives here
-- `backend/crates/atc-server/src/ws.rs` — WebSocket handler. Subscribes via `state.persist.subscribe()` (ADR 0006); per-connection event forwarding and SeqEvent serialization unchanged.
+- `backend/crates/atc-server/src/state.rs` — AppState struct (5 fields: `persist`, `webhook_secret`, `runner_pool_capacities`, `shutdown`, `ws_tracker`). `CommittedEvent { seq, event }` and `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` live in `backend/crates/atc-wire/src/lib.rs` (ADR 0008)
+- `backend/crates/atc-server/src/ws.rs` — WebSocket handler. Subscribes via `state.persist.subscribe()` (ADR 0006); per-connection event forwarding and CommittedEvent serialization unchanged.
 - `backend/crates/atc-server/src/assets.rs` — rust-embed struct, embedded file serving, SPA fallback, dev proxy
 - `backend/crates/atc-server/src/otel.rs` — `init_otel`: builds the OTLP/HTTP tracer + meter providers (when `OTEL_EXPORTER_OTLP_ENDPOINT` is set), installs `TraceContextPropagator` globally, registers the shared `exponential_histogram_view` so all histograms emit as base-2 exponential aggregations, and sets both providers as the OTel globals. `shutdown(handles)`: flushes both providers; called from `run_shutdown_orchestration` after every emitter has joined.
 - `backend/crates/atc-server/src/metrics.rs` — `register_build_info` (one-shot startup gauge against the global meter), `PgMetrics::register` (cached OTel instruments + pre-built `[KeyValue; N]` attribute slices for every `atc_pg_*` emit site, owned by `PgStore`), and `spawn_process_collector` (wraps `opentelemetry-system-metrics::init_process_observer` in a `ProcessCollectorHandle` joined during shutdown). All emit sites resolve through the OTel global meter installed by `otel::init_otel`. The metric inventory and authoring contract live in [`metrics.md`](metrics.md).
-- `backend/crates/atc-server/src/persist/` — `pub trait PersistentStore` (ADR 0005, extended in ADR 0006 with `subscribe` + `shutdown`); `PgStore` and `InMemoryStore` impls. `PgStore::start` / `InMemoryStore::start` spawn the per-store background tasks and store the `JoinHandle`s on the returned `Arc<Self>`; `pub(crate)` transaction helpers for UPSERT+outbox+NOTIFY pattern; `pub(crate)` read helpers for PG state handler. The in-memory-mode eviction sweep is a private `InMemoryStore::spawn_eviction` associated function called inside `start()`; it has no sibling module.
-- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `SeqEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. The sole production caller is `PgStore::start_inner`. The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
+- `backend/crates/atc-server/src/persist/` — In-tree home of `PgStore` and `InMemoryStore` impls until per-store crate extractions land. The `PersistentStore` trait itself (ADR 0005, extended in ADR 0006 with `subscribe` + `shutdown`) lives in `backend/crates/atc-persist/src/lib.rs` (ADR 0008). `PgStore::start` / `InMemoryStore::start` spawn the per-store background tasks and store the `JoinHandle`s on the returned `Arc<Self>`; `pub(crate)` transaction helpers for UPSERT+outbox+NOTIFY pattern; `pub(crate)` read helpers for PG state handler. The in-memory-mode eviction sweep is a private `InMemoryStore::spawn_eviction` associated function called inside `start()`; it has no sibling module.
+- `backend/crates/atc-server/src/listener.rs` — PG LISTEN/NOTIFY background tasks: `spawn_listener_task` (receives notifications, registers seq in `min_pending_seq`, fires `Arc<Notify>`) and `spawn_drain_task` (wakes on notify or 5 s heartbeat; NOTIFY-driven passes fetch outbox rows by `seq > pass_start_floor ORDER BY seq` in pages, decode payload, apply ring-buffer dedup, broadcast `CommittedEvent`s, advance watermark; every iteration updates `last_drain_pass_at`). Constants: `DRAIN_BATCH_SIZE=500`, `HEARTBEAT_TICK=5s`, `DEDUP_CAP=2048`. The sole production caller is `PgStore::start_inner`. The `connect_listener_fails_on_bad_url` unit test wraps `connect_listener` in a 2 s `tokio::time::timeout` to cap test runtime — sqlx's default `connect_timeout` is 30 s, which would otherwise dominate the lib-test wall clock for a negative-path assertion.
 - `backend/crates/atc-server/build.rs` — vergen-gix Emitter emitting VERGEN_* compile-time env vars; also emits `cargo:rerun-if-changed=migrations` so sqlx::migrate!() re-embeds files on SQL changes
 - `backend/crates/atc-server/migrations/0001_initial_runs_jobs.sql` — Initial schema: `runs` and `jobs` tables with CHECK constraints, FK, and indexes
 - `backend/crates/atc-server/migrations/0002_outbox.sql` — Outbox table: `BIGSERIAL seq` PK, `kind` discriminator, `run_id`/`job_id`, `payload JSONB` (domain event envelope), `inserted_at TIMESTAMPTZ`; `outbox_run_idx` on `run_id`

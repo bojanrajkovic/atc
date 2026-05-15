@@ -521,7 +521,7 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 6. Connection transitions to `'connected'`; subsequent WS events are dispatched via `EventDispatcher`
 
 **Seq reconciliation:**
-- Each event carries a monotonic sequence number (`SeqEvent.seq`)
+- Each event carries a monotonic sequence number (`CommittedEvent.seq`)
 - The snapshot returns `StateSnapshot.lastSeq: bigint` — the **highest committed** seq, not the next-to-assign. `lastSeq = 0n` is the unambiguous "no events committed since startup" sentinel.
 - Buffered pre-connect events with `seq <= lastSeq` are discarded as stale (already in the snapshot)
 - Buffered pre-connect events with `seq > lastSeq` are dispatched in order
@@ -546,7 +546,7 @@ The `textContent` is driven by `liveRegion.message` — a plain `$state` string 
 
 ### EventDispatcher setOnFlush callback contract
 
-`EventDispatcher.setOnFlush(cb)` registers a callback that is invoked **synchronously** within `processBuffer()` after all events in the current RAF batch have been applied to stores. The callback receives the flushed `ReadonlyArray<SeqEvent>`.
+`EventDispatcher.setOnFlush(cb)` registers a callback that is invoked **synchronously** within `processBuffer()` after all events in the current RAF batch have been applied to stores. The callback receives the flushed `ReadonlyArray<CommittedEvent>`.
 
 Invariants:
 - The callback is only called when `events.length > 0` (empty drains never fire the callback).
@@ -573,7 +573,7 @@ Result: zero announcements during snapshot load or buffered-replay drain; only e
 
 ### LiveRegion store: transition classification and burst accumulation
 
-`LiveRegion.observeFlush(events)` walks the flushed `SeqEvent[]` and extracts `RunEvent::Requested` (→ "queued") and `RunEvent::Completed` (→ conclusion-specific verb) transitions. `RunEvent::InProgress` events are silently skipped.
+`LiveRegion.observeFlush(events)` walks the flushed `CommittedEvent[]` and extracts `RunEvent::Requested` (→ "queued") and `RunEvent::Completed` (→ conclusion-specific verb) transitions. `RunEvent::InProgress` events are silently skipped.
 
 Announcement routing:
 - **≤3 transitions in a flush:** per-run messages are emitted immediately, joined by `". "`. `aria-busy` stays `"false"`.
@@ -581,7 +581,7 @@ Announcement routing:
 
 `classifyEvent` uses an exhaustive `switch` over `RunConclusion` guarded by `Record<RunConclusion, string>` (`VERB_BY_CONCLUSION`). Adding a new `RunConclusion` variant in `atc-core` and regenerating ts-rs types fails the frontend `tsc` step until `VERB_BY_CONCLUSION` adds the corresponding verb.
 
-Per-event error containment: `observeFlush` wraps each `classifyEvent` call in a try/catch. Invariant violations (e.g., `Completed` with `conclusion: null`) are logged via `console.error` with the offending `SeqEvent` payload; the bad event is skipped; remaining well-formed transitions in the flush still announce.
+Per-event error containment: `observeFlush` wraps each `classifyEvent` call in a try/catch. Invariant violations (e.g., `Completed` with `conclusion: null`) are logged via `console.error` with the offending `CommittedEvent` payload; the bad event is skipped; remaining well-formed transitions in the flush still announce.
 
 ## Test Strategy
 
@@ -726,7 +726,7 @@ Coverage is collected from all three modalities and merged server-side by Codeco
 - `frontend/src/lib/animations/kanban-transitions.ts` — Shared crossfade instance, motion constants, reduced-motion support
 
 **ARIA Utilities**
-- `frontend/src/lib/aria/transition-kinds.ts` — `TransitionKind` discriminated union (`{kind:'queued'}` | `{kind:'completed';conclusion:RunConclusion}`); `VERB_BY_CONCLUSION: Record<RunConclusion, string>` exhaustive verb table; `classifyEvent(seqEvent): TransitionKind | null` — extracts the transition kind from a `SeqEvent` (returns null for InProgress / Job events; throws on invariant violation)
+- `frontend/src/lib/aria/transition-kinds.ts` — `TransitionKind` discriminated union (`{kind:'queued'}` | `{kind:'completed';conclusion:RunConclusion}`); `VERB_BY_CONCLUSION: Record<RunConclusion, string>` exhaustive verb table; `classifyEvent(committedEvent): TransitionKind | null` — extracts the transition kind from a `CommittedEvent` (returns null for InProgress / Job events; throws on invariant violation)
 - `frontend/src/lib/aria/format-run-transition.ts` — `formatRunTransition(run, kind): string` — pure message builder; elides "on {branch}" when `run.branch` is null
 - `frontend/src/lib/aria/live-region.svelte.ts` — `LiveRegion` rune-class store (`message: $state<string>`, `busy: $state<boolean>`, `observeFlush(events)`); `BurstAccumulator` internal state (threshold=3, debounce=200ms); module-level singleton `liveRegion`
 - `frontend/src/lib/components/AriaLiveRegion.svelte` — Connected component: renders `<div role="status" aria-live="polite" aria-atomic="true" aria-busy={liveRegion.busy?'true':'false'} aria-label="Workflow run updates" class="sr-only">{liveRegion.message}</div>` at App root level (sibling to AppShell)
@@ -749,7 +749,7 @@ Coverage is collected from all three modalities and merged server-side by Codeco
 - `frontend/src/lib/**/*.browser.test.ts` — Vitest browser-mode tests for animations, store reactivity, reduced-motion support
 - `frontend/src/lib/components/**/*.test.ts` — Vitest unit tests for components
 - `frontend/src/lib/components/BackdropSuppression.browser.test.ts` — Browser-mode test: verifies the `[data-dialog-overlay] ~ [data-dialog-overlay] { display: none }` CSS rule hides the second overlay when both Sheet and Command.Dialog are open
-- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobSeqEvent`, `sendWS`, `sendWSBatch` — intercepts `new WebSocket('/v1/ws')` and routes events through `window.eventDispatcher`. The harness exposes two send paths: `sendWS()` calls `dispatch` then `flush` synchronously (deterministic, used when a test needs exactly one event delivered before asserting); `sendWSBatch()` calls `dispatch` for each event without flushing between them and lets natural RAF coalesce the batch, then awaits a `bufferLength === 0` synchronization fence followed by one extra RAF tick (used by burst-testing scenarios such as aria-live and frame-budget to exercise real RAF batching and the `setOnFlush` callback path)
+- `frontend/e2e/lib/ws-mock.ts` — Shared Playwright harness: `WS_MOCK_INIT_SCRIPT`, `makeRunEvent`, `makeJobCommittedEvent`, `sendWS`, `sendWSBatch` — intercepts `new WebSocket('/v1/ws')` and routes events through `window.eventDispatcher`. The harness exposes two send paths: `sendWS()` calls `dispatch` then `flush` synchronously (deterministic, used when a test needs exactly one event delivered before asserting); `sendWSBatch()` calls `dispatch` for each event without flushing between them and lets natural RAF coalesce the batch, then awaits a `bufferLength === 0` synchronization fence followed by one extra RAF tick (used by burst-testing scenarios such as aria-live and frame-budget to exercise real RAF batching and the `setOnFlush` callback path)
 - `frontend/e2e/theme.test.ts` — Playwright E2E tests: app rendering, theme switching, dark/light mode toggle
 - `frontend/e2e/app-shell.test.ts` — Playwright E2E tests: app shell rendering, runner bar pool indicators, connection indicator, settings popover
 - `frontend/e2e/kanban.test.ts` — Playwright E2E tests: kanban board lifecycle, card movement, WebSocket event handling

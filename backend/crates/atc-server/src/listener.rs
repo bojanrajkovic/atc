@@ -4,7 +4,7 @@
 //! payload's seq into the gap-healing backstop atomic before waking the drain.
 //! The drain task reads outbox rows newer than a local watermark, decodes each
 //! row's payload, applies a bounded ring-buffer dedup, and broadcasts the
-//! resulting `SeqEvent` to WS subscribers via the shared broadcast channel.
+//! resulting `CommittedEvent` to WS subscribers via the shared broadcast channel.
 //!
 //! See `docs/architecture/backend-server.md` for the full design and
 //! gap-healing notes.
@@ -24,8 +24,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info_span;
 
+use atc_wire::CommittedEvent;
+
 use crate::metrics::PgMetrics;
-use crate::state::SeqEvent;
 
 /// The PG LISTEN/NOTIFY channel name used by the outbox.
 pub const NOTIFY_CHANNEL: &str = "atc_outbox";
@@ -158,7 +159,7 @@ fn handle_listener_notification(
 }
 
 /// Spawn the drain task that fetches outbox rows on each notification, decodes
-/// them, applies ring-buffer dedup, and broadcasts `SeqEvent`s.
+/// them, applies ring-buffer dedup, and broadcasts `CommittedEvent`s.
 ///
 /// The drain task is the SOLE writer to `webhook_tx` in PG mode — the webhook
 /// handler is silent. This eliminates the dual-broadcast bug that would
@@ -189,7 +190,7 @@ pub fn spawn_drain_task(
     last_drain_pass_at: Arc<AtomicI64>,
     broadcast_watermark: Arc<AtomicI64>,
     drain_in_flight: Arc<AtomicBool>,
-    webhook_tx: broadcast::Sender<SeqEvent>,
+    webhook_tx: broadcast::Sender<CommittedEvent>,
     cancel: CancellationToken,
     observed_passes: Option<Arc<AtomicU64>>,
     drain_started: Option<Arc<Notify>>,
@@ -390,7 +391,7 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics:
 }
 
 /// Page through outbox rows from `pass_start_floor` upward, decoding payload,
-/// applying ring-buffer dedup, broadcasting `SeqEvent` on miss.
+/// applying ring-buffer dedup, broadcasting `CommittedEvent` on miss.
 ///
 /// On success advances `watermark` to the highest seq seen (or leaves it
 /// unchanged if no rows were fetched). Returns `false` on any query error.
@@ -416,7 +417,7 @@ async fn drain_pass(
     watermark: &mut i64,
     recent_ring: &mut VecDeque<i64>,
     recent_set: &mut HashSet<i64>,
-    webhook_tx: &broadcast::Sender<SeqEvent>,
+    webhook_tx: &broadcast::Sender<CommittedEvent>,
     drain_delay: Option<Duration>,
     metrics: &PgMetrics,
 ) -> bool {
@@ -520,7 +521,7 @@ async fn drain_pass(
                         tracing::error!(seq = row.seq, "negative outbox seq encountered");
                         0
                     });
-                    let _ = webhook_tx.send(SeqEvent {
+                    let _ = webhook_tx.send(CommittedEvent {
                         seq: seq_u64,
                         event,
                     });

@@ -1,5 +1,5 @@
 import { runStore } from '$lib/stores/runs.svelte'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 
 /**
  * Tracks event types that have already triggered a console.warn so that a
@@ -8,11 +8,11 @@ import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 const warnedUnknownTypes = new Set<string>()
 
 class EventDispatcher {
-  private buffer: SeqEvent[] = []
+  private buffer: CommittedEvent[] = []
   private rafId: number | null = null
-  private onFlushCb: ((events: ReadonlyArray<SeqEvent>) => void) | null = null
+  private onFlushCb: ((events: ReadonlyArray<CommittedEvent>) => void) | null = null
 
-  dispatch(event: SeqEvent): void {
+  dispatch(event: CommittedEvent): void {
     this.buffer.push(event)
     if (this.rafId === null) {
       this.rafId = requestAnimationFrame(() => this.processBuffer())
@@ -49,7 +49,7 @@ class EventDispatcher {
    *
    * Idempotent: calling setOnFlush twice replaces the prior callback.
    */
-  setOnFlush(cb: ((events: ReadonlyArray<SeqEvent>) => void) | null): void {
+  setOnFlush(cb: ((events: ReadonlyArray<CommittedEvent>) => void) | null): void {
     this.onFlushCb = cb
   }
 
@@ -63,8 +63,8 @@ class EventDispatcher {
     this.rafId = null
     const events = this.buffer
     this.buffer = []
-    for (const seqEvent of events) {
-      this.routeEvent(seqEvent)
+    for (const committedEvent of events) {
+      this.routeEvent(committedEvent)
     }
     // Invoke post-flush callback only when there were actual events to process.
     if (events.length > 0 && this.onFlushCb !== null) {
@@ -72,8 +72,8 @@ class EventDispatcher {
     }
   }
 
-  private routeEvent(seqEvent: SeqEvent): void {
-    const event = seqEvent.event
+  private routeEvent(committedEvent: CommittedEvent): void {
+    const event = committedEvent.event
     switch (event.type) {
       case 'Run':
         runStore.applyRunEvent(event.data)
@@ -86,7 +86,7 @@ class EventDispatcher {
         // variant (e.g. newer backend, rolling deploy, or malformed payload).
         // Throwing aborts the entire RAF batch and leaves the dashboard stale,
         // which is worse than skipping. Warn once per unknown type, then skip
-        // the entire seqEvent.
+        // the entire committedEvent.
         const unknownType = (event as { type: string }).type
         if (!warnedUnknownTypes.has(unknownType)) {
           warnedUnknownTypes.add(unknownType)

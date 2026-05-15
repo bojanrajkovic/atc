@@ -1,0 +1,12 @@
+[package]
+name = "atc-wire"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atc-core = { path = "../atc-core" }
+atc-github = { path = "../atc-github" }
+serde = { version = "=1.0.228", features = ["derive"] }
+ts-rs = { workspace = true, features = ["serde-compat"] }

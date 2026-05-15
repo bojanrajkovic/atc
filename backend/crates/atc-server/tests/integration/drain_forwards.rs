@@ -22,7 +22,7 @@ use tokio::time::timeout;
 /// in outbox seq order (1, 2, …).
 ///
 /// Fires a run webhook (→ seq=1) then a job webhook (→ seq=2). Asserts both
-/// SeqEvents arrive at broadcast_rx with the correct seq numbers and in order.
+/// CommittedEvents arrive at broadcast_rx with the correct seq numbers and in order.
 #[tokio::test]
 #[serial]
 async fn drain_broadcasts_seq_in_order() {

@@ -1,6 +1,6 @@
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import { expect, test } from './lib/fixtures'
-import { makeJobSeqEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { makeJobCommittedEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /** Standard page setup: inject WS mock, stub /v1/state, navigate, wait for connected. */
 async function setupPage(page: import('@playwright/test').Page) {
@@ -151,7 +151,7 @@ test.describe('Run detail panel', () => {
     for (let i = 1; i <= 3; i++) {
       await sendWS(
         page,
-        makeJobSeqEvent(i + 1, {
+        makeJobCommittedEvent(i + 1, {
           jobData: {
             jobId: BigInt(i),
             runId: 1n,
@@ -288,7 +288,7 @@ test.describe('Run detail panel', () => {
     for (let i = 1; i <= 6; i++) {
       await sendWS(
         page,
-        makeJobSeqEvent(i + 1, {
+        makeJobCommittedEvent(i + 1, {
           jobData: {
             jobId: BigInt(i),
             runId: 1n,

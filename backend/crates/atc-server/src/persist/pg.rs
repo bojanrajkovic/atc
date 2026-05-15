@@ -9,6 +9,8 @@ use atc_core::{
     Clock, JobConclusion, JobStatus, PersistError, RunConclusion, RunStatus,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
+use atc_persist::{LivenessError, PersistentStore, join_with_timeout};
+use atc_wire::{CommittedEvent, StateSnapshot};
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio::sync::{Notify, broadcast};
@@ -21,11 +23,10 @@ use crate::listener;
 use crate::metrics::PgMetrics;
 use crate::shutdown::{
     SHUTDOWN_TIMEOUT_DRAIN, SHUTDOWN_TIMEOUT_LISTENER, SHUTDOWN_TIMEOUT_OUTBOX_HEARTBEAT,
-    SHUTDOWN_TIMEOUT_OUTBOX_SWEEP, join_with_timeout,
+    SHUTDOWN_TIMEOUT_OUTBOX_SWEEP,
 };
-use crate::state::{SeqEvent, StateSnapshot};
 
-use super::{LivenessError, PersistentStore, reads};
+use super::reads;
 
 /// Production broadcast capacity for the PG-mode event stream.
 const BROADCAST_CAPACITY: usize = 256;
@@ -229,10 +230,10 @@ pub struct PgStore {
     /// Drain-task heartbeat (epoch milliseconds). Refreshed by drain each loop
     /// iteration. Used by `readyz` to detect stalled drain tasks.
     pub(crate) last_drain_pass_at: Arc<AtomicI64>,
-    /// Broadcast sender for fanning `SeqEvent`s out to WS subscribers. Cloned
-    /// into the drain task at spawn time so the drain is the sole writer in
-    /// PG mode.
-    broadcast_tx: broadcast::Sender<SeqEvent>,
+    /// Broadcast sender for fanning `CommittedEvent`s out to WS subscribers.
+    /// Cloned into the drain task at spawn time so the drain is the sole
+    /// writer in PG mode.
+    broadcast_tx: broadcast::Sender<CommittedEvent>,
     /// Cached metric handles for every `atc_pg_*` emit site. Constructed once
     /// per store in `start_inner` (which requires the global recorder to be
     /// installed first — see [`PgMetrics::register`]) and cloned into the
@@ -414,7 +415,7 @@ impl PgStore {
 
         // Construct broadcast channel (sentinel receiver dropped immediately —
         // production subscribers come from `subscribe()`).
-        let (broadcast_tx, _sentinel) = broadcast::channel::<SeqEvent>(BROADCAST_CAPACITY);
+        let (broadcast_tx, _sentinel) = broadcast::channel::<CommittedEvent>(BROADCAST_CAPACITY);
 
         // Arcs the listener and drain need to coordinate. Created before
         // `PgMetrics::register` so the observable gauges' callbacks close
@@ -624,7 +625,7 @@ impl PersistentStore for PgStore {
         Ok(snap)
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<SeqEvent> {
+    fn subscribe(&self) -> broadcast::Receiver<CommittedEvent> {
         self.broadcast_tx.subscribe()
     }
 
@@ -668,7 +669,7 @@ impl PersistentStore for PgStore {
     /// older than 30 s the drain task has stalled; return `DrainStale`.
     async fn liveness_check(&self) -> Result<(), LivenessError> {
         if let Err(e) = sqlx::query("SELECT 1").execute(&self.pool).await {
-            return Err(LivenessError::DbUnreachable(e));
+            return Err(LivenessError::DbUnreachable(Box::new(e)));
         }
 
         let now_ms = self.clock.now().timestamp_millis();

@@ -27,7 +27,7 @@ async fn build_app_with_pool(
     common::ensure_recorder_installed();
     let shutdown = CancellationToken::new();
     let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
-    let persist = store as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = store as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,

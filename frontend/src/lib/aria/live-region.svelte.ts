@@ -1,5 +1,5 @@
 import { runStore } from '$lib/stores/runs.svelte'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import { formatRunTransition } from './format-run-transition'
 import { classifyEvent, VERB_BY_CONCLUSION } from './transition-kinds'
 
@@ -38,20 +38,23 @@ export class LiveRegion {
    * Per-event try/catch: classifyEvent can throw on invariant violations.
    * A bad event is logged and skipped; remaining events in the batch still announce.
    */
-  observeFlush(events: ReadonlyArray<SeqEvent>): void {
+  observeFlush(events: ReadonlyArray<CommittedEvent>): void {
     // Walk events and classify
-    const transitions: Array<{ seqEvent: SeqEvent; kind: ReturnType<typeof classifyEvent> }> = []
+    const transitions: Array<{
+      committedEvent: CommittedEvent
+      kind: ReturnType<typeof classifyEvent>
+    }> = []
 
-    for (const seqEvent of events) {
+    for (const committedEvent of events) {
       try {
-        const kind = classifyEvent(seqEvent)
+        const kind = classifyEvent(committedEvent)
         if (kind !== null) {
-          transitions.push({ seqEvent, kind })
+          transitions.push({ committedEvent, kind })
         }
       } catch (err) {
         console.error(
           `classifyEvent invariant violation: ${err instanceof Error ? err.message : String(err)}`,
-          seqEvent,
+          committedEvent,
         )
       }
     }
@@ -75,10 +78,10 @@ export class LiveRegion {
 
     // Below threshold, no open burst: emit per-run messages
     const messages: string[] = []
-    for (const { seqEvent, kind } of transitions) {
+    for (const { committedEvent, kind } of transitions) {
       if (kind === null) continue // Already filtered above but TS narrows
       // Look up the run in the store for message formatting
-      const runId = (seqEvent.event as { type: 'Run'; data: { runId: bigint } }).data.runId
+      const runId = (committedEvent.event as { type: 'Run'; data: { runId: bigint } }).data.runId
       const run = runStore.runs.get(runId)
       if (run == null) {
         // Run not in store yet (edge case) — skip formatting
@@ -93,7 +96,7 @@ export class LiveRegion {
   }
 
   private openBurst(
-    transitions: Array<{ seqEvent: SeqEvent; kind: ReturnType<typeof classifyEvent> }>,
+    transitions: Array<{ committedEvent: CommittedEvent; kind: ReturnType<typeof classifyEvent> }>,
   ): void {
     this.burst.active = true
     this.busy = true
@@ -104,7 +107,7 @@ export class LiveRegion {
   }
 
   private accumulateTransitions(
-    transitions: Array<{ seqEvent: SeqEvent; kind: ReturnType<typeof classifyEvent> }>,
+    transitions: Array<{ committedEvent: CommittedEvent; kind: ReturnType<typeof classifyEvent> }>,
   ): void {
     for (const { kind } of transitions) {
       if (kind === null) continue

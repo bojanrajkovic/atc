@@ -1,5 +1,5 @@
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 
 /**
  * A transition is the minimal classified form of a per-run announcement event.
@@ -35,7 +35,7 @@ type Equal<X, Y> =
 export type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, RunConclusion>>
 
 /**
- * Classify a SeqEvent as a TransitionKind for announcement purposes.
+ * Classify a CommittedEvent as a TransitionKind for announcement purposes.
  *
  * Returns `null` for non-announcement events (InProgress, Job events, etc.).
  * Throws on invariant violations (e.g., a Completed RunEvent with
@@ -52,8 +52,8 @@ export type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, Run
 /** Dedupe set for unknown conclusion warnings — prevents log spam per session. */
 const _warnedConclusions = new Set<string>()
 
-export function classifyEvent(seqEvent: SeqEvent): TransitionKind | null {
-  const webhookEvent = seqEvent.event
+export function classifyEvent(committedEvent: CommittedEvent): TransitionKind | null {
+  const webhookEvent = committedEvent.event
 
   // Only RunEvents can be transitions
   if (webhookEvent.type !== 'Run') {
@@ -77,7 +77,7 @@ export function classifyEvent(seqEvent: SeqEvent): TransitionKind | null {
       // through. Throw so the caller can log and skip.
       if (conclusion == null) {
         throw new Error(
-          `classifyEvent: invariant violation — Completed RunEvent has null/undefined conclusion. Event seq: ${seqEvent.seq}`,
+          `classifyEvent: invariant violation — Completed RunEvent has null/undefined conclusion. Event seq: ${committedEvent.seq}`,
         )
       }
       // Runtime guard for off-shape string values: not null/undefined, but also
@@ -90,7 +90,7 @@ export function classifyEvent(seqEvent: SeqEvent): TransitionKind | null {
           _warnedConclusions.add(key)
           // biome-ignore lint/suspicious/noConsole: intentional one-per-session diagnostic for off-shape wire values
           console.warn(
-            `classifyEvent: unrecognized RunConclusion "${key}" — skipping announcement. Event seq: ${seqEvent.seq}`,
+            `classifyEvent: unrecognized RunConclusion "${key}" — skipping announcement. Event seq: ${committedEvent.seq}`,
           )
         }
         return null

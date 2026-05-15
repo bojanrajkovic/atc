@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { eventDispatcher } from '$lib/dispatcher'
 import { runStore } from '$lib/stores/runs.svelte'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 
 describe('EventDispatcher', () => {
   beforeEach(() => {
@@ -34,7 +34,7 @@ describe('EventDispatcher', () => {
         },
       }
 
-      const seqEvent: SeqEvent = {
+      const committedEvent: CommittedEvent = {
         seq: 1n,
         event: {
           type: 'Run',
@@ -42,7 +42,7 @@ describe('EventDispatcher', () => {
         },
       }
 
-      eventDispatcher.dispatch(seqEvent)
+      eventDispatcher.dispatch(committedEvent)
       eventDispatcher.flush()
 
       // Verify the run appeared in the store
@@ -73,7 +73,7 @@ describe('EventDispatcher', () => {
         },
       }
 
-      const runSeqEvent: SeqEvent = {
+      const runCommittedEvent: CommittedEvent = {
         seq: 1n,
         event: {
           type: 'Run',
@@ -81,7 +81,7 @@ describe('EventDispatcher', () => {
         },
       }
 
-      eventDispatcher.dispatch(runSeqEvent)
+      eventDispatcher.dispatch(runCommittedEvent)
       eventDispatcher.flush()
 
       // Now dispatch a job event
@@ -103,7 +103,7 @@ describe('EventDispatcher', () => {
         },
       }
 
-      const jobSeqEvent: SeqEvent = {
+      const jobCommittedEvent: CommittedEvent = {
         seq: 2n,
         event: {
           type: 'Job',
@@ -111,7 +111,7 @@ describe('EventDispatcher', () => {
         },
       }
 
-      eventDispatcher.dispatch(jobSeqEvent)
+      eventDispatcher.dispatch(jobCommittedEvent)
       eventDispatcher.flush()
 
       // Verify the job appeared in the store
@@ -150,15 +150,15 @@ describe('EventDispatcher', () => {
       })
 
       // Dispatch 3 events rapidly without flushing between
-      const event1: SeqEvent = {
+      const event1: CommittedEvent = {
         seq: 1n,
         event: { type: 'Run', data: createRunEnvelope(1n) },
       }
-      const event2: SeqEvent = {
+      const event2: CommittedEvent = {
         seq: 2n,
         event: { type: 'Run', data: createRunEnvelope(2n) },
       }
-      const event3: SeqEvent = {
+      const event3: CommittedEvent = {
         seq: 3n,
         event: { type: 'Run', data: createRunEnvelope(3n) },
       }
@@ -192,7 +192,7 @@ describe('EventDispatcher', () => {
       runStore.clear()
     })
 
-    const makeRunSeqEvent = (id: bigint): SeqEvent => ({
+    const makeRunCommittedEvent = (id: bigint): CommittedEvent => ({
       seq: id,
       event: {
         type: 'Run',
@@ -220,8 +220,8 @@ describe('EventDispatcher', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
 
-      const e1 = makeRunSeqEvent(1n)
-      const e2 = makeRunSeqEvent(2n)
+      const e1 = makeRunCommittedEvent(1n)
+      const e2 = makeRunCommittedEvent(2n)
       eventDispatcher.dispatch(e1)
       eventDispatcher.dispatch(e2)
       eventDispatcher.flush()
@@ -244,11 +244,11 @@ describe('EventDispatcher', () => {
       const cb = vi.fn()
       eventDispatcher.setOnFlush(cb)
 
-      const e1 = makeRunSeqEvent(1n)
+      const e1 = makeRunCommittedEvent(1n)
       eventDispatcher.dispatch(e1)
       eventDispatcher.flush()
 
-      const e2 = makeRunSeqEvent(2n)
+      const e2 = makeRunCommittedEvent(2n)
       eventDispatcher.dispatch(e2)
       eventDispatcher.flush()
 
@@ -262,7 +262,7 @@ describe('EventDispatcher', () => {
       eventDispatcher.setOnFlush(cb)
 
       // dispatch() would schedule a RAF, flush() should cancel it
-      const e1 = makeRunSeqEvent(1n)
+      const e1 = makeRunCommittedEvent(1n)
       eventDispatcher.dispatch(e1)
       eventDispatcher.flush()
 
@@ -279,7 +279,7 @@ describe('EventDispatcher', () => {
       eventDispatcher.setOnFlush(cb)
       eventDispatcher.setOnFlush(null)
 
-      eventDispatcher.dispatch(makeRunSeqEvent(1n))
+      eventDispatcher.dispatch(makeRunCommittedEvent(1n))
       eventDispatcher.flush()
 
       expect(cb).not.toHaveBeenCalled()
@@ -292,7 +292,7 @@ describe('EventDispatcher', () => {
       eventDispatcher.setOnFlush(cb1)
       eventDispatcher.setOnFlush(cb2)
 
-      eventDispatcher.dispatch(makeRunSeqEvent(1n))
+      eventDispatcher.dispatch(makeRunCommittedEvent(1n))
       eventDispatcher.flush()
 
       expect(cb1).not.toHaveBeenCalled()
@@ -301,7 +301,7 @@ describe('EventDispatcher', () => {
 
     it('no invocation when setOnFlush was never set', () => {
       // Don't set any callback — should not throw and nothing should fail
-      eventDispatcher.dispatch(makeRunSeqEvent(1n))
+      eventDispatcher.dispatch(makeRunCommittedEvent(1n))
       expect(() => eventDispatcher.flush()).not.toThrow()
     })
   })
@@ -317,7 +317,7 @@ describe('EventDispatcher', () => {
     })
 
     it('returns the number of queued events before flush', () => {
-      const e1: SeqEvent = {
+      const e1: CommittedEvent = {
         seq: 1n,
         event: {
           type: 'Run',
@@ -355,7 +355,7 @@ describe('EventDispatcher', () => {
 
   describe('unknown event type tolerance (wire-skew resilience)', () => {
     // Helper factories
-    const makeRunSeqEvent = (id: bigint): SeqEvent => ({
+    const makeRunCommittedEvent = (id: bigint): CommittedEvent => ({
       seq: id,
       event: {
         type: 'Run',
@@ -379,8 +379,8 @@ describe('EventDispatcher', () => {
       },
     })
 
-    const makeUnknownSeqEvent = (seq: bigint, unknownType: string): SeqEvent =>
-      ({ seq, event: { type: unknownType } }) as unknown as SeqEvent
+    const makeUnknownCommittedEvent = (seq: bigint, unknownType: string): CommittedEvent =>
+      ({ seq, event: { type: unknownType } }) as unknown as CommittedEvent
 
     beforeEach(() => {
       eventDispatcher.setOnFlush(null)
@@ -392,9 +392,9 @@ describe('EventDispatcher', () => {
 
       try {
         // --- Batch 1: [valid Run A, unknown "future_unknown_type", valid Run B] ---
-        const runA = makeRunSeqEvent(10n)
-        const unknown1 = makeUnknownSeqEvent(11n, 'future_unknown_type')
-        const runB = makeRunSeqEvent(12n)
+        const runA = makeRunCommittedEvent(10n)
+        const unknown1 = makeUnknownCommittedEvent(11n, 'future_unknown_type')
+        const runB = makeRunCommittedEvent(12n)
 
         eventDispatcher.dispatch(runA)
         eventDispatcher.dispatch(unknown1)
@@ -412,14 +412,14 @@ describe('EventDispatcher', () => {
         warnSpy.mockClear()
 
         // --- Batch 2: same unknown type again — warn must NOT fire again (dedupe) ---
-        const unknown2 = makeUnknownSeqEvent(20n, 'future_unknown_type')
+        const unknown2 = makeUnknownCommittedEvent(20n, 'future_unknown_type')
         eventDispatcher.dispatch(unknown2)
         eventDispatcher.flush()
 
         expect(warnSpy).not.toHaveBeenCalled()
 
         // --- Batch 3: different unknown type — warn IS fired once for the new type ---
-        const unknown3 = makeUnknownSeqEvent(30n, 'another_future_type')
+        const unknown3 = makeUnknownCommittedEvent(30n, 'another_future_type')
         eventDispatcher.dispatch(unknown3)
         eventDispatcher.flush()
 

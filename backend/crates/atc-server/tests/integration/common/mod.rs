@@ -6,10 +6,11 @@ use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Duration;
 
 use atc_core::SystemClock;
+use atc_persist::PersistentStore;
 use atc_server::listener;
 use atc_server::otel::exponential_histogram_view;
 use atc_server::persist::pg::PgStoreTestHooks;
-use atc_server::persist::{InMemoryStore, PersistentStore, PgStore};
+use atc_server::persist::{InMemoryStore, PgStore};
 use atc_server::state::AppState;
 use opentelemetry::KeyValue;
 use opentelemetry::trace::TracerProvider as _;
@@ -329,7 +330,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         Arc::new(SystemClock),
         Duration::from_hours(1),
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
-    ) as Arc<dyn atc_server::persist::PersistentStore>;
+    ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: Some(secret.to_string()),
@@ -353,7 +354,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         Arc::new(SystemClock),
         Duration::from_hours(1),
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
-    ) as Arc<dyn atc_server::persist::PersistentStore>;
+    ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
@@ -526,7 +527,7 @@ pub struct AppFixture {
     pub pool: sqlx::PgPool,
     pub router: axum::Router,
     pub state: Arc<atc_server::state::AppState>,
-    pub broadcast_rx: tokio::sync::broadcast::Receiver<atc_server::state::SeqEvent>,
+    pub broadcast_rx: tokio::sync::broadcast::Receiver<atc_wire::CommittedEvent>,
     pub observed_recv: Arc<AtomicU64>,
     pub observed_passes: Arc<AtomicU64>,
     pub drain_started: Arc<tokio::sync::Notify>,
@@ -622,7 +623,7 @@ async fn build_app_inner(
     .expect("PgStore::start_with_test_hooks");
 
     let broadcast_rx = pg_store.subscribe();
-    let persist = pg_store as Arc<dyn atc_server::persist::PersistentStore>;
+    let persist = pg_store as Arc<dyn atc_persist::PersistentStore>;
 
     let state = Arc::new(AppState {
         persist,

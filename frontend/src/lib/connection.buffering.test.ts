@@ -10,8 +10,8 @@ import { ConnectionManager } from '$lib/connection'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
+import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
-import type { SeqEvent } from '$lib/types/generated/SeqEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
 describe('ConnectionManager', () => {
@@ -71,7 +71,7 @@ describe('ConnectionManager', () => {
       // Get the mock WebSocket and send an event while state fetch is in progress
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        const event: SeqEvent = {
+        const event: CommittedEvent = {
           seq: 10n,
           event: {
             type: 'Run',
@@ -151,7 +151,7 @@ describe('ConnectionManager', () => {
       // Get the mock WebSocket and send an event with seq <= snapshot.lastSeq (should be discarded)
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        const staleEvent: SeqEvent = {
+        const staleEvent: CommittedEvent = {
           seq: 5n,
           event: {
             type: 'Run',
@@ -230,7 +230,7 @@ describe('ConnectionManager', () => {
       // Get the mock WebSocket and send an event with seq === snapshot.lastSeq (should be discarded)
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        const freshEvent: SeqEvent = {
+        const freshEvent: CommittedEvent = {
           seq: 10n,
           event: {
             type: 'Run',
@@ -306,7 +306,7 @@ describe('ConnectionManager', () => {
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
         // seq=1 is the first broadcast seq with pre-increment counter
-        const firstEvent: SeqEvent = {
+        const firstEvent: CommittedEvent = {
           seq: 1n,
           event: {
             type: 'Run',

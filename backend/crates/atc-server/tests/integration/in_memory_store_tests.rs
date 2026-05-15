@@ -19,7 +19,8 @@ use atc_core::{
     job::{Step, StepStatus},
     types::RepoKey,
 };
-use atc_server::persist::{InMemoryStore, PersistentStore};
+use atc_persist::PersistentStore;
+use atc_server::persist::InMemoryStore;
 use chrono::{DateTime, Utc};
 
 // ---------------------------------------------------------------------------

@@ -408,7 +408,7 @@ if (( converged != 1 )); then
   exit 1
 fi
 
-# 7. Each WS-tap logfile must show exactly one SeqEvent for the webhook
+# 7. Each WS-tap logfile must show exactly one CommittedEvent for the webhook
 # (single-delivery via ring-buffer dedup). Allow up to 2s for live delivery.
 sleep 2
 COUNT_A=$(grep -c '"seq":' /tmp/ws-a.log 2>/dev/null || true)
@@ -416,7 +416,7 @@ COUNT_B=$(grep -c '"seq":' /tmp/ws-b.log 2>/dev/null || true)
 COUNT_A=${COUNT_A:-0}
 COUNT_B=${COUNT_B:-0}
 if (( COUNT_A != 1 )) || (( COUNT_B != 1 )); then
-  echo "FAIL: expected exactly one SeqEvent per replica (A=$COUNT_A, B=$COUNT_B)" >&2
+  echo "FAIL: expected exactly one CommittedEvent per replica (A=$COUNT_A, B=$COUNT_B)" >&2
   exit 1
 fi
 echo "single-delivery verified: A=1 B=1"
@@ -430,7 +430,7 @@ echo "PASS: multi-replica smoke test"
 
 Pass criteria:
 - Both `/v1/state` endpoints converge on the same `lastSeq` within 5 seconds of the webhook POST.
-- Each WS-tap logfile shows exactly one `SeqEvent` for the webhook.
+- Each WS-tap logfile shows exactly one `CommittedEvent` for the webhook.
 - Both `/readyz` endpoints return 200 throughout the test.
 
 `kubectl logs -l app.kubernetes.io/name=atc -f --prefix` tags each line with the pod name — sufficient for "which replica did what" attribution during inspection. Per-process replica identification at the metrics layer is added at the collector by the standard target attributes (`pod`, `instance`) — the `atc_pg_*` metrics ship unlabeled per-process and dashboards aggregate `by (pod)`. See `docs/architecture/metrics.md` § Operational metrics for the per-metric scoping rules.

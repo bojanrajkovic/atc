@@ -1,6 +1,6 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-14
+Last verified: 2026-05-15
 
 > **Note on issue #16 (runner-pool capacities).** The wire field
 > `StateSnapshot.runner_pool_capacities` carries operator-declared capacity
@@ -8,6 +8,15 @@ Last verified: 2026-05-14
 > introduces no new `atc_runner_pool_*` instrument — ADR 0004 keeps pool
 > stats derivation on the frontend. See `docs/architecture-decisions/0004-frontend-derived-pool-stats.md` and the
 > design plan at `docs/design-plans/2026-05-13-issue-16-runner-pool-capacity.md`.
+
+> **Note on the persistence crate split (ADR 0008).** The broadcast
+> envelope type — referenced throughout this document as the value drained
+> from the outbox and forwarded to WS subscribers — was renamed from
+> `SeqEvent` to `CommittedEvent` and moved into the new `atc-wire` crate.
+> No metric or span name changes. The trait that owns `subscribe()` and
+> `shutdown()` now lives in the `atc-persist` crate (the `PgStore` /
+> `InMemoryStore` impls stay in `atc-server` until the per-store crate
+> extractions land). See `docs/architecture-decisions/0008-persistence-crate-split.md`.
 
 ## Purpose
 

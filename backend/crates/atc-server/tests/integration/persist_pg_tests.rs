@@ -15,7 +15,7 @@ use atc_core::{
     fixed_test_timestamp,
     types::{JobId, RunId},
 };
-use atc_server::persist::PersistentStore;
+use atc_persist::PersistentStore;
 use chrono::{DateTime, Utc};
 use tokio_util::sync::CancellationToken;
 

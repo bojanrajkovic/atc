@@ -14,7 +14,8 @@ use std::time::Duration;
 use atc_core::SystemClock;
 use atc_server::persist::InMemoryStore;
 use atc_server::routes;
-use atc_server::state::{AppState, SeqEvent};
+use atc_server::state::AppState;
+use atc_wire::CommittedEvent;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -34,7 +35,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         Arc::new(SystemClock),
         Duration::from_hours(1),
         broadcast_capacity,
-    ) as Arc<dyn atc_server::persist::PersistentStore>;
+    ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
@@ -77,7 +78,7 @@ async fn ws_upgrade_succeeds() {
     // keep the socket alive and receive frames. Here we just verify the upgrade succeeded.
 }
 
-/// Connected client receives SeqEvent after webhook ingestion
+/// Connected client receives CommittedEvent after webhook ingestion
 #[tokio::test]
 #[serial_test::serial]
 async fn ws_receives_webhook_event() {
@@ -116,19 +117,19 @@ async fn ws_receives_webhook_event() {
         other => panic!("Expected text frame, got: {:?}", other),
     };
 
-    // Deserialize as SeqEvent and verify the structure
-    let seq_event: SeqEvent =
-        serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
+    // Deserialize as CommittedEvent and verify the structure
+    let committed_event: CommittedEvent =
+        serde_json::from_str(&text).expect("CommittedEvent JSON deserialization should succeed");
 
-    assert_eq!(seq_event.seq, 1, "First event should have seq=1");
+    assert_eq!(committed_event.seq, 1, "First event should have seq=1");
     // Just verify it's a Run event variant (don't deep-inspect the enum)
-    match &seq_event.event {
+    match &committed_event.event {
         atc_github::WebhookEvent::Run(_) => {}
         atc_github::WebhookEvent::Job(_) => panic!("Expected Run event, got Job"),
     }
 }
 
-/// Multiple connected clients each receive the same SeqEvent
+/// Multiple connected clients each receive the same CommittedEvent
 #[tokio::test]
 #[serial_test::serial]
 async fn multiple_clients_receive_same_event() {
@@ -182,17 +183,17 @@ async fn multiple_clients_receive_same_event() {
         _ => panic!("Expected text frame on socket2"),
     };
 
-    let seq_event1: SeqEvent =
-        serde_json::from_str(&text1).expect("SeqEvent 1 JSON deserialization should succeed");
-    let seq_event2: SeqEvent =
-        serde_json::from_str(&text2).expect("SeqEvent 2 JSON deserialization should succeed");
+    let committed_event1: CommittedEvent =
+        serde_json::from_str(&text1).expect("CommittedEvent 1 JSON deserialization should succeed");
+    let committed_event2: CommittedEvent =
+        serde_json::from_str(&text2).expect("CommittedEvent 2 JSON deserialization should succeed");
 
     // Both should have the same seq
     assert_eq!(
-        seq_event1.seq, seq_event2.seq,
+        committed_event1.seq, committed_event2.seq,
         "Both clients should receive event with same seq"
     );
-    assert_eq!(seq_event1.seq, 1, "First event seq should be 1");
+    assert_eq!(committed_event1.seq, 1, "First event seq should be 1");
 }
 
 /// Client disconnect does not crash server or affect other clients
@@ -244,9 +245,9 @@ async fn disconnect_does_not_crash_server() {
         _ => panic!("Expected text frame on socket2"),
     };
 
-    let seq_event: SeqEvent =
-        serde_json::from_str(&text).expect("SeqEvent JSON deserialization should succeed");
-    assert_eq!(seq_event.seq, 1, "Client 2 should receive the event");
+    let committed_event: CommittedEvent =
+        serde_json::from_str(&text).expect("CommittedEvent JSON deserialization should succeed");
+    assert_eq!(committed_event.seq, 1, "Client 2 should receive the event");
 }
 
 /// Lagging client is disconnected — the server closes the connection on lag.
@@ -284,7 +285,7 @@ async fn lagging_client_is_disconnected() {
 
     // Apply 3 run events with distinct run_ids so each call is a first-sight
     // create (no Queued → Queued transition handling involved). Each successful
-    // apply broadcasts a `SeqEvent`; with capacity 2 the third broadcast laps
+    // apply broadcasts a `CommittedEvent`; with capacity 2 the third broadcast laps
     // the ring buffer, invalidating the receiver's position so its next
     // `recv()` returns `Lagged`.
     for i in 0..3i64 {
