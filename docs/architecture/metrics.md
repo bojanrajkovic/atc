@@ -57,9 +57,9 @@ ATC spans use a dotted hierarchy that names the boundary, not the implementation
 - `webhook.verify`, `webhook.parse` — atc-github boundary spans nested under `webhook.handler`.
 - `persist.apply.run_event`, `persist.apply.job_event` — `PgStore` / `InMemoryStore` write-path entries.
 - `persist.notify.emit` — the in-transaction `pg_notify` after the outbox INSERT.
-- `listener.task`, `listener.recv` — task-lifetime root and per-NOTIFY child for the PG listener.
-- `drain.task`, `drain.pass`, `drain.broadcast` — task-lifetime root, per-pass child, per-row grandchild for the outbox drain.
-- `eviction.sweep` — per-tick root span for the in-memory-mode TTL eviction sweep. Each `InMemoryStore::evict_expired` call is its own root (no task-lifetime parent) so every tick exports as one tidy trace.
+- `listener.recv` — per-NOTIFY root span for the PG listener. Each notification exports as its own root trace.
+- `drain.pass`, `drain.broadcast` — per-pass root and per-row child for the outbox drain. `drain.broadcast` is nested under `drain.pass` because `info_span!("drain.broadcast").in_scope(...)` runs inside the `drain_pass`-instrumented function.
+- `eviction.sweep` — per-tick root span for the in-memory-mode TTL eviction sweep. Each `InMemoryStore::evict_expired` call is its own root, so every tick exports as one tidy trace.
 
 Span names are stable identifiers — operators build dashboards and alerts that filter on them. Do not rename a span without coordinating with the dashboard owners; in particular, do not change `webhook.*`, `persist.*`, `listener.*`, or `drain.*` names without updating the doc here in lockstep.
 
@@ -75,7 +75,7 @@ New instrumentation goes at one of these boundaries:
 
 - **API boundaries.** Every public HTTP route handler that performs work worth tracing (today: `webhook_handler`). The `axum-otel-metrics` middleware is the duration / status-code surface for *every* HTTP route automatically; per-route span instrumentation only needs to be added when the handler does enough work that the operator wants to see its internal structure.
 - **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `persist/pg.rs`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
-- **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` need an explicit task-lifetime root span (`listener.task`, `drain.task`) constructed at spawn time and attached via `.instrument(span)` — see the [Tokio spawn gotcha](#tokio-spawn-gotcha) below.
+- **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` do NOT take a task-lifetime root span. Decorate the per-tick handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(...)]` directly, so each iteration emits its own root that exports on completion. A wrapper at the spawn site is an anti-pattern — see [Task-lifetime root spans are an anti-pattern](#task-lifetime-root-spans-are-an-anti-pattern) below.
 
 Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph. If a function is not load-bearing for an operator reading a flame graph, leave it uninstrumented and let it inherit the surrounding span.
 
@@ -119,18 +119,11 @@ async move { /* handler body */ }.instrument(span).await
 
 `set_parent` MUST be called between span construction and the first poll of the instrumented future — calling it from inside an `#[instrument]` body is wrong because the span has already been entered. If the header is absent or malformed, `parent_cx` is the empty context and the resulting `webhook.handler` span is a fresh root with a new trace ID. Outbound HTTP is not yet instrumented; if it is added later, the same propagator emits `traceparent` on outgoing requests.
 
-### Tokio spawn gotcha
+### Task-lifetime root spans are an anti-pattern
 
-`tokio::spawn` does NOT propagate the calling task's parent span. A future spawned with `tokio::spawn(async { ... })` becomes a fresh root unless explicitly instrumented. For task-lifetime root spans (e.g., `listener.task`, `drain.task`), construct the span at spawn time and wrap the future via `.instrument(span)` from the `tracing::Instrument` trait:
+`tracing-opentelemetry` only exports a span to the OTel pipeline when it closes. A span attached to a `tokio::spawn`-ed future via `.instrument(span)` closes when the task ends — for long-lived background tasks (the listener loop, the drain loop, the eviction loop) that means "at process shutdown." Under normal operation the span never exports, and a SIGKILL or OOM kill loses it entirely along with every per-tick child that was waiting on it.
 
-```rust
-let task_span = info_span!("drain.task");
-tokio::spawn(
-    async move { /* drain loop body */ }.instrument(task_span),
-);
-```
-
-Per-iteration child spans (e.g., `drain.pass`, `drain.broadcast`) attach as descendants of the surrounding task span automatically because they are constructed inside the instrumented future. The same pattern wraps the listener task — `backend/crates/atc-server/src/listener.rs` is the reference implementation.
+The fix is per-tick roots: decorate the handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(name = "...", ...)]` directly. Each iteration is then a fresh root that exports as soon as it returns. `drain.broadcast` stays a child of `drain.pass` because it is constructed inside the instrumented `drain_pass` function via `info_span!("drain.broadcast").in_scope(...)`. The reference implementations are `backend/crates/atc-server/src/listener.rs` and `backend/crates/atc-server/src/persist/in_memory.rs`. The rationale was first written down in `docs/design-plans/2026-05-13-eviction-fold-into-in-memory-store.md` (§ "Postscript") and extended to listener/drain in issue #170.
 
 ### Shutdown ordering
 
@@ -387,16 +380,14 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 
 | Span | Source | Attributes |
 |---|---|---|
-| `listener.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_listener_task`, spawned from `PgStore::start_inner` per ADR-0006) — task-lifetime root span constructed at spawn time and attached to the spawned future via `.instrument(...)`. | none (long-lived). |
-| `listener.recv` | `handle_notification` in `listener.rs` — per-NOTIFY child of `listener.task`. | `notify.payload.seq` (i64; the seq carried by the NOTIFY payload). |
+| `listener.recv` | `handle_listener_notification` in `listener.rs` — per-NOTIFY root span. The spawn site (`spawn_listener_task`, spawned from `PgStore::start_inner` per ADR-0006) carries no task-lifetime wrapper; each notification's handler invocation emits its own root. | `notify.payload.seq` (i64; the seq carried by the NOTIFY payload). |
 
 ### Drain path
 
 | Span | Source | Attributes |
 |---|---|---|
-| `drain.task` | `backend/crates/atc-server/src/listener.rs` (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) — task-lifetime root span constructed at spawn time and attached via `.instrument(...)` so per-pass children attach to it instead of becoming fresh roots. | none (long-lived). |
-| `drain.pass` | `drain_pass` in `listener.rs` — per-pass child. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
-| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
+| `drain.pass` | `drain_pass` in `listener.rs` — per-pass root span. The spawn site (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) carries no task-lifetime wrapper; each invocation of `drain_pass` emits its own root. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
+| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`, nested under `drain.pass` via `broadcast_span.in_scope(...)`. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
 
 ### Eviction path (in-memory mode only)
 

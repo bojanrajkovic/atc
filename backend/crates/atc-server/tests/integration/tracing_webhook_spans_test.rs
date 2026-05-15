@@ -127,7 +127,7 @@ async fn traceparent_header_propagates_to_root_span() {
 
 #[tokio::test]
 #[serial]
-async fn drain_pass_span_is_child_of_drain_task() {
+async fn drain_pass_is_root_with_drain_broadcast_child() {
     common::ensure_span_exporter_installed();
     common::reset_spans();
 
@@ -151,12 +151,8 @@ async fn drain_pass_span_is_child_of_drain_task() {
         .expect("timed out waiting for drain broadcast");
 
     // Poll up to ~500 ms for the SimpleSpanProcessor to flush the ended
-    // drain.pass child. `drain.task` itself only ends when the spawned task
-    // exits (after `fixture.shutdown.cancel()` below + record_shutdown_remaining),
-    // so we assert the parent linkage via parent_span_id (set at child
-    // creation time) rather than by lookup against the not-yet-exported
-    // parent. Polling absorbs scheduler jitter under heavy concurrent test
-    // load (testcontainers PG shared, axum-otel pipeline shared) without
+    // drain.pass root. Polling absorbs scheduler jitter under heavy concurrent
+    // test load (testcontainers PG shared, axum-otel pipeline shared) without
     // committing to a fixed-budget sleep that can underprovision in CI.
     let spans = {
         let mut spans = Vec::new();
@@ -170,14 +166,20 @@ async fn drain_pass_span_is_child_of_drain_task() {
         spans
     };
 
-    let pass = span_named(&spans, "drain.pass")
-        .expect("drain.pass span must be exported after a drain pass runs");
+    let pass_spans = spans_named(&spans, "drain.pass");
     assert!(
-        pass.parent_span_id.to_bytes().iter().any(|b| *b != 0),
-        "drain.pass must carry a non-zero parent_span_id (the spawn-site \
-         drain.task span). A zero parent_span_id means tokio::spawn detached \
-         the future from its parent — the Instrument-trait gotcha."
+        !pass_spans.is_empty(),
+        "drain.pass span must be exported after a drain pass runs"
     );
+    for p in &pass_spans {
+        assert!(
+            p.parent_span_id.to_bytes().iter().all(|b| *b == 0),
+            "every drain.pass must be a root span (zero parent_span_id). A \
+             non-zero parent here means a task-lifetime wrapper was \
+             reintroduced — see the per-tick-root rationale in \
+             `eviction_spans_test.rs`."
+        );
+    }
 
     let broadcasts = spans_named(&spans, "drain.broadcast");
     assert!(
@@ -193,30 +195,57 @@ async fn drain_pass_span_is_child_of_drain_task() {
             "drain.broadcast must be a child of drain.pass; parent={:?}",
             parent.map(|p| p.name.as_ref()),
         );
-        assert_eq!(
-            b.span_context.trace_id(),
-            pass.span_context.trace_id(),
-            "drain.broadcast must share its trace id with drain.pass",
-        );
     }
 
-    // Cancel the shutdown token so drain.task ends and exports. After cancel,
-    // the in-memory exporter holds the parent span too — assert by name lookup.
     fixture.shutdown.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(5), fixture.state.persist.shutdown()).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+}
 
-    let spans_after = common::read_finished_spans();
-    let task = span_named(&spans_after, "drain.task")
-        .expect("drain.task span must be exported after the task exits");
-    assert_eq!(
-        task.span_context.trace_id(),
-        pass.span_context.trace_id(),
-        "drain.task and drain.pass must share a trace id",
+#[tokio::test]
+#[serial]
+async fn listener_recv_is_root() {
+    common::ensure_span_exporter_installed();
+    common::reset_spans();
+
+    let (pool, _container, db_url) = common::start_pg().await;
+    let fixture = common::build_app_with_pg_and_listener(pool, db_url).await;
+
+    // Fire a webhook so the listener receives a NOTIFY for the outbox row.
+    let (status, _body) = common::post_webhook_to_router(
+        fixture.router.clone(),
+        "workflow_run",
+        &common::fixture_workflow_run_requested(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Wait for the drain to broadcast — proves the listener picked the NOTIFY
+    // up before we poll the exporter.
+    let mut rx = fixture.state.persist.subscribe();
+    let _ = timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("timed out waiting for drain broadcast");
+
+    let spans = {
+        let mut spans = Vec::new();
+        for _ in 0..50 {
+            spans = common::read_finished_spans();
+            if span_named(&spans, "listener.recv").is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        spans
+    };
+
+    let recv = span_named(&spans, "listener.recv")
+        .expect("listener.recv span must be exported after a NOTIFY is received");
+    assert!(
+        recv.parent_span_id.to_bytes().iter().all(|b| *b == 0),
+        "listener.recv must be a root span (zero parent_span_id). A non-zero \
+         parent here means a task-lifetime wrapper was reintroduced."
     );
-    assert_eq!(
-        task.span_context.span_id(),
-        pass.parent_span_id,
-        "drain.pass parent_span_id must match drain.task span_id",
-    );
+
+    fixture.shutdown.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(5), fixture.state.persist.shutdown()).await;
 }
