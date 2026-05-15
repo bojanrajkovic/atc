@@ -62,6 +62,12 @@ jobs:
       # Use mold instead of lld to avoid SIGBUS/OOM crashes when linking large
       # test binaries (ws_tests, notify_listener_tests) on GitHub-hosted runners.
       RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+      # Fresh CI runners have no prior state to incrementalize against; the
+      # incremental cache just inflates target/ with metadata cargo never
+      # reuses. Combined with the workspace's `line-tables-only` dev/test
+      # profile (backend/Cargo.toml), this keeps the coverage build's peak
+      # target/ within a single-runner disk budget. See #55.
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -99,18 +105,29 @@ jobs:
         working-directory: backend
         run: cargo check --locked --workspace
 
-      # Run the type-export check BEFORE the coverage build. Coverage layers
-      # ~3-5 GB of llvm-cov-instrumented artifacts on top of the regular
-      # workspace target/, and rustflags differ so cargo can't reuse the
-      # results between the two builds. Doing verify-types first means a
-      # single peak in target/ rather than two stacked. See #55 for a deeper
-      # investigation of the Rust CI build footprint.
+      # Run the type-export check BEFORE the coverage build. cargo-llvm-cov
+      # uses RUSTC_WRAPPER to inject `-C instrument-coverage` per first-party
+      # crate while reusing dep artifacts from the prior non-coverage build,
+      # so the coverage step's additional disk cost is just the first-party
+      # crates rebuilt under instrumentation plus the `integration` test
+      # binary (which `--lib` skipped at verify-types time). Verify-types
+      # second would force a full rebuild of every first-party crate without
+      # instrumentation — the bigger peak.
+      #
+      # `--lib` is the load-bearing flag: ts-rs's `#[derive(TS)]` emits an
+      # `export_bindings_<TypeName>` test for each derived type, and every
+      # such derive lives in `src/` (library targets) — none in
+      # `tests/integration/`. Without `--lib`, cargo also compiles the
+      # multi-GB `integration` test binary just to discover those tests,
+      # ~doubling the verify-types step's target/ footprint for no gain.
+      # See #55.
       - name: Verify generated TypeScript types are current
         run: |
           set -euo pipefail
           mkdir -p frontend/src/lib/types/generated
           cd backend
-          TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" cargo test --workspace -- export_bindings
+          TS_RS_EXPORT_DIR="$(cd .. && pwd)/frontend/src/lib/types/generated" \
+            cargo test --locked --workspace --lib -- export_bindings
           cd ..
           git diff --exit-code frontend/src/lib/types/generated/ || {
             echo "::error::Generated TypeScript types are out of date. Run 'just types' and commit the changes."
@@ -125,6 +142,22 @@ jobs:
       - name: Run tests with coverage
         working-directory: backend
         run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
+
+      # Instrumentation for #55 — captures the post-coverage runner disk
+      # state so the rolling impact of cargo profile / step-ordering
+      # tweaks is visible in CI logs. `if: always()` so we still capture
+      # data when the coverage step has failed (the failure mode worth
+      # observing is "No space left on device").
+      - name: Report disk usage
+        if: always()
+        run: |
+          echo "::group::Runner disk"
+          df -h /
+          echo "::endgroup::"
+          echo "::group::Backend target/"
+          du -sh backend/target 2>/dev/null || true
+          du -sh backend/target/debug backend/target/release 2>/dev/null || true
+          echo "::endgroup::"
 
       - name: Upload coverage to Codecov
         if: github.repository == 'bojanrajkovic/atc'
