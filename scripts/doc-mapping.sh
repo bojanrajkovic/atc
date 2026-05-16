@@ -36,6 +36,18 @@ get_docs_for_file() {
             echo "docs/architecture/metrics.md"
             return
             ;;
+        backend/crates/atc-server/src/config_watcher.rs)
+            # Straddler: the watcher's behavior (file detection, debounce,
+            # K8s ConfigMap atomic swap, narrow-schema reload, scalar drift
+            # warn-log, shutdown integration) lives in backend-server.md;
+            # the watcher's emitted metrics (atc_config_reload_total,
+            # atc_config_runner_pools) live in metrics.md. Both must update.
+            # Listed BEFORE the atc-server/src/* catch-all because `case`
+            # matching is first-match.
+            echo "docs/architecture/backend-server.md"
+            echo "docs/architecture/metrics.md"
+            return
+            ;;
         backend/crates/atc-server/src/persist/pg.rs|backend/crates/atc-server/src/listener.rs)
             # Straddlers: PersistentStore trait / drain pipeline contracts live
             # in backend-server.md; metric emissions (atc_pg_write_failures_total,

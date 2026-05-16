@@ -376,6 +376,26 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Aggregation:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` for the cluster-wide signal; per-pod comparison surfaces stalled replicas.
 - **Example PromQL:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` (Grafana renders NaN as gaps)
 
+### `atc_config_reload_total`
+
+- **Name:** `atc_config_reload_total`
+- **Type:** counter
+- **Attributes:** `result` (`"success"` | `"failure"`), `reason` (`"applied"` | `"noop"` | `"read"` | `"parse"` | `"validate"`); `pod`, `instance` (injected)
+- **Measures:** Config-watcher reload attempts, labeled by outcome. `result="success",reason="applied"` — reload changed AppState and broadcast `ConfigUpdate`. `result="success",reason="noop"` — reload re-read the file but content matched current AppState (no broadcast). `result="failure",reason="read"` — file I/O failure (deleted file, permissions). `result="failure",reason="parse"` — YAML deserialization failure. `result="failure",reason="validate"` — zero capacity / empty labels / duplicate pool. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 2]` attribute slices per outcome (cached-instrument convention) — call sites incur no allocation on emit.
+- **Per-replica vs cluster:** Per-replica — each replica's watcher reloads independently from its local view of the ConfigMap mount.
+- **Aggregation:** `sum without (pod, instance) (rate(atc_config_reload_total[5m]))` for cluster-wide reload rate; per-reason breakdown surfaces failure spikes. A sustained non-zero `reason="failure"` rate indicates the operator's most-recent YAML edit is invalid and the cluster is running on the previous good config.
+- **Example PromQL:** `sum by (reason) (rate(atc_config_reload_total[5m]))`
+
+### `atc_config_runner_pools`
+
+- **Name:** `atc_config_runner_pools`
+- **Type:** gauge
+- **Attributes:** none emitted; `pod`, `instance` (injected)
+- **Measures:** Number of operator-declared runner pools currently loaded in `AppState.runner_pool_capacities`. Reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count. Implemented as an OTel `ObservableGauge<f64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention; the atomic update IS the metric update). `Weak<AtomicI64>` registration ensures dropped watchers do not leak callbacks.
+- **Per-replica vs cluster:** Per-replica observation of a cluster-wide quantity. All replicas mount the same ConfigMap so values should match within the kubelet sync window; divergence (~60 s skew) is normal during a rolling ConfigMap update.
+- **Aggregation:** `max without (pod, instance) (atc_config_runner_pools)` for the cluster-wide pool count; per-pod divergence during a rolling reload is expected.
+- **Example PromQL:** `max without (pod, instance) (atc_config_runner_pools)`
+
 ### `atc_pg_outbox_oldest_row_age_seconds`
 
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`

@@ -173,6 +173,24 @@ Empty list (the default) ⇒ no `ConfigMap`, no volume, no behavior change. The 
 
 The parsed pool list is composed onto every `/v1/state` snapshot response as `runnerPoolCapacities` (ADR 0004 — frontend remains the single derivation point for pool stats; capacity arrives as inert config, never as a server-side metric). The frontend merges the wire field into `RunnerPoolStats.total` keyed by canonical label-set, lighting up `CapacityBar.svelte` with the appropriate color band per saturation threshold.
 
+### Hot-reload
+
+Edits to `/etc/atc/config.yaml` are picked up without a pod roll. A `config_watcher` task (see `backend/crates/atc-server/src/config_watcher.rs`) watches the parent directory through `notify-debouncer-full` with a 500 ms debounce window — long enough to coalesce the burst of filesystem events that kubelet's ConfigMap atomic swap produces, short enough that an operator edit propagates within one second of kubelet completing the swap. End-to-end propagation time (ConfigMap edit → open browser sees new capacities) is ≤ 90 s: kubelet sync (default ~60 s) plus the debounce.
+
+**Directory mount, not `subPath`.** The chart mounts the ConfigMap at `mountPath: /etc/atc` (directory) — Kubernetes explicitly documents that `subPath` ConfigMap mounts do NOT receive updates, so hot-reload requires the directory mount. kubelet exposes the projected directory via an atomic `..data` symlink swap; the watcher's parent-dir watch sees the rename and triggers a reload.
+
+**Reload-only fields.** Only the `runner_pools` block hot-reloads. The narrow reload schema (`config::reload_runner_pools`) deliberately ignores scalar fields (`http_addr`, `database_url`, log settings, retention) so an operator editing a scalar in YAML doesn't appear to have the edit accepted-then-discarded — the watcher simply isn't looking at that field. A separate diagnostic compares the live file's scalars to a startup snapshot; each changed scalar field produces a `tracing::warn!` instructing the operator to roll the pod.
+
+**Graceful failure.** When a reload fails (zero capacity, duplicate pool, malformed YAML, deleted file, read error) the previous valid capacities stay in place. The watcher logs a structured error, increments `atc_config_reload_total{result="failure",reason=<category>}`, and broadcasts a `ConfigReloadError` WS frame; the frontend logs the failure to the console (UI surfacing tracked in issue #203).
+
+**Missing-file divergence.** Startup tolerates a missing config file (figment's `Yaml::file` is auto-optional, yielding `runner_pools: []`). On reload, a deleted file is treated as `ReloadError::Read` — an operator who deletes the file mid-deploy almost certainly didn't intend to clear all pool capacities, so the old caps are kept and the error is surfaced.
+
+**Wire framing.** The WS endpoint frames every event in an outer `kind` discriminator: `Committed` (the existing seq-keyed `CommittedEvent`), `ConfigUpdate { runnerPoolCapacities }` (full capacity list after a successful reload, not a delta), and `ConfigReloadError { reason }`. The dispatcher's outer-kind switch routes Committed frames through the RAF-batched store path and applies ConfigUpdate / ConfigReloadError immediately. Lagged on either channel closes the WS connection symmetrically — the client reconnects and re-fetches `/v1/state` to re-establish both the seq cursor and the current capacities.
+
+**Shutdown.** The watcher task is joined explicitly by `run_shutdown_orchestration` under `SHUTDOWN_TIMEOUT_CONFIG_WATCHER` (1 s) before OTel pipeline tear-down, matching the "no live emitter when shutdown fires" invariant.
+
+**Bare-metal dev boxes.** If the parent directory of `$ATC_CONFIG_FILE` doesn't exist (typical on a dev box without `/etc/atc/`), the watcher is skipped with a warn log and the process boots cleanly without hot-reload.
+
 ## Multi-replica
 
 `replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard at the top of `templates/deployment.yaml`. The same template also rejects any non-PostgreSQL scheme on the inline `config.databaseUrl` path (`postgres://` and `postgresql://` are the only accepted prefixes); the `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`) that exits with a remediation-naming log line before any sqlx connect call. The chart's ephemeral in-memory mode is single-replica only.

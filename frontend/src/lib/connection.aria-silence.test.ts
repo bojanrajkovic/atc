@@ -54,7 +54,7 @@ function makeRequestedRunEvent(runId: bigint, seq: bigint): CommittedEvent {
 
 /** Serialize a CommittedEvent to JSON with bigint → string (matching the wire format). */
 function serializeEvent(event: CommittedEvent): string {
-  return JSON.stringify(event, (_key, value) => {
+  return JSON.stringify({ kind: 'Committed', ...event }, (_key, value) => {
     if (typeof value === 'bigint') return value.toString()
     return value
   })

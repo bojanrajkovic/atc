@@ -14,6 +14,7 @@
 mod common;
 
 mod config_tests;
+mod config_watcher_tests;
 mod db_readyz_tests;
 mod drain_forwards;
 mod e2e_tests;

@@ -272,6 +272,18 @@ class RunStore {
     this.jobsByRun.set(runId, jobs)
   }
 
+  /**
+   * Replace the operator-declared capacity list in-place.
+   *
+   * Called by `ConnectionManager` when a `ConfigUpdate` WireFrame arrives
+   * (the backend's hot-reload watcher pushes the full new list, not a
+   * delta). The atomic assignment invalidates the `$state` slice; derived
+   * computations downstream (`computePoolStats`) recompute on the next read.
+   */
+  applyConfigUpdate(runnerPoolCapacities: RunnerPoolCapacity[]): void {
+    this.runnerPoolCapacities = runnerPoolCapacities
+  }
+
   loadSnapshot(
     runs: WorkflowRun[],
     jobs: Job[],

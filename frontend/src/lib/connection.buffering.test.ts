@@ -97,7 +97,7 @@ describe('ConnectionManager', () => {
           },
         }
         ws.receiveMessage(
-          JSON.stringify(event, (_key, value) => {
+          JSON.stringify({ kind: 'Committed', ...event }, (_key, value) => {
             if (typeof value === 'bigint') {
               return value.toString()
             }
@@ -177,7 +177,7 @@ describe('ConnectionManager', () => {
           },
         }
         ws.receiveMessage(
-          JSON.stringify(staleEvent, (_key, value) => {
+          JSON.stringify({ kind: 'Committed', ...staleEvent }, (_key, value) => {
             if (typeof value === 'bigint') {
               return value.toString()
             }
@@ -256,7 +256,7 @@ describe('ConnectionManager', () => {
           },
         }
         ws.receiveMessage(
-          JSON.stringify(freshEvent, (_key, value) => {
+          JSON.stringify({ kind: 'Committed', ...freshEvent }, (_key, value) => {
             if (typeof value === 'bigint') {
               return value.toString()
             }
@@ -330,7 +330,7 @@ describe('ConnectionManager', () => {
           },
         }
         ws.receiveMessage(
-          JSON.stringify(firstEvent, (_key, value) =>
+          JSON.stringify({ kind: 'Committed', ...firstEvent }, (_key, value) =>
             typeof value === 'bigint' ? value.toString() : value,
           ),
         )

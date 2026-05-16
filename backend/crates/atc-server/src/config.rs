@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use atc_core::LabelSet;
+use atc_core::{LabelSet, RunnerPoolCapacity};
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Yaml},
@@ -19,8 +19,22 @@ fn default_outbox_retention() -> Duration {
 const CONFIG_FILE_ENV: &str = "ATC_CONFIG_FILE";
 
 /// Default path of the YAML configuration file. Mounted by the Helm chart from a
-/// rendered `ConfigMap` when `runnerPools` is non-empty. Missing-file is benign.
+/// rendered `ConfigMap` when `runnerPools` is non-empty. Missing-file is benign
+/// at startup (figment treats `Yaml::file` as auto-optional); the hot-reload
+/// path treats it as an error so an operator who deletes the file mid-deploy
+/// does not silently clear all pool capacities.
 const DEFAULT_CONFIG_FILE: &str = "/etc/atc/config.yaml";
+
+/// Resolves the YAML configuration file path the same way `Config::load` does:
+/// `$ATC_CONFIG_FILE` if set, otherwise the chart-default `/etc/atc/config.yaml`.
+///
+/// The hot-reload watcher in `config_watcher.rs` uses this to arm its file
+/// watcher on the same path the startup loader read from.
+pub fn config_path() -> PathBuf {
+    std::env::var(CONFIG_FILE_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_CONFIG_FILE))
+}
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -125,9 +139,7 @@ impl Config {
     /// The error is boxed (`Box<figment::Error>`) because `figment::Error` is large
     /// (clippy::result_large_err).
     pub fn load() -> Result<Self, Box<figment::Error>> {
-        let path: PathBuf = std::env::var(CONFIG_FILE_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_CONFIG_FILE));
+        let path = config_path();
 
         let mut config: Config = Figment::from(Serialized::defaults(Config::default()))
             .merge(Yaml::file(&path))
@@ -135,46 +147,195 @@ impl Config {
             .extract()
             .map_err(Box::new)?;
 
-        config
-            .validate_runner_pools()
+        canonicalize_runner_pools(&mut config.runner_pools)
             .map_err(|msg| Box::new(figment::Error::from(msg)))?;
 
         Ok(config)
     }
+}
 
-    /// Canonicalizes each pool's labels (sort + dedup) and rejects invalid entries.
-    ///
-    /// Fatal at startup so operators see misconfiguration immediately rather than
-    /// silently picking a last-one-wins resolution at runtime.
-    fn validate_runner_pools(&mut self) -> Result<(), String> {
-        let mut seen: HashSet<LabelSet> = HashSet::new();
+/// Canonicalizes each pool's labels (sort + dedup) and rejects invalid entries.
+///
+/// Shared by `Config::load` (startup) and `reload_runner_pools` (hot reload) so
+/// both paths see identical validation. Fatal — callers map the returned
+/// message into their own error type.
+fn canonicalize_runner_pools(pools: &mut [RunnerPoolConfig]) -> Result<(), String> {
+    let mut seen: HashSet<LabelSet> = HashSet::new();
 
-        for (idx, pool) in self.runner_pools.iter_mut().enumerate() {
-            if pool.capacity == 0 {
-                return Err(format!(
-                    "runner_pools[{idx}]: capacity must be >= 1 (got 0)"
-                ));
-            }
-
-            // Canonicalize: dedup via BTreeSet, then reflect sorted order back
-            // into the Vec so the on-wire payload is already canonical.
-            let canonical = LabelSet::new(pool.labels.iter().cloned());
-            if canonical.is_empty() {
-                return Err(format!(
-                    "runner_pools[{idx}]: labels must contain at least one entry"
-                ));
-            }
-            pool.labels = canonical.iter().map(str::to_owned).collect();
-
-            if !seen.insert(canonical) {
-                return Err(format!(
-                    "runner_pools[{idx}]: duplicate label set (labels={:?} canonicalizes to a pool already declared earlier)",
-                    pool.labels
-                ));
-            }
+    for (idx, pool) in pools.iter_mut().enumerate() {
+        if pool.capacity == 0 {
+            return Err(format!(
+                "runner_pools[{idx}]: capacity must be >= 1 (got 0)"
+            ));
         }
 
-        Ok(())
+        // Canonicalize: dedup via BTreeSet, then reflect sorted order back
+        // into the Vec so the on-wire payload is already canonical.
+        let canonical = LabelSet::new(pool.labels.iter().cloned());
+        if canonical.is_empty() {
+            return Err(format!(
+                "runner_pools[{idx}]: labels must contain at least one entry"
+            ));
+        }
+        pool.labels = canonical.iter().map(str::to_owned).collect();
+
+        if !seen.insert(canonical) {
+            return Err(format!(
+                "runner_pools[{idx}]: duplicate label set (labels={:?} canonicalizes to a pool already declared earlier)",
+                pool.labels
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Narrow schema used by `reload_runner_pools`.
+///
+/// Deliberately captures ONLY `runner_pools` — other config fields require
+/// per-field reload safety analysis and remain restart-only. Operators editing
+/// `http_addr` / `database_url` / etc. in the live file get a `tracing::warn!`
+/// from the watcher (via [`ScalarSnapshot::diff`]) noting the changed field;
+/// the actual scalar value is never observed here.
+#[derive(Debug, Default, serde::Deserialize)]
+struct ReloadPayload {
+    #[serde(default)]
+    runner_pools: Vec<RunnerPoolConfig>,
+}
+
+/// Categorized failure mode from `reload_runner_pools`.
+///
+/// `category()` produces the stable label set for the
+/// `atc_config_reload_total{reason}` counter; the wrapped message is the
+/// human-readable detail surfaced in logs and the `ConfigReloadError` WS
+/// frame.
+#[derive(Debug)]
+pub enum ReloadError {
+    /// File I/O failure — missing file, permissions, etc.
+    Read(String),
+    /// YAML parse / deserialization failure.
+    Parse(String),
+    /// Validation failure — zero capacity, empty labels, duplicate pool.
+    Validate(String),
+}
+
+impl ReloadError {
+    /// Stable lowercase category label for the
+    /// `atc_config_reload_total{reason}` counter.
+    pub fn category(&self) -> &'static str {
+        match self {
+            ReloadError::Read(_) => "read",
+            ReloadError::Parse(_) => "parse",
+            ReloadError::Validate(_) => "validate",
+        }
+    }
+}
+
+impl std::fmt::Display for ReloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReloadError::Read(m) | ReloadError::Parse(m) | ReloadError::Validate(m) => {
+                f.write_str(m)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReloadError {}
+
+/// Re-reads the YAML configuration file and extracts a fresh
+/// `Vec<RunnerPoolCapacity>`.
+///
+/// Used by `config_watcher` on every debounced filesystem event. Validation
+/// is identical to startup (`canonicalize_runner_pools`). The path is read
+/// directly so the read/parse error split is precise: figment's `Yaml::file`
+/// is auto-optional and would mask a deleted-file edit as an empty document.
+///
+/// # Errors
+///
+/// - [`ReloadError::Read`] — file does not exist, permission denied, etc.
+///   This is a deliberate divergence from startup behavior: `Config::load`
+///   tolerates a missing file (figment's auto-optional `Yaml::file`), but on
+///   reload, missing-file almost certainly indicates an operator mistake
+///   that should be surfaced rather than silently zeroing all capacities.
+/// - [`ReloadError::Parse`] — YAML deserialization failed.
+/// - [`ReloadError::Validate`] — zero capacity, empty labels, or duplicate
+///   canonicalized label set.
+pub fn reload_runner_pools(path: &Path) -> Result<Vec<RunnerPoolCapacity>, ReloadError> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| ReloadError::Read(format!("failed to read {}: {e}", path.display())))?;
+
+    let mut payload: ReloadPayload = Figment::from(Yaml::string(&contents))
+        .extract()
+        .map_err(|e| ReloadError::Parse(format!("failed to parse {}: {e}", path.display())))?;
+
+    canonicalize_runner_pools(&mut payload.runner_pools).map_err(ReloadError::Validate)?;
+
+    Ok(payload
+        .runner_pools
+        .into_iter()
+        .map(|p| RunnerPoolCapacity {
+            labels: LabelSet::new(p.labels),
+            capacity: p.capacity,
+        })
+        .collect())
+}
+
+/// Snapshot of scalar `Config` fields captured at process startup.
+///
+/// The hot-reload watcher restricts itself to `runner_pools` (Decision 9 in
+/// `docs/design-plans/2026-05-15-issue-172-hot-reload-runner-pools.md`).
+/// Scalar fields require per-field reload safety analysis and remain
+/// restart-only. The watcher diffs each reload's file against this snapshot
+/// and emits a `tracing::warn!` per changed scalar — diagnostic only, never
+/// applied — so operators editing a scalar know the change won't take effect
+/// until the next pod roll.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScalarSnapshot {
+    pub http_addr: SocketAddr,
+    pub database_url: Option<String>,
+    pub database_listener_url: Option<String>,
+    pub log_filter: String,
+    pub log_format: LogFormat,
+    pub outbox_retention: Duration,
+}
+
+impl ScalarSnapshot {
+    /// Capture the scalar surface of a fully-loaded `Config`.
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
+            http_addr: cfg.http_addr,
+            database_url: cfg.database_url.clone(),
+            database_listener_url: cfg.database_listener_url.clone(),
+            log_filter: cfg.log_filter.clone(),
+            log_format: cfg.log_format.clone(),
+            outbox_retention: cfg.outbox_retention,
+        }
+    }
+
+    /// Names of scalar fields that differ between `self` and `other`. Empty
+    /// slice means no drift.
+    pub fn diff(&self, other: &Self) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+        if self.http_addr != other.http_addr {
+            changed.push("http_addr");
+        }
+        if self.database_url != other.database_url {
+            changed.push("database_url");
+        }
+        if self.database_listener_url != other.database_listener_url {
+            changed.push("database_listener_url");
+        }
+        if self.log_filter != other.log_filter {
+            changed.push("log_filter");
+        }
+        if self.log_format != other.log_format {
+            changed.push("log_format");
+        }
+        if self.outbox_retention != other.outbox_retention {
+            changed.push("outbox_retention");
+        }
+        changed
     }
 }
 
@@ -383,6 +544,127 @@ runner_pools:
             msg.contains("duplicate label set"),
             "error should mention duplicate, got: {msg}"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn reload_runner_pools_returns_caps_from_yaml() {
+        let file = write_yaml(
+            r#"
+runner_pools:
+  - labels: [self-hosted, linux, x64]
+    capacity: 10
+  - labels: [ubuntu-latest]
+    capacity: 20
+"#,
+        );
+
+        let caps = reload_runner_pools(file.path()).expect("happy path should succeed");
+        assert_eq!(caps.len(), 2);
+        let first_labels: Vec<_> = caps[0].labels.iter().collect();
+        assert_eq!(first_labels, vec!["linux", "self-hosted", "x64"]);
+        assert_eq!(caps[0].capacity, 10);
+        let second_labels: Vec<_> = caps[1].labels.iter().collect();
+        assert_eq!(second_labels, vec!["ubuntu-latest"]);
+        assert_eq!(caps[1].capacity, 20);
+    }
+
+    #[test]
+    #[serial]
+    fn reload_runner_pools_rejects_zero_capacity() {
+        let file = write_yaml(
+            r#"
+runner_pools:
+  - labels: [a]
+    capacity: 0
+"#,
+        );
+
+        let err = reload_runner_pools(file.path()).expect_err("capacity 0 should fail");
+        assert!(matches!(err, ReloadError::Validate(_)), "got {err:?}");
+        assert_eq!(err.category(), "validate");
+    }
+
+    #[test]
+    #[serial]
+    fn reload_runner_pools_rejects_duplicate_pool() {
+        let file = write_yaml(
+            r#"
+runner_pools:
+  - labels: [self-hosted, linux, x64]
+    capacity: 10
+  - labels: [x64, linux, self-hosted]
+    capacity: 5
+"#,
+        );
+
+        let err = reload_runner_pools(file.path()).expect_err("duplicate pool should fail");
+        assert!(matches!(err, ReloadError::Validate(_)), "got {err:?}");
+    }
+
+    #[test]
+    #[serial]
+    fn reload_runner_pools_rejects_malformed_yaml() {
+        let file = write_yaml("runner_pools: not-a-list\n");
+
+        let err = reload_runner_pools(file.path()).expect_err("malformed YAML should fail");
+        assert!(matches!(err, ReloadError::Parse(_)), "got {err:?}");
+        assert_eq!(err.category(), "parse");
+    }
+
+    #[test]
+    #[serial]
+    fn reload_runner_pools_treats_missing_file_as_read_error() {
+        // Divergence from startup: `Config::load` tolerates a missing file
+        // (figment's `Yaml::file` is auto-optional and silently produces an
+        // empty document). On reload, missing-file means an operator likely
+        // deleted the live config; surface as an error so the old capacities
+        // stay in place and the operator sees it in logs / metrics / WS.
+        let path = std::path::Path::new("/tmp/atc-config-does-not-exist-172.yaml");
+        let _ = std::fs::remove_file(path);
+        let err = reload_runner_pools(path).expect_err("missing file should fail on reload");
+        assert!(matches!(err, ReloadError::Read(_)), "got {err:?}");
+        assert_eq!(err.category(), "read");
+    }
+
+    #[test]
+    #[serial]
+    fn reload_runner_pools_uses_narrow_schema_no_scalar_leakage() {
+        // A YAML file containing both `runner_pools` and a scalar field
+        // (`http_addr`) must reload the pools without complaint — the narrow
+        // schema deliberately ignores scalar fields so editing one is a no-op
+        // on the reload path (Decision 9). The watcher emits a separate
+        // diagnostic warn-log via `ScalarSnapshot::diff`; that path is tested
+        // in `config_watcher_tests.rs`.
+        let file = write_yaml(
+            r#"
+http_addr: "0.0.0.0:9999"
+database_url: "postgres://example/x"
+runner_pools:
+  - labels: [a]
+    capacity: 1
+"#,
+        );
+
+        let caps =
+            reload_runner_pools(file.path()).expect("narrow schema should ignore scalar fields");
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].capacity, 1);
+    }
+
+    #[test]
+    fn scalar_snapshot_diff_detects_changed_field() {
+        let cfg = Config::default();
+        let base = ScalarSnapshot::from_config(&cfg);
+
+        let same = ScalarSnapshot::from_config(&cfg);
+        assert!(base.diff(&same).is_empty(), "identical snapshots match");
+
+        let mut other = base.clone();
+        other.http_addr = "127.0.0.1:1".parse().unwrap();
+        other.log_filter = "debug".to_string();
+        let changed = base.diff(&other);
+        assert_eq!(changed, vec!["http_addr", "log_filter"]);
     }
 
     #[test]

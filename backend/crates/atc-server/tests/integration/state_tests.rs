@@ -80,7 +80,7 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        runner_pool_capacities: vec![
+        runner_pool_capacities: tokio::sync::RwLock::new(vec![
             RunnerPoolCapacity {
                 labels: LabelSet::new(["self-hosted", "linux", "x64"]),
                 capacity: 10,
@@ -89,7 +89,8 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
                 labels: LabelSet::new(["ubuntu-latest"]),
                 capacity: 20,
             },
-        ],
+        ]),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -127,6 +128,83 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
     assert_eq!(caps[0]["capacity"], 10);
     assert_eq!(caps[1]["labels"], serde_json::json!(["ubuntu-latest"]));
     assert_eq!(caps[1]["capacity"], 20);
+}
+
+/// Writes through `AppState.runner_pool_capacities` are visible to the next
+/// `/v1/state` snapshot. This is the contract the hot-reload watcher depends
+/// on: it takes `write().await` and replaces the inner Vec, and the next
+/// `state_handler` invocation reads the new value under a short `read().await`
+/// guard.
+#[tokio::test]
+#[serial_test::serial]
+async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
+    use atc_core::{LabelSet, RunnerPoolCapacity};
+    use atc_server::state::AppState;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    use tokio_util::task::TaskTracker;
+
+    common::ensure_recorder_installed();
+
+    let persist = atc_store_mem::InMemoryStore::new_for_test(
+        Arc::new(atc_core::SystemClock),
+        Duration::from_secs(3600),
+        256,
+    ) as Arc<dyn atc_persist::PersistentStore>;
+
+    let app_state = Arc::new(AppState {
+        persist,
+        webhook_secret: None,
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
+    });
+
+    let app = atc_server::routes::api_routes()
+        .with_state(app_state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Initial snapshot: no capacities declared.
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/v1/state"))
+        .send()
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["runnerPoolCapacities"], serde_json::json!([]));
+
+    // Take a write guard and replace the inner Vec — the same path the
+    // watcher uses.
+    {
+        let mut guard = app_state.runner_pool_capacities.write().await;
+        *guard = vec![RunnerPoolCapacity {
+            labels: LabelSet::new(["self-hosted", "linux", "x64"]),
+            capacity: 42,
+        }];
+    }
+
+    // Next snapshot reflects the write.
+    let resp = client
+        .get(format!("http://{addr}/v1/state"))
+        .send()
+        .await
+        .unwrap();
+    let json: serde_json::Value = resp.json().await.unwrap();
+    let caps = json["runnerPoolCapacities"].as_array().unwrap();
+    assert_eq!(caps.len(), 1);
+    assert_eq!(caps[0]["capacity"], 42);
+    assert_eq!(
+        caps[0]["labels"],
+        serde_json::json!(["linux", "self-hosted", "x64"])
+    );
 }
 
 /// Rolling-deploy tolerance: a snapshot serialized without

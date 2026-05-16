@@ -93,7 +93,7 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 // owns event-derived state only; capacity is config, surfaced
                 // here so the snapshot rail carries everything the frontend
                 // needs for its first render.
-                snap.runner_pool_capacities = state.runner_pool_capacities.clone();
+                snap.runner_pool_capacities = state.runner_pool_capacities.read().await.clone();
                 let current = tracing::Span::current();
                 current.record("snapshot.runs_count", snap.runs.len());
                 current.record("snapshot.jobs_count", snap.jobs.len());

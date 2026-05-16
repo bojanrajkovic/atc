@@ -544,6 +544,20 @@ The component renders a single `<div role="status" aria-live="polite" aria-atomi
 
 The `textContent` is driven by `liveRegion.message` — a plain `$state` string in the `LiveRegion` store.
 
+### Outer WireFrame dispatch
+
+The WS endpoint now frames every event in an outer `kind` discriminator (`Committed` / `ConfigUpdate` / `ConfigReloadError` — see `docs/architecture/backend-server.md` § "WireFrame"). The dispatcher's `dispatch(frame)` switches on `kind`:
+
+- `Committed` — extracts the inner `CommittedEvent`, pushes onto the buffer, and schedules the next RAF (existing path, unchanged).
+- `ConfigUpdate` — calls `runStore.applyConfigUpdate(runnerPoolCapacities)` immediately (no RAF batching — config frames are low-volume and benefit from prompt application).
+- `ConfigReloadError` — fires a single `console.warn` referencing issue #203 (UI surfacing is deferred to that issue).
+- Unknown `kind` — logged once per kind, then silenced (forward-compatible with new backends during a rolling deploy).
+
+`ConnectionManager` parses the outer `WireFrame` shape on `onmessage`. Pre-snapshot frame handling distinguishes the two non-Committed kinds:
+
+- `ConfigUpdate` frames overwrite a single `pendingConfigUpdate: RunnerPoolCapacity[] | null` slot. Buffering a list is pointless because each frame carries the **full** current capacity list (not a delta), so latest-wins is correct. After `runStore.loadSnapshot` runs, the slot is drained via `runStore.applyConfigUpdate` so a race between snapshot generation and snapshot fetch cannot lose a hot-reload.
+- `ConfigReloadError` frames pre-snapshot are dropped silently — the next successful reload will repaint state via a `ConfigUpdate`, and the snapshot rail already carries the current server-side capacities. Surfacing the error pre-snapshot would race with the loading indicator.
+
 ### EventDispatcher setOnFlush callback contract
 
 `EventDispatcher.setOnFlush(cb)` registers a callback that is invoked **synchronously** within `processBuffer()` after all events in the current RAF batch have been applied to stores. The callback receives the flushed `ReadonlyArray<CommittedEvent>`.

@@ -3,7 +3,9 @@ import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
+import type { RunnerPoolCapacity } from '$lib/types/generated/RunnerPoolCapacity'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
+import type { WireFrame } from '$lib/types/generated/WireFrame'
 
 /**
  * Stop scheduling reconnect timers after this many consecutive failed attempts.
@@ -21,6 +23,17 @@ export class ConnectionManager {
   private baseUrl: string
   private snapshotLastSeq: bigint = 0n
   private preConnectBuffer: CommittedEvent[] = []
+  /**
+   * Holds the latest pre-snapshot ConfigUpdate, if any.
+   *
+   * `ConfigUpdate` frames carry the full operator-declared capacity list
+   * (not a delta), so a pre-snapshot frame is meaningful only as "latest
+   * wins" — buffering a list is pointless. The slot is drained against the
+   * snapshot's capacities after `runStore.loadSnapshot` so the snapshot
+   * fetch's brief race window with the watcher does not lose a hot-reload.
+   * `null` means no pre-snapshot ConfigUpdate observed.
+   */
+  private pendingConfigUpdate: RunnerPoolCapacity[] | null = null
   private connected = false
 
   constructor(baseUrl: string) {
@@ -51,21 +64,42 @@ export class ConnectionManager {
     connectionStore.status = 'connecting'
     this.connected = false
     this.preConnectBuffer = []
+    this.pendingConfigUpdate = null
 
     // Step 1: Open WebSocket FIRST (WS-first protocol)
     const wsUrl = `${this.baseUrl.replace(/^http/, 'ws')}/v1/ws`
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onmessage = (event) => {
-      const committedEvent: CommittedEvent = JSON.parse(event.data, (key, value) =>
-        this.jsonReviver(key, value),
-      )
+      const frame: WireFrame = JSON.parse(event.data, (key, value) => this.jsonReviver(key, value))
       connectionStore.recordEvent()
 
       if (this.connected) {
-        eventDispatcher.dispatch(committedEvent)
-      } else {
-        this.preConnectBuffer.push(committedEvent)
+        eventDispatcher.dispatch(frame)
+        return
+      }
+
+      // Pre-snapshot phase: route frames to the appropriate buffer.
+      switch (frame.kind) {
+        case 'Committed':
+          this.preConnectBuffer.push({ seq: frame.seq, event: frame.event })
+          break
+        case 'ConfigUpdate':
+          // Latest-wins: full capacity list each time, so overwriting
+          // discards stale state without information loss.
+          this.pendingConfigUpdate = frame.runnerPoolCapacities
+          break
+        case 'ConfigReloadError':
+          // Pre-snapshot ConfigReloadError frames are informational only and
+          // dropped — the next successful reload will repaint state via a
+          // ConfigUpdate, and the snapshot rail already carries the current
+          // server-side capacities. Surfacing the error pre-snapshot would
+          // race with the loading indicator and confuse operators.
+          break
+        default: {
+          // Unknown kind from a newer backend; ignore silently here (the
+          // dispatcher's connected-mode default arm warns once per kind).
+        }
       }
     }
 
@@ -115,13 +149,31 @@ export class ConnectionManager {
       runStore.loadSnapshot(snapshot.runs, snapshot.jobs, snapshot.runnerPoolCapacities ?? [])
       this.snapshotLastSeq = snapshot.lastSeq
 
+      // Step 5b: Drain any pre-snapshot ConfigUpdate that arrived between
+      // snapshot generation and snapshot fetch. The ConfigUpdate carries the
+      // full capacity list, so applying it on top of the snapshot's
+      // capacities is a clean replace, not a merge. Apply BEFORE flushing
+      // CommittedEvents so derived computations see the latest pool config
+      // when the events trigger recomputation.
+      if (this.pendingConfigUpdate !== null) {
+        runStore.applyConfigUpdate(this.pendingConfigUpdate)
+        this.pendingConfigUpdate = null
+      }
+
       // Step 6: Flush buffered events, discarding stale ones
       // Detach any prior setOnFlush callback so buffered-replay events do not
       // produce announcements during reconnect drain.
       eventDispatcher.setOnFlush(null)
       for (const buffered of this.preConnectBuffer) {
         if (buffered.seq > this.snapshotLastSeq) {
-          eventDispatcher.dispatch(buffered)
+          // Re-wrap as a Committed WireFrame so the dispatcher's outer-kind
+          // switch routes through the buffered path the same way live frames
+          // would.
+          eventDispatcher.dispatch({
+            kind: 'Committed',
+            seq: buffered.seq,
+            event: buffered.event,
+          })
         }
       }
       this.preConnectBuffer = []
