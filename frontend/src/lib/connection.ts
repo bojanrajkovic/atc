@@ -8,6 +8,18 @@ import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 import type { WireFrame } from '$lib/types/generated/WireFrame'
 
 /**
+ * Type guard: does the parsed message already carry the outer `kind`
+ * discriminator? A `false` return means the payload is the legacy
+ * `CommittedEvent` shape (`{seq, event}`) that a pre-this-PR backend would
+ * have produced — we normalize those into `WireFrame.Committed` to keep the
+ * rolling-deploy window lossless. See the `onmessage` handler below for the
+ * caller context.
+ */
+function isWireFrame(value: unknown): value is WireFrame {
+  return typeof value === 'object' && value !== null && 'kind' in value
+}
+
+/**
  * Stop scheduling reconnect timers after this many consecutive failed attempts.
  * Cumulative wait under the exponential schedule (1s, 2s, 4s, 8s, 16s, 30s×5)
  * is ~3 minutes; the dashboard then sits in `disconnected` until the user
@@ -71,7 +83,17 @@ export class ConnectionManager {
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onmessage = (event) => {
-      const frame: WireFrame = JSON.parse(event.data, (key, value) => this.jsonReviver(key, value))
+      const parsed: unknown = JSON.parse(event.data, (key, value) => this.jsonReviver(key, value))
+      // During a rolling deploy a new frontend bundle may briefly connect to
+      // an old backend pod that still sends the legacy `{seq, event}` shape
+      // (no outer `kind`). Normalize to a Committed WireFrame so neither the
+      // connected-mode dispatcher nor the pre-snapshot switch drops events
+      // during the rollout window. The dispatcher's connected-mode entry
+      // point has the same shim; this normalization keeps the pre-snapshot
+      // buffer in agreement.
+      const frame: WireFrame = isWireFrame(parsed)
+        ? parsed
+        : { kind: 'Committed', ...(parsed as CommittedEvent) }
       connectionStore.recordEvent()
 
       if (this.connected) {

@@ -346,4 +346,74 @@ describe('ConnectionManager', () => {
       manager.destroy()
     })
   })
+
+  describe('Rolling-deploy back-compat — legacy `{seq, event}` frames (no outer `kind`)', () => {
+    it('buffers a legacy frame pre-snapshot and dispatches it after loadSnapshot', async () => {
+      // During the rolling-deploy window a new frontend may briefly connect
+      // to an old backend pod that still sends the pre-WireFrame shape
+      // (`{seq, event}` with no `kind` field). connection.ts normalizes
+      // those into a Committed WireFrame so neither the pre-snapshot
+      // buffer nor the connected-mode dispatcher drops events during the
+      // rollout — see the `isWireFrame` shim.
+      const manager = new ConnectionManager(baseUrl)
+
+      let resolveStateFetch: (() => void) | undefined
+      const statePromise = new Promise<void>((resolve) => {
+        resolveStateFetch = () => resolve()
+      })
+
+      server.use(
+        http.get('http://localhost:*/v1/state', async () => {
+          await statePromise
+          return HttpResponse.json(snapshotToJSON(defaultSnapshot))
+        }),
+      )
+
+      const connectPromise = manager.connect()
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      const ws = MockWebSocket.getLastInstance()!
+      const legacyEvent: CommittedEvent = {
+        seq: 10n,
+        event: {
+          type: 'Run',
+          data: {
+            runId: 123n,
+            org: 'org',
+            repo: 'repo',
+            workflowName: 'test',
+            workflowPath: '.github/workflows/test.yml',
+            branch: 'main',
+            headSha: 'abc',
+            commitMessage: 'legacy',
+            triggerEvent: 'push',
+            displayTitle: 'Legacy run',
+            htmlUrl: 'https://example.com/123',
+            createdAt: new Date().toISOString(),
+            runStartedAt: null,
+            updatedAt: new Date().toISOString(),
+            action: { type: 'Requested' },
+          } as RunEventEnvelope,
+        },
+      }
+      // Send the legacy shape (no `kind` wrapper) — what a pre-this-PR
+      // backend would emit.
+      ws.receiveMessage(
+        JSON.stringify(legacyEvent, (_key, value) =>
+          typeof value === 'bigint' ? value.toString() : value,
+        ),
+      )
+
+      resolveStateFetch?.()
+      await connectPromise
+      eventDispatcher.flush()
+
+      // Without the isWireFrame shim, the legacy frame would have fallen
+      // into the pre-snapshot switch's default arm and the run would never
+      // have landed.
+      expect(runStore.runs.has(123n)).toBe(true)
+
+      manager.destroy()
+    })
+  })
 })
