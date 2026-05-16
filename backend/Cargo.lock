@@ -137,7 +137,6 @@ dependencies = [
  "atc-core",
  "atc-github",
  "atc-persist",
- "atc-server",
  "atc-store-mem",
  "atc-store-pg",
  "atc-wire",
