@@ -1,13 +1,13 @@
 <script lang="ts">
   import RunnerPool from './RunnerPool.svelte'
+  import type { RunnerPoolTotal } from '$lib/types/generated/RunnerPoolTotal'
 
   interface RunnerPoolDisplay {
     key: string
     label: string
     running: number
     queued: number
-    total: number | null
-    isElastic: boolean
+    total: RunnerPoolTotal
     /**
      * True when this pool's labels match `uiStore.activePoolFilter`.
      * Computed at the connected layer (TopBar) so RunnerBar stays pure —

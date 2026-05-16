@@ -162,16 +162,21 @@ The chart renders a `ConfigMap` and a read-only `volumeMount` only when `runnerP
 ```yaml
 runnerPools:
   - labels: [self-hosted, linux, x64]
-    capacity: 10
+    capacity: 10              # bounded — declared ceiling, renders running/10 with a saturation bar
   - labels: [ubuntu-latest]
-    capacity: 20
+    capacity: null            # unbounded — no renderable ceiling, renders running with an ∞ affordance
 ```
 
 Empty list (the default) ⇒ no `ConfigMap`, no volume, no behavior change. The in-memory dev mode and existing single-replica deployments stay byte-identical.
 
-`values.schema.json` enforces the per-entry shape: `labels` is a non-empty array of unique strings, `capacity` is an integer ≥ 1, both required. Server-side validation additionally canonicalizes labels (sort + dedup) and rejects two entries that canonicalize to the same set — silently last-one-wins would be a deployment-time footgun. All three failures are fatal at startup.
+`values.schema.json` enforces the per-entry shape: `labels` is a non-empty array of unique strings, `capacity` is required and is either an integer ≥ 1 or `null`. `null` declares the pool unbounded (e.g. ARC `AutoscalingRunnerSet` without `maxRunners`, or GitHub-hosted runners whose per-account concurrency limits do not yield a per-label ceiling). Server-side validation additionally:
+- Enforces explicit `capacity` key presence via a custom `Deserialize` impl — omitting the key is rejected with `"capacity is required (use \`capacity: null\` for an unbounded pool)"`. The JSON Schema also keeps `capacity` in `required`, so the failure surfaces at `helm install` / `helm upgrade` time AND at server startup.
+- Canonicalizes labels (sort + dedup) and rejects two entries that canonicalize to the same set — silently last-one-wins would be a deployment-time footgun.
+- Rejects `capacity: 0` with `"capacity must be >= 1 (use null for unbounded pools)"`.
 
-The parsed pool list is composed onto every `/v1/state` snapshot response as `runnerPoolCapacities` (ADR 0004 — frontend remains the single derivation point for pool stats; capacity arrives as inert config, never as a server-side metric). The frontend merges the wire field into `RunnerPoolStats.total` keyed by canonical label-set, lighting up `CapacityBar.svelte` with the appropriate color band per saturation threshold.
+All failures are fatal at startup.
+
+The parsed pool list is composed onto every `/v1/state` snapshot response as `runnerPoolCapacities` with shape `{ labels, capacity: number | null }` (ADR 0004 — frontend remains the single derivation point for pool stats; capacity arrives as inert config, never as a server-side metric). The frontend merges the wire field into `RunnerPoolStats.total` as a `RunnerPoolTotal` tagged sum: `Bounded(n)` for declared integers (lights up `CapacityBar.svelte` with the saturation color band), `Unbounded` for `null` (renders an ∞ affordance with an `aria-label="unbounded capacity"` to satisfy WCAG SC 1.4.1), `Undeclared` for pools observed via webhooks but absent from `runnerPools` (count only, no affordance).
 
 ### Hot-reload
 

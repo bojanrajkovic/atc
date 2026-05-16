@@ -59,7 +59,7 @@ describe('computePoolStats (pure function)', () => {
     expect(pools[0]?.running).toBe(0)
   })
 
-  it('sets isElastic=true when groupId===0n', () => {
+  it('captures groupName from the most recent InProgress runner', () => {
     const job = makeJob({
       id: 1n,
       runId: 1n,
@@ -68,20 +68,22 @@ describe('computePoolStats (pure function)', () => {
       runner: { id: 1n, name: 'r', groupId: 0n, groupName: 'GitHub' },
     })
     const pools = computePoolStats([job])
-    expect(pools[0]?.isElastic).toBe(true)
     expect(pools[0]?.groupName).toBe('GitHub')
   })
 
-  it('does NOT set isElastic when groupId is non-zero bigint', () => {
+  it('groupId 0n with no matching declaration stays Undeclared', () => {
+    // Regression guard: only operator-declared capacities drive a pool's
+    // bounded/unbounded/undeclared classification — webhook-derived runner
+    // group ids do not influence `total`.
     const job = makeJob({
       id: 1n,
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupId: 42n, groupName: 'Group' },
+      runner: { id: 1n, name: 'r', groupId: 0n, groupName: 'GitHub' },
     })
     const pools = computePoolStats([job])
-    expect(pools[0]?.isElastic).toBe(false)
+    expect(pools[0]?.total).toEqual({ kind: 'Undeclared' })
   })
 
   it('LabelSet parity: deduplicates labels before keying', () => {
@@ -105,7 +107,7 @@ describe('computePoolStats (pure function)', () => {
     expect(pools[1]?.labels).toEqual(['z'])
   })
 
-  it('merges declared capacity into total when label sets match', () => {
+  it('merges_bounded_capacity_to_total_bounded — integer declaration produces Bounded', () => {
     const jobs = [
       makeJob({
         id: 1n,
@@ -118,11 +120,19 @@ describe('computePoolStats (pure function)', () => {
       { labels: ['linux', 'self-hosted', 'x64'], capacity: 10 },
     ])
     expect(pools).toHaveLength(1)
-    expect(pools[0]?.total).toBe(10)
+    expect(pools[0]?.total).toEqual({ kind: 'Bounded', value: 10 })
     expect(pools[0]?.running).toBe(1)
   })
 
-  it('leaves total null for pools without a declared capacity', () => {
+  it('merges_unbounded_capacity_to_total_unbounded — null declaration produces Unbounded', () => {
+    const jobs = [makeJob({ id: 1n, runId: 1n, status: 'InProgress', labels: ['ubuntu-latest'] })]
+    const pools = computePoolStats(jobs, [{ labels: ['ubuntu-latest'], capacity: null }])
+    expect(pools).toHaveLength(1)
+    expect(pools[0]?.total).toEqual({ kind: 'Unbounded' })
+    expect(pools[0]?.running).toBe(1)
+  })
+
+  it('pool_without_declaration_is_undeclared — observed pools without a config entry stay Undeclared', () => {
     const jobs = [
       makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
       makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['self-hosted', 'linux'] }),
@@ -130,8 +140,8 @@ describe('computePoolStats (pure function)', () => {
     const pools = computePoolStats(jobs, [{ labels: ['ubuntu-latest'], capacity: 20 }])
     const declared = pools.find((p) => p.labels[0] === 'ubuntu-latest')
     const undeclared = pools.find((p) => p.labels.includes('self-hosted'))
-    expect(declared?.total).toBe(20)
-    expect(undeclared?.total).toBeNull()
+    expect(declared?.total).toEqual({ kind: 'Bounded', value: 20 })
+    expect(undeclared?.total).toEqual({ kind: 'Undeclared' })
   })
 
   it('matches capacity declared with labels in any order via canonicalization', () => {
@@ -146,13 +156,13 @@ describe('computePoolStats (pure function)', () => {
       }),
     ]
     const pools = computePoolStats(jobs, [{ labels: ['x64', 'linux', 'self-hosted'], capacity: 5 }])
-    expect(pools[0]?.total).toBe(5)
+    expect(pools[0]?.total).toEqual({ kind: 'Bounded', value: 5 })
   })
 
   it('omitting capacities argument keeps existing zero-config behavior', () => {
     const jobs = [makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] })]
     const pools = computePoolStats(jobs)
-    expect(pools[0]?.total).toBeNull()
+    expect(pools[0]?.total).toEqual({ kind: 'Undeclared' })
   })
 })
 

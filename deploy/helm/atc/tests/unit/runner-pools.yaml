@@ -83,6 +83,44 @@ tests:
               name: RELEASE-NAME-atc-config
               defaultMode: 0444
 
+  - it: accepts a pool with capacity null (operator-declared unbounded)
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: [ubuntu-latest]
+          capacity: null
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "ubuntu-latest"
+      # YAML serializers may emit `null` or `~` for an explicit null value;
+      # either form round-trips through serde_yaml to a Rust `None`.
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "capacity: (null|~)"
+
+  - it: accepts a mixed pool list with both integer and null capacities
+    template: configmap.yaml
+    set:
+      runnerPools:
+        - labels: [self-hosted, linux, x64]
+          capacity: 10
+        - labels: [ubuntu-latest]
+          capacity: null
+    asserts:
+      - hasDocuments:
+          count: 1
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "capacity: 10"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "capacity: (null|~)"
+
   - it: rejects a pool with empty labels via values.schema.json
     template: configmap.yaml
     set:

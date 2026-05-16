@@ -379,9 +379,9 @@
             "description": "Runner labels identifying this pool (e.g. ['self-hosted', 'linux', 'x64']). Canonicalized server-side to a sorted, deduplicated set."
           },
           "capacity": {
-            "type": "integer",
+            "type": ["integer", "null"],
             "minimum": 1,
-            "description": "Declared upper-bound runner count for the pool. Must be >= 1."
+            "description": "Declared upper-bound runner count for the pool. Integer >= 1, or null to declare the pool unbounded (no renderable ceiling). The `capacity` key must be present — operators declare an unbounded pool with `capacity: null` rather than by omitting the key."
           }
         }
       }

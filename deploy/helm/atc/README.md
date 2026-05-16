@@ -101,21 +101,23 @@ Key sections:
 - `serviceAccount` — ServiceAccount creation and annotations
 - `service` — Service type and port configuration
 - `ingress` / `gateway` — Optional routing configuration
-- `runnerPools` — Operator-declared runner-pool capacities. When non-empty, the chart renders a `ConfigMap` mounted read-only at `/etc/atc/config.yaml`; `atc-server` reads the file at startup and surfaces the declared capacities on `/v1/state` so the frontend can render saturation bars per pool. Default `[]` keeps in-memory dev mode and existing deployments byte-identical.
+- `runnerPools` — Operator-declared runner-pool capacities. When non-empty, the chart renders a `ConfigMap` mounted read-only at `/etc/atc/config.yaml`; `atc-server` reads the file at startup and surfaces the declared capacities on `/v1/state` so the frontend can render saturation bars for bounded pools and a distinct affordance for pools declared unbounded. Default `[]` keeps in-memory dev mode and existing deployments byte-identical.
 
 ### Runner-pool capacities
 
-Declare known pool sizes per label set:
+Declare each pool's `capacity` per label set. Use an integer for bounded pools; use `null` for pools without a renderable ceiling (e.g. ARC `AutoscalingRunnerSet` without `maxRunners`, or GitHub-hosted runners):
 
 ```yaml
 runnerPools:
   - labels: [self-hosted, linux, x64]
-    capacity: 10
+    capacity: 10            # bounded — renders running/10 with a saturation bar
   - labels: [ubuntu-latest]
-    capacity: 20
+    capacity: null          # unbounded — renders running with an ∞ affordance
 ```
 
-`labels` is a non-empty array of unique strings (server-side canonicalized to sorted + deduplicated form). `capacity` is an integer ≥ 1. `values.schema.json` rejects malformed entries at `helm install` / `helm upgrade` time; the server additionally rejects duplicate canonicalized label sets across the list at startup. Empty list (the default) renders no `ConfigMap` and no volume mount. Hot-reload is not supported — pool changes require a Pod restart in this chart version.
+`labels` is a non-empty array of unique strings (server-side canonicalized to sorted + deduplicated form). `capacity` is required on every entry: an integer ≥ 1 declares a bounded pool, `null` declares the pool unbounded. Omitting the `capacity` key is rejected at server startup — `null` is the canonical way to declare unboundedness.
+
+`values.schema.json` rejects malformed entries (empty labels, `capacity: 0`, unknown sibling keys) at `helm install` / `helm upgrade` time; the server additionally rejects duplicate canonicalized label sets across the list at startup and rejects the missing-`capacity`-key case via its custom `Deserialize` impl. Empty list (the default) renders no `ConfigMap` and no volume mount. Hot-reload is not supported — pool changes require a Pod restart in this chart version.
 
 ### OpenTelemetry export
 

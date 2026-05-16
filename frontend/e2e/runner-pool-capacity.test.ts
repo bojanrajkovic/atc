@@ -5,13 +5,15 @@ import { expect, test } from './lib/fixtures'
 import { bigintReplacer, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 /**
- * E2E for the operator-declared runner-pool capacity feature (issue #16).
+ * E2E for the operator-declared runner-pool capacity feature.
  *
  * Seeds `/v1/state` with a fixed `runs` + `jobs` set plus a populated
  * `runnerPoolCapacities` block. The frontend's `computePoolStats` merge
- * should populate `RunnerPoolStats.total`, `CapacityBar.svelte` should
- * appear, and the color band should reflect utilization (`--success`
- * <70%, `--running` 70–99%, `--failed` >=100%).
+ * produces a `RunnerPoolStats.total` of `Bounded(n)`, `Unbounded`, or
+ * `Undeclared`; `CapacityBar.svelte` appears only on `Bounded`, the
+ * unbounded affordance appears only on `Unbounded`, and the color band on
+ * the bar reflects utilization (`--success` <70%, `--running` 70–99%,
+ * `--failed` >=100%).
  */
 
 function makeRun(id: number): WorkflowRun {
@@ -131,7 +133,9 @@ test.describe('Runner pool capacity', () => {
     await expect(fill).toHaveAttribute('style', /width: 100%/)
   })
 
-  test('pools without a declaration render no CapacityBar', async ({ page }) => {
+  test('pools without a declaration render no CapacityBar and no unbounded affordance', async ({
+    page,
+  }) => {
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
@@ -150,8 +154,50 @@ test.describe('Runner pool capacity', () => {
 
     await page.goto('/')
 
-    // The job's pool ('ubuntu-latest') has no capacity declaration → no meter.
+    // The job's pool ('ubuntu-latest') has no capacity declaration → no meter,
+    // and crucially no unbounded affordance — that distinguishes Undeclared
+    // from Unbounded for screen-reader users (WCAG 1.4.1).
     await expect(page.getByText('self-hosted-pool')).toBeVisible()
     await expect(page.getByRole('meter', { name: /pool capacity/i })).not.toBeVisible()
+    await expect(page.getByLabel(/unbounded/i)).toHaveCount(0)
+  })
+
+  test('pools declared with capacity null render no CapacityBar and an unbounded affordance', async ({
+    page,
+  }) => {
+    await page.route('**/v1/state', (route) => {
+      route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify(
+          {
+            lastSeq: 1n,
+            runs: [makeRun(1)],
+            jobs: [
+              makeRunningJob(1, 1, ['ubuntu-latest']),
+              makeRunningJob(2, 1, ['ubuntu-latest']),
+              makeRunningJob(3, 1, ['ubuntu-latest']),
+              makeRunningJob(4, 1, ['ubuntu-latest']),
+              makeRunningJob(5, 1, ['ubuntu-latest']),
+            ],
+            runnerPoolCapacities: [{ labels: ['ubuntu-latest'], capacity: null }],
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
+      })
+    })
+
+    await page.goto('/')
+
+    // No saturation bar (capacity is unbounded).
+    await expect(page.getByRole('meter', { name: /pool capacity/i })).not.toBeVisible()
+
+    // Count text — running only, no `/N` suffix.
+    await expect(page.getByText('5', { exact: true })).toBeVisible()
+
+    // The unbounded affordance MUST carry text/icon semantics distinct from
+    // styling alone — verified by an accessible-name lookup so a future
+    // visual swap can't silently regress to an icon-only treatment.
+    const affordance = page.getByLabel(/unbounded/i)
+    await expect(affordance).toBeVisible()
   })
 })

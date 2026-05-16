@@ -8,6 +8,11 @@ import type { LabelSet } from "./LabelSet";
  * composed into each `StateSnapshot` response, and merged by the frontend
  * into the `total` field of the matching derived `RunnerPoolStats`.
  * Unaffected by webhook events — this is configuration, not observed state.
+ *
+ * `capacity` is `Option<u32>`: `Some(n)` is a declared ceiling, `None` is
+ * `capacity: null` in YAML and marks the pool as unbounded. The `capacity`
+ * key is required on the wire — the custom `Deserialize` impl rejects
+ * inputs that omit it (mirrors the operator-config strictness).
  */
 export type RunnerPoolCapacity = { 
 /**
@@ -15,6 +20,6 @@ export type RunnerPoolCapacity = {
  */
 labels: LabelSet, 
 /**
- * Declared upper-bound runner count for the pool.
+ * Declared upper-bound runner count, or `None` for an unbounded pool.
  */
-capacity: number, };
+capacity: number | null, };

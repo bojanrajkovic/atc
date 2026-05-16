@@ -341,13 +341,23 @@ podDisruptionBudget:
 # renders a ConfigMap and a read-only volume mount at /etc/atc/config.yaml
 # that atc-server reads at startup; the parsed capacities flow onto
 # StateSnapshot.runnerPoolCapacities so the frontend renders a saturation
-# bar (running/capacity) for each declared pool. Labels are canonicalized
-# server-side (sort + dedup); duplicate canonicalized label sets fail
-# startup. Empty list (the default) renders no ConfigMap and no volume.
+# bar (running/capacity) for each bounded pool and a distinct unbounded
+# affordance for pools declared with `capacity: null`. Labels are
+# canonicalized server-side (sort + dedup); duplicate canonicalized label
+# sets fail startup. Empty list (the default) renders no ConfigMap and no
+# volume.
+#
+# The `capacity` key is required on every entry. Use an integer (>= 1) to
+# declare a bounded pool, or `null` to declare the pool unbounded (e.g. an
+# ARC AutoscalingRunnerSet without `maxRunners`, or GitHub-hosted runners
+# where per-account concurrency limits don't yield a per-label ceiling).
+# Omitting the `capacity` key is rejected at startup; `null` is the
+# canonical way to declare an unbounded pool.
+#
 # Example:
 #   runnerPools:
 #     - labels: [self-hosted, linux, x64]
-#       capacity: 10
+#       capacity: 10        # bounded — renders running/10 with a saturation bar
 #     - labels: [ubuntu-latest]
-#       capacity: 20
+#       capacity: null      # unbounded — renders running with an ∞ affordance
 runnerPools: []

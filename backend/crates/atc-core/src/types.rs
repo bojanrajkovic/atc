@@ -108,6 +108,32 @@ impl<S: Into<String>> FromIterator<S> for LabelSet {
     }
 }
 
+/// Three-state representation of a runner pool's declared total capacity.
+///
+/// Encodes the three operator outcomes on a single field:
+///
+/// - `Bounded(n)` — operator declared an integer capacity.
+/// - `Unbounded` — operator declared the pool with `capacity: null`.
+/// - `Undeclared` — pool observed in webhook traffic but absent from the
+///   operator's `runner_pools` config.
+///
+/// Adjacent tagging keeps the discriminator on a single field and works for
+/// both payload-bearing and unit variants across serde + ts-rs (internal
+/// tagging breaks on unit variants in ts-rs 12.x; external produces a less
+/// ergonomic shape).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", content = "value")]
+#[ts(export)]
+pub enum RunnerPoolTotal {
+    /// Operator declared an integer ceiling for the pool.
+    Bounded(u32),
+    /// Operator declared the pool with `capacity: null` — no renderable ceiling.
+    Unbounded,
+    /// Pool observed in webhook traffic but absent from the operator's
+    /// `runner_pools` config.
+    Undeclared,
+}
+
 /// Derived runner pool statistics.
 ///
 /// Computed on read from live job state — not stored separately.
@@ -125,14 +151,10 @@ pub struct RunnerPoolStats {
     /// Runner group name from the most recently observed `RunnerInfo`
     /// for this label set, if available.
     pub group_name: Option<String>,
-    /// Whether this pool uses GitHub-hosted (elastic) runners.
-    /// Derived from `RunnerInfo.group_id == Some(0)` for any observed runner.
-    pub is_elastic: bool,
-    /// Total runner capacity for this pool, populated by the frontend by
-    /// merging operator-declared `RunnerPoolCapacity` entries from the
-    /// snapshot rail. `None` when the operator has not declared a capacity
-    /// for this label set.
-    pub total: Option<u32>,
+    /// Three-state declared total for this pool. Populated by the frontend
+    /// by merging operator-declared `RunnerPoolCapacity` entries from the
+    /// snapshot rail against the derived label set.
+    pub total: RunnerPoolTotal,
 }
 
 /// Operator-declared capacity for a runner pool, keyed by label set.
@@ -141,13 +163,123 @@ pub struct RunnerPoolStats {
 /// composed into each `StateSnapshot` response, and merged by the frontend
 /// into the `total` field of the matching derived `RunnerPoolStats`.
 /// Unaffected by webhook events — this is configuration, not observed state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+///
+/// `capacity` is `Option<u32>`: `Some(n)` is a declared ceiling, `None` is
+/// `capacity: null` in YAML and marks the pool as unbounded. The `capacity`
+/// key is required on the wire — the custom `Deserialize` impl rejects
+/// inputs that omit it (mirrors the operator-config strictness).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 pub struct RunnerPoolCapacity {
     /// Canonical (sorted, deduped) label set identifying the pool.
     pub labels: LabelSet,
-    /// Declared upper-bound runner count for the pool.
-    pub capacity: u32,
+    /// Declared upper-bound runner count, or `None` for an unbounded pool.
+    pub capacity: Option<u32>,
+}
+
+impl<'de> Deserialize<'de> for RunnerPoolCapacity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserialize_pool_entry(deserializer, "RunnerPoolCapacity", |labels, capacity| {
+            Self { labels, capacity }
+        })
+    }
+}
+
+/// Shared `Deserialize` walker for runner-pool entries.
+///
+/// Both `RunnerPoolCapacity` (this crate) and `atc-server::config::RunnerPoolConfig`
+/// share the same input contract — `labels` (non-empty array of strings) and
+/// `capacity` (integer or null, key required) — but produce different label
+/// representations (`LabelSet` here, `Vec<String>` server-side, kept raw so
+/// `validate_runner_pools` can canonicalize in place). The factory closure
+/// parameterizes the construction so the visitor logic — key tracking,
+/// missing/null discrimination, unknown-key rejection, and the explicit
+/// "capacity is required" message — is written once.
+///
+/// # Errors
+///
+/// Returns `D::Error` if the input is not a map, contains an unknown field,
+/// contains a duplicate `labels` or `capacity` key, omits the `labels` key,
+/// or omits the `capacity` key (rejected with a remediation-naming message
+/// that points operators at the `capacity: null` form for unbounded pools).
+pub fn deserialize_pool_entry<'de, D, T, L, F>(
+    deserializer: D,
+    type_name: &'static str,
+    make: F,
+) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    L: Deserialize<'de>,
+    F: FnOnce(L, Option<u32>) -> T,
+{
+    struct Entry<F, T, L> {
+        type_name: &'static str,
+        make: Option<F>,
+        _marker: std::marker::PhantomData<fn() -> (T, L)>,
+    }
+
+    impl<'de, F, T, L> serde::de::Visitor<'de> for Entry<F, T, L>
+    where
+        L: Deserialize<'de>,
+        F: FnOnce(L, Option<u32>) -> T,
+    {
+        type Value = T;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "struct {}", self.type_name)
+        }
+
+        fn visit_map<M>(mut self, mut map: M) -> Result<T, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            let mut labels: Option<L> = None;
+            let mut capacity: Option<u32> = None;
+            let mut capacity_seen = false;
+
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "labels" => {
+                        if labels.is_some() {
+                            return Err(serde::de::Error::duplicate_field("labels"));
+                        }
+                        labels = Some(map.next_value()?);
+                    }
+                    "capacity" => {
+                        if capacity_seen {
+                            return Err(serde::de::Error::duplicate_field("capacity"));
+                        }
+                        capacity_seen = true;
+                        capacity = map.next_value::<Option<u32>>()?;
+                    }
+                    other => {
+                        return Err(serde::de::Error::unknown_field(
+                            other,
+                            &["labels", "capacity"],
+                        ));
+                    }
+                }
+            }
+
+            let labels = labels.ok_or_else(|| serde::de::Error::missing_field("labels"))?;
+            if !capacity_seen {
+                return Err(serde::de::Error::custom(
+                    "capacity is required (use `capacity: null` for an unbounded pool)",
+                ));
+            }
+            let make = self.make.take().expect("make consumed exactly once");
+            Ok(make(labels, capacity))
+        }
+    }
+
+    deserializer.deserialize_map(Entry::<F, T, L> {
+        type_name,
+        make: Some(make),
+        _marker: std::marker::PhantomData,
+    })
 }
 
 #[cfg(test)]
@@ -365,9 +497,24 @@ mod tests {
     fn runner_pool_capacity_serde_round_trip() {
         let capacity = RunnerPoolCapacity {
             labels: LabelSet::new(["self-hosted", "linux", "x64"]),
-            capacity: 10,
+            capacity: Some(10),
         };
         let json = serde_json::to_string(&capacity).expect("serialize");
+        let back: RunnerPoolCapacity = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(capacity, back);
+    }
+
+    #[test]
+    fn runner_pool_capacity_null_round_trips() {
+        let capacity = RunnerPoolCapacity {
+            labels: LabelSet::new(["ubuntu-latest"]),
+            capacity: None,
+        };
+        let json = serde_json::to_string(&capacity).expect("serialize");
+        assert!(
+            json.contains(r#""capacity":null"#),
+            "explicit null on the wire, got: {json}"
+        );
         let back: RunnerPoolCapacity = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(capacity, back);
     }
@@ -378,12 +525,65 @@ mod tests {
         // consumers see canonical-form labels regardless of insertion order.
         let capacity = RunnerPoolCapacity {
             labels: LabelSet::new(["x64", "self-hosted", "linux"]),
-            capacity: 5,
+            capacity: Some(5),
         };
         let json = serde_json::to_string(&capacity).expect("serialize");
         assert!(
             json.contains(r#"["linux","self-hosted","x64"]"#),
             "labels should serialize sorted, got: {json}"
         );
+    }
+
+    #[test]
+    fn runner_pool_capacity_accepts_explicit_null() {
+        // Wire-snapshot strictness mirrors the operator-config side: an
+        // explicit null is the canonical way to declare a pool unbounded.
+        let json = r#"{"labels":["ubuntu-latest"],"capacity":null}"#;
+        let cap: RunnerPoolCapacity = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(cap.capacity, None);
+    }
+
+    #[test]
+    fn runner_pool_capacity_rejects_missing_capacity_key() {
+        let json = r#"{"labels":["ubuntu-latest"]}"#;
+        let err = serde_json::from_str::<RunnerPoolCapacity>(json)
+            .expect_err("missing capacity should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("capacity is required"),
+            "error should explain key requirement, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn runner_pool_capacity_rejects_unknown_field() {
+        let json = r#"{"labels":["a"],"capacity":1,"elastic":true}"#;
+        let err = serde_json::from_str::<RunnerPoolCapacity>(json)
+            .expect_err("unknown field should fail");
+        assert!(
+            err.to_string().contains("elastic"),
+            "error should mention the unknown field, got: {err}"
+        );
+    }
+
+    #[test]
+    fn runner_pool_total_round_trips_all_three_variants() {
+        let bounded = RunnerPoolTotal::Bounded(10);
+        let bounded_json = serde_json::to_string(&bounded).expect("serialize bounded");
+        assert_eq!(bounded_json, r#"{"kind":"Bounded","value":10}"#);
+        let back: RunnerPoolTotal = serde_json::from_str(&bounded_json).expect("deserialize");
+        assert_eq!(back, bounded);
+
+        let unbounded = RunnerPoolTotal::Unbounded;
+        let unbounded_json = serde_json::to_string(&unbounded).expect("serialize unbounded");
+        assert_eq!(unbounded_json, r#"{"kind":"Unbounded"}"#);
+        let back: RunnerPoolTotal = serde_json::from_str(&unbounded_json).expect("deserialize");
+        assert_eq!(back, unbounded);
+
+        let undeclared = RunnerPoolTotal::Undeclared;
+        let undeclared_json = serde_json::to_string(&undeclared).expect("serialize undeclared");
+        assert_eq!(undeclared_json, r#"{"kind":"Undeclared"}"#);
+        let back: RunnerPoolTotal = serde_json::from_str(&undeclared_json).expect("deserialize");
+        assert_eq!(back, undeclared);
     }
 }
