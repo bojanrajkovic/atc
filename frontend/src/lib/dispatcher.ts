@@ -54,7 +54,8 @@ class EventDispatcher {
   }
 
   /** Read-only getter exposing current buffer length. Used by E2E harness
-   *  (sendWSBatch synchronization fence: waitForFunction(() => bufferLength === 0)). */
+   *  (sendWSBatch / sendWSBatchPaced synchronization fence:
+   *  waitForFunction(() => bufferLength === 0)). */
   get bufferLength(): number {
     return this.buffer.length
   }
