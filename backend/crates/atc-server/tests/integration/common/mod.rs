@@ -335,7 +335,8 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: Some(secret.to_string()),
-        runner_pool_capacities: Vec::new(),
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -359,7 +360,8 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        runner_pool_capacities: Vec::new(),
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -629,7 +631,8 @@ async fn build_app_inner(
     let state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        runner_pool_capacities: Vec::new(),
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
     });

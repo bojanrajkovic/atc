@@ -55,7 +55,7 @@ tests:
           path: data["config.yaml"]
           pattern: "capacity: 20"
 
-  - it: mounts the ConfigMap read-only at /etc/atc/config.yaml when runnerPools is non-empty
+  - it: mounts the ConfigMap as a directory at /etc/atc when runnerPools is non-empty
     template: deployment.yaml
     set:
       runnerPools:
@@ -63,6 +63,12 @@ tests:
           capacity: 10
     asserts:
       - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: runner-pool-config
+            mountPath: /etc/atc
+            readOnly: true
+      - notContains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: runner-pool-config

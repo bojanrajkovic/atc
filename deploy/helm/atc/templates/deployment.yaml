@@ -163,9 +163,12 @@ spec:
             - name: tmp
               mountPath: /tmp
             {{- if gt (len .Values.runnerPools) 0 }}
+            # Directory mount (not `subPath`) so kubelet's ConfigMap update
+            # propagation reaches the pod — `subPath` blocks the update path,
+            # which would defeat the hot-reload watcher. See
+            # `docs/architecture/deployment.md` § "File-based configuration".
             - name: runner-pool-config
-              mountPath: /etc/atc/config.yaml
-              subPath: config.yaml
+              mountPath: /etc/atc
               readOnly: true
             {{- end }}
       volumes:

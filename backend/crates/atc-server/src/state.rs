@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 use atc_core::RunnerPoolCapacity;
 use atc_persist::PersistentStore;
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+
+use crate::config_watcher::ConfigEvent;
 
 /// Shared application state passed to all Axum handlers via `State<Arc<AppState>>`.
 pub struct AppState {
@@ -20,10 +23,27 @@ pub struct AppState {
     /// `None` means verification is skipped.
     pub webhook_secret: Option<String>,
     /// Operator-declared runner-pool capacities loaded from the YAML config
-    /// at startup. Single source of truth — composed into every
-    /// `StateSnapshot` response by `routes::state_handler`. Empty when the
-    /// operator has not declared any pools.
-    pub runner_pool_capacities: Vec<RunnerPoolCapacity>,
+    /// at startup and re-loaded by the `config_watcher` task on file changes.
+    ///
+    /// Wrapped in an async `RwLock` so the watcher can atomically replace the
+    /// vector while route handlers and tests hold short read guards. Tokio's
+    /// `RwLock` is write-preferring, so a sustained read load cannot starve
+    /// the watcher's writes (relevant under heavy `/v1/state` traffic). Empty
+    /// when the operator has not declared any pools.
+    ///
+    /// The watcher takes `write().await`, compares current to new under the
+    /// guard, and replaces atomically if different. `routes::state_handler`
+    /// takes a short `read().await` and clones into the snapshot response.
+    pub runner_pool_capacities: RwLock<Vec<RunnerPoolCapacity>>,
+    /// Broadcast sender for config-change events produced by `config_watcher`.
+    ///
+    /// The WS handler subscribes to this channel alongside `persist.subscribe()`
+    /// and wraps each `ConfigEvent` variant in the wire `WireFrame` shape.
+    /// Capacity matches the `CommittedEvent` channel (256). Lagged on this
+    /// channel closes the WS connection symmetrically with the committed
+    /// channel — client reconnects via the existing path and re-fetches
+    /// `/v1/state`.
+    pub config_events_tx: broadcast::Sender<ConfigEvent>,
     /// Cancellation token for cooperative shutdown.
     ///
     /// Cloned from `main`'s `shutdown` token. WS handlers observe it via the

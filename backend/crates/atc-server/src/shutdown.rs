@@ -35,6 +35,10 @@ use crate::otel::{self, OtelHandles};
 pub const SHUTDOWN_TIMEOUT_WS: Duration = Duration::from_secs(2);
 pub const SHUTDOWN_TIMEOUT_SERVES: Duration = Duration::from_secs(3);
 pub const SHUTDOWN_TIMEOUT_METRICS: Duration = Duration::from_secs(1);
+/// The config_watcher task only has to drop its debouncer and exit when it
+/// observes `shutdown.cancelled()`. 1 second is generous; the underlying
+/// notify thread is detached and reaped by process exit.
+pub const SHUTDOWN_TIMEOUT_CONFIG_WATCHER: Duration = Duration::from_secs(1);
 
 /// Log an unexpected early exit of a spawned axum serve task. Used by the
 /// trigger select arm: if a serve resolves before any signal, we log and
@@ -133,6 +137,7 @@ pub async fn run_shutdown_orchestration(
     main_serve_task: JoinHandle<io::Result<()>>,
     persist: Arc<dyn PersistentStore>,
     metrics_handle: crate::metrics::ProcessCollectorHandle,
+    config_watcher_handle: Option<JoinHandle<()>>,
     otel_handles: Option<OtelHandles>,
 ) -> bool {
     // Step 1: Wait for the shutdown trigger — signal handler OR an early
@@ -189,8 +194,12 @@ pub async fn run_shutdown_orchestration(
     // Step 4: Join the persistent store's background tasks. `persist.shutdown()`
     // joins listener + drain in PG mode, eviction in in-memory mode, each
     // bounded by its own per-task timeout constant (defined alongside the
-    // store implementation). Then join the process metrics collector.
+    // store implementation). Then join the config_watcher task (if armed),
+    // then the process metrics collector.
     persist.shutdown().await;
+    if let Some(handle) = config_watcher_handle {
+        join_with_timeout(handle, SHUTDOWN_TIMEOUT_CONFIG_WATCHER, "config_watcher").await;
+    }
     join_with_timeout(
         metrics_handle.shutdown(),
         SHUTDOWN_TIMEOUT_METRICS,
@@ -210,6 +219,9 @@ pub async fn run_shutdown_orchestration(
     //      the `opentelemetry-system-metrics` observer task; aborted via
     //      `metrics_handle.shutdown()` immediately above this comment)
     //   3. axum graceful drain  (`main_serve_task` plus `axum-otel-metrics`)
+    //   4. config_watcher       (the file-watcher task — joined via the
+    //      `config_watcher_handle` parameter, after `persist.shutdown()`
+    //      and before `metrics_handle.shutdown()`)
     // A new emitter category MUST be joined before this point and named here
     // so the "no live emitter" property holds for it too.
     if let Some(handles) = otel_handles {
@@ -297,6 +309,7 @@ mod tests {
                 persist,
                 metrics_handle,
                 None,
+                None,
             ),
         )
         .await;
@@ -339,6 +352,7 @@ mod tests {
                 main_serve_task,
                 persist,
                 metrics_handle,
+                None,
                 None,
             ),
         )

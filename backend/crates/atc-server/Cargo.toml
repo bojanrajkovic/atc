@@ -37,6 +37,7 @@ http = "=1.4.0"
 axum-otel-metrics = "=0.13.0"
 uuid = { version = "=1.23.1", features = ["v4", "fast-rng"] }
 humantime-serde = "=1.1.1"
+notify-debouncer-full = "0.7.0"
 
 [dev-dependencies]
 atc-core = { path = "../atc-core", features = ["test-support"] }

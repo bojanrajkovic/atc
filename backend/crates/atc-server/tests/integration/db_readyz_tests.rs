@@ -31,7 +31,8 @@ async fn build_app_with_pool(
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        runner_pool_capacities: Vec::new(),
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
     });

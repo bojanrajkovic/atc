@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::SystemClock;
+use atc_server::config_watcher::ConfigEvent;
 use atc_server::routes;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
@@ -39,7 +40,8 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
-        runner_pool_capacities: Vec::new(),
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
     });
@@ -362,4 +364,198 @@ async fn idle_client_receives_close_on_cancel() {
         "close code should be 1001 (Going Away), got {:?}",
         close.code
     );
+}
+
+/// WireFrame: a committed event arrives as `{"kind":"Committed", ...}` with
+/// camelCase fields (matching the existing CommittedEvent convention).
+#[tokio::test]
+#[serial_test::serial]
+async fn wireframe_committed_kind_matches_camelcase() {
+    let (server_addr, _) = test_setup(256).await;
+
+    let ws_url = format!("ws://{}/v1/ws", server_addr);
+    let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WebSocket connection failed");
+
+    let client = reqwest::Client::new();
+    let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
+    client
+        .post(&webhook_url)
+        .header("X-GitHub-Event", "workflow_run")
+        .body(common::fixture_workflow_run_requested())
+        .send()
+        .await
+        .expect("Webhook POST failed");
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("timeout waiting for frame")
+        .expect("frame")
+        .expect("frame is Ok");
+    let text = match frame {
+        Message::Text(t) => t,
+        other => panic!("Expected text frame, got: {other:?}"),
+    };
+
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    assert_eq!(
+        json["kind"], "Committed",
+        "outer kind discriminator should be \"Committed\"",
+    );
+    assert!(json["seq"].is_number());
+    assert!(json["event"].is_object());
+}
+
+/// WireFrame: a config-watcher Update arrives as
+/// `{"kind":"ConfigUpdate","runnerPoolCapacities":[...]}` with camelCase
+/// field names.
+#[tokio::test]
+#[serial_test::serial]
+async fn wireframe_config_update_kind_and_camelcase_fields() {
+    let (server_addr, state) = test_setup(256).await;
+
+    let ws_url = format!("ws://{}/v1/ws", server_addr);
+    let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WebSocket connection failed");
+
+    // Wait briefly so the handler subscribes before we broadcast.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let caps = vec![atc_core::RunnerPoolCapacity {
+        labels: atc_core::LabelSet::new(["self-hosted", "linux"]),
+        capacity: 7,
+    }];
+    state
+        .config_events_tx
+        .send(ConfigEvent::Update(caps))
+        .expect("send ConfigEvent::Update");
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("timeout waiting for frame")
+        .expect("frame")
+        .expect("frame is Ok");
+    let text = match frame {
+        Message::Text(t) => t,
+        other => panic!("Expected text frame, got: {other:?}"),
+    };
+
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    assert_eq!(json["kind"], "ConfigUpdate");
+    let caps_json = json["runnerPoolCapacities"]
+        .as_array()
+        .expect("runnerPoolCapacities is array");
+    assert_eq!(caps_json.len(), 1);
+    assert_eq!(caps_json[0]["capacity"], 7);
+}
+
+/// WireFrame: a config-watcher ReloadError arrives as
+/// `{"kind":"ConfigReloadError","reason":"..."}`.
+#[tokio::test]
+#[serial_test::serial]
+async fn wireframe_config_reload_error_kind() {
+    let (server_addr, state) = test_setup(256).await;
+
+    let ws_url = format!("ws://{}/v1/ws", server_addr);
+    let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WebSocket connection failed");
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    state
+        .config_events_tx
+        .send(ConfigEvent::ReloadError {
+            reason: "capacity must be >= 1".to_string(),
+        })
+        .expect("send ConfigEvent::ReloadError");
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("timeout waiting for frame")
+        .expect("frame")
+        .expect("frame is Ok");
+    let text = match frame {
+        Message::Text(t) => t,
+        other => panic!("Expected text frame, got: {other:?}"),
+    };
+
+    let json: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    assert_eq!(json["kind"], "ConfigReloadError");
+    assert_eq!(json["reason"], "capacity must be >= 1");
+}
+
+/// Symmetric Lagged handling: a slow client on the config channel that lags
+/// past the broadcast capacity gets disconnected, matching the existing
+/// committed-channel close-on-lag behavior.
+#[tokio::test]
+#[serial_test::serial]
+async fn config_channel_lagged_closes_socket() {
+    // Build state with a tiny config-channel capacity (2). The committed
+    // channel uses the standard capacity — we're isolating config-channel
+    // lag from committed-channel lag here.
+    common::ensure_recorder_installed();
+
+    let persist = InMemoryStore::new_for_test(Arc::new(SystemClock), Duration::from_hours(1), 256)
+        as Arc<dyn atc_persist::PersistentStore>;
+    let (config_tx, _) = tokio::sync::broadcast::channel::<ConfigEvent>(2);
+    let state = Arc::new(AppState {
+        persist,
+        webhook_secret: None,
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: config_tx.clone(),
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
+    });
+
+    let router = routes::api_routes()
+        .with_state(state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let ws_url = format!("ws://{addr}/v1/ws");
+    let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WebSocket connect");
+
+    // Wait for the handler to subscribe.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Push more events than the capacity-2 channel can hold without a
+    // consumer keeping pace. The first events get buffered; pushing past
+    // capacity advances the receiver cursor and the next recv() returns
+    // Lagged. The handler closes the socket on Lagged.
+    for i in 0..10 {
+        let _ = config_tx.send(ConfigEvent::ReloadError {
+            reason: format!("forced lag {i}"),
+        });
+    }
+
+    // The handler should close the socket; wait for the Close frame OR for
+    // the stream to end. The first frames may arrive successfully (channel
+    // doesn't lag until the cursor advances past capacity), so iterate.
+    let close = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Text(_))) => continue,
+                Some(Ok(Message::Close(frame))) => return Some(frame),
+                Some(Ok(_)) => continue,
+                Some(Err(_)) | None => return None,
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for socket close after lag");
+    // Either a Close frame or a connection-end is acceptable — both mean
+    // the handler exited. Tungstenite often surfaces the close as an
+    // immediate stream-end after a server-side disconnect; the key
+    // assertion is that the socket no longer accepts further frames.
+    drop(close);
 }

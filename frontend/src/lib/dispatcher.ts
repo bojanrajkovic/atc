@@ -1,5 +1,6 @@
 import { runStore } from '$lib/stores/runs.svelte'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
+import type { WireFrame } from '$lib/types/generated/WireFrame'
 
 /**
  * Tracks event types that have already triggered a console.warn so that a
@@ -12,10 +13,61 @@ class EventDispatcher {
   private rafId: number | null = null
   private onFlushCb: ((events: ReadonlyArray<CommittedEvent>) => void) | null = null
 
-  dispatch(event: CommittedEvent): void {
-    this.buffer.push(event)
-    if (this.rafId === null) {
-      this.rafId = requestAnimationFrame(() => this.processBuffer())
+  /**
+   * Route an incoming wire frame.
+   *
+   * Committed frames are RAF-coalesced into `buffer` so a burst of webhook
+   * events lands as a single Svelte mutation pass. ConfigUpdate /
+   * ConfigReloadError frames are out-of-band (low volume, no per-frame
+   * batching needed) — they bypass RAF and apply immediately.
+   *
+   * Accepts either a `WireFrame` (the production wire shape) or a bare
+   * `CommittedEvent` (a legacy shorthand used by tests and by the E2E
+   * `sendWS` bridge). A bare `CommittedEvent` is auto-wrapped as
+   * `{ kind: 'Committed', ...committedEvent }` so the two callers share one
+   * entry point.
+   */
+  dispatch(frameOrCommitted: WireFrame | CommittedEvent): void {
+    const frame: WireFrame =
+      'kind' in frameOrCommitted
+        ? frameOrCommitted
+        : { kind: 'Committed', seq: frameOrCommitted.seq, event: frameOrCommitted.event }
+
+    switch (frame.kind) {
+      case 'Committed': {
+        // Extract the inner CommittedEvent shape. Serde's internally-tagged
+        // representation flattens the variant's tuple-payload into the same
+        // object as the kind discriminator, so `frame` carries `seq` and
+        // `event` directly.
+        const committedEvent: CommittedEvent = { seq: frame.seq, event: frame.event }
+        this.buffer.push(committedEvent)
+        if (this.rafId === null) {
+          this.rafId = requestAnimationFrame(() => this.processBuffer())
+        }
+        break
+      }
+      case 'ConfigUpdate':
+        runStore.applyConfigUpdate(frame.runnerPoolCapacities)
+        break
+      case 'ConfigReloadError':
+        // biome-ignore lint/suspicious/noConsole: operator-visible warning, not debugging output
+        console.warn(
+          `Config reload failed on server: ${frame.reason}. ` +
+            `UI surfacing tracked in https://github.com/bojanrajkovic/atc/issues/203.`,
+        )
+        break
+      default: {
+        // Unknown outer kind from a newer backend. Warn once per kind so a
+        // sustained rolling-deploy mismatch does not spam the console.
+        const unknownKind = (frame as { kind: string }).kind
+        if (!warnedUnknownTypes.has(`kind:${unknownKind}`)) {
+          warnedUnknownTypes.add(`kind:${unknownKind}`)
+          // biome-ignore lint/suspicious/noConsole: operator-visible warning, not debugging output
+          console.warn(
+            `EventDispatcher.dispatch: unknown frame kind "${unknownKind}" — skipping (future occurrences of this kind will be silenced)`,
+          )
+        }
+      }
     }
   }
 

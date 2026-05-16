@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod config;
+pub mod config_watcher;
 pub mod metrics;
 pub mod otel;
 pub mod routes;

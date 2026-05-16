@@ -430,4 +430,71 @@ describe('EventDispatcher', () => {
       }
     })
   })
+
+  describe('Outer WireFrame kind switch', () => {
+    beforeEach(() => {
+      eventDispatcher.setOnFlush(null)
+      runStore.clear()
+    })
+
+    it('Committed frame routes to runStore via the RAF-batched path', () => {
+      eventDispatcher.dispatch({
+        kind: 'Committed',
+        seq: 7n,
+        event: {
+          type: 'Run',
+          data: {
+            runId: 7n,
+            org: 'o',
+            repo: 'r',
+            workflowName: null,
+            workflowPath: null,
+            branch: 'main',
+            headSha: 'sha',
+            commitMessage: null,
+            triggerEvent: 'push',
+            displayTitle: 'Run 7',
+            htmlUrl: 'https://example.com',
+            createdAt: new Date().toISOString(),
+            runStartedAt: null,
+            updatedAt: new Date().toISOString(),
+            action: { type: 'Requested' },
+          },
+        },
+      })
+      eventDispatcher.flush()
+      expect(runStore.runs.has(7n)).toBe(true)
+    })
+
+    it('ConfigUpdate frame replaces runnerPoolCapacities immediately, bypassing RAF', () => {
+      // No flush() needed — config frames are out-of-band.
+      eventDispatcher.dispatch({
+        kind: 'ConfigUpdate',
+        runnerPoolCapacities: [
+          {
+            labels: ['linux', 'self-hosted'],
+            capacity: 11,
+          },
+        ],
+      })
+      expect(runStore.runnerPoolCapacities).toHaveLength(1)
+      expect(runStore.runnerPoolCapacities[0]?.capacity).toBe(11)
+    })
+
+    it('ConfigReloadError frame fires console.warn referencing issue #203', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        eventDispatcher.dispatch({
+          kind: 'ConfigReloadError',
+          reason: 'capacity must be >= 1',
+        })
+        expect(warnSpy).toHaveBeenCalledOnce()
+        const msg = warnSpy.mock.calls[0]![0] as string
+        expect(msg).toContain('capacity must be >= 1')
+        expect(msg).toContain('issues/203')
+      } finally {
+        warnSpy.mockRestore()
+      }
+    })
+  })
 })

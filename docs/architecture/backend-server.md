@@ -228,16 +228,18 @@ A shared `AppState` struct is passed to all handlers via Axum's `State` extracto
 ```rust
 struct AppState {
     persist: Arc<dyn PersistentStore>,
-    webhook_tx: broadcast::Sender<CommittedEvent>,
     webhook_secret: Option<String>,
+    runner_pool_capacities: RwLock<Vec<RunnerPoolCapacity>>,
+    config_events_tx: broadcast::Sender<ConfigEvent>,
     shutdown: CancellationToken,
     ws_tracker: TaskTracker,
 }
 ```
 
-- **`persist`** — `Arc<dyn PersistentStore>` (ADR 0005). The write-path dispatch point for webhook ingestion and the read-path for state snapshots. `PgStore` when `ATC_DATABASE_URL` is set; `InMemoryStore` otherwise. Route handlers call `state.persist.apply_*_event(env).await` and `state.persist.read_snapshot().await` without branching on storage mode.
-- **`webhook_tx`** — Sender side of a bounded `tokio::sync::broadcast` channel (capacity 256). **In PG mode the drain task is the SOLE writer.** In in-memory mode `InMemoryStore::apply_*_event` broadcasts directly under the seq mutex. WebSocket clients subscribe as receivers.
+- **`persist`** — `Arc<dyn PersistentStore>` (ADR 0005). The write-path dispatch point for webhook ingestion and the read-path for state snapshots. `PgStore` when `ATC_DATABASE_URL` is set; `InMemoryStore` otherwise. Route handlers call `state.persist.apply_*_event(env).await` and `state.persist.read_snapshot().await` without branching on storage mode. The store's broadcast sender (bounded, capacity 256) is the WS handler's subscription seam via `state.persist.subscribe()`. **In PG mode the drain task is the SOLE writer**; in-memory mode broadcasts directly under the seq mutex.
 - **`webhook_secret`** — Optional GitHub webhook secret loaded from `ATC_GITHUB__WEBHOOK_SECRET`. If `None`, HMAC verification is skipped. If `Some`, signatures are required and validated.
+- **`runner_pool_capacities`** — `tokio::sync::RwLock<Vec<RunnerPoolCapacity>>` wrapping the operator-declared capacity list. Built at startup from `Config::runner_pools`; replaced atomically by the `config_watcher` task on YAML reload. `routes::state_handler` takes a short `.read().await` and clones the slice onto each `/v1/state` snapshot. Tokio's `RwLock` is write-preferring, so a sustained read load from `/v1/state` cannot starve the watcher's writes.
+- **`config_events_tx`** — Bounded `broadcast::Sender<ConfigEvent>` (capacity 256). The `config_watcher` task is the sole writer; the WS handler subscribes alongside `persist.subscribe()` and wraps each variant in the wire `WireFrame` shape. Lagged on this channel closes the WS connection symmetrically with the committed channel.
 - **`shutdown`** — Shared `CancellationToken` for cooperative shutdown signalling to background tasks and WS handlers.
 - **`ws_tracker`** — `TaskTracker` counting live WebSocket handlers. `ws_tracker.wait()` is awaited during shutdown to ensure every WS client receives a `Close(1001)` frame before the process exits.
 
@@ -356,7 +358,44 @@ struct StateSnapshot {
 
 **Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `CommittedEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
 
-**Capacity composition:** `runner_pool_capacities` is operator config, not observed state. `PersistentStore` (Postgres + InMemory) leaves the field as `Vec::new()` when constructing a snapshot. `routes::state_handler` clones `AppState::runner_pool_capacities` (built once at startup from `Config::runner_pools`) onto the response after the persist call returns. Two consequences: (1) the `PersistentStore` trait stays single-purpose — it owns event-derived state only — and (2) capacity changes require a process restart to take effect (a hot-reload follow-up is tracked separately).
+**Capacity composition:** `runner_pool_capacities` is operator config, not observed state. `PersistentStore` (Postgres + InMemory) leaves the field as `Vec::new()` when constructing a snapshot. `routes::state_handler` takes a short `read().await` on `AppState::runner_pool_capacities` and clones the slice onto the response after the persist call returns. The `PersistentStore` trait stays single-purpose — it owns event-derived state only. Capacity changes propagate without a process restart: the `config_watcher` task re-reads the YAML on filesystem change and replaces the RwLock contents atomically (see [Hot-reload](#hot-reload-config_watcher) below).
+
+### Hot-reload (`config_watcher`)
+
+`config_watcher::spawn_config_watcher` (in `backend/crates/atc-server/src/config_watcher.rs`) watches the parent directory of `$ATC_CONFIG_FILE` with `notify-debouncer-full` (500 ms debounce, non-recursive). Each debounced filesystem event triggers a reload through `config::reload_runner_pools` — a narrow-schema parse that only observes the `runner_pools` block, so scalar fields are deliberately ignored. The reload outcome is one of:
+
+- **Applied** — new capacities differ from current AppState. The watcher takes `runner_pool_capacities.write().await`, compares inside the guard (TOCTOU-safe), replaces the inner Vec, releases the guard, then broadcasts `ConfigEvent::Update(new_caps)` on `config_events_tx`. The WS handler wraps it as `WireFrame::ConfigUpdate`.
+- **No-op** — content matches current AppState. Counter increments under `reason="noop"`; no broadcast.
+- **Failure** — read / parse / validate error. Old capacities stay in place. The watcher logs structured error, increments `atc_config_reload_total{result="failure",reason=<category>}`, and broadcasts `ConfigEvent::ReloadError { reason }`.
+
+Each reload attempt also runs a diagnostic scalar-drift check: the watcher parses the file as a full `Config` (errors suppressed), diffs against a `ScalarSnapshot` captured at startup, and emits a `tracing::warn!` per changed scalar field. This catches the "I edited `http_addr` in YAML — why didn't it take effect" foot-gun without re-architecting hot-reload for scalar fields (out of scope per the design plan).
+
+**Kubernetes ConfigMap atomic-swap.** kubelet projects the ConfigMap via a `..data` symlink that gets atomically renamed on update. The watcher's parent-dir watch sees the rename. The Helm chart mounts the ConfigMap as a directory (`mountPath: /etc/atc`, no `subPath`) — `subPath` mounts block kubelet propagation, so hot-reload literally cannot work behind `subPath`.
+
+**Bare-metal dev / missing parent dir.** If `config_path.parent()` doesn't exist, `spawn_config_watcher` returns `None` with a warn log and the process boots cleanly without hot-reload (the watcher handle in `run_shutdown_orchestration` is `Option<JoinHandle<()>>`).
+
+**Missing-file divergence.** Startup tolerates a missing config file (figment's `Yaml::file` is auto-optional). On reload, a deleted file is treated as `ReloadError::Read` — an operator who deletes the file mid-deploy almost certainly didn't intend to clear all pool capacities.
+
+### WireFrame (WS framing)
+
+The WS endpoint frames every outbound event in an outer `kind` discriminator, defined as `pub enum WireFrame` in `backend/crates/atc-server/src/ws.rs`:
+
+```rust
+#[derive(Serialize, ts_rs::TS)]
+#[serde(tag = "kind")]
+pub enum WireFrame {
+    Committed(CommittedEvent),
+    #[serde(rename_all = "camelCase")]
+    ConfigUpdate { runner_pool_capacities: Vec<RunnerPoolCapacity> },
+    ConfigReloadError { reason: String },
+}
+```
+
+`#[serde(tag = "kind")]` is internally-tagged: the variant name lands at `kind`, and `CommittedEvent`'s fields (`seq`, `event`) flatten into the same object. The `ConfigUpdate` variant uses `rename_all = "camelCase"` so `runner_pool_capacities` serializes as `runnerPoolCapacities`, matching the existing snapshot convention.
+
+`WireFrame` is local to the `ws.rs` boundary — `CommittedEvent` (in `atc-wire`) and `WebhookEvent` (in `atc-github`) are not modified. Stores remain pure event sources; only the WS handler knows about the outer framing. ts-rs exports `WireFrame.ts` to `frontend/src/lib/types/generated/`.
+
+**Lagged on either channel closes the WS.** The WS handler subscribes to both the committed channel (`persist.subscribe()`) and the config channel (`config_events_tx.subscribe()`). Either receiver returning `RecvError::Lagged` closes the socket — the client reconnects, fetches `/v1/state` to re-establish both the seq cursor and the current capacity list. Symmetric handling avoids the silent-drop trap where one channel's overflow goes unnoticed.
 
 Return 200 with the JSON snapshot.
 

@@ -11,6 +11,10 @@ use std::time::Duration;
 use atc_core::{Clock, SystemClock};
 use atc_persist::PersistentStore;
 use atc_server::config;
+use atc_server::config::ScalarSnapshot;
+use atc_server::config_watcher;
+use atc_server::config_watcher::ConfigEvent;
+use atc_server::config_watcher::ConfigWatcherMetrics;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
 use atc_server::routes;
@@ -18,6 +22,7 @@ use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
 use atc_store_pg::{DbInitError, PgStore, db, listener};
+use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing_subscriber::layer::SubscriberExt;
@@ -109,6 +114,13 @@ async fn main() {
         eprintln!("configuration error: {e}");
         process::exit(1);
     });
+
+    // Capture scalar fields BEFORE moving cfg into AppState construction.
+    // Hot-reload is restricted to `runner_pools`; the watcher diffs each
+    // reload against this snapshot and warn-logs any scalar drift so
+    // operators editing scalar fields know to roll the pod.
+    let startup_scalars = ScalarSnapshot::from_config(&cfg);
+    let watcher_config_path = config::config_path();
 
     let otel_handles: Option<OtelHandles> = otel::init_otel(&cfg);
 
@@ -203,7 +215,7 @@ async fn main() {
     // Build AppState. Capacity entries are flattened from the validated
     // `Config::runner_pools` into the wire-shaped `RunnerPoolCapacity` form
     // here, so the request path can clone the canonical struct directly.
-    let runner_pool_capacities = cfg
+    let initial_capacities: Vec<atc_core::RunnerPoolCapacity> = cfg
         .runner_pools
         .iter()
         .map(|p| atc_core::RunnerPoolCapacity {
@@ -211,10 +223,18 @@ async fn main() {
             capacity: p.capacity,
         })
         .collect();
+
+    // Bounded channel for config-change events. Capacity 256 matches the
+    // CommittedEvent channel — both surfaces close the WS connection on
+    // Lagged, and a debugging operator who edits the config file repeatedly
+    // shouldn't be able to backpressure other consumers.
+    let (config_events_tx, _) = broadcast::channel::<ConfigEvent>(256);
+
     let app_state = Arc::new(AppState {
         persist: Arc::clone(&persist),
         webhook_secret: cfg.github.webhook_secret.clone(),
-        runner_pool_capacities,
+        runner_pool_capacities: RwLock::new(initial_capacities),
+        config_events_tx,
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
     });
@@ -223,6 +243,23 @@ async fn main() {
     // Returns a `ProcessCollectorHandle` whose `shutdown()` aborts the loop and
     // surfaces a `JoinHandle` for the orchestration to await under a timeout.
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
+
+    // Register watcher-owned OTel instruments — gauge surfaces the
+    // startup-loaded pool count immediately; counter increments on each
+    // reload outcome.
+    let config_watcher_metrics =
+        ConfigWatcherMetrics::register(app_state.runner_pool_capacities.read().await.len());
+
+    // Spawn the hot-reload watcher. Skipped (returns None) when the config
+    // file's parent directory does not exist — bare-metal dev boxes without
+    // `/etc/atc/` still boot cleanly, just without hot-reload.
+    let config_watcher_handle = config_watcher::spawn_config_watcher(
+        watcher_config_path,
+        Arc::clone(&app_state),
+        startup_scalars,
+        config_watcher_metrics,
+        shutdown.clone(),
+    );
 
     // Clone the Arc into the router so `app_state` itself stays in this scope
     // for the lifetime of `main`. With `app_state` still held here, the
@@ -265,6 +302,7 @@ async fn main() {
         main_serve_task,
         persist,
         metrics_handle,
+        config_watcher_handle,
         otel_handles,
     )
     .await;
