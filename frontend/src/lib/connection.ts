@@ -55,7 +55,7 @@ export class ConnectionManager {
   /** JSON reviver to convert numeric fields to bigint for known i64/u64 fields */
   private jsonReviver(key: string, value: unknown): unknown {
     if (
-      ['seq', 'lastSeq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
+      ['seq', 'lastSeq', 'id', 'runId', 'jobId', 'number'].includes(key) &&
       (typeof value === 'number' || typeof value === 'string')
     ) {
       try {

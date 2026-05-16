@@ -29,13 +29,13 @@ describe('format/runners', () => {
     it('returns runner name when all jobs share the same runner', () => {
       const jobs = [
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
       ]
 
@@ -49,10 +49,10 @@ describe('format/runners', () => {
     it('returns "2 runners" when jobs span exactly two distinct runner names', () => {
       const jobs = [
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
         createMockJob({
-          runner: { id: 2n, name: 'runner-2', groupId: null, groupName: null },
+          runner: { id: 2n, name: 'runner-2', groupName: null },
         }),
       ]
 
@@ -64,13 +64,13 @@ describe('format/runners', () => {
     it('returns "3 runners" when jobs span three distinct runner names', () => {
       const jobs = [
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
         createMockJob({
-          runner: { id: 2n, name: 'runner-2', groupId: null, groupName: null },
+          runner: { id: 2n, name: 'runner-2', groupName: null },
         }),
         createMockJob({
-          runner: { id: 3n, name: 'runner-3', groupId: null, groupName: null },
+          runner: { id: 3n, name: 'runner-3', groupName: null },
         }),
       ]
 
@@ -106,7 +106,7 @@ describe('format/runners', () => {
     it('returns the single runner name when one job has runner and others do not', () => {
       const jobs = [
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
         createMockJob({ runner: null }),
         createMockJob({ runner: null }),
@@ -122,10 +122,10 @@ describe('format/runners', () => {
     it('returns identical output when called twice with same input', () => {
       const jobs = [
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
         createMockJob({
-          runner: { id: 2n, name: 'runner-2', groupId: null, groupName: null },
+          runner: { id: 2n, name: 'runner-2', groupName: null },
         }),
       ]
 
@@ -138,7 +138,7 @@ describe('format/runners', () => {
     it('does not mutate the input array when called', () => {
       const jobs = [
         createMockJob({
-          runner: { id: 1n, name: 'runner-1', groupId: null, groupName: null },
+          runner: { id: 1n, name: 'runner-1', groupName: null },
         }),
       ]
 

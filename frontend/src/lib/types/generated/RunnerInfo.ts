@@ -16,10 +16,6 @@ id: bigint,
  */
 name: string, 
 /**
- * Runner group identifier, if grouped.
- */
-groupId: bigint | null, 
-/**
  * Runner group name, if grouped.
  */
 groupName: string | null, };

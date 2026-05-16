@@ -59,11 +59,10 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     expect(pool.total).toEqual({ kind: 'Undeclared' })
   })
 
-  it('InProgress job with groupId=0n produces running=1 with groupName populated', () => {
+  it('InProgress job with groupName populated produces running=1', () => {
     const runner: RunnerInfo = {
       id: 1n,
       name: 'runner-1',
-      groupId: 0n,
       groupName: 'Default',
     }
 
@@ -95,7 +94,6 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     const runner: RunnerInfo = {
       id: 1n,
       name: 'runner-1',
-      groupId: 0n,
       groupName: 'Default',
     }
 

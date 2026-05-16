@@ -121,7 +121,6 @@ fn job_in_progress(job_id: i64, run_id: i64) -> JobEventEnvelope {
             runner: Some(atc_core::job::RunnerInfo {
                 id: 42,
                 name: "runner-1".to_string(),
-                group_id: Some(1),
                 group_name: Some("default".to_string()),
             }),
             labels: vec!["ubuntu-latest".to_string()],
@@ -146,7 +145,6 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
             runner: Some(atc_core::job::RunnerInfo {
                 id: 42,
                 name: "runner-1".to_string(),
-                group_id: Some(1),
                 group_name: Some("default".to_string()),
             }),
             labels: vec!["ubuntu-latest".to_string()],
@@ -600,7 +598,7 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
 
     store.apply_run_event(run_requested(4010)).await.unwrap();
     store.apply_job_event(job_queued(5010, 4010)).await.unwrap();
-    // First in_progress: runner with group_id=1, group_name="default"
+    // First in_progress: runner with group_name="default"
     store
         .apply_job_event(job_in_progress(5010, 4010))
         .await
@@ -620,7 +618,6 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
             runner: Some(atc_core::job::RunnerInfo {
                 id: 99,
                 name: "runner-2".to_string(),
-                group_id: None,
                 group_name: None,
             }),
             labels: vec!["ubuntu-latest".to_string()],
@@ -629,12 +626,11 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
     };
     store.apply_job_event(env_new_runner).await.unwrap();
 
-    let row = sqlx::query!(
-        "SELECT runner_id, runner_name, runner_group_id, runner_group_name FROM jobs WHERE id = 5010"
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("job row not found");
+    let row =
+        sqlx::query!("SELECT runner_id, runner_name, runner_group_name FROM jobs WHERE id = 5010")
+            .fetch_one(&pool)
+            .await
+            .expect("job row not found");
 
     assert_eq!(
         row.runner_id,
@@ -645,10 +641,6 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
         row.runner_name.as_deref(),
         Some("runner-2"),
         "runner_name must reflect new runner"
-    );
-    assert!(
-        row.runner_group_id.is_none(),
-        "runner_group_id must be cleared (was Some(1), new runner has None)"
     );
     assert!(
         row.runner_group_name.is_none(),

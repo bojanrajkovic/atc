@@ -102,8 +102,6 @@ pub(crate) struct WorkflowJobData {
     pub runner_id: Option<i64>,
     /// Runner name. `None` until runner assignment.
     pub runner_name: Option<String>,
-    /// Runner group ID (for self-hosted runners). `None` for GitHub-hosted.
-    pub runner_group_id: Option<i64>,
     /// Runner group name. `None` for GitHub-hosted.
     pub runner_group_name: Option<String>,
 }

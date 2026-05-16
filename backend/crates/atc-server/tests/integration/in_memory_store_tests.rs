@@ -280,7 +280,6 @@ async fn update_job_to_in_progress_with_runner() {
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
-        group_id: None,
         group_name: None,
     };
     store

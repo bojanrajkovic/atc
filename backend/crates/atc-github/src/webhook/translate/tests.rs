@@ -65,7 +65,6 @@ fn make_workflow_job_webhook(
         } else {
             None
         },
-        runner_group_id: if runner { Some(100) } else { None },
         runner_group_name: if runner {
             Some("self-hosted".to_string())
         } else {
@@ -282,7 +281,6 @@ fn test_translate_job_with_steps() {
         labels: vec!["ubuntu-latest".to_string()],
         runner_id: None,
         runner_name: None,
-        runner_group_id: None,
         runner_group_name: None,
     };
 
@@ -421,7 +419,6 @@ fn test_unknown_step_status() {
         labels: vec![],
         runner_id: None,
         runner_name: None,
-        runner_group_id: None,
         runner_group_name: None,
     };
 
@@ -462,7 +459,6 @@ fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
         labels: vec!["ubuntu-latest".to_string()],
         runner_id: Some(42),
         runner_name: Some("runner-42".to_string()),
-        runner_group_id: Some(100),
         runner_group_name: Some(String::new()),
     };
 
@@ -472,6 +468,5 @@ fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
     let info = result.unwrap();
     assert_eq!(info.id, 42);
     assert_eq!(info.name, "runner-42");
-    assert_eq!(info.group_id, Some(100));
     assert_eq!(info.group_name, None);
 }

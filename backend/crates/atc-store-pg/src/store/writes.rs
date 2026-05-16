@@ -396,19 +396,18 @@ pub(crate) async fn upsert_job_in_txn(
     // Statement 2: Predicated job UPSERT.
     let runner_id: Option<i64> = runner.map(|r| r.id);
     let runner_name: Option<&str> = runner.map(|r| r.name.as_str());
-    let runner_group_id: Option<i64> = runner.and_then(|r| r.group_id);
     let runner_group_name: Option<&str> = runner.and_then(|r| r.group_name.as_deref());
 
     let result = sqlx::query!(
         r#"
         INSERT INTO jobs (
             id, run_id, name, status, conclusion, labels, steps,
-            runner_id, runner_name, runner_group_id, runner_group_name,
+            runner_id, runner_name, runner_group_name,
             started_at, completed_at, created_at
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7,
-            $8, $9, $10, $11,
-            $12, $13, $14
+            $8, $9, $10,
+            $11, $12, $13
         )
         ON CONFLICT (id) DO UPDATE SET
             name              = jobs.name,
@@ -419,12 +418,11 @@ pub(crate) async fn upsert_job_in_txn(
             steps             = EXCLUDED.steps,
             runner_id         = COALESCE(EXCLUDED.runner_id,         jobs.runner_id),
             runner_name       = COALESCE(EXCLUDED.runner_name,       jobs.runner_name),
-            runner_group_id   = CASE WHEN EXCLUDED.runner_id IS NOT NULL THEN EXCLUDED.runner_group_id   ELSE jobs.runner_group_id END,
             runner_group_name = CASE WHEN EXCLUDED.runner_id IS NOT NULL THEN EXCLUDED.runner_group_name ELSE jobs.runner_group_name END,
             started_at        = COALESCE(EXCLUDED.started_at,        jobs.started_at),
             completed_at      = COALESCE(EXCLUDED.completed_at,      jobs.completed_at),
             created_at        = jobs.created_at
-        WHERE jobs.status = ANY($15::text[])
+        WHERE jobs.status = ANY($14::text[])
         "#,
         job_id,
         run_id,
@@ -435,7 +433,6 @@ pub(crate) async fn upsert_job_in_txn(
         steps_json,
         runner_id,
         runner_name,
-        runner_group_id,
         runner_group_name,
         env.started_at,
         env.completed_at,

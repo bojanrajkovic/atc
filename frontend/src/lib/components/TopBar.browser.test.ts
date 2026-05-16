@@ -46,12 +46,11 @@ describe('TopBar (browser mode)', () => {
     }
   }
 
-  // Helper to create a runner with given groupName/groupId
-  function makeRunner(groupName: string | null, groupId: bigint | null = null): RunnerInfo {
+  // Helper to create a runner with given groupName
+  function makeRunner(groupName: string | null): RunnerInfo {
     return {
       id: 1n,
       name: 'runner-1',
-      groupId,
       groupName,
     }
   }
@@ -158,8 +157,8 @@ describe('TopBar (browser mode)', () => {
   it('two pools sharing a groupName render with disambiguated labels', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
-      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
-      makeInProgressJob(2n, 1n, ['ubuntu-24.04'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions')),
+      makeInProgressJob(2n, 1n, ['ubuntu-24.04'], makeRunner('GitHub Actions')),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -171,7 +170,7 @@ describe('TopBar (browser mode)', () => {
   it('single pool with non-null groupName renders without suffix', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
-      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions')),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -192,9 +191,9 @@ describe('TopBar (browser mode)', () => {
   it('three pools sharing a groupName each get the suffix', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
-      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
-      makeInProgressJob(2n, 1n, ['ubuntu-24.04'], makeRunner('GitHub Actions', 0n)),
-      makeInProgressJob(3n, 1n, ['ubuntu-22.04'], makeRunner('GitHub Actions', 0n)),
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions')),
+      makeInProgressJob(2n, 1n, ['ubuntu-24.04'], makeRunner('GitHub Actions')),
+      makeInProgressJob(3n, 1n, ['ubuntu-22.04'], makeRunner('GitHub Actions')),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -207,7 +206,7 @@ describe('TopBar (browser mode)', () => {
   it('chip label falls back to labels when groupName is "Default" (issue #143)', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
-      makeInProgressJob(1n, 1n, ['self-hosted', 'linux', 'amd64'], makeRunner('Default', 1n)),
+      makeInProgressJob(1n, 1n, ['self-hosted', 'linux', 'amd64'], makeRunner('Default')),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -221,8 +220,8 @@ describe('TopBar (browser mode)', () => {
     // branch, matching the rule "Default is treated as null".
     render(TopBar)
     runStore.jobsByRun.set(1n, [
-      makeInProgressJob(1n, 1n, ['self-hosted', 'linux'], makeRunner('Default', 1n)),
-      makeInProgressJob(2n, 1n, ['self-hosted', 'macos'], makeRunner('Default', 1n)),
+      makeInProgressJob(1n, 1n, ['self-hosted', 'linux'], makeRunner('Default')),
+      makeInProgressJob(2n, 1n, ['self-hosted', 'macos'], makeRunner('Default')),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
@@ -234,19 +233,9 @@ describe('TopBar (browser mode)', () => {
   it('mixed ambiguous and unambiguous pools', async () => {
     render(TopBar)
     runStore.jobsByRun.set(1n, [
-      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions', 0n)),
-      makeInProgressJob(
-        2n,
-        1n,
-        ['self-hosted', 'x86_64'],
-        makeRunner('self-hosted-linux-group', 42n),
-      ),
-      makeInProgressJob(
-        3n,
-        1n,
-        ['self-hosted', 'arm64'],
-        makeRunner('self-hosted-linux-group', 42n),
-      ),
+      makeInProgressJob(1n, 1n, ['ubuntu-latest'], makeRunner('GitHub Actions')),
+      makeInProgressJob(2n, 1n, ['self-hosted', 'x86_64'], makeRunner('self-hosted-linux-group')),
+      makeInProgressJob(3n, 1n, ['self-hosted', 'arm64'], makeRunner('self-hosted-linux-group')),
     ])
     await new Promise((r) => setTimeout(r, 50))
 
