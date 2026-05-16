@@ -101,10 +101,18 @@ pub async fn ws_handler(
 /// capacity list. Symmetric handling avoids the "silent drop" trap where
 /// one channel's overflow goes unnoticed.
 ///
-/// `tokio::select! { biased; … }` evaluates arms top-down with
+/// `tokio::select! { biased; … }` evaluates arms top-down. Order matters:
 /// `shutdown.cancelled()` first so the cancel signal is preferred over any
-/// concurrently-ready arm, keeping shutdown predictable for tests and
-/// operators. `main` keeps an `Arc<AppState>` alive (and therefore the
+/// concurrently-ready arm (keeps shutdown predictable for tests and
+/// operators); then the low-volume arms (`config_rx`, the client socket)
+/// before `committed_rx`. Putting the high-volume committed arm last
+/// prevents sustained webhook traffic from perpetually starving the config
+/// arm — under burst load every iteration committed_rx is ready, and a
+/// committed-first bias would mean a fresh `ConfigUpdate` could sit
+/// unforwarded until the buffer rolls over to `Lagged`. Config and socket
+/// poll fairly under that bias because their ready-rates are near zero, so
+/// shifting them above committed doesn't materially delay committed
+/// forwarding. `main` keeps an `Arc<AppState>` alive (and therefore the
 /// `Arc<dyn PersistentStore>` inside it) through orchestration, so the
 /// store's broadcast sender stays open through the cancel-fire window.
 async fn handle_socket(
@@ -124,33 +132,6 @@ async fn handle_socket(
                     reason: "going away".into(),
                 }))).await;
                 break "shutdown";
-            }
-            result = committed_rx.recv() => {
-                match result {
-                    Ok(committed_event) => {
-                        let seq = committed_event.seq;
-                        let frame = WireFrame::Committed(committed_event);
-                        if let Err(reason) = send_frame(&mut socket, &frame).await {
-                            break reason;
-                        }
-                        tracing::debug!(seq, "forwarded committed event to WS client");
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        // The subscriber missed `n` events because the
-                        // bounded broadcast channel (capacity 256) advanced
-                        // past their cursor. Close the socket — the frontend's
-                        // reconnect handler will fetch /v1/state and
-                        // re-establish the seq cursor from the snapshot.
-                        tracing::warn!(
-                            missed = n,
-                            "WebSocket client lagging on committed channel; closing to force re-snapshot",
-                        );
-                        break "lagged";
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        break "broadcast channel closed";
-                    }
-                }
             }
             result = config_rx.recv() => {
                 match result {
@@ -191,6 +172,33 @@ async fn handle_socket(
                     Some(Err(e)) => {
                         tracing::warn!(error = %e, "WebSocket read error");
                         break "read error";
+                    }
+                }
+            }
+            result = committed_rx.recv() => {
+                match result {
+                    Ok(committed_event) => {
+                        let seq = committed_event.seq;
+                        let frame = WireFrame::Committed(committed_event);
+                        if let Err(reason) = send_frame(&mut socket, &frame).await {
+                            break reason;
+                        }
+                        tracing::debug!(seq, "forwarded committed event to WS client");
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        // The subscriber missed `n` events because the
+                        // bounded broadcast channel (capacity 256) advanced
+                        // past their cursor. Close the socket — the frontend's
+                        // reconnect handler will fetch /v1/state and
+                        // re-establish the seq cursor from the snapshot.
+                        tracing::warn!(
+                            missed = n,
+                            "WebSocket client lagging on committed channel; closing to force re-snapshot",
+                        );
+                        break "lagged";
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break "broadcast channel closed";
                     }
                 }
             }

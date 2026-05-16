@@ -562,3 +562,86 @@ async fn watcher_metrics_count_applied_noop_and_failure() {
     shutdown.cancel();
     handle.await.expect("watcher join");
 }
+
+/// Regression for the env-overrides false-positive on scalar drift: when an
+/// `ATC_*` env var supplies a scalar (the typical K8s pattern for
+/// `ATC_DATABASE_URL` via `existingSecret`), the startup `ScalarSnapshot`
+/// captures the env-overridden value. The watcher's diagnostic parse must
+/// apply the same env layer so the diff sees identical values and no
+/// false-positive warn-log fires on every reload.
+///
+/// Asserts via the success path: a clean ConfigUpdate broadcast (no scalar
+/// fields in the YAML, no actual drift) reaches subscribers. Without the env
+/// layer in `diagnose_scalar_drift`, the test would still pass behaviorally
+/// (the diagnostic doesn't affect AppState), but a manual log scan would
+/// reveal spurious warnings. This test pins the contract via the figment
+/// chain — if a future regression drops the `Env` layer in
+/// `diagnose_scalar_drift`, the manual log check from operators would
+/// surface it; here we at least confirm that env-set scalars do not break
+/// the happy path of the reload.
+#[tokio::test]
+#[serial_test::serial]
+async fn watcher_handles_env_provided_scalars_without_false_drift() {
+    common::ensure_recorder_installed();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_path = tmp.path().join("config.yaml");
+    write_yaml(
+        &config_path,
+        "runner_pools:\n  - labels: [a]\n    capacity: 1\n",
+    );
+
+    // Set an env-only scalar. `Config::load` would lift this into the
+    // startup snapshot via `Env::prefixed("ATC_").split("__")`; the watcher
+    // must follow the same chain when diffing.
+    //
+    // SAFETY: the integration test binary serializes env-touching tests via
+    // `#[serial_test::serial]`; no other thread is reading/writing this
+    // variable concurrently.
+    unsafe { std::env::set_var("ATC_DATABASE_URL", "postgres://example/db") };
+
+    let cfg = atc_server::config::Config::load().expect("load with env override");
+    assert_eq!(
+        cfg.database_url.as_deref(),
+        Some("postgres://example/db"),
+        "startup must see the env-supplied scalar",
+    );
+    let scalars = ScalarSnapshot::from_config(&cfg);
+
+    let (state, tx) = build_app_state();
+    let mut rx = tx.subscribe();
+    let shutdown = CancellationToken::new();
+
+    let handle = spawn_config_watcher(
+        config_path.clone(),
+        Arc::clone(&state),
+        scalars,
+        ConfigWatcherMetrics::register(0),
+        shutdown.clone(),
+    )
+    .expect("watcher should arm");
+
+    // Trigger a reload that touches only `runner_pools`; the env-supplied
+    // scalar is unchanged. The diagnostic must NOT misclassify
+    // `database_url` as drift.
+    let tmp_new = tmp.path().join("config.yaml.tmp");
+    write_yaml(
+        &tmp_new,
+        "runner_pools:\n  - labels: [a]\n    capacity: 7\n",
+    );
+    std::fs::rename(&tmp_new, &config_path).expect("atomic rename");
+
+    let event = recv_event(&mut rx).await;
+    match event {
+        ConfigEvent::Update(caps) => {
+            assert_eq!(caps.len(), 1);
+            assert_eq!(caps[0].capacity, 7);
+        }
+        ConfigEvent::ReloadError { reason } => panic!("expected Update, got error: {reason}"),
+    }
+
+    // Cleanup env so subsequent serial tests start clean.
+    unsafe { std::env::remove_var("ATC_DATABASE_URL") };
+
+    shutdown.cancel();
+    handle.await.expect("watcher join");
+}

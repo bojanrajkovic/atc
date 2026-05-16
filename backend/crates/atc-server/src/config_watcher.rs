@@ -22,7 +22,7 @@ use atc_core::RunnerPoolCapacity;
 use atc_store_pg::metrics::METER_SCOPE;
 use figment::{
     Figment,
-    providers::{Format, Serialized, Yaml},
+    providers::{Env, Format, Serialized, Yaml},
 };
 use notify_debouncer_full::notify::RecursiveMode;
 use notify_debouncer_full::{DebounceEventResult, new_debouncer};
@@ -412,6 +412,12 @@ async fn process_reload(
 /// 9), so a changed scalar is a no-op the operator should know about —
 /// either revert the YAML edit or roll the pod to apply.
 ///
+/// The figment chain mirrors `Config::load` (defaults → Yaml → Env) so that
+/// scalars supplied via `ATC_*` env vars (e.g. `ATC_DATABASE_URL` from a
+/// K8s `existingSecret`) are present in both the startup snapshot and the
+/// per-reload snapshot. Without the env layer here, every reload would
+/// falsely report drift on every env-provided scalar.
+///
 /// Errors from the full-Config parse (malformed YAML, etc.) are suppressed
 /// here — the narrow-schema reload path reports those.
 fn diagnose_scalar_drift(config_path: &Path, startup_scalars: &ScalarSnapshot) {
@@ -420,6 +426,7 @@ fn diagnose_scalar_drift(config_path: &Path, startup_scalars: &ScalarSnapshot) {
     };
     let Ok(cfg): Result<Config, _> = Figment::from(Serialized::defaults(Config::default()))
         .merge(Yaml::string(&contents))
+        .merge(Env::prefixed("ATC_").split("__"))
         .extract()
     else {
         return;
