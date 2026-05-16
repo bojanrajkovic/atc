@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT runner_id, runner_name, runner_group_id, runner_group_name FROM jobs WHERE id = 5010",
+  "query": "SELECT runner_id, runner_name, runner_group_name FROM jobs WHERE id = 5010",
   "describe": {
     "columns": [
       {
@@ -15,11 +15,6 @@
       },
       {
         "ordinal": 2,
-        "name": "runner_group_id",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 3,
         "name": "runner_group_name",
         "type_info": "Text"
       }
@@ -30,9 +25,8 @@
     "nullable": [
       true,
       true,
-      true,
       true
     ]
   },
-  "hash": "815deda87222d98791f7cbf0045a93acdc7718287e936469ec1c248d77ebb835"
+  "hash": "937c3f252871861ac76cb3b4a1ff4469d577c582f31e4d92301595810ea742b9"
 }

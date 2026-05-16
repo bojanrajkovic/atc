@@ -71,7 +71,7 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
         action: {
           type: 'InProgress',
           data: {
-            runner: { id: 1n, name: 'runner-1', groupId: null, groupName: 'linux-builders' },
+            runner: { id: 1n, name: 'runner-1', groupName: 'linux-builders' },
             labels: LINUX_LABELS,
             steps: [],
           },

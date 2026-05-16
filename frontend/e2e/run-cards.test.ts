@@ -251,7 +251,6 @@ test.describe('run-cards', () => {
               runner: {
                 id: 1 as unknown as bigint,
                 name: 'gh-hosted-1',
-                groupId: null,
                 groupName: null,
               },
               labels: ['ubuntu-latest'],

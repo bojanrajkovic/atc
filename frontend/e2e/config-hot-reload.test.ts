@@ -45,7 +45,6 @@ function makeRunningJob(jobId: number, runId: number, labels: string[]): Job {
     runner: {
       id: BigInt(jobId * 100),
       name: `runner-${jobId}`,
-      groupId: 42n,
       groupName: 'self-hosted-pool',
     },
     steps: [],

@@ -11,7 +11,6 @@ fn test_job_with_all_fields() {
     let runner = RunnerInfo {
         id: 1,
         name: "runner-1".to_string(),
-        group_id: Some(10),
         group_name: Some("default".to_string()),
     };
     let step = Step {
@@ -80,7 +79,6 @@ fn test_job_serde_round_trip() {
     let runner = RunnerInfo {
         id: 5,
         name: "runner-5".to_string(),
-        group_id: Some(20),
         group_name: Some("ci-group".to_string()),
     };
     let step = Step {
@@ -150,23 +148,20 @@ fn test_step_status_serialization() {
     }
 }
 
-// Construct a `RunnerInfo` with `id`, `name`, `group_id: Some(1)`,
-// `group_name: Some("default")`. Embed it in a `Job`. Verify `RunnerInfo` is a
-// separate struct accessible via `job.runner`. Serialize/deserialize `RunnerInfo`
-// independently.
+// Construct a `RunnerInfo` with `id`, `name`, `group_name: Some("default")`.
+// Embed it in a `Job`. Verify `RunnerInfo` is a separate struct accessible via
+// `job.runner`. Serialize/deserialize `RunnerInfo` independently.
 #[test]
 fn test_runner_info_as_separate_struct() {
     let runner = RunnerInfo {
         id: 123,
         name: "my-runner".to_string(),
-        group_id: Some(1),
         group_name: Some("default".to_string()),
     };
 
     // Verify RunnerInfo is accessible as separate struct
     assert_eq!(runner.id, 123);
     assert_eq!(runner.name, "my-runner");
-    assert_eq!(runner.group_id, Some(1));
     assert_eq!(runner.group_name, Some("default".to_string()));
 
     // Embed in a Job

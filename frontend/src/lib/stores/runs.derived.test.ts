@@ -447,7 +447,6 @@ describe('RunStore', () => {
   const runner = (name: string, id: bigint = 1n): RunnerInfo => ({
     id,
     name,
-    groupId: null,
     groupName: null,
   })
 

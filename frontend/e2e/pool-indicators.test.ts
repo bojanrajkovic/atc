@@ -59,7 +59,6 @@ test.describe('Pool indicators update live', () => {
           runner: {
             id: 1n,
             name: 'runner-1',
-            groupId: 0n,
             groupName: 'GitHub Actions',
           },
           labels: ['ubuntu-latest'],
@@ -95,7 +94,6 @@ test.describe('Pool indicators update live', () => {
           runner: {
             id: 1n,
             name: 'runner-1',
-            groupId: 0n,
             groupName: 'GitHub Actions',
           },
           labels: ['ubuntu-latest'],

@@ -138,7 +138,7 @@ pub(crate) async fn read_all_jobs(
     let rows = sqlx::query!(
         r#"
         SELECT id, run_id, name, status, conclusion,
-               runner_id, runner_name, runner_group_id, runner_group_name,
+               runner_id, runner_name, runner_group_name,
                labels, steps, created_at, started_at, completed_at
           FROM jobs
          ORDER BY id
@@ -162,7 +162,6 @@ pub(crate) async fn read_all_jobs(
             (Some(id), Some(name)) => Some(RunnerInfo {
                 id,
                 name,
-                group_id: row.runner_group_id,
                 group_name: row.runner_group_name,
             }),
             _ => None,

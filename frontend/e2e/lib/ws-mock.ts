@@ -161,7 +161,7 @@ export async function sendWS(page: Page, msg: string): Promise<void> {
     // Parse with the same bigint reviver as ConnectionManager
     const reviver = (key: string, value: unknown) => {
       if (
-        ['seq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
+        ['seq', 'id', 'runId', 'jobId', 'number'].includes(key) &&
         (typeof value === 'number' || typeof value === 'string')
       ) {
         try {
@@ -201,7 +201,7 @@ export async function sendWSBatch(page: Page, msgs: string[]): Promise<void> {
 
     const reviver = (key: string, value: unknown) => {
       if (
-        ['seq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
+        ['seq', 'id', 'runId', 'jobId', 'number'].includes(key) &&
         (typeof value === 'number' || typeof value === 'string')
       ) {
         try {
@@ -345,7 +345,7 @@ export async function sendWSBatchPaced(
 
         const reviver = (key: string, value: unknown) => {
           if (
-            ['seq', 'id', 'runId', 'jobId', 'groupId', 'number'].includes(key) &&
+            ['seq', 'id', 'runId', 'jobId', 'number'].includes(key) &&
             (typeof value === 'number' || typeof value === 'string')
           ) {
             try {

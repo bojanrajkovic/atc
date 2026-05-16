@@ -65,22 +65,22 @@ describe('computePoolStats (pure function)', () => {
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupId: 0n, groupName: 'GitHub' },
+      runner: { id: 1n, name: 'r', groupName: 'GitHub' },
     })
     const pools = computePoolStats([job])
     expect(pools[0]?.groupName).toBe('GitHub')
   })
 
-  it('groupId 0n with no matching declaration stays Undeclared', () => {
+  it('runner groupName present with no matching declaration stays Undeclared', () => {
     // Regression guard: only operator-declared capacities drive a pool's
-    // bounded/unbounded/undeclared classification — webhook-derived runner
-    // group ids do not influence `total`.
+    // bounded/unbounded/undeclared classification — runner group names
+    // do not influence `total`.
     const job = makeJob({
       id: 1n,
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupId: 0n, groupName: 'GitHub' },
+      runner: { id: 1n, name: 'r', groupName: 'GitHub' },
     })
     const pools = computePoolStats([job])
     expect(pools[0]?.total).toEqual({ kind: 'Undeclared' })

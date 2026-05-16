@@ -88,8 +88,6 @@ pub struct RunnerInfo {
     pub id: i64,
     /// Display name of the runner.
     pub name: String,
-    /// Runner group identifier, if grouped.
-    pub group_id: Option<i64>,
     /// Runner group name, if grouped.
     pub group_name: Option<String>,
 }

@@ -150,7 +150,7 @@ describe('RunStore', () => {
           data: {
             labels: ['ubuntu-latest'],
             steps: [],
-            runner: { id: 1n, name: 'Runner1', groupId: null, groupName: null },
+            runner: { id: 1n, name: 'Runner1', groupName: null },
           },
         },
       })
@@ -180,7 +180,7 @@ describe('RunStore', () => {
       const job = jobs[0]!
       expect(job.status).toBe('Completed')
       // Runner preserved from prior event (backend uses .or() semantics)
-      expect(job.runner).toEqual({ id: 1n, name: 'Runner1', groupId: null, groupName: null })
+      expect(job.runner).toEqual({ id: 1n, name: 'Runner1', groupName: null })
     })
 
     it('should handle duplicate job events without creating duplicates', () => {
