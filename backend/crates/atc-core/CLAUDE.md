@@ -12,7 +12,7 @@ Pure domain types, state machine transition rules, and business logic for ATC. S
 
 | Module | Role |
 |--------|------|
-| `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; `RunnerPoolStats` (frontend-derived; `total: RunnerPoolTotal`, no elasticity flag); `RunnerPoolTotal` (adjacent-tagged enum `Bounded(u32) | Unbounded | Undeclared`); `RunnerPoolCapacity { labels: LabelSet, capacity: Option<u32> }` (operator-declared, surfaced on `StateSnapshot.runnerPoolCapacities`; `None` = `capacity: null` = unbounded); `deserialize_pool_entry` shared helper for the custom struct-level `Deserialize` impls that enforce explicit-`capacity`-key presence on both `RunnerPoolCapacity` and `atc-server`'s `RunnerPoolConfig` |
+| `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; `RunnerPoolStats` (frontend-derived; `total: RunnerPoolTotal`, no elasticity flag); `RunnerPoolTotal` (adjacent-tagged enum `Bounded(u32) | Unbounded | Undeclared`); `RunnerPoolCapacity { labels: LabelSet, capacity: Option<u32> }` (operator-declared, surfaced on `StateSnapshot.runnerPoolCapacities`; `None` = `capacity: null` = unbounded; struct-level custom `Deserialize` on `RunnerPoolCapacity` enforces explicit-`capacity`-key presence and rejects unknown fields — `atc-server` deserializes YAML directly into this type, so there is no separate config-side mirror type) |
 | `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`; `RunStatus::predecessors_of(target)` |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`; `JobStatus::predecessors_of(target)` |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs |

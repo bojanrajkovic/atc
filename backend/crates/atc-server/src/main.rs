@@ -212,17 +212,10 @@ async fn main() {
 
     let ws_tracker = TaskTracker::new();
 
-    // Build AppState. Capacity entries are flattened from the validated
-    // `Config::runner_pools` into the wire-shaped `RunnerPoolCapacity` form
-    // here, so the request path can clone the canonical struct directly.
-    let initial_capacities: Vec<atc_core::RunnerPoolCapacity> = cfg
-        .runner_pools
-        .iter()
-        .map(|p| atc_core::RunnerPoolCapacity {
-            labels: atc_core::LabelSet::new(p.labels.iter().cloned()),
-            capacity: p.capacity,
-        })
-        .collect();
+    // Build AppState. `Config::runner_pools` is already `Vec<RunnerPoolCapacity>`
+    // (figment deserializes directly into the domain type), so no mapping is
+    // needed here.
+    let initial_capacities: Vec<atc_core::RunnerPoolCapacity> = cfg.runner_pools;
 
     // Bounded channel for config-change events. Capacity 256 matches the
     // CommittedEvent channel — both surfaces close the WS connection on

@@ -412,7 +412,7 @@ Server wiring configuration uses figment with three layers, lowest precedence to
 Notable fields:
 
 - **`github.webhook_secret`** (`ATC_GITHUB__WEBHOOK_SECRET` env var) — Optional string. If present, all webhook requests must carry a valid HMAC-SHA256 signature. If absent, signatures are not required or verified.
-- **`runner_pools`** (file-only, no env override) — Operator-declared `Vec<RunnerPoolConfig { labels: Vec<String>, capacity: u32 }>`. Each entry's labels are canonicalized at load (sort + dedup). Validation rejects empty labels, `capacity == 0`, and duplicate canonicalized label sets. The validated list flows into `AppState::runner_pool_capacities` and is composed onto every `/v1/state` snapshot. See `docs/architecture/deployment.md` § "File-based configuration" for the operator-facing surface.
+- **`runner_pools`** (file-only, no env override) — Operator-declared `Vec<RunnerPoolCapacity { labels: LabelSet, capacity: Option<u32> }>`. figment deserializes YAML directly into `atc_core::RunnerPoolCapacity`; `LabelSet` (BTreeSet) canonicalizes labels (sort + dedup) during deserialization. A post-extract `validate_capacities` scan rejects empty label sets, `capacity == 0`, and duplicate canonicalized label sets. The validated list flows into `AppState::runner_pool_capacities` and is composed onto every `/v1/state` snapshot. See `docs/architecture/deployment.md` § "File-based configuration" for the operator-facing surface.
 
 ### Lifecycle Wiring
 
