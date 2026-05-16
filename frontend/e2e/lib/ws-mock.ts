@@ -258,6 +258,15 @@ export function randomBatchSchedule(
   opts: { min: number; max: number; seed: number },
 ): number[] {
   const { min, max, seed } = opts
+  // Inputs must be integers so the produced schedule is a `Array<positive integer>` —
+  // sendWSBatchPaced's invariant. `Math.floor` inside the slice-size formula already
+  // rounds the random component, but non-integer `min` would propagate through.
+  if (!Number.isInteger(min))
+    throw new Error(`randomBatchSchedule: min must be an integer (got ${min})`)
+  if (!Number.isInteger(max))
+    throw new Error(`randomBatchSchedule: max must be an integer (got ${max})`)
+  if (!Number.isInteger(total))
+    throw new Error(`randomBatchSchedule: total must be an integer (got ${total})`)
   if (min < 1) throw new Error(`randomBatchSchedule: min must be >= 1 (got ${min})`)
   if (max < min) throw new Error(`randomBatchSchedule: max (${max}) must be >= min (${min})`)
   if (max < 2 * min - 1)
@@ -297,7 +306,7 @@ export function randomBatchSchedule(
  * The existing `sendWSBatch` drain fence (`waitForFunction(() => bufferLength === 0)`
  * + one extra rAF) is reused after the pacing promise resolves.
  *
- * Throws if `sum(schedule) !== msgs.length`.
+ * Throws if any slice is not a positive integer, or if `sum(schedule) !== msgs.length`.
  */
 export async function sendWSBatchPaced(
   page: Page,
@@ -305,6 +314,17 @@ export async function sendWSBatchPaced(
   schedule: ReadonlyArray<number>,
   opts?: { driver?: PaceDriver },
 ): Promise<void> {
+  // Validate every slice is a positive integer before crossing the page.evaluate
+  // boundary — a non-integer or non-positive entry would silently corrupt msgIdx
+  // arithmetic inside the in-browser tick loop. `randomBatchSchedule` guarantees
+  // this by construction, but hand-authored schedules (a supported use case)
+  // can violate it.
+  for (let i = 0; i < schedule.length; i++) {
+    const size = schedule[i]
+    if (size === undefined || !Number.isInteger(size) || size < 1) {
+      throw new Error(`sendWSBatchPaced: schedule[${i}] must be a positive integer (got ${size})`)
+    }
+  }
   const scheduleSum = schedule.reduce((a, b) => a + b, 0)
   if (scheduleSum !== msgs.length) {
     throw new Error(
