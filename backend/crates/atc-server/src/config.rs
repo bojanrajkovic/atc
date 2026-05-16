@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use atc_core::{LabelSet, RunnerPoolCapacity};
+use atc_core::{LabelSet, RunnerPoolCapacity, deserialize_pool_entry};
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Yaml},
@@ -64,11 +64,29 @@ pub struct GitHubConfig {
 /// Loaded from `runner_pools:` entries in the YAML config file. Labels are
 /// canonicalized (sorted + deduplicated) during validation so that downstream
 /// `LabelSet` comparisons match regardless of the source ordering.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+///
+/// `capacity` is `Option<u32>`: `Some(n)` declares a bounded pool with a
+/// ceiling of `n`, `None` (written as `capacity: null` in YAML) declares the
+/// pool unbounded. The custom `Deserialize` impl distinguishes a missing
+/// `capacity` key from an explicit null and rejects key omission with a
+/// remediation-named error.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub struct RunnerPoolConfig {
     pub labels: Vec<String>,
-    pub capacity: u32,
+    pub capacity: Option<u32>,
+}
+
+impl<'de> serde::Deserialize<'de> for RunnerPoolConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserialize_pool_entry(
+            deserializer,
+            "RunnerPoolConfig",
+            |labels: Vec<String>, capacity| Self { labels, capacity },
+        )
+    }
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -123,9 +141,11 @@ impl Config {
     /// `config.github.webhook_secret`).
     ///
     /// After extraction, `runner_pools` is validated and canonicalized: each
-    /// pool's labels are sorted + deduplicated in place, empty labels arrays are
-    /// rejected, `capacity == 0` is rejected, and duplicate canonicalized label
-    /// sets across the array are rejected.
+    /// pool's labels are sorted + deduplicated in place, empty labels arrays
+    /// are rejected, `capacity: 0` is rejected (`capacity: null` declares an
+    /// unbounded pool), missing `capacity` key is rejected at parse time by
+    /// the custom `Deserialize` impl, and duplicate canonicalized label sets
+    /// across the array are rejected.
     ///
     /// # Errors
     ///
@@ -133,8 +153,10 @@ impl Config {
     /// - An environment variable fails to deserialize to its target type (e.g.,
     ///   `ATC_HTTP_ADDR=invalid-addr`).
     /// - The YAML file is syntactically invalid or has type-mismatched fields.
+    /// - A `runner_pools` entry omits the `capacity` key (must be present —
+    ///   `capacity: null` is the canonical way to declare an unbounded pool).
     /// - A `runner_pools` entry fails validation (empty labels post-dedup,
-    ///   `capacity == 0`, or a duplicate canonicalized label set).
+    ///   `capacity: 0`, or a duplicate canonicalized label set).
     ///
     /// The error is boxed (`Box<figment::Error>`) because `figment::Error` is large
     /// (clippy::result_large_err).
@@ -163,9 +185,9 @@ fn canonicalize_runner_pools(pools: &mut [RunnerPoolConfig]) -> Result<(), Strin
     let mut seen: HashSet<LabelSet> = HashSet::new();
 
     for (idx, pool) in pools.iter_mut().enumerate() {
-        if pool.capacity == 0 {
+        if matches!(pool.capacity, Some(0)) {
             return Err(format!(
-                "runner_pools[{idx}]: capacity must be >= 1 (got 0)"
+                "runner_pools[{idx}]: capacity must be >= 1 (use null for unbounded pools)"
             ));
         }
 
@@ -436,9 +458,9 @@ runner_pools:
             vec!["linux", "self-hosted", "x64"],
             "labels should be canonicalized to sorted order"
         );
-        assert_eq!(config.runner_pools[0].capacity, 10);
+        assert_eq!(config.runner_pools[0].capacity, Some(10));
         assert_eq!(config.runner_pools[1].labels, vec!["ubuntu-latest"]);
-        assert_eq!(config.runner_pools[1].capacity, 20);
+        assert_eq!(config.runner_pools[1].capacity, Some(20));
     }
 
     #[test]
@@ -463,6 +485,78 @@ runner_pools:
 
     #[test]
     #[serial]
+    fn unbounded_capacity_via_null_is_accepted() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
+        let file = write_yaml(
+            r#"
+runner_pools:
+  - labels: [ubuntu-latest]
+    capacity: null
+"#,
+        );
+        unsafe { std::env::set_var(CONFIG_FILE_ENV, file.path()) };
+
+        let config = Config::load().expect("capacity: null should succeed");
+        assert_eq!(config.runner_pools.len(), 1);
+        assert_eq!(
+            config.runner_pools[0].capacity, None,
+            "explicit null → None"
+        );
+        assert_eq!(config.runner_pools[0].labels, vec!["ubuntu-latest"]);
+    }
+
+    #[test]
+    #[serial]
+    fn unbounded_capacity_via_key_omission_is_rejected() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
+        let file = write_yaml(
+            r#"
+runner_pools:
+  - labels: [a]
+"#,
+        );
+        unsafe { std::env::set_var(CONFIG_FILE_ENV, file.path()) };
+
+        let err = Config::load().expect_err("missing capacity key should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("capacity is required"),
+            "error should explain the key requirement, got: {msg}"
+        );
+        assert!(
+            msg.contains("capacity: null"),
+            "error should point operator at `capacity: null`, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn mixed_pool_list_validates() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
+        let file = write_yaml(
+            r#"
+runner_pools:
+  - labels: [self-hosted, linux, x64]
+    capacity: 10
+  - labels: [ubuntu-latest]
+    capacity: null
+"#,
+        );
+        unsafe { std::env::set_var(CONFIG_FILE_ENV, file.path()) };
+
+        let config = Config::load().expect("mixed bounded + unbounded should succeed");
+        assert_eq!(config.runner_pools.len(), 2);
+        assert_eq!(config.runner_pools[0].capacity, Some(10));
+        assert_eq!(
+            config.runner_pools[0].labels,
+            vec!["linux", "self-hosted", "x64"]
+        );
+        assert_eq!(config.runner_pools[1].capacity, None);
+        assert_eq!(config.runner_pools[1].labels, vec!["ubuntu-latest"]);
+    }
+
+    #[test]
+    #[serial]
     fn missing_capacity_is_a_deserialization_error() {
         let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
         let file = write_yaml(
@@ -476,8 +570,8 @@ runner_pools:
         let err = Config::load().expect_err("missing capacity should fail");
         let msg = format!("{err}");
         assert!(
-            msg.to_lowercase().contains("capacity"),
-            "error message should mention capacity, got: {msg}"
+            msg.contains("capacity is required"),
+            "error should explain the key requirement via the custom Deserialize impl, got: {msg}"
         );
     }
 
@@ -497,8 +591,12 @@ runner_pools:
         let err = Config::load().expect_err("capacity: 0 should fail");
         let msg = format!("{err}");
         assert!(
-            msg.contains("capacity") && msg.contains(">= 1"),
+            msg.contains("capacity must be >= 1"),
             "error should explain capacity bound, got: {msg}"
+        );
+        assert!(
+            msg.contains("null"),
+            "error should point operator at `capacity: null` for unbounded pools, got: {msg}"
         );
     }
 
@@ -563,10 +661,10 @@ runner_pools:
         assert_eq!(caps.len(), 2);
         let first_labels: Vec<_> = caps[0].labels.iter().collect();
         assert_eq!(first_labels, vec!["linux", "self-hosted", "x64"]);
-        assert_eq!(caps[0].capacity, 10);
+        assert_eq!(caps[0].capacity, Some(10));
         let second_labels: Vec<_> = caps[1].labels.iter().collect();
         assert_eq!(second_labels, vec!["ubuntu-latest"]);
-        assert_eq!(caps[1].capacity, 20);
+        assert_eq!(caps[1].capacity, Some(20));
     }
 
     #[test]
@@ -649,7 +747,7 @@ runner_pools:
         let caps =
             reload_runner_pools(file.path()).expect("narrow schema should ignore scalar fields");
         assert_eq!(caps.len(), 1);
-        assert_eq!(caps[0].capacity, 1);
+        assert_eq!(caps[0].capacity, Some(1));
     }
 
     #[test]
@@ -671,8 +769,9 @@ runner_pools:
     #[serial]
     fn unknown_field_in_pool_is_rejected() {
         let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
-        // The `elastic` field is explicitly out of scope for v1; deny_unknown_fields
-        // ensures operators get a clear error instead of silent acceptance.
+        // `capacity: null` is the canonical way to declare a pool unbounded;
+        // an `elastic: true` shape remains an unknown key and must surface a
+        // clear operator error rather than silent acceptance.
         let file = write_yaml(
             r#"
 runner_pools:

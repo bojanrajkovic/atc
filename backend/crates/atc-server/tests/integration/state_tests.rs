@@ -76,18 +76,19 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
 
     // Capacities are populated post-validation in `main.rs`; here we hand-build
     // the same shape to exercise the route-layer composition without going
-    // through file IO.
+    // through file IO. The unbounded entry (`capacity: None`) exercises the
+    // `capacity: null` rail end-to-end through serialization.
     let app_state = Arc::new(AppState {
         persist,
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(vec![
             RunnerPoolCapacity {
                 labels: LabelSet::new(["self-hosted", "linux", "x64"]),
-                capacity: 10,
+                capacity: Some(10),
             },
             RunnerPoolCapacity {
                 labels: LabelSet::new(["ubuntu-latest"]),
-                capacity: 20,
+                capacity: None,
             },
         ]),
         config_events_tx: tokio::sync::broadcast::channel(16).0,
@@ -127,7 +128,11 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
     );
     assert_eq!(caps[0]["capacity"], 10);
     assert_eq!(caps[1]["labels"], serde_json::json!(["ubuntu-latest"]));
-    assert_eq!(caps[1]["capacity"], 20);
+    assert_eq!(
+        caps[1]["capacity"],
+        serde_json::Value::Null,
+        "explicit-null capacity for an unbounded pool must round-trip on the wire"
+    );
 }
 
 /// Writes through `AppState.runner_pool_capacities` are visible to the next
@@ -187,7 +192,7 @@ async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
         let mut guard = app_state.runner_pool_capacities.write().await;
         *guard = vec![RunnerPoolCapacity {
             labels: LabelSet::new(["self-hosted", "linux", "x64"]),
-            capacity: 42,
+            capacity: Some(42),
         }];
     }
 

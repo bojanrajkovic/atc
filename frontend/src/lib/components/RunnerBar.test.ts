@@ -1,6 +1,9 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
+import type { RunnerPoolTotal } from '$lib/types/generated/RunnerPoolTotal'
 import RunnerBar from './RunnerBar.svelte'
+
+const bounded = (value: number): RunnerPoolTotal => ({ kind: 'Bounded', value })
 
 describe('RunnerBar', () => {
   it('renders one RunnerPool per pool entry', () => {
@@ -10,8 +13,7 @@ describe('RunnerBar', () => {
         label: 'linux',
         running: 3,
         queued: 0,
-        total: 10,
-        isElastic: false,
+        total: bounded(10),
         isActiveFilter: false,
       },
       {
@@ -19,8 +21,7 @@ describe('RunnerBar', () => {
         label: 'windows',
         running: 2,
         queued: 0,
-        total: 8,
-        isElastic: false,
+        total: bounded(8),
         isActiveFilter: false,
       },
       {
@@ -28,8 +29,7 @@ describe('RunnerBar', () => {
         label: 'macos',
         running: 1,
         queued: 0,
-        total: 5,
-        isElastic: false,
+        total: bounded(5),
         isActiveFilter: false,
       },
     ]
@@ -51,8 +51,7 @@ describe('RunnerBar', () => {
       props: { pools: [] },
     })
 
-    const emptyText = screen.getByText('No active runners')
-    expect(emptyText).toBeTruthy()
+    expect(screen.getByText('No active runners')).toBeTruthy()
   })
 
   it('renders single pool correctly', () => {
@@ -62,8 +61,7 @@ describe('RunnerBar', () => {
         label: 'linux',
         running: 3,
         queued: 0,
-        total: 10,
-        isElastic: false,
+        total: bounded(10),
         isActiveFilter: false,
       },
     ]
@@ -72,9 +70,7 @@ describe('RunnerBar', () => {
       props: { pools },
     })
 
-    const listitems = screen.getAllByRole('listitem')
-    expect(listitems).toHaveLength(1)
-
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
     expect(screen.getByText('linux')).toBeTruthy()
   })
 
@@ -85,8 +81,7 @@ describe('RunnerBar', () => {
         label: 'linux',
         running: 3,
         queued: 0,
-        total: 10,
-        isElastic: false,
+        total: bounded(10),
         isActiveFilter: false,
       },
     ]
@@ -95,8 +90,7 @@ describe('RunnerBar', () => {
       props: { pools },
     })
 
-    const list = screen.getByRole('list', { name: /runner pools/i })
-    expect(list).toBeTruthy()
+    expect(screen.getByRole('list', { name: /runner pools/i })).toBeTruthy()
   })
 
   it('pool with isActiveFilter=true gets is-active-filter class on its RunnerPool', () => {
@@ -106,8 +100,7 @@ describe('RunnerBar', () => {
         label: 'linux',
         running: 3,
         queued: 0,
-        total: 10,
-        isElastic: false,
+        total: bounded(10),
         isActiveFilter: true,
       },
       {
@@ -115,8 +108,7 @@ describe('RunnerBar', () => {
         label: 'windows',
         running: 2,
         queued: 0,
-        total: 8,
-        isElastic: false,
+        total: bounded(8),
         isActiveFilter: false,
       },
     ]
@@ -143,8 +135,7 @@ describe('RunnerBar', () => {
         label: 'linux',
         running: 3,
         queued: 0,
-        total: 10,
-        isElastic: false,
+        total: bounded(10),
         isActiveFilter: false,
       },
       {
@@ -152,8 +143,7 @@ describe('RunnerBar', () => {
         label: 'windows',
         running: 2,
         queued: 0,
-        total: 8,
-        isElastic: false,
+        total: bounded(8),
         isActiveFilter: false,
       },
     ]

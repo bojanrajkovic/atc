@@ -105,8 +105,12 @@ Runner pool statistics are derived views over the current job state. They are co
 - `group_name: String` — Friendly pool name (e.g., "Default", "macOS")
 - `running: u32` — Count of currently running jobs in this pool
 - `queued: u32` — Count of queued jobs waiting for a runner in this pool
-- `is_elastic: bool` — Derived from runner `group_id == Some(0)`. Indicates whether the pool auto-scales (true) or has fixed capacity (false).
-- `total: Option<u32>` — Maximum capacity of the pool. Populated frontend-side via the merge in `computePoolStats`, keyed by canonical label-set against `StateSnapshot.runner_pool_capacities`. `None` for any pool the operator hasn't declared. Drives capacity-bar rendering and saturation-threshold colors.
+- `total: RunnerPoolTotal` — Three-state declared capacity for this pool. Adjacent-tagged enum with three variants:
+  - `Bounded(u32)` — operator declared an integer ceiling. Drives capacity-bar rendering and saturation-threshold colors.
+  - `Unbounded` — operator declared the pool with `capacity: null`. Frontend renders a distinct affordance (icon + accessible label) instead of a saturation bar.
+  - `Undeclared` — pool observed in webhook traffic but absent from the operator's `runner_pools` config. Frontend renders the count only, no bar, no affordance.
+
+  Populated frontend-side via the merge in `computePoolStats`, keyed by canonical label-set against `StateSnapshot.runner_pool_capacities`. The wire only carries operator-declared `RunnerPoolCapacity { labels, capacity: Option<u32> }` entries; the three-way variant is composed on the frontend. The backend does not re-derive `RunnerPoolTotal` (stays consistent with ADR 0004: operator config is additive over derived stats; the trait owns event-derived state only).
 
 The snapshot returns `StateSnapshot { last_seq, runs, jobs, runner_pool_capacities }` (no inline pool-stats computation). The wire carries no `pool_stats` or `pool_stats_after` fields (see ADR 0004). The lexicographic sort by `labels` is the responsibility of `computePoolStats` on the frontend, which also performs the capacity merge.
 

@@ -425,7 +425,7 @@ async fn wireframe_config_update_kind_and_camelcase_fields() {
 
     let caps = vec![atc_core::RunnerPoolCapacity {
         labels: atc_core::LabelSet::new(["self-hosted", "linux"]),
-        capacity: 7,
+        capacity: Some(7),
     }];
     state
         .config_events_tx

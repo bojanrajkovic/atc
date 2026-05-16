@@ -54,10 +54,12 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     expect(pool.labels).toEqual(['ubuntu-latest'])
     expect(pool.queued).toBe(1)
     expect(pool.running).toBe(0)
-    expect(pool.isElastic).toBe(false)
+    // Without an operator declaration for this label set, the pool is
+    // Undeclared — runner group ids never participate in classification.
+    expect(pool.total).toEqual({ kind: 'Undeclared' })
   })
 
-  it('InProgress job with groupId=0n produces running=1, isElastic=true, groupName populated', () => {
+  it('InProgress job with groupId=0n produces running=1 with groupName populated', () => {
     const runner: RunnerInfo = {
       id: 1n,
       name: 'runner-1',
@@ -84,8 +86,9 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     const pool = runnerStore.pools[0]!
     expect(pool.queued).toBe(0)
     expect(pool.running).toBe(1)
-    expect(pool.isElastic).toBe(true)
     expect(pool.groupName).toBe('Default')
+    // Group-id observation does not drive total — only operator declarations do.
+    expect(pool.total).toEqual({ kind: 'Undeclared' })
   })
 
   it('Completed job removes pool', () => {

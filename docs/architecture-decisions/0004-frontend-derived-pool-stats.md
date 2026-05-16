@@ -127,3 +127,11 @@ The delivery path:
 4. Merged frontend-side by `computePoolStats(jobs, capacities)` into `RunnerPoolStats.total`, keyed by canonical label set.
 
 No backend `atc_runner_pool_*` Prometheus gauge is reintroduced — that path would force re-derivation server-side and invalidate this ADR. The frontend remains the single derivation site for all pool stats; capacity arrives as inert config alongside the entity data, not as a computed sidecar.
+
+### Extension — unbounded pools (issue #176)
+
+Issue #176 (closed by [`docs/design-plans/2026-05-15-issue-176-unbounded-runner-pools.md`](../design-plans/2026-05-15-issue-176-unbounded-runner-pools.md)) extends operator-declared capacity to cover the "no renderable ceiling" case. Operators declare a pool unbounded by writing `capacity: null` in the YAML config; the key must be present. The wire-snapshot field `RunnerPoolCapacity.capacity` becomes `Option<u32>` (`number | null` on the TS side).
+
+The frontend composes `RunnerPoolStats.total` as a `RunnerPoolTotal` adjacent-tagged enum during the merge: `Bounded(u32)` when the operator declared an integer, `Unbounded` when the operator declared `null`, `Undeclared` when the pool has no matching declaration. This is a frontend-emitted shape — the backend does not re-derive `RunnerPoolTotal`; the wire only carries `RunnerPoolCapacity` declarations and the frontend's merge produces the three-way discrimination. The ADR's architectural boundary is unchanged.
+
+The substantive shift is **retiring the `runner.groupId === 0n` heuristic** that previously set `RunnerPoolStats.is_elastic` in `runners.svelte.ts`. That heuristic was confirmed unreliable (issue #143). With operator-declared unboundedness, the elastic / autoscaling signal comes from a trustworthy source — the operator's config — so `is_elastic` is retired from the wire entirely (`RunnerPoolStats` no longer carries the field) and the JS-side `groupId` check is removed. No new ADR was required because the layering (operator config additive over derived stats; backend ships declarations, frontend composes shape) is unchanged.

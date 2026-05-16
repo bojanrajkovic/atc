@@ -2,6 +2,7 @@ import { poolKey } from '$lib/filters/pool'
 import type { Job } from '$lib/types/generated/Job'
 import type { RunnerPoolCapacity } from '$lib/types/generated/RunnerPoolCapacity'
 import type { RunnerPoolStats } from '$lib/types/generated/RunnerPoolStats'
+import type { RunnerPoolTotal } from '$lib/types/generated/RunnerPoolTotal'
 import { runStore } from './runs.svelte'
 
 /** Derives runner pool statistics from a flat job list and merges in
@@ -9,10 +10,12 @@ import { runStore } from './runs.svelte'
  *
  *  - LabelSet equivalence: dedupe via Set, then sort.
  *  - Collision-free map key: JSON.stringify on the deduped sorted array.
- *  - Bigint-aware: `groupId === 0n` (RunnerInfo.groupId is bigint | null).
+ *  - Three-state `total`: `Bounded(n)` when the operator declared an integer
+ *    `capacity`, `Unbounded` when the operator declared `capacity: null`,
+ *    `Undeclared` when the pool is observed via webhook traffic only.
  *  - Capacity merge: keyed by `poolKey()` (ADR 0001) so insertion-order
  *    differences between the wire payload and the derived label set don't
- *    affect the match. Pools with no declared capacity stay `total: null`. */
+ *    affect the match. */
 export function computePoolStats(
   jobs: Job[],
   capacities: readonly RunnerPoolCapacity[] = [],
@@ -21,7 +24,7 @@ export function computePoolStats(
 
   // Build the capacity lookup once per call. `poolKey()` re-sorts on its own,
   // so wire-side canonical order doesn't have to match JS's sort order.
-  const capacityByKey = new Map<string, number>()
+  const capacityByKey = new Map<string, number | null>()
   for (const cap of capacities) {
     capacityByKey.set(poolKey(cap.labels), cap.capacity)
   }
@@ -32,14 +35,18 @@ export function computePoolStats(
     const sortedLabels = [...new Set(job.labels)].sort()
     const key = JSON.stringify(sortedLabels)
     if (!statsMap.has(key)) {
-      const declared = capacityByKey.get(poolKey(sortedLabels))
+      const lookupKey = poolKey(sortedLabels)
+      const total: RunnerPoolTotal = capacityByKey.has(lookupKey)
+        ? capacityByKey.get(lookupKey) === null
+          ? { kind: 'Unbounded' }
+          : { kind: 'Bounded', value: capacityByKey.get(lookupKey) as number }
+        : { kind: 'Undeclared' }
       statsMap.set(key, {
         labels: sortedLabels,
         queued: 0,
         running: 0,
         groupName: null,
-        isElastic: false,
-        total: declared ?? null,
+        total,
       })
     }
     const entry = statsMap.get(key)!
@@ -50,9 +57,6 @@ export function computePoolStats(
       entry.running++
       if (job.runner?.groupName != null) {
         entry.groupName = job.runner.groupName
-      }
-      if (job.runner?.groupId === 0n) {
-        entry.isElastic = true
       }
     }
   }

@@ -95,7 +95,7 @@ async fn watcher_detects_atomic_rename_and_updates_state() {
     match event {
         ConfigEvent::Update(caps) => {
             assert_eq!(caps.len(), 1, "expected one pool, got {caps:?}");
-            assert_eq!(caps[0].capacity, 42);
+            assert_eq!(caps[0].capacity, Some(42));
         }
         ConfigEvent::ReloadError { reason } => panic!("expected Update, got error: {reason}"),
     }
@@ -103,7 +103,7 @@ async fn watcher_detects_atomic_rename_and_updates_state() {
     // AppState reflects the new caps.
     let guard = state.runner_pool_capacities.read().await;
     assert_eq!(guard.len(), 1);
-    assert_eq!(guard[0].capacity, 42);
+    assert_eq!(guard[0].capacity, Some(42));
     drop(guard);
 
     shutdown.cancel();
@@ -126,7 +126,7 @@ async fn watcher_emits_reload_error_on_bad_file() {
         let mut guard = state.runner_pool_capacities.write().await;
         *guard = vec![atc_core::RunnerPoolCapacity {
             labels: atc_core::LabelSet::new(["a"]),
-            capacity: 1,
+            capacity: Some(1),
         }];
     }
     let mut rx = tx.subscribe();
@@ -164,7 +164,7 @@ async fn watcher_emits_reload_error_on_bad_file() {
 
     let guard = state.runner_pool_capacities.read().await;
     assert_eq!(guard.len(), 1, "AppState unchanged after bad reload");
-    assert_eq!(guard[0].capacity, 1);
+    assert_eq!(guard[0].capacity, Some(1));
     drop(guard);
 
     shutdown.cancel();
@@ -186,7 +186,7 @@ async fn watcher_skips_broadcast_on_identical_content() {
         let mut guard = state.runner_pool_capacities.write().await;
         *guard = vec![atc_core::RunnerPoolCapacity {
             labels: atc_core::LabelSet::new(["a"]),
-            capacity: 1,
+            capacity: Some(1),
         }];
     }
     let mut rx = tx.subscribe();
@@ -234,7 +234,7 @@ async fn watcher_treats_file_deletion_as_reload_error() {
         let mut guard = state.runner_pool_capacities.write().await;
         *guard = vec![atc_core::RunnerPoolCapacity {
             labels: atc_core::LabelSet::new(["a"]),
-            capacity: 1,
+            capacity: Some(1),
         }];
     }
     let mut rx = tx.subscribe();
@@ -335,7 +335,7 @@ async fn watcher_handles_kubernetes_symlink_swap() {
     match event {
         ConfigEvent::Update(caps) => {
             assert_eq!(caps.len(), 1);
-            assert_eq!(caps[0].capacity, 99);
+            assert_eq!(caps[0].capacity, Some(99));
             let labels: Vec<_> = caps[0].labels.iter().collect();
             assert_eq!(labels, vec!["v2"]);
         }
@@ -410,7 +410,7 @@ async fn watcher_warn_logs_scalar_drift() {
     match event {
         ConfigEvent::Update(caps) => {
             assert_eq!(caps.len(), 1);
-            assert_eq!(caps[0].capacity, 99, "pools should still be applied");
+            assert_eq!(caps[0].capacity, Some(99), "pools should still be applied");
         }
         ConfigEvent::ReloadError { reason } => panic!("expected Update, got error: {reason}"),
     }
@@ -634,7 +634,7 @@ async fn watcher_handles_env_provided_scalars_without_false_drift() {
     match event {
         ConfigEvent::Update(caps) => {
             assert_eq!(caps.len(), 1);
-            assert_eq!(caps[0].capacity, 7);
+            assert_eq!(caps[0].capacity, Some(7));
         }
         ConfigEvent::ReloadError { reason } => panic!("expected Update, got error: {reason}"),
     }
