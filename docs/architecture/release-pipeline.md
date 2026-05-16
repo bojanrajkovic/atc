@@ -1,6 +1,6 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-05-15
+Last verified: 2026-05-16
 
 
 ## Purpose
@@ -35,7 +35,7 @@ Both workflows integrate with the conventional commits framework to provide full
 
 **Alternatives considered:** Docker buildx with explicit cache; base image pre-built with dependencies
 
-**Rationale:** cargo-chef efficiently caches Rust dependency compilation across builds by producing a "recipe" of dependencies. This keeps Docker build cache layers stable and predictable, reducing rebuild time when only application code changes.
+**Rationale:** cargo-chef efficiently caches Rust dependency compilation across builds by producing a "recipe" of dependencies. This keeps Docker build cache layers stable and predictable, reducing rebuild time when only application code changes. The planner stage manually enumerates every workspace member's `Cargo.toml` and stub src file (rather than relying on the workspace glob); this list must be kept in sync whenever workspace members are added or removed — failing to do so causes `cargo chef prepare` to abort with a missing-manifest error (as observed when issue #169 added four new crates without updating the Dockerfile).
 
 ---
 

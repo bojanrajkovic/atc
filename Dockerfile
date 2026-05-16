@@ -29,9 +29,18 @@ WORKDIR /app/backend
 COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY backend/crates/atc-core/Cargo.toml crates/atc-core/Cargo.toml
 COPY backend/crates/atc-github/Cargo.toml crates/atc-github/Cargo.toml
+COPY backend/crates/atc-persist/Cargo.toml crates/atc-persist/Cargo.toml
 COPY backend/crates/atc-server/Cargo.toml crates/atc-server/Cargo.toml
-RUN mkdir -p crates/atc-core/src crates/atc-github/src crates/atc-server/src \
-    && touch crates/atc-core/src/lib.rs crates/atc-github/src/lib.rs crates/atc-server/src/main.rs
+COPY backend/crates/atc-store-mem/Cargo.toml crates/atc-store-mem/Cargo.toml
+COPY backend/crates/atc-store-pg/Cargo.toml crates/atc-store-pg/Cargo.toml
+COPY backend/crates/atc-wire/Cargo.toml crates/atc-wire/Cargo.toml
+RUN mkdir -p crates/atc-core/src crates/atc-github/src crates/atc-persist/src \
+        crates/atc-server/src crates/atc-store-mem/src crates/atc-store-pg/src \
+        crates/atc-wire/src \
+    && touch crates/atc-core/src/lib.rs crates/atc-github/src/lib.rs \
+        crates/atc-persist/src/lib.rs crates/atc-server/src/main.rs \
+        crates/atc-store-mem/src/lib.rs crates/atc-store-pg/src/lib.rs \
+        crates/atc-wire/src/lib.rs
 RUN cargo chef prepare --recipe-path /app/recipe.json
 
 # ---- Stage 3: Dependencies ----
