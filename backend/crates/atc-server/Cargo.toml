@@ -5,13 +5,6 @@ publish = false
 edition.workspace = true
 rust-version.workspace = true
 
-[features]
-# Enables `ProcessCollectorHandle::from_join_handle` for unit tests inside this
-# crate. Activated automatically via the self-referential dev-dependency below.
-# Retirement is tracked alongside narrowing `metrics.rs`'s cfg gate to
-# `#[cfg(test)]` (its only consumers are unit tests in the same crate).
-test-support = []
-
 [dependencies]
 atc-core = { path = "../atc-core" }
 atc-github = { path = "../atc-github" }
@@ -52,11 +45,6 @@ atc-store-mem = { path = "../atc-store-mem", features = ["test-support"] }
 # integration test binary (PgStoreTestHooks, start_with_test_hooks, sync
 # tick / accessor methods on PgStore).
 atc-store-pg = { path = "../atc-store-pg", features = ["test-support"] }
-# Self-referential dev-dependency enables the local `test-support` feature
-# when building integration tests, making `ProcessCollectorHandle::from_join_handle`
-# available. Retire this once Phase 2 narrows the `metrics.rs` cfg gate to
-# `#[cfg(test)]` (its only consumers are unit tests inside the same crate).
-atc-server = { path = ".", features = ["test-support"] }
 chrono = { version = "=0.4.44", features = ["serde"] }
 const-hex = "=1.19.0"
 futures-util = "=0.3.32"
