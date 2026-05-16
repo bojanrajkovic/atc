@@ -1,33 +1,36 @@
 /**
  * frame-budget.test.ts — Frame-budget tracing (informational).
  *
- * Measures end-to-end injection-loop + first-flush + post-flush rAF tail
- * latency while the EventDispatcher receives a 1000-event burst, by parsing
- * `AnimationFrame` trace event deltas from a CDP trace. This is a composite
- * regression canary, not a pure dispatcher-pacing measurement — Tier 1
- * (dispatcher.perf.browser.test.ts) owns the deterministic rAF-coalescing
- * gate. The dominant cost in current results is the synchronous JSON.parse +
- * dispatcher.dispatch loop inside `sendWSBatch.page.evaluate`, which blocks
- * the main thread for ~200ms across 1000 iterations.
+ * Measures dispatcher rAF coalescing under realistic randomized arrival pacing.
+ * Fires 1000 WS events through the live `EventDispatcher` using `sendWSBatchPaced`,
+ * which splits the burst into variable-size slices (default driver: `'raf'`) so
+ * the dispatcher's flush rAF runs between pacing ticks — the alternating
+ * "drain previous-slice → inject next-slice" cadence is what real WS arrival
+ * looks like in production. The deltas observed via CDP `AnimationFrame` events
+ * are therefore dominated by the dispatcher's coalescing behavior, not by a
+ * synchronous injection-loop tax (as was the case in the prior `sendWSBatch`
+ * shape).
+ *
+ * Tier 1 (`dispatcher.perf.browser.test.ts`) still owns the deterministic
+ * rAF-coalescing gate via a manually-driven rAF queue. Tier 2 here is orthogonal:
+ * it measures real-browser pacing under a randomized but seeded schedule so the
+ * artifact is reproducible across CI runs.
  *
  * Modern Chromium emits a single `AnimationFrame` trace event per rAF tick
  * (the legacy `BeginFrame` / `FireAnimationFrame` names are not present in
  * `devtools.timeline,rendering` traces from this Chromium build — see the
  * `top_event_names` histogram in the artifact for empirical confirmation).
  *
- * A future PR may rewrite `sendWSBatch` to inject events across rAF boundaries
- * (simulating real WS arrival pacing); tracked in GitHub issue #46. Until then,
- * the metric is useful as a regression canary on full-pipeline cost — if
- * dispatch() got 5× slower we'd see it here.
- *
  * This test:
  *   1. Starts a CDP trace with the devtools.timeline,rendering categories.
- *   2. Fires 1000 WS events through the live EventDispatcher (via sendWSBatch).
- *   3. Parses AnimationFrame deltas from the collected trace data.
- *   4. Logs a structured frame-budget summary (p50_ms, p95_ms, dropped_frames).
- *   5. Saves the trace summary, top-50 event-name histogram (for diagnosing
- *      future Chromium event-name renames without rerunning), and per-frame
- *      timestamps to test-results/frame-budget-trace.json.
+ *   2. Pre-computes a seeded random batch schedule (~12–30 slices of size [10,100]).
+ *   3. Fires 1000 WS events through the live EventDispatcher with rAF pacing
+ *      between slices (via sendWSBatchPaced).
+ *   4. Parses AnimationFrame deltas from the collected trace data.
+ *   5. Logs a structured frame-budget summary (p50_ms, p95_ms, dropped_frames).
+ *   6. Saves the schedule, trace summary, top-50 event-name histogram (for
+ *      diagnosing future Chromium event-name renames without rerunning), and
+ *      per-frame timestamps to test-results/frame-budget-trace.json.
  *
  * The test ALWAYS passes (no timing assertions). All assertions are structural
  * (trace data was collected, artifact was written).
@@ -41,7 +44,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
 import { expect, test } from './lib/fixtures'
-import { bigintReplacer, makeRunEvent, sendWSBatch, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import {
+  bigintReplacer,
+  makeRunEvent,
+  randomBatchSchedule,
+  sendWSBatchPaced,
+  WS_MOCK_INIT_SCRIPT,
+} from './lib/ws-mock'
 
 const _dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -113,7 +122,7 @@ test.describe('Frame-budget tracing (informational)', () => {
       transferMode: 'ReportEvents',
     })
 
-    // --- Fire 1000 events as a batch through the real EventDispatcher ---
+    // --- Fire 1000 events with randomized rAF pacing through the real EventDispatcher ---
     const msgs: string[] = []
     const now = new Date().toISOString()
     for (let i = 1; i <= 1000; i++) {
@@ -128,7 +137,11 @@ test.describe('Frame-budget tracing (informational)', () => {
         }),
       )
     }
-    await sendWSBatch(page, msgs)
+    // Seeded schedule keeps the artifact reproducible across CI runs (~12–30
+    // slices, wide variance). Default driver `'raf'` interleaves dispatcher
+    // flushes between pacing ticks — what real WS arrival pacing looks like.
+    const schedule = randomBatchSchedule(1000, { min: 10, max: 100, seed: 1 })
+    await sendWSBatchPaced(page, msgs, schedule)
 
     // --- Stop tracing and collect data ---
     await cdpSession.send('Tracing.end')
@@ -148,13 +161,12 @@ test.describe('Frame-budget tracing (informational)', () => {
       .map(([name, count]) => ({ name, count }))
 
     // --- Parse AnimationFrame deltas ---
-    // The full deltas span end-to-end injection-loop + first-flush + post-flush
-    // rAF tail. The dominant signal in current results is the synchronous
-    // JSON.parse + dispatcher.dispatch loop inside `sendWSBatch.page.evaluate`,
-    // which blocks the main thread for ~200ms (1000 iterations) and prevents
-    // any rAF from firing during that window. See architecture doc for the
-    // honest framing — this measures composite end-to-end latency, not the
-    // dispatcher's rAF coalescing in isolation (Tier 1 owns that gate).
+    // With paced injection (sendWSBatchPaced), the deltas reflect dispatcher
+    // rAF coalescing under randomized per-tick arrival pacing: the dispatcher's
+    // flush rAF fires between pacing ticks (FIFO with the next pacing rAF), so
+    // each slice drains in its own frame. Slices near the upper bound (100 events)
+    // can exceed one frame budget — that's the realistic WS-burst case we wanted
+    // to capture. See architecture doc § Performance Verification for framing.
     const animationFrames = traceEvents
       .filter(
         (e): e is CdpTraceEvent & { name: string; ts: number } =>
@@ -196,6 +208,7 @@ test.describe('Frame-budget tracing (informational)', () => {
       JSON.stringify(
         {
           summary,
+          schedule,
           trace_event_count: traceEvents.length,
           top_event_names: topEventNames,
           animation_frame_timestamps_us: animationFrames,
