@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use atc_core::{LabelSet, RunnerPoolCapacity, deserialize_pool_entry};
+use atc_core::{LabelSet, RunnerPoolCapacity};
 use figment::{
     Figment,
     providers::{Env, Format, Serialized, Yaml},
@@ -59,36 +59,6 @@ pub struct GitHubConfig {
     pub webhook_secret: Option<String>,
 }
 
-/// Operator-declared capacity for a runner pool, keyed by label set.
-///
-/// Loaded from `runner_pools:` entries in the YAML config file. Labels are
-/// canonicalized (sorted + deduplicated) during validation so that downstream
-/// `LabelSet` comparisons match regardless of the source ordering.
-///
-/// `capacity` is `Option<u32>`: `Some(n)` declares a bounded pool with a
-/// ceiling of `n`, `None` (written as `capacity: null` in YAML) declares the
-/// pool unbounded. The custom `Deserialize` impl distinguishes a missing
-/// `capacity` key from an explicit null and rejects key omission with a
-/// remediation-named error.
-#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
-pub struct RunnerPoolConfig {
-    pub labels: Vec<String>,
-    pub capacity: Option<u32>,
-}
-
-impl<'de> serde::Deserialize<'de> for RunnerPoolConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        deserialize_pool_entry(
-            deserializer,
-            "RunnerPoolConfig",
-            |labels: Vec<String>, capacity| Self { labels, capacity },
-        )
-    }
-}
-
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Config {
     pub http_addr: SocketAddr,
@@ -98,7 +68,7 @@ pub struct Config {
     pub log_format: LogFormat,
     pub github: GitHubConfig,
     #[serde(default)]
-    pub runner_pools: Vec<RunnerPoolConfig>,
+    pub runner_pools: Vec<RunnerPoolCapacity>,
     /// Outbox retention age. Operator-tunable via `ATC_OUTBOX_RETENTION`
     /// (humantime-parseable: `7d`, `24h`, etc.). Default 7 days. Must be at
     /// least 1 hour — `PgStore::start_inner` rejects shorter values because
@@ -140,12 +110,12 @@ impl Config {
     /// for nested configuration (e.g., `ATC_GITHUB__WEBHOOK_SECRET` →
     /// `config.github.webhook_secret`).
     ///
-    /// After extraction, `runner_pools` is validated and canonicalized: each
-    /// pool's labels are sorted + deduplicated in place, empty labels arrays
-    /// are rejected, `capacity: 0` is rejected (`capacity: null` declares an
-    /// unbounded pool), missing `capacity` key is rejected at parse time by
-    /// the custom `Deserialize` impl, and duplicate canonicalized label sets
-    /// across the array are rejected.
+    /// After extraction, `runner_pools` is validated: `LabelSet` canonicalizes
+    /// labels (sort + dedup) during deserialization, so the post-extract step
+    /// is a pure scan via `validate_capacities`. Rejected: empty label sets,
+    /// `capacity: 0` (`capacity: null` declares an unbounded pool), missing
+    /// `capacity` key (rejected at parse time by `RunnerPoolCapacity`'s custom
+    /// `Deserialize` impl), and duplicate canonicalized label sets.
     ///
     /// # Errors
     ///
@@ -163,48 +133,46 @@ impl Config {
     pub fn load() -> Result<Self, Box<figment::Error>> {
         let path = config_path();
 
-        let mut config: Config = Figment::from(Serialized::defaults(Config::default()))
+        let config: Config = Figment::from(Serialized::defaults(Config::default()))
             .merge(Yaml::file(&path))
             .merge(Env::prefixed("ATC_").split("__"))
             .extract()
             .map_err(Box::new)?;
 
-        canonicalize_runner_pools(&mut config.runner_pools)
+        validate_capacities(&config.runner_pools)
             .map_err(|msg| Box::new(figment::Error::from(msg)))?;
 
         Ok(config)
     }
 }
 
-/// Canonicalizes each pool's labels (sort + dedup) and rejects invalid entries.
+/// Validates operator-declared runner pool capacities.
 ///
-/// Shared by `Config::load` (startup) and `reload_runner_pools` (hot reload) so
-/// both paths see identical validation. Fatal — callers map the returned
-/// message into their own error type.
-fn canonicalize_runner_pools(pools: &mut [RunnerPoolConfig]) -> Result<(), String> {
-    let mut seen: HashSet<LabelSet> = HashSet::new();
+/// Shared by `Config::load` (startup) and `reload_runner_pools` (hot reload)
+/// so both paths see identical validation. `LabelSet` already canonicalizes
+/// (sort + dedup) during deserialization, so this function is a pure scan —
+/// no mutation. Fatal — callers map the returned message into their own error
+/// type.
+fn validate_capacities(caps: &[RunnerPoolCapacity]) -> Result<(), String> {
+    let mut seen: HashSet<&LabelSet> = HashSet::new();
 
-    for (idx, pool) in pools.iter_mut().enumerate() {
-        if matches!(pool.capacity, Some(0)) {
+    for (idx, cap) in caps.iter().enumerate() {
+        if matches!(cap.capacity, Some(0)) {
             return Err(format!(
                 "runner_pools[{idx}]: capacity must be >= 1 (use null for unbounded pools)"
             ));
         }
 
-        // Canonicalize: dedup via BTreeSet, then reflect sorted order back
-        // into the Vec so the on-wire payload is already canonical.
-        let canonical = LabelSet::new(pool.labels.iter().cloned());
-        if canonical.is_empty() {
+        if cap.labels.is_empty() {
             return Err(format!(
                 "runner_pools[{idx}]: labels must contain at least one entry"
             ));
         }
-        pool.labels = canonical.iter().map(str::to_owned).collect();
 
-        if !seen.insert(canonical) {
+        if !seen.insert(&cap.labels) {
+            let label_list: Vec<_> = cap.labels.iter().collect();
             return Err(format!(
-                "runner_pools[{idx}]: duplicate label set (labels={:?} canonicalizes to a pool already declared earlier)",
-                pool.labels
+                "runner_pools[{idx}]: duplicate label set (labels={label_list:?} canonicalizes to a pool already declared earlier)"
             ));
         }
     }
@@ -222,7 +190,7 @@ fn canonicalize_runner_pools(pools: &mut [RunnerPoolConfig]) -> Result<(), Strin
 #[derive(Debug, Default, serde::Deserialize)]
 struct ReloadPayload {
     #[serde(default)]
-    runner_pools: Vec<RunnerPoolConfig>,
+    runner_pools: Vec<RunnerPoolCapacity>,
 }
 
 /// Categorized failure mode from `reload_runner_pools`.
@@ -269,7 +237,7 @@ impl std::error::Error for ReloadError {}
 /// `Vec<RunnerPoolCapacity>`.
 ///
 /// Used by `config_watcher` on every debounced filesystem event. Validation
-/// is identical to startup (`canonicalize_runner_pools`). The path is read
+/// is identical to startup (`validate_capacities`). The path is read
 /// directly so the read/parse error split is precise: figment's `Yaml::file`
 /// is auto-optional and would mask a deleted-file edit as an empty document.
 ///
@@ -287,20 +255,13 @@ pub fn reload_runner_pools(path: &Path) -> Result<Vec<RunnerPoolCapacity>, Reloa
     let contents = std::fs::read_to_string(path)
         .map_err(|e| ReloadError::Read(format!("failed to read {}: {e}", path.display())))?;
 
-    let mut payload: ReloadPayload = Figment::from(Yaml::string(&contents))
+    let payload: ReloadPayload = Figment::from(Yaml::string(&contents))
         .extract()
         .map_err(|e| ReloadError::Parse(format!("failed to parse {}: {e}", path.display())))?;
 
-    canonicalize_runner_pools(&mut payload.runner_pools).map_err(ReloadError::Validate)?;
+    validate_capacities(&payload.runner_pools).map_err(ReloadError::Validate)?;
 
-    Ok(payload
-        .runner_pools
-        .into_iter()
-        .map(|p| RunnerPoolCapacity {
-            labels: LabelSet::new(p.labels),
-            capacity: p.capacity,
-        })
-        .collect())
+    Ok(payload.runner_pools)
 }
 
 /// Snapshot of scalar `Config` fields captured at process startup.
@@ -453,13 +414,15 @@ runner_pools:
 
         let config = Config::load().expect("load with valid file should succeed");
         assert_eq!(config.runner_pools.len(), 2);
+        let first_labels: Vec<_> = config.runner_pools[0].labels.iter().collect();
         assert_eq!(
-            config.runner_pools[0].labels,
+            first_labels,
             vec!["linux", "self-hosted", "x64"],
             "labels should be canonicalized to sorted order"
         );
         assert_eq!(config.runner_pools[0].capacity, Some(10));
-        assert_eq!(config.runner_pools[1].labels, vec!["ubuntu-latest"]);
+        let second_labels: Vec<_> = config.runner_pools[1].labels.iter().collect();
+        assert_eq!(second_labels, vec!["ubuntu-latest"]);
         assert_eq!(config.runner_pools[1].capacity, Some(20));
     }
 
@@ -477,10 +440,8 @@ runner_pools:
         unsafe { std::env::set_var(CONFIG_FILE_ENV, file.path()) };
 
         let config = Config::load().expect("dedup should not be fatal");
-        assert_eq!(
-            config.runner_pools[0].labels,
-            vec!["linux", "self-hosted", "x64"]
-        );
+        let labels: Vec<_> = config.runner_pools[0].labels.iter().collect();
+        assert_eq!(labels, vec!["linux", "self-hosted", "x64"]);
     }
 
     #[test]
@@ -502,7 +463,8 @@ runner_pools:
             config.runner_pools[0].capacity, None,
             "explicit null → None"
         );
-        assert_eq!(config.runner_pools[0].labels, vec!["ubuntu-latest"]);
+        let labels: Vec<_> = config.runner_pools[0].labels.iter().collect();
+        assert_eq!(labels, vec!["ubuntu-latest"]);
     }
 
     #[test]
@@ -547,12 +509,11 @@ runner_pools:
         let config = Config::load().expect("mixed bounded + unbounded should succeed");
         assert_eq!(config.runner_pools.len(), 2);
         assert_eq!(config.runner_pools[0].capacity, Some(10));
-        assert_eq!(
-            config.runner_pools[0].labels,
-            vec!["linux", "self-hosted", "x64"]
-        );
+        let first_labels: Vec<_> = config.runner_pools[0].labels.iter().collect();
+        assert_eq!(first_labels, vec!["linux", "self-hosted", "x64"]);
         assert_eq!(config.runner_pools[1].capacity, None);
-        assert_eq!(config.runner_pools[1].labels, vec!["ubuntu-latest"]);
+        let second_labels: Vec<_> = config.runner_pools[1].labels.iter().collect();
+        assert_eq!(second_labels, vec!["ubuntu-latest"]);
     }
 
     #[test]

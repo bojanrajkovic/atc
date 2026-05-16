@@ -171,7 +171,7 @@ Empty list (the default) ⇒ no `ConfigMap`, no volume, no behavior change. The 
 
 `values.schema.json` enforces the per-entry shape: `labels` is a non-empty array of unique strings, `capacity` is required and is either an integer ≥ 1 or `null`. `null` declares the pool unbounded (e.g. ARC `AutoscalingRunnerSet` without `maxRunners`, or GitHub-hosted runners whose per-account concurrency limits do not yield a per-label ceiling). Server-side validation additionally:
 - Enforces explicit `capacity` key presence via a custom `Deserialize` impl — omitting the key is rejected with `"capacity is required (use \`capacity: null\` for an unbounded pool)"`. The JSON Schema also keeps `capacity` in `required`, so the failure surfaces at `helm install` / `helm upgrade` time AND at server startup.
-- Canonicalizes labels (sort + dedup) and rejects two entries that canonicalize to the same set — silently last-one-wins would be a deployment-time footgun.
+- Canonicalizes labels (sort + dedup) implicitly during deserialization (the wire `LabelSet` is a `BTreeSet<String>` under the hood); a post-extract scan additionally rejects two entries that canonicalize to the same set — silently last-one-wins would be a deployment-time footgun.
 - Rejects `capacity: 0` with `"capacity must be >= 1 (use null for unbounded pools)"`.
 
 All failures are fatal at startup.

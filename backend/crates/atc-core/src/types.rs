@@ -177,109 +177,73 @@ pub struct RunnerPoolCapacity {
     pub capacity: Option<u32>,
 }
 
+/// Custom `Deserialize` for `RunnerPoolCapacity`.
+///
+/// A field-level `Option<u32>` cannot distinguish a missing `capacity` key
+/// from an explicit `capacity: null` — both would deserialize as `None`.
+/// This visitor walks the input map manually and tracks whether the
+/// `capacity` key was seen at all (`capacity_seen`). A missing key is
+/// rejected with an operator-facing remediation message; `capacity: null`
+/// (seen-but-null) maps to `None` (unbounded pool). Unknown keys are
+/// rejected to prevent silent operator misconfiguration.
 impl<'de> Deserialize<'de> for RunnerPoolCapacity {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        deserialize_pool_entry(deserializer, "RunnerPoolCapacity", |labels, capacity| {
-            Self { labels, capacity }
-        })
-    }
-}
+        struct Visitor;
 
-/// Shared `Deserialize` walker for runner-pool entries.
-///
-/// Both `RunnerPoolCapacity` (this crate) and `atc-server::config::RunnerPoolConfig`
-/// share the same input contract — `labels` (non-empty array of strings) and
-/// `capacity` (integer or null, key required) — but produce different label
-/// representations (`LabelSet` here, `Vec<String>` server-side, kept raw so
-/// `validate_runner_pools` can canonicalize in place). The factory closure
-/// parameterizes the construction so the visitor logic — key tracking,
-/// missing/null discrimination, unknown-key rejection, and the explicit
-/// "capacity is required" message — is written once.
-///
-/// # Errors
-///
-/// Returns `D::Error` if the input is not a map, contains an unknown field,
-/// contains a duplicate `labels` or `capacity` key, omits the `labels` key,
-/// or omits the `capacity` key (rejected with a remediation-naming message
-/// that points operators at the `capacity: null` form for unbounded pools).
-pub fn deserialize_pool_entry<'de, D, T, L, F>(
-    deserializer: D,
-    type_name: &'static str,
-    make: F,
-) -> Result<T, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    L: Deserialize<'de>,
-    F: FnOnce(L, Option<u32>) -> T,
-{
-    struct Entry<F, T, L> {
-        type_name: &'static str,
-        make: Option<F>,
-        _marker: std::marker::PhantomData<fn() -> (T, L)>,
-    }
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = RunnerPoolCapacity;
 
-    impl<'de, F, T, L> serde::de::Visitor<'de> for Entry<F, T, L>
-    where
-        L: Deserialize<'de>,
-        F: FnOnce(L, Option<u32>) -> T,
-    {
-        type Value = T;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "struct RunnerPoolCapacity")
+            }
 
-        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "struct {}", self.type_name)
-        }
+            fn visit_map<M>(self, mut map: M) -> Result<RunnerPoolCapacity, M::Error>
+            where
+                M: serde::de::MapAccess<'de>,
+            {
+                let mut labels: Option<LabelSet> = None;
+                let mut capacity: Option<u32> = None;
+                let mut capacity_seen = false;
 
-        fn visit_map<M>(mut self, mut map: M) -> Result<T, M::Error>
-        where
-            M: serde::de::MapAccess<'de>,
-        {
-            let mut labels: Option<L> = None;
-            let mut capacity: Option<u32> = None;
-            let mut capacity_seen = false;
-
-            while let Some(key) = map.next_key::<String>()? {
-                match key.as_str() {
-                    "labels" => {
-                        if labels.is_some() {
-                            return Err(serde::de::Error::duplicate_field("labels"));
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "labels" => {
+                            if labels.is_some() {
+                                return Err(serde::de::Error::duplicate_field("labels"));
+                            }
+                            labels = Some(map.next_value()?);
                         }
-                        labels = Some(map.next_value()?);
-                    }
-                    "capacity" => {
-                        if capacity_seen {
-                            return Err(serde::de::Error::duplicate_field("capacity"));
+                        "capacity" => {
+                            if capacity_seen {
+                                return Err(serde::de::Error::duplicate_field("capacity"));
+                            }
+                            capacity_seen = true;
+                            capacity = map.next_value::<Option<u32>>()?;
                         }
-                        capacity_seen = true;
-                        capacity = map.next_value::<Option<u32>>()?;
-                    }
-                    other => {
-                        return Err(serde::de::Error::unknown_field(
-                            other,
-                            &["labels", "capacity"],
-                        ));
+                        other => {
+                            return Err(serde::de::Error::unknown_field(
+                                other,
+                                &["labels", "capacity"],
+                            ));
+                        }
                     }
                 }
-            }
 
-            let labels = labels.ok_or_else(|| serde::de::Error::missing_field("labels"))?;
-            if !capacity_seen {
-                return Err(serde::de::Error::custom(
-                    "capacity is required (use `capacity: null` for an unbounded pool)",
-                ));
+                let labels = labels.ok_or_else(|| serde::de::Error::missing_field("labels"))?;
+                if !capacity_seen {
+                    return Err(serde::de::Error::custom(
+                        "capacity is required (use `capacity: null` for an unbounded pool)",
+                    ));
+                }
+                Ok(RunnerPoolCapacity { labels, capacity })
             }
-            let make = self.make.take().expect("make consumed exactly once");
-            Ok(make(labels, capacity))
         }
-    }
 
-    deserializer.deserialize_map(Entry::<F, T, L> {
-        type_name,
-        make: Some(make),
-        _marker: std::marker::PhantomData,
-    })
+        deserializer.deserialize_map(Visitor)
+    }
 }
 
 #[cfg(test)]
