@@ -220,8 +220,17 @@ jobs:
   # multi-stage Dockerfile compiles the binary inside the image, so each
   # arch produces its own native binary; no QEMU emulation and no binary
   # handoff from build-binaries.
+  #
+  # `needs: create-release` is intentional even though build-container
+  # doesn't consume any outputs from create-release: it serializes the
+  # ghcr.io image push behind the GitHub Release creation, so a transient
+  # release-creation failure (API blip, token issue) doesn't leave orphan
+  # `:<version>-{amd64,arm64}` tags pointing at a release that never came
+  # together. Partial-release states are the failure mode that's hardest
+  # to recover from cleanly.
   build-container:
     name: Build Container (${{ matrix.platform }})
+    needs: create-release
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
