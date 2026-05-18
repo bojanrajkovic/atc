@@ -243,4 +243,43 @@ describe('TopBar (browser mode)', () => {
     expect(screen.getByText('self-hosted-linux-group · self-hosted, x86_64')).toBeTruthy()
     expect(screen.getByText('self-hosted-linux-group · arm64, self-hosted')).toBeTruthy()
   })
+
+  describe('GoingAway tooltip (issue #47)', () => {
+    it('shows "Server restarting" tooltip when connectionStore.serverGoingAway is true and we are reconnecting', async () => {
+      render(TopBar)
+
+      // Simulate the going-away envelope arriving, which the dispatcher would
+      // route via connectionStore.markGoingAway(). Then the WS would close and
+      // ConnectionManager would transition status to 'reconnecting'.
+      connectionStore.markGoingAway('server shutdown')
+      connectionStore.status = 'reconnecting'
+
+      await new Promise((r) => setTimeout(r, 50))
+
+      // The indicator's aria-label / tooltip text should reflect the restart
+      // rather than the generic "Reconnecting..." wording.
+      const indicator = screen.getByRole('status', { name: /server restarting/i })
+      expect(indicator).toBeTruthy()
+    })
+
+    it('clears the going-away framing once status reaches connected', async () => {
+      render(TopBar)
+
+      connectionStore.markGoingAway('server shutdown')
+      connectionStore.status = 'reconnecting'
+      await new Promise((r) => setTimeout(r, 50))
+      expect(screen.queryByRole('status', { name: /server restarting/i })).toBeTruthy()
+
+      // ConnectionManager's success path resets serverGoingAway / goingAwayReason
+      // alongside the status flip to 'connected'.
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
+      connectionStore.status = 'connected'
+      connectionStore.lastEventAt = Date.now()
+      await new Promise((r) => setTimeout(r, 50))
+
+      expect(screen.queryByRole('status', { name: /server restarting/i })).toBeNull()
+      expect(screen.getByRole('status', { name: /connected/i })).toBeTruthy()
+    })
+  })
 })

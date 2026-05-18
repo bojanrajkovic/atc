@@ -80,32 +80,43 @@ Rejected alternatives: separate `protocol_version` integer (CI-discipline burden
 
 ### Frontend version tracking
 
-**`versionMismatchStore` (new rune-class store)** at `frontend/src/lib/stores/version-mismatch.svelte.ts`:
+**`connectionStore` extensions** (`frontend/src/lib/stores/connection.svelte.ts`) — both `ServerHello`- and `GoingAway`-derived state co-located with the existing WS-lifecycle state (status, lastEventAt, reconnectAttempt). No new store module:
 
 ```typescript
-class VersionMismatchStore {
-  /** First ServerHello.version seen in this tab session; null until first connect. */
-  reference = $state<string | null>(null)
-  /** Latest observed version distinct from reference; drives banner visibility. */
-  observed = $state<string | null>(null)
-  /** Countdown deadline (epoch ms) — null while no banner is showing. */
-  reloadAt = $state<number | null>(null)
+class ConnectionStore {
+  // ... existing fields (status, lastEventAt, reconnectAttempt, ...) ...
 
-  observe(serverVersion: string): void {
-    if (this.reference === null) {
-      this.reference = serverVersion
+  // ServerHello + GoingAway lifecycle (issue #47)
+  /** First ServerHello.version seen in this tab session; null until first connect. */
+  serverVersionReference = $state<string | null>(null)
+  /** Latest observed version distinct from reference; drives banner visibility. */
+  serverVersionMismatch = $state<string | null>(null)
+  /** Countdown deadline (epoch ms) — null while no banner is showing. */
+  serverReloadAt = $state<number | null>(null)
+  /** GoingAway flag flipped by the envelope variant; informs ConnectionIndicator tooltip. */
+  serverGoingAway = $state(false)
+  goingAwayReason = $state<string | null>(null)
+
+  observeServerVersion(version: string): void {
+    if (this.serverVersionReference === null) {
+      this.serverVersionReference = version
       return
     }
-    if (serverVersion === this.reference) {
-      // Reconnect to same backend — keep countdown if it was already running
-      // against a different observed value; otherwise no-op.
+    if (version === this.serverVersionReference) {
+      // Reconnect to same backend — keep countdown if armed against another
+      // observed value; otherwise no-op.
       return
     }
-    // New mismatch detected. If banner is not already showing, arm the countdown.
-    if (this.observed !== serverVersion) {
-      this.observed = serverVersion
-      this.reloadAt = Date.now() + 30_000
+    // Different version. Arm or update the countdown.
+    if (this.serverVersionMismatch !== version) {
+      this.serverVersionMismatch = version
+      this.serverReloadAt = Date.now() + 30_000
     }
+  }
+
+  markGoingAway(reason: string): void {
+    this.serverGoingAway = true
+    this.goingAwayReason = reason
   }
 
   refreshNow(): void {
@@ -114,17 +125,15 @@ class VersionMismatchStore {
 }
 ```
 
-In-memory only; refresh wipes the store, and after refresh, the new bundle's first `ServerHello` matches the running backend, so no banner.
+In-memory only; refresh wipes the store, and after refresh, the new bundle's first `ServerHello` matches the running backend, so no banner. `serverGoingAway` + `goingAwayReason` reset to `(false, null)` on the next successful `connected` transition (`connection.ts:209`).
 
 **Dispatcher additions** (`frontend/src/lib/dispatcher.ts:36`):
-- `case 'ServerHello'`: call `versionMismatchStore.observe(frame.version)`. Bypasses RAF (apply immediately).
+- `case 'ServerHello'`: call `connectionStore.observeServerVersion(frame.version)`. Bypasses RAF (apply immediately).
 - `case 'GoingAway'`: call `connectionStore.markGoingAway(frame.reason)`. Bypasses RAF.
 
 The `default` arm at `dispatcher.ts:59-70` stays warn-and-skip (intentional forward-compat).
 
 **Pre-snapshot switch additions** (`frontend/src/lib/connection.ts:105-126`): add `case 'ServerHello'` and `case 'GoingAway'` arms calling the same store methods. Both apply immediately; neither is buffered for post-snapshot replay (the version check is snapshot-independent; `GoingAway` arrives once and is transient).
-
-**`connectionStore` updates** (`frontend/src/lib/stores/connection.svelte.ts`): add `serverGoingAway: boolean` + `goingAwayReason: string | null` + `markGoingAway(reason)`. Reset both on the next `connected` transition (`connection.ts:209`).
 
 ### Pre-snapshot close-race fix
 
@@ -135,12 +144,12 @@ Fix: in `handleDisconnect()` (`connection.ts:225`), invoke `this.abortController
 ### Banner component
 
 `frontend/src/lib/components/VersionMismatchBanner.svelte`:
-- Visible when `versionMismatchStore.observed !== null && versionMismatchStore.reloadAt !== null`.
-- Subscribes to a 1Hz tick (small `setInterval` started by the component on mount, cleared on destroy) to compute `remainingSeconds = Math.max(0, Math.ceil((reloadAt - Date.now()) / 1000))`.
-- When `remainingSeconds === 0`, calls `versionMismatchStore.refreshNow()` (which calls `window.location.reload()`).
-- Renders the locked design (countdown + "Refresh now" button, no dismiss/snooze). Final visual tuned during the playground + impeccable design pass — see Implementation Steps.
+- Visible when `connectionStore.serverVersionMismatch !== null && connectionStore.serverReloadAt !== null`.
+- Uses `requestAnimationFrame` to keep a local `now` `$state` updated, so the bar's `width %` drains smoothly at 60+ Hz; the numeric "{N}s" derives from `Math.ceil((serverReloadAt - now) / 1000)` and only re-renders when the integer changes.
+- When `remainingMs <= 0`, calls `connectionStore.refreshNow()` (which calls `window.location.reload()`).
+- Renders the locked-after-impeccable design (full-width strip under TopBar, OKLCH-mixed `--queued`-tinted surface, no side stripe, `↺` glyph in `--text-dim`, queued-colored "{N}s" + countdown bar, ease-out-expo 220ms entrance, prefers-reduced-motion hides the bar). No dismiss / no snooze.
 - Mounted in `AppShell.svelte` between `<TopBar>` and `<main>`.
-- Reuses existing shadcn-svelte `Button` from `frontend/src/lib/components/ui/button/` and `Progress` from `frontend/src/lib/components/ui/progress/` (for the countdown bar).
+- Reuses existing shadcn-svelte `Button` from `frontend/src/lib/components/ui/button/`. The countdown bar is a 3px-tall `<div>` with an inline `width: %`-bound child element — no `Progress` primitive (its API doesn't expose the smooth-drain semantics we need).
 - Container is `<aside role="status" aria-live="polite" aria-atomic="true">` so screen readers announce the message without overriding the workflow-update live region.
 
 ### Connection indicator going-away state
@@ -165,10 +174,10 @@ Fix: in `handleDisconnect()` (`connection.ts:225`), invoke `this.abortController
 
 - **Backend integration test** (`backend/crates/atc-server/tests/integration/`): WS open → first frame is `{"kind":"ServerHello","version":"..."}` with non-empty `version` equal to `env!("VERGEN_GIT_DESCRIBE")`.
 - **Backend integration test**: cancel the shutdown token → next two frames are `{"kind":"GoingAway","reason":"server shutdown"}` then a Close-1001.
-- **Frontend unit test** (Vitest): `versionMismatchStore.observe('v1')` then `observe('v1')` again leaves `reference === 'v1'`, `observed === null`, `reloadAt === null`. `observe('v1')` then `observe('v2')` sets `observed === 'v2'` and `reloadAt` ≈ 30s in the future.
-- **Frontend unit test**: dispatcher calls `versionMismatchStore.observe` on `ServerHello` and `connectionStore.markGoingAway` on `GoingAway`.
+- **Frontend unit test** (Vitest): `connectionStore.observeServerVersion('v1')` then `observeServerVersion('v1')` again leaves `serverVersionReference === 'v1'`, `serverVersionMismatch === null`, `serverReloadAt === null`. `observeServerVersion('v1')` then `observeServerVersion('v2')` sets `serverVersionMismatch === 'v2'` and `serverReloadAt` ≈ 30s in the future.
+- **Frontend unit test**: dispatcher calls `connectionStore.observeServerVersion` on `ServerHello` and `connectionStore.markGoingAway` on `GoingAway`.
 - **Frontend unit test**: socket close during `/v1/state` fetch never lands `connectionStore.status === 'connected'`; the abort-fix regression test.
-- **Frontend component test** (Vitest browser): `VersionMismatchBanner.svelte` is hidden when `observed === null`; visible when `observed !== null`; countdown decrements with virtual timers; "Refresh now" invokes a reload spy; at `remainingSeconds === 0` the reload spy fires automatically.
+- **Frontend component test** (Vitest browser): `VersionMismatchBanner.svelte` is hidden when `serverVersionMismatch === null`; visible when `serverVersionMismatch !== null`; countdown decrements with virtual timers; "Refresh now" invokes a `refreshNow()` spy; at `remainingMs <= 0` the spy fires automatically.
 - **Frontend component test**: `ConnectionIndicator.svelte` shows the "Server restarting — reconnecting…" tooltip when `connectionStore.serverGoingAway === true`.
 - **E2E test** (Playwright, using `frontend/e2e/lib/ws-mock.ts` helpers): inject two ServerHello frames with different versions, assert banner appears, click "Refresh now", assert reload.
 
@@ -187,8 +196,11 @@ These tests all fail initially.
 
 ### Frontend dispatcher, store, and abort-race fix
 
-- Create `versionMismatchStore` at `frontend/src/lib/stores/version-mismatch.svelte.ts` per Architecture.
-- Extend `connectionStore` with `serverGoingAway`, `goingAwayReason`, `markGoingAway`. Reset both on the `connected` transition at `connection.ts:209`.
+- Extend `connectionStore` (`frontend/src/lib/stores/connection.svelte.ts`) with:
+  - `serverVersionReference`, `serverVersionMismatch`, `serverReloadAt` — session-reference state for the banner.
+  - `serverGoingAway`, `goingAwayReason` — going-away envelope state for the indicator.
+  - `observeServerVersion(version)`, `markGoingAway(reason)`, `refreshNow()` methods per Architecture.
+- Reset `serverGoingAway` + `goingAwayReason` to `(false, null)` on the `connected` transition at `connection.ts:209`.
 - Add `case 'ServerHello'` and `case 'GoingAway'` arms to `dispatcher.ts:36` and to `connection.ts:105-126`.
 - In `handleDisconnect()` (`connection.ts:225`), call `this.abortController?.abort()` BEFORE scheduling the reconnect timer.
 - Frontend store, dispatcher, and abort-race unit tests pass.
@@ -203,7 +215,7 @@ These tests all fail initially.
 ### Documentation updates
 
 - `docs/architecture/backend-server.md` — WS section: new envelope variants; ServerHello-on-connect + GoingAway-before-Close-1001 lifecycle.
-- `docs/architecture/frontend-app.md` — new "Deploy detection" subsection: session-reference model, dispatcher arms, banner UX, countdown + auto-reload, `versionMismatchStore`, `serverGoingAway` flag, indicator variant, abort-on-disconnect race fix.
+- `docs/architecture/frontend-app.md` — new "Deploy detection" subsection: session-reference model, dispatcher arms, banner UX, countdown + auto-reload, `connectionStore` version-handshake fields, `serverGoingAway` flag, indicator variant, abort-on-disconnect race fix.
 - `backend/crates/atc-server/CLAUDE.md` — `ws` Modules row updated for five `WireFrame` variants + on-connect handshake.
 - `frontend/CLAUDE.md` — no proactive change. Reactive sharp-edge entry only if friction surfaces.
 - `scripts/doc-mapping.sh` — no new entries; existing catch-alls cover all changed files.
@@ -213,11 +225,11 @@ These tests all fail initially.
 
 - **AC1** — On every WS open, the frontend receives a frame with `kind === 'ServerHello'` and a `version` string equal to the backend's `env!("VERGEN_GIT_DESCRIBE")` (verified by backend integration test).
 - **AC2** — On graceful shutdown, the frontend receives `{"kind":"GoingAway","reason":"server shutdown"}` immediately before the Close-1001 transport frame (verified by backend integration test).
-- **AC3** — The first `ServerHello` in a tab session sets `versionMismatchStore.reference` and does NOT show the banner (verified by unit test).
-- **AC4** — A subsequent `ServerHello` with a `version` different from `reference` sets `observed` and `reloadAt ≈ Date.now() + 30_000`, making the banner visible (verified by unit test).
-- **AC5** — A subsequent `ServerHello` with `version === reference` (reconnect to same backend) does not arm or rearm the countdown (verified by unit test).
-- **AC6** — The banner renders the locked design (per playground+impeccable pass) with a decrementing countdown; at `remainingSeconds === 0` it calls `window.location.reload()` (verified by component test with virtual timers).
-- **AC7** — Clicking "Refresh now" calls `window.location.reload()` immediately (verified by component test with a reload spy).
+- **AC3** — The first `ServerHello` in a tab session sets `connectionStore.serverVersionReference` and does NOT show the banner (verified by unit test).
+- **AC4** — A subsequent `ServerHello` with a `version` different from `serverVersionReference` sets `serverVersionMismatch` and `serverReloadAt ≈ Date.now() + 30_000`, making the banner visible (verified by unit test).
+- **AC5** — A subsequent `ServerHello` with `version === serverVersionReference` (reconnect to same backend) does not arm or rearm the countdown (verified by unit test).
+- **AC6** — The banner renders the locked-after-impeccable design (full-width strip under TopBar, OKLCH-mixed `--queued`-tinted surface, no side stripe, `↺` glyph in `--text-dim`, queued-colored "{N}s" + countdown bar, ease-out-expo entrance 220ms, prefers-reduced-motion hides the bar) with a smooth-draining bar; at `serverReloadAt - Date.now() <= 0` it calls `connectionStore.refreshNow()` (verified by component test with virtual timers).
+- **AC7** — Clicking "Refresh now" calls `connectionStore.refreshNow()` (which invokes `window.location.reload()`) immediately (verified by component test with a reload spy).
 - **AC8** — On receiving `GoingAway`, `connectionStore.serverGoingAway === true` and `goingAwayReason` carries the wire `reason`; both reset on the next successful `connected` transition (verified by unit test).
 - **AC9** — When `connectionStore.serverGoingAway === true`, `ConnectionIndicator.svelte` shows the "Server restarting — reconnecting…" tooltip (verified by component test).
 - **AC10** — A socket close during `/v1/state` fetch never leaves `connectionStore.status === 'connected'` afterward (verified by unit test that races a `ws.close()` against an in-flight fetch and asserts the final status is `reconnecting`).
@@ -228,7 +240,7 @@ These tests all fail initially.
 | Doc | Change |
 |-----|--------|
 | `docs/architecture/backend-server.md` | WS section: new envelope variants; ServerHello-on-connect + GoingAway-before-Close-1001 lifecycle. |
-| `docs/architecture/frontend-app.md` | New "Deploy detection" subsection: session-reference model, dispatcher arms, banner UX, countdown + auto-reload, `versionMismatchStore`, `serverGoingAway`, `ConnectionIndicator` variant, abort-on-disconnect race fix. |
+| `docs/architecture/frontend-app.md` | New "Deploy detection" subsection: session-reference model, dispatcher arms, banner UX, countdown + auto-reload, `connectionStore` version-handshake fields, `serverGoingAway`, `ConnectionIndicator` variant, abort-on-disconnect race fix. |
 | `backend/crates/atc-server/CLAUDE.md` | `ws` Modules row updated for five `WireFrame` variants + on-connect handshake. |
 | `frontend/CLAUDE.md` | No proactive change. |
 | `scripts/doc-mapping.sh` | No new entries. |
@@ -247,7 +259,7 @@ These tests all fail initially.
 
 ## Glossary
 
-- **Session reference** — The first `ServerHello.version` received in a given browser tab. Held in `versionMismatchStore.reference` until the tab is refreshed or closed.
+- **Session reference** — The first `ServerHello.version` received in a given browser tab. Held in `connectionStore.serverVersionReference` until the tab is refreshed or closed.
 - **Countdown** — The 30-second window between detecting a version mismatch and auto-reloading. Skippable via "Refresh now"; not pausable or dismissible.
 - **`VERGEN_GIT_DESCRIBE`** — Existing build-time env var emitted by `vergen-gix` (`backend/crates/atc-server/build.rs:1-17`). Source for `ServerHello.version` and for the `git_describe` / `version` labels on `atc_build_info`.
 - **`WireFrame`** — Outer-`kind`-discriminated enum at `backend/crates/atc-server/src/ws.rs:60-73`; serde-tagged, ts-rs-exported.

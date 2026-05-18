@@ -226,4 +226,116 @@ describe('ConnectionStore', () => {
       expect(connectionStore.reconnectRequested).toBe(initial + 3)
     })
   })
+
+  describe('observeServerVersion — session-reference handshake (issue #47)', () => {
+    beforeEach(() => {
+      // Reset issue #47 fields between tests.
+      connectionStore.serverVersionReference = null
+      connectionStore.serverVersionMismatch = null
+      connectionStore.serverReloadAt = null
+    })
+
+    it('first observation in a session sets `serverVersionReference` and does not arm the banner', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.observeServerVersion('v1.0.0')
+
+      expect(connectionStore.serverVersionReference).toBe('v1.0.0')
+      expect(connectionStore.serverVersionMismatch).toBeNull()
+      expect(connectionStore.serverReloadAt).toBeNull()
+    })
+
+    it('observing the reference version a second time is a no-op (reconnect to same backend)', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.observeServerVersion('v1.0.0')
+      vi.advanceTimersByTime(10_000)
+      connectionStore.observeServerVersion('v1.0.0')
+
+      expect(connectionStore.serverVersionReference).toBe('v1.0.0')
+      expect(connectionStore.serverVersionMismatch).toBeNull()
+      expect(connectionStore.serverReloadAt).toBeNull()
+    })
+
+    it('a different version arms `serverReloadAt ≈ now + 30_000`', () => {
+      const t = 1_000_000
+      vi.setSystemTime(t)
+      connectionStore.observeServerVersion('v1.0.0')
+      connectionStore.observeServerVersion('v1.1.0')
+
+      expect(connectionStore.serverVersionReference).toBe('v1.0.0')
+      expect(connectionStore.serverVersionMismatch).toBe('v1.1.0')
+      expect(connectionStore.serverReloadAt).toBe(t + 30_000)
+    })
+
+    it('observing the SAME mismatched version twice does not rearm the countdown', () => {
+      const t = 1_000_000
+      vi.setSystemTime(t)
+      connectionStore.observeServerVersion('v1.0.0')
+      connectionStore.observeServerVersion('v1.1.0')
+      const firstDeadline = connectionStore.serverReloadAt
+
+      vi.advanceTimersByTime(5_000)
+      connectionStore.observeServerVersion('v1.1.0')
+      expect(connectionStore.serverReloadAt).toBe(firstDeadline)
+    })
+
+    it('observing a NEW mismatched version updates `serverVersionMismatch` and resets `serverReloadAt`', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.observeServerVersion('v1.0.0')
+      connectionStore.observeServerVersion('v1.1.0')
+      const firstDeadline = connectionStore.serverReloadAt
+
+      vi.advanceTimersByTime(5_000)
+      connectionStore.observeServerVersion('v1.2.0')
+
+      expect(connectionStore.serverVersionMismatch).toBe('v1.2.0')
+      expect(connectionStore.serverReloadAt).not.toBe(firstDeadline)
+      expect(connectionStore.serverReloadAt).toBe(Date.now() + 30_000)
+    })
+
+    it('reconnecting to the reference version after a mismatch keeps the countdown armed', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.observeServerVersion('v1.0.0')
+      connectionStore.observeServerVersion('v1.1.0')
+      const deadlineBefore = connectionStore.serverReloadAt
+
+      // Brief reconnect to the reference pod during a rolling deploy.
+      connectionStore.observeServerVersion('v1.0.0')
+
+      expect(connectionStore.serverVersionMismatch).toBe('v1.1.0')
+      expect(connectionStore.serverReloadAt).toBe(deadlineBefore)
+    })
+  })
+
+  describe('markGoingAway — GoingAway envelope (issue #47)', () => {
+    beforeEach(() => {
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
+    })
+
+    it('sets `serverGoingAway` and `goingAwayReason`', () => {
+      connectionStore.markGoingAway('server shutdown')
+      expect(connectionStore.serverGoingAway).toBe(true)
+      expect(connectionStore.goingAwayReason).toBe('server shutdown')
+    })
+  })
+
+  describe('refreshNow — auto-reload (issue #47)', () => {
+    it('invokes window.location.reload', () => {
+      const reload = vi.fn()
+      const originalLocation = window.location
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...originalLocation, reload },
+      })
+      try {
+        connectionStore.refreshNow()
+        expect(reload).toHaveBeenCalledOnce()
+      } finally {
+        Object.defineProperty(window, 'location', {
+          configurable: true,
+          value: originalLocation,
+        })
+      }
+    })
+  })
 })
