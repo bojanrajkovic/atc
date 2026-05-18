@@ -30,6 +30,11 @@ jobs:
       - uses: taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651 # v1.11.0
         with:
           changelog: backend/crates/atc-server/CHANGELOG.md
+          # Tolerate a missing CHANGELOG on pre-release tags (rc/dev cycles
+          # run before release-please has materialised the file). Real
+          # release tags (no `-` suffix) still fail-loud if the CHANGELOG
+          # has gone missing.
+          allow-missing-changelog: ${{ contains(github.ref_name, '-') }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Build the frontend once and share `frontend/dist` with every binary build
