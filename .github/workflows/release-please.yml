@@ -30,6 +30,12 @@ jobs:
         with:
           app-id: ${{ vars.RELEASER_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASER_BOT_PRIVATE_KEY }}
+          # Least-privilege scopes for release-please: it commits the
+          # release manifest/changelog (contents) and opens/updates the
+          # release PR (pull-requests). `skip-github-release: true` in
+          # release-please-config.json means we don't need release scope.
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
@@ -52,6 +58,10 @@ jobs:
         with:
           app-id: ${{ vars.RELEASER_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASER_BOT_PRIVATE_KEY }}
+          # Only contents:write — we push a Cargo.lock refresh commit to
+          # the release PR branch. `gh api /users/<slug>[bot]` resolves
+          # via metadata, which is implicit on installation tokens.
+          permission-contents: write
 
       # Look up the bot's user id so commits attribute correctly under
       # <id>+<slug>[bot]@users.noreply.github.com (GitHub's canonical form).
@@ -126,6 +136,10 @@ jobs:
         with:
           app-id: ${{ vars.RELEASER_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASER_BOT_PRIVATE_KEY }}
+          # Only contents:write — we push an appVersion sync commit to
+          # the release PR branch. Bot identity lookup uses metadata,
+          # which is implicit on installation tokens.
+          permission-contents: write
 
       - name: Resolve bot identity
         id: bot
