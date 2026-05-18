@@ -118,6 +118,17 @@ export class ConnectionManager {
           // server-side capacities. Surfacing the error pre-snapshot would
           // race with the loading indicator and confuse operators.
           break
+        case 'ServerHello':
+          // The version check is snapshot-independent — apply now. First
+          // ServerHello in a session sets the reference; later mismatches
+          // arm the deploy-detected banner.
+          connectionStore.observeServerVersion(frame.version)
+          break
+        case 'GoingAway':
+          // Transient, single-shot. Mark the flag so the indicator can
+          // render its "Server restarting" tooltip during the gap.
+          connectionStore.markGoingAway(frame.reason)
+          break
         default: {
           // Unknown kind from a newer backend; ignore silently here (the
           // dispatcher's connected-mode default arm warns once per kind).
@@ -205,7 +216,10 @@ export class ConnectionManager {
       eventDispatcher.setOnFlush((events) => liveRegion.observeFlush(events))
       this.connected = true
 
-      // Step 7: Transition to connected
+      // Step 7: Transition to connected. Reset GoingAway flags — the previous
+      // close cycle (if any) is complete and we're up against a fresh backend.
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
       connectionStore.status = 'connected'
       connectionStore.reconnectAttempt = 0
     } catch {
@@ -225,6 +239,13 @@ export class ConnectionManager {
   private handleDisconnect(): void {
     this.connected = false
     this.ws = null
+    // Abort any in-flight connect cycle before scheduling the reconnect. If
+    // the socket closes during `/v1/state` fetch (likely on every redeploy
+    // because `GoingAway` arrives right before the close), the prior
+    // `connect()` call would otherwise complete its fetch path and set
+    // `status = 'connected'` against a dead socket. The fetch chain already
+    // bails on `signal.aborted`. See issue #47 AC10.
+    this.abortController?.abort()
     // Detach the live-region callback on disconnect so the next reconnect cycle
     // (snapshot + buffered-drain) runs silently until re-wired.
     eventDispatcher.setOnFlush(null)
