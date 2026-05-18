@@ -337,6 +337,56 @@ podDisruptionBudget:
   minAvailable: 1
   maxUnavailable: null
 
+# Grafana dashboard auto-discovery. Default off — provisioning a dashboard is
+# an operator decision, not a chart default. Two discovery paths are supported
+# from one chart-shipped JSON; enable whichever (or both) matches your stack.
+# See docs/architecture/deployment.md § Grafana dashboard for the runbook.
+grafanaDashboard:
+  # -- Render the dashboard ConfigMap. The bundled JSON covers every metric
+  # the backend emits today (HTTP, process, atc_pg_*, atc_config_*) and uses a
+  # `${datasource}` Grafana template variable for the Prometheus datasource
+  # reference, so the dashboard is portable across stacks regardless of what
+  # the operator named their datasource.
+  enabled: false
+
+  # -- Namespace for the ConfigMap. Empty (default) renders in the release
+  # namespace. Set when the Grafana sidecar discovers dashboards only from a
+  # specific namespace (the kiwigrid sidecar's default is its own namespace;
+  # the Grafana helm chart exposes a `sidecar.dashboards.searchNamespace` knob
+  # that operators can widen).
+  namespace: ""
+
+  # -- Discovery labels for the ConfigMap. `grafana_dashboard: "1"` is the
+  # kiwigrid/k8s-sidecar convention (used by kube-prometheus-stack). Override
+  # if your stack uses a different label key/value.
+  labels:
+    grafana_dashboard: "1"
+
+  # -- Annotations for the ConfigMap. `grafana_folder: "ATC"` places the
+  # dashboard in a named Grafana folder (sidecar convention);
+  # `k8s-sidecar-target-directory: "/..."` overrides the on-disk path.
+  annotations: {}
+
+  grafanaOperator:
+    # -- Additionally render a grafana-operator v5 GrafanaDashboard CR
+    # (`grafana.integreatly.org/v1beta1`) that references the ConfigMap above.
+    # Requires the grafana-operator CRDs installed in the cluster; the chart
+    # does not bundle them.
+    enabled: false
+    # -- instanceSelector for the GrafanaDashboard CR — Kubernetes
+    # LabelSelector shape (matchLabels / matchExpressions) matching one or
+    # more Grafana CRs that should mount this dashboard.
+    instanceSelector:
+      matchLabels:
+        dashboards: "grafana"
+    # -- Optional folder reference (name of a GrafanaFolder CR in the same
+    # namespace). Empty omits the field; the dashboard lands in the default
+    # folder.
+    folderRef: ""
+    # -- Optional resyncPeriod (Go duration string, e.g. "5m"). Empty omits
+    # the field; the operator uses its own default.
+    resyncPeriod: ""
+
 # -- Operator-declared runner-pool capacities. When non-empty, the chart
 # renders a ConfigMap and a read-only volume mount at /etc/atc/config.yaml
 # that atc-server reads at startup; the parsed capacities flow onto

@@ -333,6 +333,44 @@ networkPolicy:
 
 **`kubeVersion` requirement.** NetworkPolicy `networking.k8s.io/v1` is GA on every supported cluster (the chart's `kubeVersion: ">=1.32.0-0"` already covers it). Authors should still verify the cluster runs a CNI that enforces NetworkPolicy (Calico, Cilium, kube-router, etc.) before flipping `enabled: true` — many CNIs install successfully without policy enforcement and the resource becomes a no-op.
 
+## Grafana dashboard
+
+The chart ships an opt-in Grafana dashboard at `deploy/helm/atc/dashboards/atc-overview.json` covering HTTP, webhook ingestion, PG outbox+drain pipeline, watermarks, retention, startup/shutdown lifecycle, process resource usage, and config reloads. Default off — provisioning a dashboard is an operator decision. Two discovery paths are supported from one chart-shipped JSON; enable whichever (or both) matches your stack.
+
+### Discovery paths
+
+| Path | Operator-side prerequisite | values toggle |
+|---|---|---|
+| kube-prometheus-stack Grafana sidecar (`kiwigrid/k8s-sidecar`) | Grafana deployed with the dashboard sidecar enabled; sidecar discovers ConfigMaps labeled `grafana_dashboard: "1"` in the configured namespace(s). | `grafanaDashboard.enabled: true` |
+| grafana-operator v5 `GrafanaDashboard` CR | grafana-operator (`grafana.integreatly.org/v1beta1`) CRDs installed in the cluster; a `Grafana` instance matched by `instanceSelector`. | `grafanaDashboard.enabled: true` AND `grafanaDashboard.grafanaOperator.enabled: true` |
+
+The CR's `spec.configMapRef` references the same ConfigMap the sidecar discovers — one JSON source, two delivery paths. Enable both safely when transitioning from one mechanism to the other or when running both in parallel.
+
+### Values reference
+
+| Key | Default | Purpose |
+|---|---|---|
+| `grafanaDashboard.enabled` | `false` | Master toggle. When `true`, renders the ConfigMap. |
+| `grafanaDashboard.namespace` | `""` | Override namespace for the ConfigMap. Empty renders in the release namespace. Set when the Grafana sidecar discovers from a specific namespace. |
+| `grafanaDashboard.labels` | `{grafana_dashboard: "1"}` | Discovery labels. `grafana_dashboard: "1"` is the kiwigrid/k8s-sidecar default. Override the value or key if your stack uses a different convention. |
+| `grafanaDashboard.annotations` | `{}` | ConfigMap annotations. Common values: `grafana_folder: "ATC"` (folder placement), `k8s-sidecar-target-directory: "/..."` (on-disk path override). |
+| `grafanaDashboard.grafanaOperator.enabled` | `false` | Additionally render the GrafanaDashboard CR. Requires grafana-operator CRDs installed. |
+| `grafanaDashboard.grafanaOperator.instanceSelector` | `{matchLabels: {dashboards: "grafana"}}` | LabelSelector for the target `Grafana` CR(s). Pass-through with `matchLabels` / `matchExpressions` shape validation. |
+| `grafanaDashboard.grafanaOperator.folderRef` | `""` | Name of a `GrafanaFolder` CR in the same namespace. Empty omits the field. |
+| `grafanaDashboard.grafanaOperator.resyncPeriod` | `""` | Go duration string (e.g. `"5m"`). Empty omits the field; the operator uses its own default. |
+
+### Datasource portability
+
+Every panel's datasource reference is `{ "type": "prometheus", "uid": "${datasource}" }`. The dashboard declares a `datasource` template variable of type `datasource` with `query: prometheus`, so Grafana resolves the variable against whichever Prometheus datasource(s) the operator has configured. Operators with one Prometheus get automatic resolution; operators with multiple get a top-of-dashboard picker. No `${DS_PROMETHEUS}` / `__inputs` block is shipped — the variable approach handles both file-provisioned discovery (sidecar / operator) AND standalone Grafana-UI import without requiring chart-side string substitution.
+
+### Histogram-aggregation caveat
+
+Panel queries use the classic `_bucket` histogram form (`histogram_quantile(0.99, sum(rate(name_bucket[5m])) by (le, pod))`). The OTel SDK is configured with `Base2ExponentialHistogram` aggregation, but the OTLP→Prometheus translator emits classic histograms by default; native-histogram-only emission requires explicit collector configuration. Operators running the collector in native-only mode must translate panel queries to `histogram_quantile(0.99, sum(rate(name[5m])))` (no `_bucket`, no `le`). See `docs/architecture/metrics.md` § Histogram aggregation.
+
+### Standalone import
+
+The dashboard is also importable via the Grafana UI without the chart — fetch `deploy/helm/atc/dashboards/atc-overview.json` from the repo and use **Dashboards → New → Import**. The `${datasource}` variable resolves the same way it does under chart-bundled discovery.
+
 ## Testing Conventions
 
 helm-unittest suites live in `deploy/helm/atc/tests/unit/*.yaml` and are run via `helm unittest deploy/helm/atc`. Scope them to invariants and conditionals, not template tautologies.

@@ -144,7 +144,7 @@ The meter provider registers an instrument view that maps every `Histogram` inst
 
 This requires the `spec_unstable_metrics_views` feature on `opentelemetry_sdk`. The feature is unstable per OTel's spec stability tracking — the API may shift on a future SDK release. The implementer who bumps `opentelemetry_sdk` owns reviewing the feature gate and, if it has been stabilized, removing the unstable flag.
 
-The cross-format implication: when the OTLP collector translates an OTel exponential histogram into a Prometheus native histogram (Prometheus 2.40+), the resulting series does NOT emit `*_bucket` lines. Dashboards that previously queried `histogram_quantile(0.99, sum(rate(name_bucket[5m])) by (le, pod))` continue to work in Prometheus 2.40+ because `histogram_quantile` accepts native histograms directly. If the collector is configured to emit classic histograms instead (some operators run mixed stacks during migration), `*_bucket` series reappear and the same query continues to work.
+The cross-format implication: when the OTLP collector translates an OTel exponential histogram into a Prometheus native histogram (Prometheus 2.40+), the resulting series does NOT emit `*_bucket` lines, so a classic-form query (`histogram_quantile(0.99, sum(rate(name_bucket[5m])) by (le, pod))`) returns empty. Against native histograms the equivalent is `histogram_quantile(0.99, sum(rate(name[5m])))` — no `_bucket` suffix, no `le` grouping — since `histogram_quantile` accepts native histograms as a single series, not a `le`-keyed bucket set. The OTel→Prometheus translator emits classic histograms by default; native-histogram emission requires explicit collector config. The bundled dashboard (`deploy/helm/atc/dashboards/atc-overview.json`) targets the classic form because that's what the default translator produces; operators running native-histogram-only collectors must translate panel queries accordingly. Dual-emission (classic AND native from the same source) is supported by some collector configurations and would let the classic-form query continue to work; ATC does not test against that configuration.
 
 ## atc_build_info
 
@@ -180,15 +180,17 @@ The middleware records into the global meter installed by `init_otel`. When OTel
 
 `spawn_process_collector(_cancel: CancellationToken) -> ProcessCollectorHandle` spawns the `opentelemetry-system-metrics` observer (`init_process_observer`) under a tokio task and returns a wrapper handle. The observer ticks on the standard `OTEL_METRIC_EXPORT_INTERVAL` interval (default 30 s, configurable via env), reads `sysinfo` snapshots of the current process, and records gauges against the global meter installed by `init_otel`. Emitted instruments (OTel dotted names; the OTLP→Prometheus collector translates dots to underscores so the scrape names are the `process_*` variants shown):
 
-| OTel name | Scrape name | Type | Unit | Attributes |
-|---|---|---|---|---|
-| `process.cpu.usage` | `process_cpu_usage` | f64 gauge | percent | none |
-| `process.cpu.utilization` | `process_cpu_utilization` | f64 gauge | percent | `process.pid`, `process.executable.name`, `process.executable.path`, `process.command` |
-| `process.memory.usage` | `process_memory_usage` | i64 gauge | byte | same four `process.*` |
-| `process.memory.virtual` | `process_memory_virtual` | i64 gauge | byte | same four `process.*` |
-| `process.disk.io` | `process_disk_io` | i64 gauge | byte | same four `process.*` plus `direction=read\|write` |
+| OTel name | Scrape name | Type | Unit | Value | Attributes |
+|---|---|---|---|---|---|
+| `process.cpu.usage` | `process_cpu_usage` | f64 gauge | percent | `raw_cpu_percent / core_count` (0..100% of host capacity) | `process.pid`, `process.executable.name`, `process.executable.path`, `process.command` |
+| `process.cpu.utilization` | `process_cpu_utilization` | f64 gauge | percent | raw sysinfo `cpu_usage` summed across cores (0..N*100%) | none |
+| `process.memory.usage` | `process_memory_usage` | i64 gauge | byte | resident memory | same four `process.*` |
+| `process.memory.virtual` | `process_memory_virtual` | i64 gauge | byte | committed virtual memory | same four `process.*` |
+| `process.disk.io` | `process_disk_io` | i64 gauge | byte | cumulative read/write bytes | same four `process.*` plus `direction=read\|write` |
 
-This surface differs from the `metrics_process` exposition the prior recorder emitted (no `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds`, or `process_threads`). Dashboards that filtered on those names need to be updated; ATC's bundled Grafana dashboard (`deploy/grafana/atc-postgres-overview.json`) only queries `atc_pg_*` and is unaffected. Operators relying on host- or container-level fd / start-time metrics should source them from the node exporter or container runtime sidecar instead.
+The `process_cpu_usage` / `process_cpu_utilization` row inversion above is correct — `opentelemetry-system-metrics 0.31.0` binds the Rust variables to inverted constants (see crate source `src/lib.rs:131,214`): the Rust binding named `process_cpu_utilization` records `process_cpu_usage` (with attributes), and the binding named `process_cpu_usage` records `process_cpu_utilization` (no attributes). Dashboard queries that want per-process CPU (with pod attribution from the collector) should use `process_cpu_usage`, not `process_cpu_utilization`.
+
+This surface differs from the `metrics_process` exposition the prior recorder emitted (no `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds`, or `process_threads`). Dashboards that filtered on those names need to be updated; ATC's bundled Grafana dashboard (`deploy/helm/atc/dashboards/atc-overview.json`) covers the full `process_*`, `http_*`, `atc_pg_*`, `atc_config_*`, and `atc_build_info` surface. Operators relying on host- or container-level fd / start-time metrics should source them from the node exporter or container runtime sidecar instead.
 
 The observer's `init_process_observer` loop runs forever — there is no cooperative shutdown surface on the upstream crate. `ProcessCollectorHandle::shutdown()` calls `tokio::task::AbortHandle::abort()` and returns the underlying `JoinHandle<()>` so the orchestration in `shutdown.rs` can await it under `SHUTDOWN_TIMEOUT_METRICS`. The observer does no DB/network work, so an abort between ticks is the common case and an abort mid-tick is safe.
 

@@ -1,0 +1,18 @@
+# Helm-check fixture: dashboard + grafana-operator CR both enabled.
+#
+# Feeds the `just helm-check` matrix via scripts/helm-kubeconform-one.sh, which
+# renders this fixture against every kube-version pinned in the chart and runs
+# kubeconform against the rendered YAML. The GrafanaDashboard CR schema is
+# resolved from the Datree CRDs catalog (grafana.integreatly.org/grafanadashboard_v1beta1.json),
+# so no -ignore-missing-schemas escape hatch is required.
+grafanaDashboard:
+  enabled: true
+  annotations:
+    grafana_folder: ATC
+  grafanaOperator:
+    enabled: true
+    instanceSelector:
+      matchLabels:
+        dashboards: grafana
+    folderRef: atc
+    resyncPeriod: 5m
