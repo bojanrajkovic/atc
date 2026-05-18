@@ -338,4 +338,97 @@ describe('ConnectionStore', () => {
       }
     })
   })
+
+  describe('markConfigReloadError — admin alert banner (issue #203)', () => {
+    beforeEach(() => {
+      connectionStore.dismissConfigReloadError()
+    })
+
+    afterEach(() => {
+      connectionStore.dismissConfigReloadError()
+    })
+
+    it('sets configReloadError to the reason string', () => {
+      connectionStore.markConfigReloadError('missing key X')
+      expect(connectionStore.configReloadError).toBe('missing key X')
+    })
+
+    it('replaces the visible reason on a second call (single-slot, last-wins)', () => {
+      connectionStore.markConfigReloadError('first reason')
+      expect(connectionStore.configReloadError).toBe('first reason')
+      connectionStore.markConfigReloadError('second reason')
+      expect(connectionStore.configReloadError).toBe('second reason')
+    })
+
+    it('auto-dismisses 60 seconds after markConfigReloadError', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.markConfigReloadError('boom')
+      expect(connectionStore.configReloadError).toBe('boom')
+
+      // Advance just before the boundary — still visible.
+      vi.advanceTimersByTime(59_999)
+      expect(connectionStore.configReloadError).toBe('boom')
+
+      // Cross the 60s boundary — cleared.
+      vi.advanceTimersByTime(1)
+      expect(connectionStore.configReloadError).toBeNull()
+    })
+
+    it('a second markConfigReloadError mid-display restarts the 60s timer', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.markConfigReloadError('first')
+
+      // 30 seconds in, a fresh error arrives.
+      vi.advanceTimersByTime(30_000)
+      connectionStore.markConfigReloadError('second')
+      expect(connectionStore.configReloadError).toBe('second')
+
+      // 30 seconds after the second mark — still visible (would have
+      // expired at the 60s mark from the first call if the timer hadn't
+      // reset).
+      vi.advanceTimersByTime(30_000)
+      expect(connectionStore.configReloadError).toBe('second')
+
+      // 30 more seconds — total 60s after the second mark — cleared.
+      vi.advanceTimersByTime(30_000)
+      expect(connectionStore.configReloadError).toBeNull()
+    })
+
+    it('dismissConfigReloadError clears state and any pending timer', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.markConfigReloadError('boom')
+      expect(connectionStore.configReloadError).toBe('boom')
+
+      connectionStore.dismissConfigReloadError()
+      expect(connectionStore.configReloadError).toBeNull()
+
+      // Even after advancing past 60s, no spurious clear from a still-armed
+      // timeout fires (no-op on already-null state, but the regression we
+      // guard is "timer cleared so it can't trip in the future and reset
+      // a subsequent error").
+      vi.advanceTimersByTime(60_000)
+      expect(connectionStore.configReloadError).toBeNull()
+
+      // Confirm: after dismiss, a fresh markConfigReloadError + advance
+      // still behaves correctly.
+      connectionStore.markConfigReloadError('fresh')
+      expect(connectionStore.configReloadError).toBe('fresh')
+      vi.advanceTimersByTime(60_000)
+      expect(connectionStore.configReloadError).toBeNull()
+    })
+
+    it('destroy() clears the auto-dismiss timer (state is not changed by destroy)', () => {
+      vi.setSystemTime(1_000_000)
+      connectionStore.markConfigReloadError('boom')
+      expect(connectionStore.configReloadError).toBe('boom')
+
+      connectionStore.destroy()
+
+      // destroy() clears the pending timer but does not null out state.
+      // Advancing past the 60s deadline must NOT clear configReloadError —
+      // that would prove the timer is still armed.
+      vi.advanceTimersByTime(120_000)
+      expect(connectionStore.configReloadError).toBe('boom')
+    })
+  })
 })

@@ -51,11 +51,7 @@ class EventDispatcher {
         runStore.applyConfigUpdate(frame.runnerPoolCapacities)
         break
       case 'ConfigReloadError':
-        // biome-ignore lint/suspicious/noConsole: operator-visible warning, not debugging output
-        console.warn(
-          `Config reload failed on server: ${frame.reason}. ` +
-            `UI surfacing tracked in https://github.com/bojanrajkovic/atc/issues/203.`,
-        )
+        connectionStore.markConfigReloadError(frame.reason)
         break
       case 'ServerHello':
         // Apply immediately — version-mismatch detection is snapshot-

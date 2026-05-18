@@ -10,7 +10,9 @@ import { bigintReplacer, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
  * Mocks a snapshot with one pool at running=3/capacity=10, then dispatches
  * a `ConfigUpdate` WireFrame raising capacity to 20. The CapacityBar must
  * re-render to `3/20` without a page reload. A subsequent
- * `ConfigReloadError` frame must not break the dashboard.
+ * `ConfigReloadError` frame must surface the `ConfigReloadErrorBanner`
+ * with the backend's reason text, dismissible via the close button, while
+ * keeping the dashboard intact (issue #203).
  */
 
 function makeRun(id: number): WorkflowRun {
@@ -103,16 +105,9 @@ test.describe('Config hot reload', () => {
     await expect(page.getByText('3/20')).toBeVisible()
   })
 
-  test('ConfigReloadError WireFrame fires console.warn without breaking the dashboard', async ({
+  test('ConfigReloadError WireFrame surfaces dismissible banner without breaking the dashboard', async ({
     page,
   }) => {
-    const warnings: string[] = []
-    page.on('console', (msg) => {
-      if (msg.type() === 'warning') {
-        warnings.push(msg.text())
-      }
-    })
-
     await page.route('**/v1/state', (route) => {
       route.fulfill({
         contentType: 'application/json',
@@ -133,13 +128,17 @@ test.describe('Config hot reload', () => {
       }),
     )
 
-    // CapacityBar remains intact (no UI surfacing for ConfigReloadError —
-    // tracked in issue #203). The dashboard does not break.
+    // The ConfigReloadErrorBanner appears with the backend's reason text.
+    const banner = page.getByRole('status', { name: /config reload/i })
+    await expect(banner).toBeVisible()
+    await expect(banner).toContainText('capacity must be >= 1')
+
+    // The dashboard remains intact behind the banner.
     await expect(meter).toBeVisible()
     await expect(page.getByText('3/10')).toBeVisible()
 
-    // The dispatcher emits a console.warn referencing #203 so operators
-    // running the dashboard with devtools open see the failure surface.
-    expect(warnings.some((w) => /issues\/203/.test(w))).toBe(true)
+    // Clicking the Dismiss button hides the banner.
+    await banner.getByRole('button', { name: /dismiss/i }).click()
+    await expect(banner).toBeHidden()
   })
 })

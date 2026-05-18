@@ -18,8 +18,10 @@ import type { RunnerPoolCapacity } from "./RunnerPoolCapacity";
  * - `ConfigUpdate` — full operator-declared capacity list after a successful
  *   hot-reload. Not seq-keyed; latest-wins semantics in the pre-snapshot
  *   buffer.
- * - `ConfigReloadError` — reload failed on the server. Informational; the
- *   frontend logs and waits for the next successful reload.
+ * - `ConfigReloadError` — reload failed on the server. The server keeps
+ *   serving the last-known-good capacities; the wire `reason` is a
+ *   human-readable string (`err.to_string()`), not a category enum.
+ *   Frontend handling is owned by `docs/architecture/frontend-app.md`.
  * - `ServerHello` — sent as the first text frame on every fresh WS
  *   connection, carrying the backend's `VERGEN_GIT_DESCRIBE` build
  *   identifier. The frontend uses the first ServerHello in a tab session as

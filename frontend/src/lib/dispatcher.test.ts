@@ -481,19 +481,44 @@ describe('EventDispatcher', () => {
       expect(runStore.runnerPoolCapacities[0]?.capacity).toBe(11)
     })
 
-    it('ConfigReloadError frame fires console.warn referencing issue #203', () => {
+    it('ConfigReloadError frame routes to connectionStore.markConfigReloadError (no console.warn)', async () => {
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const markSpy = vi.spyOn(connectionStore, 'markConfigReloadError')
       try {
         eventDispatcher.dispatch({
           kind: 'ConfigReloadError',
           reason: 'capacity must be >= 1',
         })
-        expect(warnSpy).toHaveBeenCalledOnce()
-        const msg = warnSpy.mock.calls[0]![0] as string
-        expect(msg).toContain('capacity must be >= 1')
-        expect(msg).toContain('issues/203')
+        expect(markSpy).toHaveBeenCalledOnce()
+        expect(markSpy).toHaveBeenCalledWith('capacity must be >= 1')
+        // Regression guard: the dispatcher must no longer fire console.warn
+        // for ConfigReloadError. The banner replaces that surface.
+        expect(warnSpy).not.toHaveBeenCalled()
       } finally {
+        markSpy.mockRestore()
         warnSpy.mockRestore()
+        connectionStore.dismissConfigReloadError()
+      }
+    })
+
+    it('ConfigUpdate arriving while the banner is visible does NOT clear configReloadError (AC6)', async () => {
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
+      try {
+        connectionStore.markConfigReloadError('x')
+        expect(connectionStore.configReloadError).toBe('x')
+
+        eventDispatcher.dispatch({
+          kind: 'ConfigUpdate',
+          runnerPoolCapacities: [{ labels: ['l'], capacity: 1 }],
+        })
+
+        // ConfigUpdate updates runStore.runnerPoolCapacities but must
+        // leave the banner state alone.
+        expect(connectionStore.configReloadError).toBe('x')
+        expect(runStore.runnerPoolCapacities).toHaveLength(1)
+      } finally {
+        connectionStore.dismissConfigReloadError()
       }
     })
   })

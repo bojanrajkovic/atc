@@ -3,6 +3,7 @@ type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnec
 const STALE_THRESHOLD_MS = 30_000
 const STALE_CHECK_INTERVAL_MS = 5_000
 const VERSION_MISMATCH_COUNTDOWN_MS = 30_000
+const CONFIG_RELOAD_ERROR_AUTO_DISMISS_MS = 60_000
 
 class ConnectionStore {
   status = $state<ConnectionStatus>('disconnected')
@@ -27,6 +28,15 @@ class ConnectionStore {
   // tooltip during the close + reconnect gap.
   serverGoingAway = $state(false)
   goingAwayReason = $state<string | null>(null)
+
+  // ConfigReloadError admin alert state (issue #203). Single-slot, last-wins:
+  // a fresh ConfigReloadError replaces the visible reason and restarts the
+  // 60s wall-clock auto-dismiss timer. Manual dismiss is also supported via
+  // dismissConfigReloadError(). The timer lives here on the store (rather
+  // than as a component $effect) so tests can drive it without mounting
+  // the Svelte component.
+  configReloadError = $state<string | null>(null)
+  private configReloadErrorTimeout: ReturnType<typeof setTimeout> | null = null
 
   // Reactive tick counter — incremented by a setInterval to trigger
   // periodic re-evaluation of isStale. $derived only re-evaluates when
@@ -100,10 +110,40 @@ class ConnectionStore {
     window.location.reload()
   }
 
+  /**
+   * Record a config-reload-error from the dispatcher (issue #203). Replaces
+   * any visible reason, arms a 60-second wall-clock auto-dismiss timer, and
+   * cancels any prior pending dismiss so the timer always reflects the most
+   * recent error.
+   */
+  markConfigReloadError(reason: string): void {
+    if (this.configReloadErrorTimeout !== null) {
+      clearTimeout(this.configReloadErrorTimeout)
+    }
+    this.configReloadError = reason
+    this.configReloadErrorTimeout = setTimeout(() => {
+      this.configReloadError = null
+      this.configReloadErrorTimeout = null
+    }, CONFIG_RELOAD_ERROR_AUTO_DISMISS_MS)
+  }
+
+  /** Manual-close target for the ConfigReloadErrorBanner. */
+  dismissConfigReloadError(): void {
+    if (this.configReloadErrorTimeout !== null) {
+      clearTimeout(this.configReloadErrorTimeout)
+      this.configReloadErrorTimeout = null
+    }
+    this.configReloadError = null
+  }
+
   destroy(): void {
     if (this.tickInterval !== null) {
       clearInterval(this.tickInterval)
       this.tickInterval = null
+    }
+    if (this.configReloadErrorTimeout !== null) {
+      clearTimeout(this.configReloadErrorTimeout)
+      this.configReloadErrorTimeout = null
     }
   }
 }

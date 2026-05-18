@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-14
+Last verified: 2026-05-18
 
 ## Purpose
 
@@ -400,6 +400,8 @@ pub enum WireFrame {
 `#[serde(tag = "kind")]` is internally-tagged: the variant name lands at `kind`, and `CommittedEvent`'s fields (`seq`, `event`) flatten into the same object. The `ConfigUpdate` variant uses `rename_all = "camelCase"` so `runner_pool_capacities` serializes as `runnerPoolCapacities`, matching the existing snapshot convention.
 
 `WireFrame` is local to the `ws.rs` boundary — `CommittedEvent` (in `atc-wire`) and `WebhookEvent` (in `atc-github`) are not modified. Stores remain pure event sources; only the WS handler knows about the outer framing. ts-rs exports `WireFrame.ts` to `frontend/src/lib/types/generated/`.
+
+**Frontend handling is not described here.** Each `WireFrame` variant's rustdoc deliberately stays at the wire-contract layer — payload shape, sequencing, and the backend's own post-emit behavior — and points at `docs/architecture/frontend-app.md` for any UI surfacing (e.g., `ConfigReloadError` → admin alert banner; `ServerHello` mismatch → refresh banner). This split keeps backend-side rustdoc independent of frontend UX iteration; bumping the version, copy, or dismissal model of a banner should never invalidate a wire-contract claim.
 
 **Connection lifecycle (issue #47).** `ServerHello { version }` is sent synchronously as the first text frame on every fresh WS connection, carrying `env!("VERGEN_GIT_DESCRIBE")` so the frontend can detect a backend redeploy across a reconnect (a session's first ServerHello becomes its reference; later mismatches arm a refresh banner). Broadcast receivers are subscribed before the WebSocket upgrade completes, so any committed or config events that fire between subscription and the ServerHello send accumulate in the bounded channel and drain through the `select!` loop AFTER ServerHello ships — one task owns the socket, so the "ServerHello is the first text frame" invariant holds without additional synchronization. On graceful shutdown, `GoingAway { reason }` is sent immediately before the existing `Close(1001 "going away")` frame; both are best-effort because the client may already be gone. The Close-1001 transport signal remains the authoritative shutdown indication — `GoingAway` is informational application-level metadata that lets the frontend's connection indicator render a tailored "server restarting" state during the gap between the close and the next reconnect.
 

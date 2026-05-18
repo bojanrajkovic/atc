@@ -125,9 +125,13 @@ describe('ConnectionManager — ConfigUpdate / ConfigReloadError', () => {
       resolveStateFetch?.()
       await connectPromise
 
-      // Pre-snapshot ConfigReloadError frames are informational only and
-      // dropped. console.warn must NOT have fired (the dispatcher's warn
-      // for ConfigReloadError fires only in connected mode).
+      // Pre-snapshot ConfigReloadError frames are dropped at connection.ts
+      // before reaching the dispatcher. configReloadError must remain null —
+      // the dashboard does not surface a banner during initial connection,
+      // when an operator can't act on the error anyway (issue #203 AC7).
+      // console.warn must also remain unfired (no console-side path for
+      // ConfigReloadError after the banner replaced it).
+      expect(connectionStore.configReloadError).toBeNull()
       expect(warnSpy).not.toHaveBeenCalled()
       expect(runStore.runnerPoolCapacities).toEqual(SNAPSHOT_CAPS)
 
