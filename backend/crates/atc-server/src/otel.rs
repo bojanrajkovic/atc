@@ -112,7 +112,12 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
 }
 
 fn build_resource() -> Resource {
-    let mut attrs = vec![KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION"))];
+    // Mirror the `atc_build_info` gauge's `version` label: prefer
+    // `VERGEN_GIT_DESCRIBE` over `CARGO_PKG_VERSION` so `service.version`
+    // tracks the git tag the binary was built from, not whatever
+    // `Cargo.toml` happened to say at that commit. See the analogous
+    // comment in `metrics::register_build_info`.
+    let mut attrs = vec![KeyValue::new(SERVICE_VERSION, env!("VERGEN_GIT_DESCRIBE"))];
 
     if env::var_os("OTEL_SERVICE_NAME").is_none() {
         attrs.push(KeyValue::new(SERVICE_NAME, DEFAULT_SERVICE_NAME));

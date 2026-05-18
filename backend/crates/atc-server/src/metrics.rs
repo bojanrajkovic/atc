@@ -18,13 +18,22 @@ use atc_store_pg::metrics::METER_SCOPE;
 pub fn register_build_info() {
     let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
     let attrs: [KeyValue; 6] = [
-        KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+        // `version` mirrors `git_describe` (both `VERGEN_GIT_DESCRIBE`)
+        // rather than `CARGO_PKG_VERSION` so the operator-facing identifier
+        // tracks the git tag the image was built from, not whatever
+        // `Cargo.toml` happened to say at that commit. Without this, an
+        // ad-hoc rc tag placed on a commit where release-please has
+        // already bumped `Cargo.toml` produces an image whose OCI label
+        // (`org.opencontainers.image.version` = the tag) and Prometheus
+        // `version=` label disagree — dashboards and image pulls then
+        // identify the same artifact by two different strings.
         // `git_describe` is `git describe --tags`: for ATC's release pipeline
         // (which only fires on `v*` tags) this is always the exact tag (e.g.
         // `v1.0.0`). For local builds it's `<latest-tag>-<offset>-g<sha>` or
         // a vergen-gix fallback string if the build environment has no git
         // history available (e.g. a tarball-sourced build). The startup log
         // line in main.rs surfaces the same value for operator visibility.
+        KeyValue::new("version", env!("VERGEN_GIT_DESCRIBE")),
         KeyValue::new("git_describe", env!("VERGEN_GIT_DESCRIBE")),
         KeyValue::new("git_sha", env!("VERGEN_GIT_SHA")),
         KeyValue::new("rustc_version", env!("VERGEN_RUSTC_SEMVER")),

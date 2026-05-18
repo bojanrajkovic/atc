@@ -164,7 +164,7 @@ If you find yourself wanting to run in-memory mode against more than one replica
 
 ### Startup behavior
 
-Immediately after tracing is initialized, `main.rs` emits a single `atc-server starting` INFO log line carrying the vergen-embedded build metadata: `version`, `git_describe`, `git_sha`, `rustc_version`, `build_timestamp`, `target_triple`. The same six fields populate the `atc_build_info` gauge (see `docs/architecture/metrics.md`). The log line is the operator's fallback diagnostic when the metrics endpoint isn't reachable — early startup crashes, OTel pipeline disabled, container logs as the only surface.
+Immediately after tracing is initialized, `main.rs` emits a single `atc-server starting` INFO log line carrying the vergen-embedded build metadata: `version`, `git_describe`, `git_sha`, `rustc_version`, `build_timestamp`, `target_triple`. The same six fields populate the `atc_build_info` gauge (see `docs/architecture/metrics.md`); `version` and `git_describe` both source from `VERGEN_GIT_DESCRIBE` so the operator-facing identifier tracks the git tag the binary was built from rather than `Cargo.toml`'s version (`docs/architecture/metrics.md` § `atc_build_info` carries the rationale). `service.version` on the OTel resource (set in `otel::build_resource`) is also sourced from `VERGEN_GIT_DESCRIBE` for the same reason — spans and OTel metrics carry the same identifier the metric label and OCI image label do. The log line is the operator's fallback diagnostic when the metrics endpoint isn't reachable — early startup crashes, OTel pipeline disabled, container logs as the only surface.
 
 | Scenario | Behavior |
 |---|---|

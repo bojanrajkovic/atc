@@ -152,12 +152,14 @@ The cross-format implication: when the OTLP collector translates an OTel exponen
 
 | Label | Source | Example |
 |---|---|---|
-| `version` | `CARGO_PKG_VERSION` | `0.2.0` |
+| `version` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0` (mirrors `git_describe` — see below) |
 | `git_describe` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0` (exact tag for release-pipeline builds), `v1.0.0-3-gabc1234` (post-tag offset for local builds) |
 | `git_sha` | `VERGEN_GIT_SHA` (via `build.rs`) | `a1b2c3d...` |
 | `rustc_version` | `VERGEN_RUSTC_SEMVER` (via `build.rs`) | `1.94.0` |
 | `build_timestamp` | `VERGEN_BUILD_TIMESTAMP` (via `build.rs`) | `2026-04-08T...` |
 | `target_triple` | `VERGEN_CARGO_TARGET_TRIPLE` (via `build.rs`) | `x86_64-unknown-linux-gnu` |
+
+`version` deliberately mirrors `git_describe` rather than carrying `CARGO_PKG_VERSION`. The operator-facing identifier should track the git tag the image was built from — which is also what `org.opencontainers.image.version` (the OCI label set by `docker/metadata-action`) and the `service.version` OTel resource attribute carry. Sourcing `version` from `Cargo.toml` instead lets the three identifiers drift apart on rc cycles where a tag is placed on a commit whose `Cargo.toml` was already bumped by release-please for the next stable release. The redundant column is left intact for any dashboards that already filter on `git_describe`.
 
 `build.rs` uses the `vergen-gix` crate (pure-Rust gix backend; no libgit2 dependency) and emits all six vars as `cargo:rustc-env=` instructions. `release.yml`'s `actions/checkout` step uses `fetch-depth: 0` for the `build-binaries` job so vergen-gix's `git describe` walk has full ancestry (a shallow clone fetches the tag ref but not the history `git describe` traverses to find the nearest tag, and `VERGEN_GIT_DESCRIBE` falls back to an idempotent-output sentinel).
 

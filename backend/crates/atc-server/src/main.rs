@@ -132,7 +132,7 @@ async fn main() {
     // — useful when the metrics endpoint isn't accessible (early startup
     // crashes, no OTel pipeline, etc.).
     tracing::info!(
-        version = env!("CARGO_PKG_VERSION"),
+        version = env!("VERGEN_GIT_DESCRIBE"),
         git_describe = env!("VERGEN_GIT_DESCRIBE"),
         git_sha = env!("VERGEN_GIT_SHA"),
         rustc_version = env!("VERGEN_RUSTC_SEMVER"),
