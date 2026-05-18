@@ -1,6 +1,6 @@
 # CLAUDE.md — .github
 
-Last verified: 2026-05-11
+Last verified: 2026-05-17
 
 > Canonical documentation lives in `docs/architecture/ci-pipeline.md` and `docs/architecture/release-pipeline.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture docs.
 
