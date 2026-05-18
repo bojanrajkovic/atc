@@ -96,6 +96,54 @@ describe('ConnectionManager — pre-snapshot ServerHello / GoingAway routing (is
     manager.destroy()
   })
 
+  it('ServerHello does NOT refresh `lastEventAt` — staleness must reflect real activity, not handshake', async () => {
+    const manager = new ConnectionManager(baseUrl)
+
+    // Pre-seed lastEventAt as if it were from a stale prior session — say
+    // 90s ago. After connect, the indicator should still consider the
+    // dashboard stale because no real event has arrived yet, only the
+    // handshake ServerHello.
+    const staleTimestamp = Date.now() - 90_000
+    connectionStore.lastEventAt = staleTimestamp
+
+    const connectPromise = manager.connect()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const ws = MockWebSocket.getLastInstance()
+    expect(ws, 'expected a MockWebSocket instance').toBeTruthy()
+    ws!.receiveMessage(JSON.stringify({ kind: 'ServerHello', version: 'v1.0.0' }))
+
+    await connectPromise
+
+    // ServerHello arrived but lastEventAt must NOT have moved forward —
+    // otherwise a quiet dashboard would un-stale on every redeploy
+    // reconnect, despite no actual run/config traffic.
+    expect(connectionStore.lastEventAt).toBe(staleTimestamp)
+
+    manager.destroy()
+  })
+
+  it('GoingAway does NOT refresh `lastEventAt` either — it is lifecycle metadata', async () => {
+    const manager = new ConnectionManager(baseUrl)
+    const staleTimestamp = Date.now() - 90_000
+    connectionStore.lastEventAt = staleTimestamp
+
+    const connectPromise = manager.connect()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const ws = MockWebSocket.getLastInstance()
+    expect(ws, 'expected a MockWebSocket instance').toBeTruthy()
+    // Skip the ServerHello path and deliver GoingAway directly to isolate
+    // the staleness assertion.
+    ws!.receiveMessage(JSON.stringify({ kind: 'GoingAway', reason: 'server shutdown' }))
+
+    await connectPromise
+
+    expect(connectionStore.lastEventAt).toBe(staleTimestamp)
+
+    manager.destroy()
+  })
+
   it('connectionStore.serverGoingAway resets to false on the next successful connected transition', async () => {
     // Pre-set the going-away flag as if from a prior connection cycle.
     connectionStore.serverGoingAway = true

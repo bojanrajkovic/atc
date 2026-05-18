@@ -94,7 +94,16 @@ export class ConnectionManager {
       const frame: WireFrame = isWireFrame(parsed)
         ? parsed
         : { kind: 'Committed', ...(parsed as CommittedEvent) }
-      connectionStore.recordEvent()
+      // Track real backend activity only. ServerHello + GoingAway are
+      // connection-lifecycle metadata that arrive on every redeploy, not
+      // "events" in the user-visible sense. Including them would refresh
+      // `lastEventAt` on each reconnect and falsely un-stale the "No events
+      // for X" indicator for a quiet dashboard. Connection liveness is
+      // already covered by `connectionStore.status === 'connected'`. See
+      // issue #47.
+      if (frame.kind !== 'ServerHello' && frame.kind !== 'GoingAway') {
+        connectionStore.recordEvent()
+      }
 
       if (this.connected) {
         eventDispatcher.dispatch(frame)
