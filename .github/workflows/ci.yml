@@ -178,7 +178,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: github.repository == 'bojanrajkovic/atc'
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: backend/lcov.info
@@ -279,7 +279,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: github.repository == 'bojanrajkovic/atc'
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         # Two lcov files uploaded in one action call. Codecov merges them
         # server-side by `SF:` path — files exercised by both Vitest and
         # Playwright report a union of covered lines. Files exercised only
