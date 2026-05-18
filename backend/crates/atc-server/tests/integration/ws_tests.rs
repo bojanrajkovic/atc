@@ -60,6 +60,37 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     (main_addr, app_state)
 }
 
+/// Consume the per-connection `ServerHello` text frame.
+///
+/// Every fresh WS connection now opens with a `WireFrame::ServerHello`
+/// carrying `VERGEN_GIT_DESCRIBE` (issue #47). Tests that target other frames
+/// (Committed, ConfigUpdate, ConfigReloadError) must skip ServerHello first.
+async fn consume_server_hello<S>(socket: &mut S)
+where
+    S: futures_util::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("timed out waiting for ServerHello")
+        .expect("ServerHello frame Some")
+        .expect("ServerHello frame Ok");
+    let text = match frame {
+        Message::Text(t) => t,
+        other => panic!("expected ServerHello text frame, got: {other:?}"),
+    };
+    let json: serde_json::Value = serde_json::from_str(&text).expect("ServerHello JSON");
+    assert_eq!(
+        json.get("kind").and_then(|v| v.as_str()),
+        Some("ServerHello"),
+        "first frame must be ServerHello; got: {text}"
+    );
+}
+
 /// GET /v1/ws upgrades to WebSocket connection
 #[tokio::test]
 #[serial_test::serial]
@@ -91,6 +122,8 @@ async fn ws_receives_webhook_event() {
         .await
         .expect("WebSocket connection failed");
 
+    consume_server_hello(&mut socket).await;
+
     // Post a webhook via HTTP
     let client = reqwest::Client::new();
     let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
@@ -119,7 +152,14 @@ async fn ws_receives_webhook_event() {
         other => panic!("Expected text frame, got: {:?}", other),
     };
 
-    // Deserialize as CommittedEvent and verify the structure
+    // Deserialize as the inner CommittedEvent. The wire shape now carries an
+    // outer `kind` discriminator (WireFrame), but the `Committed` variant is
+    // flattened so `seq` and `event` appear at the top level alongside `kind`,
+    // and serde_json's untagged deserialize for `CommittedEvent` still reads
+    // the same fields.
+    let json: serde_json::Value =
+        serde_json::from_str(&text).expect("WireFrame JSON deserialization should succeed");
+    assert_eq!(json["kind"], "Committed");
     let committed_event: CommittedEvent =
         serde_json::from_str(&text).expect("CommittedEvent JSON deserialization should succeed");
 
@@ -146,6 +186,9 @@ async fn multiple_clients_receive_same_event() {
     let (mut socket2, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WS client 2 connection failed");
+
+    consume_server_hello(&mut socket1).await;
+    consume_server_hello(&mut socket2).await;
 
     // Post a webhook via HTTP
     let client = reqwest::Client::new();
@@ -214,7 +257,11 @@ async fn disconnect_does_not_crash_server() {
         .await
         .expect("WS client 2 connection failed");
 
-    // Drop client 1 (disconnect)
+    consume_server_hello(&mut socket2).await;
+
+    // Drop client 1 (disconnect). Its ServerHello may not have been read
+    // before the drop, but that's irrelevant — the test asserts that the
+    // server keeps running for client 2.
     drop(socket1);
 
     // Give the server a moment to process the disconnect
@@ -378,6 +425,8 @@ async fn wireframe_committed_kind_matches_camelcase() {
         .await
         .expect("WebSocket connection failed");
 
+    consume_server_hello(&mut socket).await;
+
     let client = reqwest::Client::new();
     let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
     client
@@ -419,6 +468,8 @@ async fn wireframe_config_update_kind_and_camelcase_fields() {
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
+
+    consume_server_hello(&mut socket).await;
 
     // Wait briefly so the handler subscribes before we broadcast.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -462,6 +513,8 @@ async fn wireframe_config_reload_error_kind() {
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
+
+    consume_server_hello(&mut socket).await;
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 

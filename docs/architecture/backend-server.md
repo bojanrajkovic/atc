@@ -392,12 +392,16 @@ pub enum WireFrame {
     #[serde(rename_all = "camelCase")]
     ConfigUpdate { runner_pool_capacities: Vec<RunnerPoolCapacity> },
     ConfigReloadError { reason: String },
+    ServerHello { version: String },
+    GoingAway { reason: String },
 }
 ```
 
 `#[serde(tag = "kind")]` is internally-tagged: the variant name lands at `kind`, and `CommittedEvent`'s fields (`seq`, `event`) flatten into the same object. The `ConfigUpdate` variant uses `rename_all = "camelCase"` so `runner_pool_capacities` serializes as `runnerPoolCapacities`, matching the existing snapshot convention.
 
 `WireFrame` is local to the `ws.rs` boundary — `CommittedEvent` (in `atc-wire`) and `WebhookEvent` (in `atc-github`) are not modified. Stores remain pure event sources; only the WS handler knows about the outer framing. ts-rs exports `WireFrame.ts` to `frontend/src/lib/types/generated/`.
+
+**Connection lifecycle (issue #47).** `ServerHello { version }` is sent synchronously as the first text frame on every fresh WS connection, carrying `env!("VERGEN_GIT_DESCRIBE")` so the frontend can detect a backend redeploy across a reconnect (a session's first ServerHello becomes its reference; later mismatches arm a refresh banner). Broadcast receivers are subscribed before the WebSocket upgrade completes, so any committed or config events that fire between subscription and the ServerHello send accumulate in the bounded channel and drain through the `select!` loop AFTER ServerHello ships — one task owns the socket, so the "ServerHello is the first text frame" invariant holds without additional synchronization. On graceful shutdown, `GoingAway { reason }` is sent immediately before the existing `Close(1001 "going away")` frame; both are best-effort because the client may already be gone. The Close-1001 transport signal remains the authoritative shutdown indication — `GoingAway` is informational application-level metadata that lets the frontend's connection indicator render a tailored "server restarting" state during the gap between the close and the next reconnect.
 
 **Lagged on either channel closes the WS.** The WS handler subscribes to both the committed channel (`persist.subscribe()`) and the config channel (`config_events_tx.subscribe()`). Either receiver returning `RecvError::Lagged` closes the socket — the client reconnects, fetches `/v1/state` to re-establish both the seq cursor and the current capacity list. Symmetric handling avoids the silent-drop trap where one channel's overflow goes unnoticed.
 
@@ -442,7 +446,7 @@ Five supervised surfaces observe a single shared `CancellationToken` (`shutdown`
 2. **Listener task** (spawned internally by `PgStore::start`) — `tokio::select!` on `cancel.cancelled()` vs `pg_listener.recv()`. Exits cooperatively. Joined by `PgStore::shutdown()`.
 3. **Drain task** (spawned internally by `PgStore::start`) — checks the token only between drain passes, never inside `drain_pass()`. The current pass always runs to completion (or to a Postgres error); cancellation fires at the next inter-pass check. After the loop exits, the task runs one bounded `SELECT COUNT(*) FROM outbox WHERE seq > watermark` (1 s timeout) and records the result into `atc_pg_drain_shutdown_remaining_rows` so operators can verify the cooperative-shutdown assumption that the unscanned tail rarely exceeds one drain pass; on query failure or timeout the observation is skipped (logged) rather than recorded as zero. Joined by `PgStore::shutdown()`.
 4. **Process metrics collector** (`atc-server::metrics::spawn_process_collector`) — `tokio::select!` on `cancel.cancelled()` vs `ticker.tick()`. `Collector::collect()` is synchronous; the cancel arm fires between ticks, not mid-collect.
-5. **WebSocket handlers** (`atc-server::ws::handle_socket`) — each spawned as a tracked future in `ws_tracker`. The select loop watches `shutdown.cancelled()` (top of the biased order); on cancel the handler emits `Close(1001 "going away")` and returns.
+5. **WebSocket handlers** (`atc-server::ws::handle_socket`) — each spawned as a tracked future in `ws_tracker`. The select loop watches `shutdown.cancelled()` (top of the biased order); on cancel the handler emits `WireFrame::GoingAway` followed by `Close(1001 "going away")` and returns. See § WireFrame (WS framing) for the lifecycle invariants.
 
 The two `axum::serve(...).with_graceful_shutdown(...)` futures observe the same token through `cancelled_owned()` clones.
 

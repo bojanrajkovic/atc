@@ -135,6 +135,21 @@ async fn webhook_to_websocket() {
 
     let (_ws_write, mut ws_read) = futures_util::stream::StreamExt::split(ws_stream);
 
+    // Skip the per-connection ServerHello envelope frame (issue #47).
+    let hello = tokio::time::timeout(Duration::from_secs(2), ws_read.next())
+        .await
+        .expect("timed out waiting for ServerHello")
+        .expect("ServerHello Some")
+        .expect("ServerHello Ok");
+    let hello_text = match hello {
+        tokio_tungstenite::tungstenite::Message::Text(t) => t,
+        other => panic!("expected ServerHello text frame, got {other:?}"),
+    };
+    assert!(
+        hello_text.contains("\"ServerHello\""),
+        "first frame must be ServerHello, got {hello_text}"
+    );
+
     // POST webhook
     let webhook_url = format!("http://{}/v1/webhooks/github", addr);
     let _response = client
@@ -192,6 +207,21 @@ async fn multi_event_sequence() {
         .expect("WebSocket connection should succeed");
 
     let (_ws_write, mut ws_read) = futures_util::stream::StreamExt::split(ws_stream);
+
+    // Skip the per-connection ServerHello envelope frame (issue #47).
+    let hello = tokio::time::timeout(Duration::from_secs(2), ws_read.next())
+        .await
+        .expect("timed out waiting for ServerHello")
+        .expect("ServerHello Some")
+        .expect("ServerHello Ok");
+    let hello_text = match hello {
+        tokio_tungstenite::tungstenite::Message::Text(t) => t,
+        other => panic!("expected ServerHello text frame, got {other:?}"),
+    };
+    assert!(
+        hello_text.contains("\"ServerHello\""),
+        "first frame must be ServerHello, got {hello_text}"
+    );
 
     // Post first webhook: workflow_run_requested
     let run_body = common::fixture_workflow_run_requested();

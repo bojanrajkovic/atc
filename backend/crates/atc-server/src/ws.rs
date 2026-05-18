@@ -49,14 +49,26 @@ use crate::state::AppState;
 ///   buffer.
 /// - `ConfigReloadError` — reload failed on the server. Informational; the
 ///   frontend logs and waits for the next successful reload.
+/// - `ServerHello` — sent as the first text frame on every fresh WS
+///   connection, carrying the backend's `VERGEN_GIT_DESCRIBE` build
+///   identifier. The frontend uses the first ServerHello in a tab session as
+///   its session reference; later mismatches arm a deploy-detected refresh
+///   banner. See issue #47.
+/// - `GoingAway` — sent immediately before the existing Close-1001 transport
+///   frame on graceful shutdown. Informational application-level metadata so
+///   the frontend's ConnectionIndicator can show a tailored "Server
+///   restarting" state during the gap between the close and the next
+///   reconnect. The Close-1001 transport signal remains the authoritative
+///   shutdown indication. See issue #47.
 // The `Committed` variant flattens a full `CommittedEvent` (`WebhookEvent` is
 // the bulk — ~296 B today), so the clippy::large_enum_variant size-skew
-// warning fires on the smaller `ConfigUpdate` / `ConfigReloadError` variants.
-// Boxing here would inject `{ "kind": "Committed", "0": { ... } }` into the
-// wire shape (or force a wrapper struct), breaking the frontend's outer-kind
-// switch. The size skew is irrelevant in practice — the WS handler owns one
-// `WireFrame` value at a time per connection — so we accept the lint here
-// rather than corrupt the wire shape.
+// warning fires on the smaller `ConfigUpdate` / `ConfigReloadError` /
+// `ServerHello` / `GoingAway` variants. Boxing here would inject
+// `{ "kind": "Committed", "0": { ... } }` into the wire shape (or force a
+// wrapper struct), breaking the frontend's outer-kind switch. The size skew
+// is irrelevant in practice — the WS handler owns one `WireFrame` value at a
+// time per connection — so we accept the lint here rather than corrupt the
+// wire shape.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[serde(tag = "kind")]
@@ -68,6 +80,12 @@ pub enum WireFrame {
         runner_pool_capacities: Vec<RunnerPoolCapacity>,
     },
     ConfigReloadError {
+        reason: String,
+    },
+    ServerHello {
+        version: String,
+    },
+    GoingAway {
         reason: String,
     },
 }
@@ -123,10 +141,39 @@ async fn handle_socket(
 ) {
     tracing::info!("WebSocket client connected");
 
+    // Synchronously send ServerHello as the first text frame on this
+    // connection. Broadcast receivers were subscribed BEFORE the upgrade
+    // completed (ws_handler), so any events that fire between subscription and
+    // this point accumulate in the broadcast buffer (capacity 256) and drain
+    // through the `select!` loop AFTER ServerHello ships. One task owns the
+    // socket, so the ordering invariant — "ServerHello is the first text
+    // frame" — holds without additional synchronization.
+    if send_frame(
+        &mut socket,
+        &WireFrame::ServerHello {
+            version: env!("VERGEN_GIT_DESCRIBE").to_string(),
+        },
+    )
+    .await
+    .is_err()
+    {
+        tracing::info!("WebSocket client disconnected before ServerHello could be sent");
+        return;
+    }
+
     let reason = loop {
         tokio::select! {
             biased;
             () = shutdown.cancelled() => {
+                // GoingAway is informational application-level metadata that
+                // gives the frontend a chance to render a tailored "Server
+                // restarting" state before the transport closes. The Close
+                // frame below remains the authoritative shutdown signal —
+                // best-effort sends because the client may already be gone.
+                let _ = send_frame(
+                    &mut socket,
+                    &WireFrame::GoingAway { reason: "server shutdown".into() },
+                ).await;
                 let _ = socket.send(Message::Close(Some(CloseFrame {
                     code: 1001,
                     reason: "going away".into(),
