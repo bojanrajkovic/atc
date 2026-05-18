@@ -111,7 +111,7 @@ get_docs_for_file() {
             echo "docs/architecture/release-pipeline.md"
             return
             ;;
-        Dockerfile|Dockerfile.release|.dockerignore|Dockerfile.release.dockerignore)
+        Dockerfile|.dockerignore)
             echo "docs/architecture/release-pipeline.md"
             return
             ;;
@@ -123,7 +123,7 @@ get_docs_for_file() {
             echo "docs/architecture/deployment.md"
             return
             ;;
-        .github/workflows/*|.github/runner/*|.github/runner/k8s/*|.github/actionlint.yaml)
+        .github/workflows/*)
             echo "docs/architecture/ci-pipeline.md"
             return
             ;;

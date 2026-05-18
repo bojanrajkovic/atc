@@ -1,6 +1,0 @@
-# Build context for the runner image is just the Dockerfile + minimal
-# files the build needs (frontend/package.json, fetched separately by
-# the workflow's checkout step and exposed via build-args, not COPY).
-# Everything else is excluded for context-transfer speed.
-*
-!Dockerfile
