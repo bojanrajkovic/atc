@@ -69,7 +69,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # ---- Stage 5: Runtime ----
 # Distroless minimal image (~32 MB). No shell, no package manager.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:8f960b7fc6a5d6e28bb07f982655925d6206678bd9a6cde2ad00ddb5e2077d78
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e1fd250ce83d94603e9887ec991156a6c26905a6b0001039b7a43699018c0733
 COPY --from=builder /app/backend/target/release/atc-server /atc-server
 USER 65532:65532
 EXPOSE 8080
