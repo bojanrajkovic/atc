@@ -497,4 +497,71 @@ describe('EventDispatcher', () => {
       }
     })
   })
+
+  describe('Protocol-version handshake frames (issue #47)', () => {
+    beforeEach(async () => {
+      eventDispatcher.setOnFlush(null)
+      runStore.clear()
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
+      connectionStore.serverVersionReference = null
+      connectionStore.serverVersionMismatch = null
+      connectionStore.serverReloadAt = null
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
+    })
+
+    it('ServerHello frame routes to connectionStore.observeServerVersion', async () => {
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
+      const observeSpy = vi.spyOn(connectionStore, 'observeServerVersion')
+      try {
+        eventDispatcher.dispatch({
+          kind: 'ServerHello',
+          version: 'v1.2.3-abc',
+          // biome-ignore lint/suspicious/noExplicitAny: pre-types-regen, the generated WireFrame doesn't yet carry this variant
+        } as any)
+        expect(observeSpy).toHaveBeenCalledOnce()
+        expect(observeSpy).toHaveBeenCalledWith('v1.2.3-abc')
+      } finally {
+        observeSpy.mockRestore()
+      }
+    })
+
+    it('ServerHello bypasses RAF batching (applies immediately, no flush() needed)', async () => {
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
+      eventDispatcher.dispatch({
+        kind: 'ServerHello',
+        version: 'v1.0.0',
+        // biome-ignore lint/suspicious/noExplicitAny: pre-types-regen
+      } as any)
+      // No flush() call — should already be applied
+      expect(connectionStore.serverVersionReference).toBe('v1.0.0')
+    })
+
+    it('GoingAway frame routes to connectionStore.markGoingAway', async () => {
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
+      const markSpy = vi.spyOn(connectionStore, 'markGoingAway')
+      try {
+        eventDispatcher.dispatch({
+          kind: 'GoingAway',
+          reason: 'server shutdown',
+          // biome-ignore lint/suspicious/noExplicitAny: pre-types-regen
+        } as any)
+        expect(markSpy).toHaveBeenCalledOnce()
+        expect(markSpy).toHaveBeenCalledWith('server shutdown')
+      } finally {
+        markSpy.mockRestore()
+      }
+    })
+
+    it('GoingAway bypasses RAF batching (applies immediately)', async () => {
+      const { connectionStore } = await import('$lib/stores/connection.svelte')
+      eventDispatcher.dispatch({
+        kind: 'GoingAway',
+        reason: 'server shutdown',
+        // biome-ignore lint/suspicious/noExplicitAny: pre-types-regen
+      } as any)
+      expect(connectionStore.serverGoingAway).toBe(true)
+      expect(connectionStore.goingAwayReason).toBe('server shutdown')
+    })
+  })
 })

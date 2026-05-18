@@ -1,3 +1,4 @@
+import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { WireFrame } from '$lib/types/generated/WireFrame'
@@ -55,6 +56,17 @@ class EventDispatcher {
           `Config reload failed on server: ${frame.reason}. ` +
             `UI surfacing tracked in https://github.com/bojanrajkovic/atc/issues/203.`,
         )
+        break
+      case 'ServerHello':
+        // Apply immediately — version-mismatch detection is snapshot-
+        // independent, and the first ServerHello must set the session
+        // reference before any subsequent committed event fires.
+        connectionStore.observeServerVersion(frame.version)
+        break
+      case 'GoingAway':
+        // Apply immediately — the going-away flag must be visible to the
+        // indicator before the WS close arrives. Informational metadata only.
+        connectionStore.markGoingAway(frame.reason)
         break
       default: {
         // Unknown outer kind from a newer backend. Warn once per kind so a

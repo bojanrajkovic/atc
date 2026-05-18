@@ -20,5 +20,16 @@ import type { RunnerPoolCapacity } from "./RunnerPoolCapacity";
  *   buffer.
  * - `ConfigReloadError` — reload failed on the server. Informational; the
  *   frontend logs and waits for the next successful reload.
+ * - `ServerHello` — sent as the first text frame on every fresh WS
+ *   connection, carrying the backend's `VERGEN_GIT_DESCRIBE` build
+ *   identifier. The frontend uses the first ServerHello in a tab session as
+ *   its session reference; later mismatches arm a deploy-detected refresh
+ *   banner. See issue #47.
+ * - `GoingAway` — sent immediately before the existing Close-1001 transport
+ *   frame on graceful shutdown. Informational application-level metadata so
+ *   the frontend's ConnectionIndicator can show a tailored "Server
+ *   restarting" state during the gap between the close and the next
+ *   reconnect. The Close-1001 transport signal remains the authoritative
+ *   shutdown indication. See issue #47.
  */
-export type WireFrame = { "kind": "Committed" } & CommittedEvent | { "kind": "ConfigUpdate", runnerPoolCapacities: Array<RunnerPoolCapacity>, } | { "kind": "ConfigReloadError", reason: string, };
+export type WireFrame = { "kind": "Committed" } & CommittedEvent | { "kind": "ConfigUpdate", runnerPoolCapacities: Array<RunnerPoolCapacity>, } | { "kind": "ConfigReloadError", reason: string, } | { "kind": "ServerHello", version: string, } | { "kind": "GoingAway", reason: string, };

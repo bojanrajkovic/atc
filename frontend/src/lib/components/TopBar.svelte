@@ -54,6 +54,13 @@
         return `No events for ${elapsed}s`
       }
       case 'connecting':
+        // When the backend just signaled GoingAway, the user-facing framing
+        // shifts from "Reconnecting..." to "Server restarting" so they know
+        // the disconnect is a planned redeploy rather than a flaky link.
+        // Cleared in connection.ts on the next successful 'connected'.
+        if (connectionStore.serverGoingAway) {
+          return 'Server restarting — reconnecting…'
+        }
         return connectionStore.reconnectAttempt > 0
           ? `Reconnecting (attempt ${connectionStore.reconnectAttempt})...`
           : 'Connecting...'

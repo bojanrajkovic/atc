@@ -94,7 +94,16 @@ export class ConnectionManager {
       const frame: WireFrame = isWireFrame(parsed)
         ? parsed
         : { kind: 'Committed', ...(parsed as CommittedEvent) }
-      connectionStore.recordEvent()
+      // Track real backend activity only. ServerHello + GoingAway are
+      // connection-lifecycle metadata that arrive on every redeploy, not
+      // "events" in the user-visible sense. Including them would refresh
+      // `lastEventAt` on each reconnect and falsely un-stale the "No events
+      // for X" indicator for a quiet dashboard. Connection liveness is
+      // already covered by `connectionStore.status === 'connected'`. See
+      // issue #47.
+      if (frame.kind !== 'ServerHello' && frame.kind !== 'GoingAway') {
+        connectionStore.recordEvent()
+      }
 
       if (this.connected) {
         eventDispatcher.dispatch(frame)
@@ -117,6 +126,17 @@ export class ConnectionManager {
           // ConfigUpdate, and the snapshot rail already carries the current
           // server-side capacities. Surfacing the error pre-snapshot would
           // race with the loading indicator and confuse operators.
+          break
+        case 'ServerHello':
+          // The version check is snapshot-independent — apply now. First
+          // ServerHello in a session sets the reference; later mismatches
+          // arm the deploy-detected banner.
+          connectionStore.observeServerVersion(frame.version)
+          break
+        case 'GoingAway':
+          // Transient, single-shot. Mark the flag so the indicator can
+          // render its "Server restarting" tooltip during the gap.
+          connectionStore.markGoingAway(frame.reason)
           break
         default: {
           // Unknown kind from a newer backend; ignore silently here (the
@@ -205,7 +225,10 @@ export class ConnectionManager {
       eventDispatcher.setOnFlush((events) => liveRegion.observeFlush(events))
       this.connected = true
 
-      // Step 7: Transition to connected
+      // Step 7: Transition to connected. Reset GoingAway flags — the previous
+      // close cycle (if any) is complete and we're up against a fresh backend.
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
       connectionStore.status = 'connected'
       connectionStore.reconnectAttempt = 0
     } catch {
@@ -225,6 +248,13 @@ export class ConnectionManager {
   private handleDisconnect(): void {
     this.connected = false
     this.ws = null
+    // Abort any in-flight connect cycle before scheduling the reconnect. If
+    // the socket closes during `/v1/state` fetch (likely on every redeploy
+    // because `GoingAway` arrives right before the close), the prior
+    // `connect()` call would otherwise complete its fetch path and set
+    // `status = 'connected'` against a dead socket. The fetch chain already
+    // bails on `signal.aborted`. See issue #47 AC10.
+    this.abortController?.abort()
     // Detach the live-region callback on disconnect so the next reconnect cycle
     // (snapshot + buffered-drain) runs silently until re-wired.
     eventDispatcher.setOnFlush(null)
@@ -236,7 +266,13 @@ export class ConnectionManager {
     // Give up after the configured attempt cap. The indicator transitions to
     // `disconnected` and the user can re-arm the loop by clicking it (which
     // routes through `connectionStore.requestReconnect()` → manager.reconnect()).
+    // Clear any stale GoingAway flag — once we've exhausted the reconnect
+    // budget, subsequent manual reconnects are no longer the planned-redeploy
+    // window, and the indicator should fall back to the generic
+    // "Reconnecting..." framing instead of "Server restarting".
     if (connectionStore.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
       connectionStore.status = 'disconnected'
       return
     }
@@ -264,6 +300,12 @@ export class ConnectionManager {
       this.reconnectTimer = null
     }
     connectionStore.reconnectAttempt = 0
+    // A manual reconnect is a fresh user-driven attempt. Clear any stale
+    // GoingAway flag so the indicator tooltip uses the generic
+    // "Reconnecting..." framing rather than the planned-redeploy "Server
+    // restarting" wording that lingered from the prior cycle.
+    connectionStore.serverGoingAway = false
+    connectionStore.goingAwayReason = null
     // Detach onFlush + cancel any pending burst BEFORE closing the WS. We null
     // ws.onclose to skip handleDisconnect (which is on a different path), so
     // without this any RAF batch queued by the prior connection could still
