@@ -62,6 +62,8 @@ App.svelte                          (global Cmd/Ctrl+K listener via onMount; tog
         Separator                     (shadcn: vertical divider)
         ConnectionIndicator.svelte    (pure: colored dot + Tooltip)
         SettingsPopover.svelte        (connected: reads/writes UIStore)
+      ConfigReloadErrorBanner.svelte  (connected: reads ConnectionStore.configReloadError; mounted above VersionMismatchBanner; sibling of TopBar/main)
+      VersionMismatchBanner.svelte    (connected: reads ConnectionStore.serverVersionMismatch + .serverReloadAt)
       <slot />                        (content area: KanbanBoard mounted here)
     CommandPalette.svelte             (connected: reads PaletteStore + stores; portals to body)
       PaletteSection.svelte           (pure: group wrapper with heading)
@@ -558,6 +560,16 @@ Open browser tabs survive backend redeploys, but a frontend bundle running again
 - `prefers-reduced-motion: reduce` hides the bar entirely (the numeric `{N}s` carries state) and disables the entrance animation. The bar is decorative; the meaningful state is the integer second.
 - `--queued` is reused here as a calm-informational tone, NOT as a workflow-status indicator. A comment block at the top of the file pins this.
 
+**Banner UX (`ConfigReloadErrorBanner.svelte`) (issue #203):**
+- Sibling banner mounted in `AppShell.svelte` ABOVE `<VersionMismatchBanner>` (and below `<TopBar>`). Both banners can be visible simultaneously during a redeploy that also rejected a runner-pool edit; the config error is more immediately actionable for an operator, so it sits on top.
+- Surfaces backend `WireFrame::ConfigReloadError` reasons after the dispatcher routes them through `connectionStore.markConfigReloadError(reason)`. The backend keeps serving last-known-good capacities; the banner is the operator-visible signal that an edit was rejected.
+- Single-slot, last-wins. A second `ConfigReloadError` mid-display replaces the visible reason AND restarts the 60s wall-clock auto-dismiss timer (the timer lives on the store, not as a component `$effect`, so unit tests can drive auto-dismiss without mounting Svelte).
+- Manual close via a Dismiss button (`aria-label="Dismiss"`) clears state and the pending timer immediately. There is no auto-dismiss-on-`ConfigUpdate` — a non-operator viewer should not see the banner forever, but a `ConfigUpdate` after the fix should not race the operator out of reading the reason.
+- Container is `<aside role="status" aria-live="polite" aria-atomic="true">` (separate live region; same accessibility shape as `VersionMismatchBanner`). `aria-atomic="true"` makes a last-wins reason replacement a full re-announcement.
+- Surface tinted via `color-mix(in oklch, var(--surface) 94%, var(--failed) 6%)` — NO side-stripe accent. `✗` glyph (impeccable Failed-state assignment; pairing `⚠`/ActionRequired with `--failed` would break color+symbol duality) rendered in `var(--text-dim)`; `--failed` lives only on the surface tint (no countdown bar or numeric to carry the tone on this banner).
+- Entrance: same `cubic-bezier(0.16, 1, 0.3, 1)` 220ms slide-up-and-fade. `prefers-reduced-motion: reduce` disables the entrance animation.
+- Pre-snapshot `ConfigReloadError` frames remain dropped at `connection.ts` — `markConfigReloadError` is only invoked by the dispatcher, which runs post-snapshot. A backend never seeds the banner with a reconnect-time "last error" — surfacing one without context would mis-imply the current edit is bad.
+
 **ConnectionIndicator integration:**
 - While `connectionStore.serverGoingAway === true` and the indicator's derived state is `'connecting'` (the reconnect cycle that follows the close), `TopBar.svelte`'s `indicatorDetail` text becomes `"Server restarting — reconnecting…"` instead of the generic `"Reconnecting..."`. Cleared on the next `'connected'` transition.
 
@@ -580,13 +592,13 @@ The WS endpoint now frames every event in an outer `kind` discriminator (`Commit
 
 - `Committed` — extracts the inner `CommittedEvent`, pushes onto the buffer, and schedules the next RAF (existing path, unchanged).
 - `ConfigUpdate` — calls `runStore.applyConfigUpdate(runnerPoolCapacities)` immediately (no RAF batching — config frames are low-volume and benefit from prompt application).
-- `ConfigReloadError` — fires a single `console.warn` referencing issue #203 (UI surfacing is deferred to that issue).
+- `ConfigReloadError` — calls `connectionStore.markConfigReloadError(frame.reason)`, which arms a 60-second wall-clock auto-dismiss and renders via `ConfigReloadErrorBanner.svelte` (see § Banner UX above).
 - Unknown `kind` — logged once per kind, then silenced (forward-compatible with new backends during a rolling deploy).
 
 `ConnectionManager` parses the outer `WireFrame` shape on `onmessage`. Pre-snapshot frame handling distinguishes the two non-Committed kinds:
 
 - `ConfigUpdate` frames overwrite a single `pendingConfigUpdate: RunnerPoolCapacity[] | null` slot. Buffering a list is pointless because each frame carries the **full** current capacity list (not a delta), so latest-wins is correct. After `runStore.loadSnapshot` runs, the slot is drained via `runStore.applyConfigUpdate` so a race between snapshot generation and snapshot fetch cannot lose a hot-reload.
-- `ConfigReloadError` frames pre-snapshot are dropped silently — the next successful reload will repaint state via a `ConfigUpdate`, and the snapshot rail already carries the current server-side capacities. Surfacing the error pre-snapshot would race with the loading indicator.
+- `ConfigReloadError` frames pre-snapshot are dropped silently — the snapshot rail already carries the current server-side capacities, so the next successful reload will repaint state via a `ConfigUpdate` regardless. Surfacing the error during the initial connection would also race with the loading indicator and mis-imply that the snapshot was generated from a broken config.
 
 ### EventDispatcher setOnFlush callback contract
 
