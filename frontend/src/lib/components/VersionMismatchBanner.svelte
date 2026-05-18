@@ -1,37 +1,38 @@
-<!--
-  Version-mismatch banner (issue #47).
-
-  Locked-after-impeccable design:
-  - Full-width strip mounted in AppShell between TopBar and <main>.
-  - Surface tinted via OKLCH color-mix with --queued at 6% — NO 3px side
-    stripe (that pattern is in the design system's absolute-bans list).
-  - Glyph (↺) in --text-dim, not in the tone color. Brand says status
-    colors are the only high-chroma elements; the tone lives only on the
-    emphasized {N}s number and the countdown bar.
-  - Entrance: ease-out-expo, 220ms, slide-up-and-fade — no overshoot
-    (impeccable: no bounce/elastic).
-  - prefers-reduced-motion: bar element hidden entirely; the numeric "{N}s"
-    carries state.
-
-  --queued is reused here as a calm-informational tone, NOT as a workflow-
-  status indicator. The banner is a transient deploy-detected notice; the
-  tone's "blue == informational" carries over without implying any
-  workflow is in Queued state.
--->
-
 <script lang="ts">
-  import { onMount } from 'svelte'
+  /*
+   * Version-mismatch banner (issue #47).
+   *
+   * Locked-after-impeccable design:
+   * - Full-width strip mounted in AppShell between TopBar and <main>.
+   * - Surface tinted via OKLCH color-mix with --queued at 6%. NO 3px side
+   *   stripe (the design-system absolute-bans list rejects that pattern).
+   * - Glyph (rotate-arrow) in --text-dim, not in the tone color. Status
+   *   colors are the only high-chroma elements; the tone lives only on the
+   *   emphasized {N}s number and the countdown bar.
+   * - Entrance: ease-out-expo, 220ms, slide-up-and-fade. No overshoot.
+   * - prefers-reduced-motion: bar element hidden entirely; the numeric {N}s
+   *   carries state.
+   *
+   * Comment lives inside <script> rather than as a top-level HTML comment so
+   * the Tailwind v4 Vite plugin (which tokenizes the whole .svelte file for
+   * class-name extraction) does not choke on stray apostrophes.
+   *
+   * --queued is reused here as a calm-informational tone, NOT as a workflow-
+   * status indicator. The banner is a transient deploy-detected notice; blue
+   * reads as informational without implying any workflow is in Queued state.
+   */
   import { Button } from '$lib/components/ui/button'
   import { connectionStore } from '$lib/stores/connection.svelte'
 
   const COUNTDOWN_TOTAL_MS = 30_000
 
-  // Wall-clock state driven by a 1Hz interval. The bar visual itself uses a
-  // CSS @keyframes animation (compositor-driven, 60+ Hz, zero JS overhead);
-  // the interval exists only to update the numeric "{N}s" text and to trip
-  // the auto-reload at zero.
+  // Wall-clock state driven by a 1Hz interval — but only while the banner is
+  // actually visible. The interval exists only to update the numeric {N}s text
+  // and to trip the auto-reload at zero; the bar visual itself uses a CSS
+  // @keyframes animation (compositor-driven, 60+ Hz, zero JS overhead). Mostly
+  // idle: ATC tabs run for hours without a version mismatch, so the tick must
+  // not be a permanent background wakeup.
   let now = $state(Date.now())
-  let tickHandle: ReturnType<typeof setInterval> | null = null
 
   // prefers-reduced-motion is watched live — the user can flip the OS-level
   // setting during the countdown and the bar disappears immediately.
@@ -47,19 +48,22 @@
     return () => mql.removeEventListener('change', onChange)
   })
 
-  onMount(() => {
-    tickHandle = setInterval(() => {
-      now = Date.now()
-    }, 1_000)
-    return () => {
-      if (tickHandle !== null) clearInterval(tickHandle)
-    }
-  })
-
   // Banner visibility — driven entirely by store state.
   const visible = $derived(
     connectionStore.serverVersionMismatch !== null && connectionStore.serverReloadAt !== null
   )
+
+  // Tick only while the banner is visible. $effect re-runs when `visible`
+  // flips; the returned cleanup tears down the interval when visibility goes
+  // false (or the component unmounts).
+  $effect(() => {
+    if (!visible) return
+    now = Date.now()
+    const handle = setInterval(() => {
+      now = Date.now()
+    }, 1_000)
+    return () => clearInterval(handle)
+  })
 
   // Remaining millis derives from the 1Hz `now`; the bar's CSS animation runs
   // independently from this value (it's keyed by `serverReloadAt` below).
@@ -83,6 +87,7 @@
     role="status"
     aria-live="polite"
     aria-atomic="true"
+    aria-label="A new build is available — the page will refresh shortly"
     class="version-mismatch-banner"
     style="
       background-color: color-mix(in oklch, var(--surface) 94%, var(--queued) 6%);

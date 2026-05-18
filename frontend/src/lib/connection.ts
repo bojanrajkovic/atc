@@ -257,7 +257,13 @@ export class ConnectionManager {
     // Give up after the configured attempt cap. The indicator transitions to
     // `disconnected` and the user can re-arm the loop by clicking it (which
     // routes through `connectionStore.requestReconnect()` → manager.reconnect()).
+    // Clear any stale GoingAway flag — once we've exhausted the reconnect
+    // budget, subsequent manual reconnects are no longer the planned-redeploy
+    // window, and the indicator should fall back to the generic
+    // "Reconnecting..." framing instead of "Server restarting".
     if (connectionStore.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+      connectionStore.serverGoingAway = false
+      connectionStore.goingAwayReason = null
       connectionStore.status = 'disconnected'
       return
     }
@@ -285,6 +291,12 @@ export class ConnectionManager {
       this.reconnectTimer = null
     }
     connectionStore.reconnectAttempt = 0
+    // A manual reconnect is a fresh user-driven attempt. Clear any stale
+    // GoingAway flag so the indicator tooltip uses the generic
+    // "Reconnecting..." framing rather than the planned-redeploy "Server
+    // restarting" wording that lingered from the prior cycle.
+    connectionStore.serverGoingAway = false
+    connectionStore.goingAwayReason = null
     // Detach onFlush + cancel any pending burst BEFORE closing the WS. We null
     // ws.onclose to skip handleDisconnect (which is on a different path), so
     // without this any RAF batch queued by the prior connection could still
