@@ -533,6 +533,37 @@ The frontend uses a **WS-first protocol** with pre-connect buffering and seq-bas
 - Event queue resumes from the new sequence number
 - After `MAX_RECONNECT_ATTEMPTS` (10 — exported from `connection.ts`, cumulative ~3 min) the manager **gives up**: `connectionStore.status` transitions to `'disconnected'`, no further timers are scheduled, and the `ConnectionIndicator` chip promotes to a `<button>` with the tooltip "Disconnected — click to reconnect" (issue #24). Clicking calls `connectionStore.requestReconnect()`, which the `ConnectionManager.svelte` `$effect` observes and routes to `manager.reconnect()` — the same path the command-palette "Reconnect" command uses. The retry resets the attempt counter to 0, so the operator can re-arm the loop indefinitely.
 
+### Deploy detection (issue #47)
+
+Open browser tabs survive backend redeploys, but a frontend bundle running against a newer backend can break on wire-contract changes. The frontend detects this via the `WireFrame::ServerHello` envelope variant that the backend now sends as the first text frame on every fresh WS connection.
+
+**Session-reference model:**
+- The first `ServerHello.version` observed in a tab session is stored in `connectionStore.serverVersionReference`. No banner.
+- Subsequent reconnects to the same backend pod observe the same version — no-op.
+- A reconnect that observes a **different** version sets `connectionStore.serverVersionMismatch` to the new version and arms `connectionStore.serverReloadAt = Date.now() + 30_000`. The `VersionMismatchBanner` becomes visible.
+- A new mismatched version (a third distinct value) refreshes the deadline; the same mismatched version repeating does not (a user clicking around during the countdown shouldn't reset it).
+- Reconnect to the reference version while a mismatch is armed keeps the countdown running — we're already committed to refreshing.
+- In-memory only. A refresh wipes the store; after refresh, the new bundle's first `ServerHello` matches the running backend and no banner appears.
+
+**Dispatcher and pre-snapshot arms:**
+- `dispatcher.ts` and the pre-snapshot switch in `connection.ts` both call `connectionStore.observeServerVersion(frame.version)` on `ServerHello`. Both bypass RAF — the version check is snapshot-independent and the first `ServerHello` must set the reference before any later committed event fires.
+- Both call `connectionStore.markGoingAway(frame.reason)` on `GoingAway`. Transient, single-shot. Cleared on the next successful `'connected'` transition.
+
+**Banner UX (`VersionMismatchBanner.svelte`):**
+- Full-width strip mounted in `AppShell.svelte` between `<TopBar>` and `<main>`. Container is `<aside role="status" aria-live="polite" aria-atomic="true">` — a separate ARIA live region from the workflow-update one so the deploy announcement doesn't get overridden by burst-accumulator state.
+- 30-second hard countdown. "Refresh now" button skips the wait. No dismiss, no snooze.
+- Surface tinted via `color-mix(in oklch, var(--surface) 94%, var(--queued) 6%)` — NO side-stripe accent (the design system's absolute bans rule). Refresh-icon glyph (`↺`) in `var(--text-dim)`; `var(--queued)` lives only on the emphasized `{N}s` number and the countdown bar fill.
+- Countdown bar uses a CSS `@keyframes` drain on `transform: scaleX`, running on the compositor at 60+ Hz with zero per-frame JS work. A 1Hz `setInterval` drives the numeric `{N}s` text only. `{#key serverReloadAt}` wraps the bar so a new mismatch arming a fresh deadline forces a clean animation restart from 100%.
+- Entrance: `cubic-bezier(0.16, 1, 0.3, 1)` (ease-out-expo), 220ms, slide-up-and-fade — no overshoot.
+- `prefers-reduced-motion: reduce` hides the bar entirely (the numeric `{N}s` carries state) and disables the entrance animation. The bar is decorative; the meaningful state is the integer second.
+- `--queued` is reused here as a calm-informational tone, NOT as a workflow-status indicator. A comment block at the top of the file pins this.
+
+**ConnectionIndicator integration:**
+- While `connectionStore.serverGoingAway === true` and the indicator's derived state is `'connecting'` (the reconnect cycle that follows the close), `TopBar.svelte`'s `indicatorDetail` text becomes `"Server restarting — reconnecting…"` instead of the generic `"Reconnecting..."`. Cleared on the next `'connected'` transition.
+
+**Pre-snapshot close-race fix:**
+- `handleDisconnect()` in `connection.ts` now calls `this.abortController?.abort()` before scheduling the reconnect timer. Without this, a socket close during `/v1/state` fetch (likely on every redeploy because `GoingAway` arrives right before the close) would let the prior `connect()` complete its fetch path and set `status = 'connected'` against a dead socket. The fetch chain already bails on `signal.aborted`.
+
 ## ARIA Live Region
 
 The `AriaLiveRegion` module announces run-level state transitions to screen readers. It is composed of two pieces: the `LiveRegion` rune-class store (in `src/lib/aria/live-region.svelte.ts`) and the `AriaLiveRegion.svelte` component that mounts at the App root level as a sibling to `<AppShell>`.
