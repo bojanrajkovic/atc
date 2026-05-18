@@ -13,7 +13,7 @@ concurrency:
 jobs:
   release-please:
     name: Release Please
-    runs-on: [self-hosted, linux, amd64]
+    runs-on: ubuntu-24.04
     environment: release
     permissions: {}
     outputs:
@@ -42,7 +42,7 @@ jobs:
     name: Refresh Cargo.lock on Release PR
     needs: release-please
     if: needs.release-please.outputs.prs_created == 'true'
-    runs-on: [self-hosted, linux, amd64]
+    runs-on: ubuntu-24.04
     environment: release
     permissions: {}
     steps:
@@ -114,7 +114,7 @@ jobs:
   sync-helm-app-version:
     needs: [release-please, refresh-lockfile]
     if: always() && needs.refresh-lockfile.result != 'failure' && (needs.release-please.outputs.prs_created == 'true' || needs.release-please.outputs.pr != '')
-    runs-on: [self-hosted, linux, amd64]
+    runs-on: ubuntu-24.04
     environment: release
     permissions:
       contents: write

@@ -1,7 +1,0 @@
-self-hosted-runner:
-  # Custom labels exposed by the homelab ARC scale set (see
-  # docs/architecture/ci-pipeline.md → "Linux jobs run on self-hosted ARC
-  # runners"). actionlint's built-in arch label is `x64`; this scale set uses
-  # `amd64`. The runner's full label set is `[self-hosted, linux, amd64]`.
-  labels:
-    - amd64
