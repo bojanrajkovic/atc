@@ -360,6 +360,65 @@
         }
       }
     },
+    "grafanaDashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Grafana dashboard auto-discovery. Default off. Renders a ConfigMap with the kube-prometheus-stack sidecar discovery label and, optionally, a grafana-operator v5 GrafanaDashboard CR referencing the same ConfigMap. See docs/architecture/deployment.md § Grafana dashboard.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render the dashboard ConfigMap."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Override namespace for the ConfigMap. Empty (default) renders in the release namespace."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Discovery labels for the ConfigMap. `grafana_dashboard: \"1\"` is the kiwigrid/k8s-sidecar convention.",
+          "additionalProperties": { "type": "string" }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations for the ConfigMap. `grafana_folder: \"<Name>\"` is the sidecar folder convention.",
+          "additionalProperties": { "type": "string" }
+        },
+        "grafanaOperator": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Additionally render a grafana-operator v5 GrafanaDashboard CR referencing the ConfigMap. Requires grafana-operator CRDs installed.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Render the GrafanaDashboard CR."
+            },
+            "instanceSelector": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Pass-through to GrafanaDashboard.spec.instanceSelector (Kubernetes LabelSelector). Only matchLabels and matchExpressions are validated structurally; the chart treats this as raw pass-through so the operator can use any LabelSelector form grafana-operator accepts.",
+              "properties": {
+                "matchLabels": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" }
+                },
+                "matchExpressions": {
+                  "type": "array",
+                  "items": { "type": "object" }
+                }
+              }
+            },
+            "folderRef": {
+              "type": "string",
+              "description": "Optional name of a GrafanaFolder CR in the same namespace. Empty omits the field."
+            },
+            "resyncPeriod": {
+              "type": "string",
+              "description": "Optional Go duration (e.g. \"5m\"). Empty omits the field; the operator uses its own default."
+            }
+          }
+        }
+      }
+    },
     "runnerPools": {
       "type": "array",
       "description": "Operator-declared runner-pool capacities. Empty (default) renders no ConfigMap and no volume mount. Non-empty renders a ConfigMap consumed by atc-server at /etc/atc/config.yaml, populating the StateSnapshot.runnerPoolCapacities wire field so the frontend can render saturation bars per pool.",

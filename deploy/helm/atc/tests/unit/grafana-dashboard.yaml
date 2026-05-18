@@ -1,0 +1,161 @@
+suite: Grafana dashboard ConfigMap + GrafanaDashboard CR — opt-in auto-discovery
+
+templates:
+  - grafana-dashboard.yaml
+
+tests:
+  - it: renders zero documents with default values (grafanaDashboard.enabled is false)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the ConfigMap with the kube-prometheus-stack sidecar label when enabled
+    set:
+      grafanaDashboard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-atc-dashboard
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      # data."atc-overview.json" must carry the dashboard's uid string so
+      # operators discovering this ConfigMap know which dashboard they got.
+      - matchRegex:
+          path: data["atc-overview.json"]
+          pattern: '"uid"[[:space:]]*:[[:space:]]*"atc-overview"'
+
+  - it: lands the ConfigMap in the override namespace when grafanaDashboard.namespace is set
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.namespace: monitoring
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+
+  - it: merges custom labels and annotations onto the ConfigMap
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.labels:
+        grafana_dashboard: "1"
+        team: platform
+      grafanaDashboard.annotations:
+        grafana_folder: ATC
+    asserts:
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      - equal:
+          path: metadata.labels.team
+          value: platform
+      - equal:
+          path: metadata.annotations.grafana_folder
+          value: ATC
+
+  - it: omits the ConfigMap annotations block when no annotations are set
+    set:
+      grafanaDashboard.enabled: true
+    asserts:
+      - notExists:
+          path: metadata.annotations.grafana_folder
+
+  - it: renders the GrafanaDashboard CR alongside the ConfigMap when grafanaOperator.enabled is true
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.grafanaOperator.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 2
+      - documentIndex: 0
+        isKind:
+          of: ConfigMap
+      - documentIndex: 1
+        isKind:
+          of: GrafanaDashboard
+      - documentIndex: 1
+        equal:
+          path: apiVersion
+          value: grafana.integreatly.org/v1beta1
+      - documentIndex: 1
+        equal:
+          path: spec.configMapRef.name
+          value: RELEASE-NAME-atc-dashboard
+      - documentIndex: 1
+        equal:
+          path: spec.configMapRef.key
+          value: atc-overview.json
+      - documentIndex: 1
+        equal:
+          path: spec.instanceSelector.matchLabels.dashboards
+          value: grafana
+
+  - it: applies a custom instanceSelector to the CR
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.grafanaOperator.enabled: true
+      grafanaDashboard.grafanaOperator.instanceSelector:
+        matchLabels:
+          grafana-instance: prod
+    asserts:
+      - documentIndex: 1
+        equal:
+          path: spec.instanceSelector.matchLabels.grafana-instance
+          value: prod
+
+  - it: passes folderRef and resyncPeriod through to the CR when set
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.grafanaOperator.enabled: true
+      grafanaDashboard.grafanaOperator.folderRef: atc-folder
+      grafanaDashboard.grafanaOperator.resyncPeriod: 5m
+    asserts:
+      - documentIndex: 1
+        equal:
+          path: spec.folderRef
+          value: atc-folder
+      - documentIndex: 1
+        equal:
+          path: spec.resyncPeriod
+          value: 5m
+
+  - it: omits folderRef and resyncPeriod from the CR when empty
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.grafanaOperator.enabled: true
+    asserts:
+      - documentIndex: 1
+        notExists:
+          path: spec.folderRef
+      - documentIndex: 1
+        notExists:
+          path: spec.resyncPeriod
+
+  - it: renders only the ConfigMap when grafanaOperator.enabled is false
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.grafanaOperator.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+
+  - it: rejects unknown top-level keys in grafanaDashboard via values.schema.json
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.elastic: true
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects unknown keys in grafanaDashboard.grafanaOperator via values.schema.json
+    set:
+      grafanaDashboard.enabled: true
+      grafanaDashboard.grafanaOperator.enabled: true
+      grafanaDashboard.grafanaOperator.elastic: true
+    asserts:
+      - failedTemplate: {}

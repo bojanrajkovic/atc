@@ -1,0 +1,74 @@
+{{- /*
+Grafana dashboard auto-discovery for ATC.
+
+Renders an opt-in ConfigMap carrying the dashboard JSON. Two operator-side
+discovery mechanisms are supported from a single chart-shipped JSON:
+
+  1. kube-prometheus-stack Grafana sidecar (kiwigrid/k8s-sidecar) — the
+     ConfigMap's `grafana_dashboard: "1"` label triggers automatic dashboard
+     provisioning. Folder placement and on-disk path are controlled by
+     ConfigMap annotations (`grafana_folder`, `k8s-sidecar-target-directory`).
+
+  2. grafana-operator v5 — a `grafana.integreatly.org/v1beta1`
+     `GrafanaDashboard` CR references the SAME ConfigMap via
+     `spec.configMapRef`, avoiding duplicated dashboard JSON.
+
+Operators choose one or both via:
+  - grafanaDashboard.enabled                 (master toggle)
+  - grafanaDashboard.grafanaOperator.enabled (additionally render the CR)
+
+The dashboard JSON itself uses a `${datasource}` Grafana template variable so
+it's portable across operator stacks regardless of what name they gave their
+Prometheus datasource. `.Files.Get` injects the raw file bytes without running
+Sprig, so the `${...}` token survives Helm rendering intact.
+
+The second `if` (operator CR) intentionally drops the leading-dash trim
+(`{{ if ... }}` not `{{- if ... }}`) so the document-separator newline before
+`---` survives even if the dashboard JSON file were ever missing its trailing
+newline. The JSON file does end with `\n` today; this is belt-and-suspenders.
+*/}}
+{{- if .Values.grafanaDashboard.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "atc.fullname" . }}-dashboard
+  {{- with .Values.grafanaDashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "atc.labels" . | nindent 4 }}
+    {{- with .Values.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.grafanaDashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  atc-overview.json: |-
+{{ .Files.Get "dashboards/atc-overview.json" | indent 4 }}
+{{ if .Values.grafanaDashboard.grafanaOperator.enabled }}
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: {{ include "atc.fullname" . }}-dashboard
+  {{- with .Values.grafanaDashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "atc.labels" . | nindent 4 }}
+spec:
+  instanceSelector:
+    {{- toYaml .Values.grafanaDashboard.grafanaOperator.instanceSelector | nindent 4 }}
+  {{- with .Values.grafanaDashboard.grafanaOperator.folderRef }}
+  folderRef: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.grafanaDashboard.grafanaOperator.resyncPeriod }}
+  resyncPeriod: {{ . | quote }}
+  {{- end }}
+  configMapRef:
+    name: {{ include "atc.fullname" . }}-dashboard
+    key: atc-overview.json
+{{- end }}
+{{- end }}
