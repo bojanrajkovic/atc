@@ -221,16 +221,23 @@ jobs:
   # arch produces its own native binary; no QEMU emulation and no binary
   # handoff from build-binaries.
   #
-  # `needs: create-release` is intentional even though build-container
-  # doesn't consume any outputs from create-release: it serializes the
-  # ghcr.io image push behind the GitHub Release creation, so a transient
-  # release-creation failure (API blip, token issue) doesn't leave orphan
-  # `:<version>-{amd64,arm64}` tags pointing at a release that never came
-  # together. Partial-release states are the failure mode that's hardest
-  # to recover from cleanly.
+  # `needs: [create-release, build-binaries]` is intentional even though
+  # build-container no longer consumes any outputs from either job:
+  # both deps are pure ordering gates that protect against partial-release
+  # states (the hardest failure mode to recover from cleanly).
+  #
+  #   - `create-release` — if release creation fails (API blip, token issue),
+  #     don't push container tags pointing at a release that never came together.
+  #   - `build-binaries` — `fail-fast: false` lets independent matrix entries
+  #     fail without cancelling siblings. Without this needs, a failed
+  #     `aarch64-apple-darwin` (or any other binary entry) would leave the
+  #     GitHub Release missing some standalone binaries while the OCI image +
+  #     Helm chart still ship — confusing for users who consume both surfaces.
+  #     The pre-#73 private-phase workflow had this gate implicitly via the
+  #     binary-handoff artifact; this restores it explicitly.
   build-container:
     name: Build Container (${{ matrix.platform }})
-    needs: create-release
+    needs: [create-release, build-binaries]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
