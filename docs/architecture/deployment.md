@@ -363,9 +363,9 @@ The CR's `spec.configMapRef` references the same ConfigMap the sidecar discovers
 
 Every panel's datasource reference is `{ "type": "prometheus", "uid": "${datasource}" }`. The dashboard declares a `datasource` template variable of type `datasource` with `query: prometheus`, so Grafana resolves the variable against whichever Prometheus datasource(s) the operator has configured. Operators with one Prometheus get automatic resolution; operators with multiple get a top-of-dashboard picker. No `${DS_PROMETHEUS}` / `__inputs` block is shipped — the variable approach handles both file-provisioned discovery (sidecar / operator) AND standalone Grafana-UI import without requiring chart-side string substitution.
 
-### Histogram-aggregation caveat
+### Histogram-aggregation assumption
 
-Panel queries use the classic `_bucket` histogram form (`histogram_quantile(0.99, sum(rate(name_bucket[5m])) by (le, pod))`). The OTel SDK is configured with `Base2ExponentialHistogram` aggregation, but the OTLP→Prometheus translator emits classic histograms by default; native-histogram-only emission requires explicit collector configuration. Operators running the collector in native-only mode must translate panel queries to `histogram_quantile(0.99, sum(rate(name[5m])))` (no `_bucket`, no `le`). See `docs/architecture/metrics.md` § Histogram aggregation.
+Panel queries use the **native histogram** form: `histogram_quantile(0.99, sum by (label) (rate(name[5m])))`. The OTel SDK uses `Base2ExponentialHistogram` aggregation, and the OTLP→Prometheus translator surfaces those as native histograms when the storage supports them (Prometheus 2.40+, Mimir, the grafana/otel-lgtm bundle). Operators running collectors that emit only classic histograms (older stacks, transitional configurations) must translate panel queries to the classic form: `histogram_quantile(0.99, sum by (le, label) (rate(name_bucket[5m])))`. See `docs/architecture/metrics.md` § Histogram aggregation.
 
 ### Standalone import
 

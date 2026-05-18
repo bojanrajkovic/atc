@@ -21,7 +21,7 @@
       }
     ]
   },
-  "description": "ATC \u2014 operational metrics covering HTTP, webhook ingestion, PG outbox+drain pipeline, watermarks, retention, startup/shutdown lifecycle, process resource usage, and operator-facing config reloads. Replica identity comes from the scraper as the `pod` label. Histogram panels query the classic `_bucket` series form; operators whose OTel collector is configured to emit only native histograms must translate to `histogram_quantile(0.99, sum(rate(name[5m])))` (no `_bucket`, no `le` group). See docs/architecture/metrics.md \u00a7 Histogram aggregation.",
+  "description": "ATC \u2014 operational metrics covering HTTP, webhook ingestion, PG outbox+drain pipeline, watermarks, retention, startup/shutdown lifecycle, process resource usage, and operator-facing config reloads. Replica identity comes from the scraper as the `pod` label. Histogram panels assume Prometheus native histograms \u2014 the OTel SDK is configured with Base2ExponentialHistogram aggregation, and the OTLP\u2192Prometheus translator emits these as native histograms when the storage supports them (Prometheus 2.40+, Mimir, the grafana/otel-lgtm bundle, etc.). Operators on collectors that emit only classic histograms must translate panel queries to the classic form: replace `histogram_quantile(0.99, sum by (label) (rate(name[5m])))` with `histogram_quantile(0.99, sum by (le, label) (rate(name_bucket[5m])))`. See docs/architecture/metrics.md \u00a7 Histogram aggregation.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -329,7 +329,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{pod=~\"$pod\"}[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds{pod=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "p99",
           "range": true,
           "refId": "A"
@@ -592,7 +592,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Latency by route \u2014 p50 / p95 / p99",
-      "description": "Per-route p50/p95/p99 of http_server_request_duration_seconds. Histograms use the classic `_bucket` series (the OTLP\u2192Prometheus translator emits classic histograms by default; see docs/architecture/metrics.md \u00a7 Histogram aggregation for the native-histogram caveat).",
+      "description": "Per-route p50/p95/p99 of http_server_request_duration_seconds. Panels assume Prometheus native histograms (the OTel SDK uses Base2ExponentialHistogram aggregation \u2014 see backend/crates/atc-server/src/otel.rs). Operators on collectors that emit classic histograms must translate to `histogram_quantile(0.99, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{...}[5m])))` \u2014 see docs/architecture/metrics.md \u00a7 Histogram aggregation.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -669,7 +669,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{pod=~\"$pod\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_request_duration_seconds{pod=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "p50 {{http_route}}",
           "range": true,
           "refId": "A"
@@ -680,7 +680,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{pod=~\"$pod\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_request_duration_seconds{pod=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "p95 {{http_route}}",
           "range": true,
           "refId": "B"
@@ -691,7 +691,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{pod=~\"$pod\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_request_duration_seconds{pod=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "p99 {{http_route}}",
           "range": true,
           "refId": "C"
@@ -790,7 +790,7 @@
       "id": 12,
       "type": "heatmap",
       "title": "HTTP duration heatmap",
-      "description": "Cluster-wide HTTP duration distribution across all routes. Heatmap renders the native histogram bucket counts as a 2-D density plot \u2014 useful for spotting a multimodal latency distribution that p99 alone masks.",
+      "description": "Cluster-wide HTTP duration distribution across all routes. Renders the native histogram directly as a 2-D density plot \u2014 useful for spotting multimodal latency distributions that p99 alone masks. Grafana 11 auto-detects the native histogram format from the query.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -860,8 +860,8 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (le) (rate(http_server_request_duration_seconds_bucket{pod=~\"$pod\"}[$__rate_interval]))",
-          "legendFormat": "{{le}}",
+          "expr": "sum(rate(http_server_request_duration_seconds{pod=~\"$pod\"}[$__rate_interval]))",
+          "legendFormat": "",
           "range": true,
           "refId": "A"
         }
@@ -1345,7 +1345,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(atc_pg_drain_pass_duration_seconds_bucket{pod=~\"$pod\"}[$__rate_interval])) by (le, pod))",
+          "expr": "histogram_quantile(0.99, sum by (pod) (rate(atc_pg_drain_pass_duration_seconds{pod=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -1441,7 +1441,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(atc_pg_outbox_lag_seconds_bucket{pod=~\"$pod\"}[$__rate_interval])) by (le, pod))",
+          "expr": "histogram_quantile(0.99, sum by (pod) (rate(atc_pg_outbox_lag_seconds{pod=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -2403,7 +2403,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(atc_pg_drain_startup_seconds_bucket{pod=~\"$pod\"}[1h])) by (le, pod))",
+          "expr": "histogram_quantile(0.99, sum by (pod) (rate(atc_pg_drain_startup_seconds{pod=~\"$pod\"}[1h])))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
@@ -2498,7 +2498,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(atc_pg_drain_shutdown_remaining_rows_bucket{pod=~\"$pod\"}[24h])) by (le, pod))",
+          "expr": "histogram_quantile(0.99, sum by (pod) (rate(atc_pg_drain_shutdown_remaining_rows{pod=~\"$pod\"}[24h])))",
           "legendFormat": "{{pod}}",
           "range": true,
           "refId": "A"
