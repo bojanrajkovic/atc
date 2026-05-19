@@ -152,16 +152,12 @@ atc.example.com {
       uri /api/verify?rd=https://auth.example.com/
       copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
     }
-    reverse_proxy atc.svc.cluster.local:8080 {
-      # WS idle: default is 2 minutes; bump for long-lived ATC WS
-      transport http {
-        read_timeout 1h
-        write_timeout 1h
-      }
-    }
+    reverse_proxy atc.svc.cluster.local:8080
   }
 }
 ```
+
+Caddy's `reverse_proxy` passes WebSocket upgrades through transparently and applies no per-stream timeouts by default, so no override is needed for long-lived ATC WS. Avoid adding `transport http { read_timeout / write_timeout }` here: those are per-read/per-write deadlines that will silently disconnect quiet dashboards because ATC sends no application-level ping. If you want a hard maximum lifetime (to force reconnects), use `stream_timeout` instead — but for ATC the safest config is no idle cutoff, letting OS-level TCP keepalive detect dead connections.
 
 Sources: [Caddy `forward_auth`](https://caddyserver.com/docs/caddyfile/directives/forward_auth), [Caddy `reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
 
