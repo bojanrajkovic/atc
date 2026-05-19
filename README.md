@@ -8,9 +8,9 @@ ATC ships as a single Rust binary that serves a Svelte 5 SPA, ingests GitHub web
 
 **ATC ships no built-in authentication.** Anyone who can reach the HTTP port can read every workflow run, job, and runner-pool view for every repository that has sent a webhook. The webhook endpoint validates HMAC-SHA256 signatures when a secret is configured; the SPA, the `GET /v1/state` snapshot, and the `GET /v1/ws` event stream do not.
 
-Deploy ATC behind a trusted network surface — a private VPC, a corporate VPN, a Tailscale subnet — or behind an authenticating reverse proxy. The SPA + REST + WebSocket pattern is compatible with the usual suspects: **Pomerium** (explicit `allow_websockets` policy; forwards JWT claims; the most mature fit), **oauth2-proxy** (WS upgrades are proxied by default), and **Authelia + nginx/Caddy** (`auth_request` / `forward_auth` work, but the `Upgrade` and `Connection` headers must be forwarded explicitly). **Cloudflare Access** is awkward — its login challenge cannot be served mid-upgrade, so operators end up splitting policies (HTTP gated, `/v1/ws` bypassed). Treat the dashboard as if it were the GitHub Actions tab of every repository whose webhooks land on it.
+Deploy ATC behind a trusted network surface — a private VPC, a corporate VPN, a Tailscale subnet — or behind an authenticating reverse proxy that gates the SPA and proxies the API + WebSocket through once a session is established. Treat the dashboard as if it were the GitHub Actions tab of every repository whose webhooks land on it.
 
-See [`docs/architecture/deployment.md`](docs/architecture/deployment.md#authentication) for the operator surface: which proxy patterns are recommended, the webhook-endpoint exception, and the cross-cutting gotchas (cookie forwarding, `Origin` validation, idle-timeout starvation on the long-lived WS).
+See [`docs/operator/authentication.md`](docs/operator/authentication.md) for the per-proxy recipes (Pomerium, oauth2-proxy, Authelia + nginx/Caddy, Cloudflare Access), the path-split layout that lets `/v1/webhooks/github` bypass auth while the rest stays gated, and the cross-cutting gotchas (`Origin` not validated by `atc-server`, cookie `SameSite`, idle-timeout starvation on the long-lived WS).
 
 ## Why it exists
 

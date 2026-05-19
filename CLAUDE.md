@@ -71,8 +71,9 @@ just build    # Production build
 
 | What | Where |
 |------|-------|
-| Architecture docs | `docs/architecture/` (created per feature) |
-| Deployment | `docs/architecture/deployment.md` |
+| Architecture docs (why + what) | `docs/architecture/` (created per feature) |
+| Operator runbooks (how) | `docs/operator/` (auth-proxy recipes, integration patterns) |
+| Deployment architecture | `docs/architecture/deployment.md` |
 | Observability (metrics + spans + OTel pipeline) | `docs/architecture/metrics.md` |
 | Architecture decisions (ADRs) | `docs/architecture-decisions/` |
 | Design plans | `docs/design-plans/` |
