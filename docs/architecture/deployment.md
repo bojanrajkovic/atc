@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-13
+Last verified: 2026-05-18 (auth section + breaking-change-callout cleanup)
 
 ## Purpose
 
@@ -139,7 +139,42 @@ When `otel.enabled: false` (the default), none of the `OTEL_*` env vars are inje
 
 **Operator dependency.** Setting `otel.enabled: true` assumes an OTel collector is reachable at the configured endpoint. Operators bring their own collector (Grafana Alloy, opentelemetry-collector-contrib, vendor distributions, etc.) — the chart documents the dependency, it does not bundle one. The collector decides which downstream backends consume the OTLP stream.
 
-**Breaking change vs prior chart versions.** Charts before 0.2 carried a `metrics.*` values block, a `config.metricsAddr` field, a dedicated `metrics` Service port, and a `templates/servicemonitor.yaml`. All of these are gone. `values.schema.json` rejects unknown properties (`additionalProperties: false`), so any operator overriding `metrics.*` or `config.metricsAddr` will see schema validation failures at install/upgrade time. Migration: remove those overrides; configure your collector to receive OTLP at `otel.endpoint`; if your monitoring stack still scrapes Prometheus exposition, configure the collector to re-expose it.
+## Authentication
+
+**ATC ships no built-in authentication.** The SPA, `GET /v1/state`, and `GET /v1/ws` are all unauthenticated. The webhook endpoint at `POST /v1/webhooks/github` validates HMAC-SHA256 signatures when `ATC_GITHUB__WEBHOOK_SECRET` is configured; nothing else is gated. Anyone who can reach the HTTP port can read every run, job, and runner-pool record for every repository whose webhooks land on the deployment.
+
+This is a deliberate scope decision. ATC is designed to live inside a trusted network surface and accept the surrounding deployment's identity model rather than ship its own auth subsystem (which would force OIDC / SAML / session-store choices that operators already make at the cluster edge).
+
+### Supported patterns
+
+- **Private network.** Deploy into a VPC, a homelab subnet, a Tailscale tailnet, or any network where the access-control answer is "you have to already be inside." The chart's default NetworkPolicy (when enabled) is permissive on ingress — operators harden the `from` list to their ingress-controller / VPN namespace.
+- **Authenticating reverse proxy.** Front the Service with a proxy that completes an OIDC / OAuth2 flow against an upstream IdP, then forwards the authenticated session to ATC. The SPA loads under the proxy's session cookie; the same cookie carries through to the `/v1/ws` WebSocket upgrade request (same origin), so session-cookie auth models work out of the box. Bearer-token auth is not recommended — most proxies do not inject tokens on a WebSocket upgrade response.
+- **Ingress / HTTPRoute annotations.** The Ingress (`templates/ingress.yaml`) and HTTPRoute (`templates/httproute.yaml`) both accept arbitrary annotations through `ingress.annotations` / `gateway.annotations`, so operators can wire whatever ingress-class-specific auth filter their stack supports (nginx `auth_request`, Traefik middleware chains, Envoy Gateway `SecurityPolicy`, etc.).
+
+### Proxy compatibility matrix
+
+| Proxy | Status | Notes |
+|-------|--------|-------|
+| **Pomerium** | Recommended | Mature WebSocket support via explicit `allow_websockets` policy; forwards JWT claims (`X-Pomerium-Jwt`) so a future ATC version could pick up identity for audit logging. Configure `idle_timeout` explicitly — Pomerium's global timeouts do not apply to upgraded connections, and the long-lived ATC WS otherwise interacts badly with default request budgets. |
+| **oauth2-proxy** | Works | WebSocket proxying is on by default (`--proxy-websockets`). Auth cookies flow through the upgrade without extra wiring. Open issues around `Origin` validation on WS upgrades ([`oauth2-proxy#2996`](https://github.com/oauth2-proxy/oauth2-proxy/issues/2996)) — see § Cross-cutting gotchas below. |
+| **Authelia + nginx** | Works | Pair the `authelia-authrequest.conf` snippet with an explicit `websocket.conf` block forwarding `Upgrade $http_upgrade` and `Connection "upgrade"`. The nginx `auth_request` subrequest adds latency per connection — usually fine for a dashboard. |
+| **Authelia + Caddy** | Works | `forward_auth` directive with `stream_timeout` / `stream_close_delay` for the WS upgrade. |
+| **Cloudflare Access** | Awkward — split policies | Access cannot serve its login challenge mid-WebSocket upgrade. Browsers receive `1008 Unauthorized` and the WS never opens. The workaround is to configure two Access Applications: one for HTTP (gated) and one for `/v1/ws` with a Bypass policy, then rely on the SPA-set session for authorization. Cleaner alternative: use a different proxy in front of `/v1/ws`. |
+
+### Cross-cutting gotchas
+
+- **`Origin` validation is not done by ATC.** None of the proxies above validate the `Origin` header on the WS upgrade either, which leaves a CSRF surface: a malicious page loaded under the same authenticated session could open `/v1/ws` and read the event stream. For deployments where this matters, add an `Origin`-allowlist check at the proxy (nginx `if ($http_origin !~ "^https://atc\.example\.com$") { return 403; }`, Pomerium policy, etc.). Adding native `Origin` validation in `atc-server` is on the table — file an issue if you need it.
+- **Cookie forwarding.** `SameSite=Lax` is the safe default. `SameSite=Strict` can drop the cookie on cross-scheme transitions even when the WS is same-origin; if your auth proxy issues `Strict` cookies, the WS upgrade may silently fail.
+- **Idle-timeout starvation.** ATC's WS is long-lived (event-driven, no client-side ping inside the application protocol). Default proxy idle timeouts (60 s / 5 min) will drop the connection; the client reconnects and re-fetches `/v1/state`, so it's recoverable but noisy. Configure a generous idle timeout (Pomerium: explicit `idle_timeout`; oauth2-proxy: `--upstream-timeout`; nginx: `proxy_read_timeout`).
+- **Sticky sessions are not required.** ATC's recovery model is reconnect-to-any-healthy-replica via `/v1/state` + `lastSeq`; pinning the session to one replica masks gap-healing regressions during development. If your proxy's load-balancing model is round-robin, leave it alone.
+
+### Not in scope (today)
+
+First-class OIDC inside `atc-server`, per-repository or per-org access control, audit logging of frontend reads, and native `Origin` validation on the WS endpoint. If any of these matter for your deployment, the answer is to gate at the proxy and either restrict which webhooks reach ATC (separate deployment per access boundary) or open a GitHub issue with the specific shape you'd want.
+
+### Webhook endpoint exception
+
+`POST /v1/webhooks/github` should NOT be behind the same auth flow as the SPA — GitHub does not authenticate to OIDC providers. Either expose the webhook path through an unauthenticated bypass on the proxy (allowing the HMAC signature to do its job) or terminate the webhook traffic at a separate Ingress/HTTPRoute. HMAC-SHA256 verification with a strong secret is cryptographically sufficient for the webhook channel.
 
 ## File-based configuration
 

@@ -8,7 +8,9 @@ ATC (Actions Traffic Control) is a real-time GitHub Actions dashboard. This Helm
 
 For architecture details and design decisions, see [`docs/architecture/deployment.md`](../../../docs/architecture/deployment.md).
 
-> **Breaking change (chart 0.2+):** The `metrics.*` values block, `config.metricsAddr`, the `metrics` Service port, and the bundled `ServiceMonitor` template have been removed. ATC no longer exposes a `/metrics` endpoint; observability is exported via OTLP through the new `otel.*` block (see below). Operators upgrading from chart 0.1.x must remove any `metrics.*` and `config.metricsAddr` overrides — the values schema rejects them at render time. Configure your collector (Alloy, OpenTelemetry Collector, etc.) to receive OTLP on the endpoint passed via `otel.endpoint` and re-expose Prometheus scrape on the collector if your monitoring stack still scrapes that format.
+> **No built-in authentication.** ATC does not gate the SPA, `/v1/state`, or `/v1/ws`. Deploy the chart behind a trusted network surface (private VPC, VPN, Tailscale) or an authenticating reverse proxy. See [`docs/architecture/deployment.md`](../../../docs/architecture/deployment.md#authentication) for the operator surface.
+
+> **Pre-1.0 stability.** The chart is still on the `0.x` line; minor version bumps may carry breaking changes to values keys. Check `CHANGELOG.md` before upgrading.
 
 ## Install from GitHub Pages (Recommended)
 
