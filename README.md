@@ -38,7 +38,7 @@ ATC consumes the same webhook stream GitHub already sends to your repositories, 
 
 **Multi-replica** — Postgres-backed mode uses a transactional outbox + `LISTEN/NOTIFY` drain so every replica sees every event in commit order. Replicas are symmetric: clients reconnect to any healthy peer and resume from `/v1/state` + `lastSeq`. Per-replica gap-healing ring buffer guarantees single delivery to each WebSocket.
 
-**OpenTelemetry pipeline** — traces, metrics, and structured logs exported over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; cold zero-overhead when unset. Includes an opt-in Grafana dashboard (`grafana_dashboard` ConfigMap or `GrafanaDashboard` CR) covering ingestion, drain pipeline, watermarks, and lifecycle.
+**OpenTelemetry pipeline** — traces and metrics exported over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; cold zero-overhead when unset. Structured logs go to stderr via `tracing-subscriber` (JSON in release builds, pretty in debug) and are not part of the OTel pipeline today — collect them through your container-log path. Includes an opt-in Grafana dashboard (`grafana_dashboard` ConfigMap or `GrafanaDashboard` CR) covering ingestion, drain pipeline, watermarks, and lifecycle.
 
 **Graceful shutdown** — cooperative `CancellationToken` across HTTP serves, WebSocket handlers, the PG drain and listener tasks, the retention sweep, and the OTel pipeline. Aggregate budget ~13 s, sized inside `terminationGracePeriodSeconds: 30`. Pre-stop hook holds the pod through EndpointSlice / kube-proxy propagation.
 

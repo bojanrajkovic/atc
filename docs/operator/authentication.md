@@ -14,7 +14,8 @@ This is a deliberate scope decision. ATC accepts the surrounding deployment's id
 
 - **Private network.** Deploy into a VPC, a homelab subnet, a Tailscale tailnet — any network where the access-control answer is "you have to already be inside." Pair with the chart's NetworkPolicy (hardened `from` list scoped to ingress controllers + VPN endpoints) when CNI enforcement is available.
 - **Authenticating reverse proxy.** Front the Service with a proxy that runs an OIDC / OAuth2 flow against an upstream IdP and forwards the authenticated session to ATC. Recipes for the common proxies are below.
-- **Ingress / HTTPRoute annotations.** The chart's Ingress (`templates/ingress.yaml`) and HTTPRoute (`templates/httproute.yaml`) both pass arbitrary `annotations` through, so operators can wire any ingress-class-specific auth filter (nginx `auth_request`, Traefik middleware chains, Envoy Gateway `SecurityPolicy`, etc.).
+- **Ingress annotations.** The chart's Ingress (`templates/ingress.yaml`) passes `ingress.annotations` through, so operators can wire any ingress-class-specific auth filter (nginx `auth_request`, Traefik middleware chains, etc.) without modifying the chart.
+- **Gateway API attachment.** The chart's `HTTPRoute` (`templates/httproute.yaml`) does not currently expose `annotations` through chart values. Gateway API auth attaches via the API's native mechanisms instead — Envoy Gateway's `SecurityPolicy` resource keyed by `targetRef` on the HTTPRoute, an HTTPRoute `filters` entry with `type: ExtensionRef`, or whatever the operator's Gateway implementation supports. Operators who want chart-managed `HTTPRoute` annotations should open an issue — it's a small, additive chart change.
 
 ## Recipes
 

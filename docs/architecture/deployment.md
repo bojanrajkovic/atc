@@ -147,7 +147,7 @@ This is a deliberate scope decision. ATC is designed to live inside a trusted ne
 
 - **Private network** — VPC, homelab subnet, Tailscale tailnet, or any network where the access-control answer is "you have to already be inside."
 - **Authenticating reverse proxy** — Pomerium, oauth2-proxy, Authelia + nginx/Caddy, Cloudflare Access, etc. The SPA loads under the proxy's session cookie; the same cookie flows through to the WebSocket upgrade because they're same-origin.
-- **Ingress / HTTPRoute annotations** — wire any ingress-class-specific auth filter via the chart's `ingress.annotations` / `gateway.annotations` pass-through.
+- **Ingress annotations** — wire any ingress-class-specific auth filter via the chart's `ingress.annotations` pass-through (nginx `auth_request`, Traefik middleware chains, etc.). Gateway API users attach auth through the API's native mechanisms instead (Envoy Gateway `SecurityPolicy`, HTTPRoute `filters` with `ExtensionRef`); the chart does not currently expose annotations on its `HTTPRoute` template.
 
 **Per-proxy recipes**, the cross-cutting gotchas (`Origin` validation, cookie `SameSite`, idle-timeout starvation on the long-lived WS), and the path-split layout that lets `/v1/webhooks/github` bypass auth while the rest of the surface is gated all live in the operator runbook: [`docs/operator/authentication.md`](../operator/authentication.md).
 
