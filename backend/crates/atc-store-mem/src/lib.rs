@@ -195,6 +195,62 @@ impl InMemoryStore {
             // Operator-declared capacities live in `AppState`, not the store —
             // composed into the response by `routes::state_handler`.
             runner_pool_capacities: Vec::new(),
+            // Auth scope is resolved at the handler boundary; the store
+            // surfaces 0 so unauthenticated / all-access paths inherit a sane
+            // default.
+            accessible_repos_count: 0,
+        }
+    }
+
+    /// Return a snapshot filtered to the supplied repositories.
+    ///
+    /// Mirrors `read_snapshot_inner`'s lock ordering: the seq mutex is
+    /// acquired first so `last_seq` reflects the same point in time as the
+    /// state read. An empty `repos` slice short-circuits without scanning;
+    /// the returned `last_seq` is still the live cursor so a scoped caller
+    /// whose accessible repos are quiet does not reconcile against a stale
+    /// seq.
+    pub(crate) async fn read_snapshot_for_repos_inner(&self, repos: &[RepoKey]) -> StateSnapshot {
+        let seq_guard = self.seq.lock().await;
+        let state = self.state.read().await;
+        let last_seq = *seq_guard;
+
+        if repos.is_empty() {
+            drop(seq_guard);
+            return StateSnapshot {
+                last_seq,
+                runs: Vec::new(),
+                jobs: Vec::new(),
+                runner_pool_capacities: Vec::new(),
+                accessible_repos_count: 0,
+            };
+        }
+
+        let scope: HashSet<&RepoKey> = repos.iter().collect();
+        let runs: Vec<WorkflowRun> = state
+            .runs
+            .values()
+            .filter(|r| {
+                let key = RepoKey::new(r.org.clone(), r.repo.clone());
+                scope.contains(&key)
+            })
+            .cloned()
+            .collect();
+        let jobs: Vec<Job> = repos
+            .iter()
+            .filter_map(|key| state.jobs_by_repo.get(key))
+            .flat_map(|set| set.iter())
+            .filter_map(|job_id| state.jobs.get(job_id))
+            .cloned()
+            .collect();
+        drop(seq_guard);
+
+        StateSnapshot {
+            last_seq,
+            runs,
+            jobs,
+            runner_pool_capacities: Vec::new(),
+            accessible_repos_count: 0,
         }
     }
 
@@ -307,6 +363,34 @@ impl PersistentStore for InMemoryStore {
     )]
     async fn read_snapshot(&self) -> Result<StateSnapshot, PersistError> {
         let snap = self.read_snapshot_inner().await;
+        let span = tracing::Span::current();
+        span.record("last_seq", snap.last_seq);
+        span.record("runs_count", snap.runs.len());
+        span.record("jobs_count", snap.jobs.len());
+        Ok(snap)
+    }
+
+    /// Repository-scoped snapshot read.
+    ///
+    /// Empty `repos` returns an empty snapshot; otherwise the in-memory
+    /// secondary index (`jobs_by_repo`) is consulted for jobs and the primary
+    /// `runs` map is scanned by (org, repo) for runs. `last_seq` reflects the
+    /// live cursor.
+    #[tracing::instrument(
+        name = "persist.read.snapshot_for_repos",
+        skip_all,
+        fields(
+            scope_size = repos.len(),
+            last_seq = tracing::field::Empty,
+            runs_count = tracing::field::Empty,
+            jobs_count = tracing::field::Empty,
+        ),
+    )]
+    async fn read_snapshot_for_repos(
+        &self,
+        repos: &[RepoKey],
+    ) -> Result<StateSnapshot, PersistError> {
+        let snap = self.read_snapshot_for_repos_inner(repos).await;
         let span = tracing::Span::current();
         span.record("last_seq", snap.last_seq);
         span.record("runs_count", snap.runs.len());

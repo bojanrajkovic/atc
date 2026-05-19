@@ -16,5 +16,12 @@ import type { WorkflowRun } from "./WorkflowRun";
  * `#[serde(default)]` so a snapshot from an older replica that does not
  * emit the field still deserializes — the field defaults to `Vec::new()`
  * and the frontend behaves as if no capacities were declared.
+ *
+ * `accessible_repos_count` reports the size of the caller's accessible
+ * repository set when auth scoping is active. The persistent store
+ * constructs the snapshot with `0` and `routes::state_handler` overwrites
+ * the value from the resolved `AccessScope` — the store owns event-derived
+ * state only. The field is `#[serde(default)]` for rolling-deploy tolerance:
+ * snapshots from older replicas that lack the field deserialize to `0`.
  */
-export type StateSnapshot = { lastSeq: bigint, runs: Array<WorkflowRun>, jobs: Array<Job>, runnerPoolCapacities: Array<RunnerPoolCapacity>, };
+export type StateSnapshot = { lastSeq: bigint, runs: Array<WorkflowRun>, jobs: Array<Job>, runnerPoolCapacities: Array<RunnerPoolCapacity>, accessibleReposCount: bigint, };

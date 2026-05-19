@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT j.id, j.run_id, j.name, j.status, j.conclusion,\n               j.runner_id, j.runner_name, j.runner_group_id, j.runner_group_name,\n               j.labels, j.steps, j.created_at, j.started_at, j.completed_at\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n          JOIN unnest($1::text[], $2::text[]) AS scope(org, repo)\n            ON r.org = scope.org AND r.repo = scope.repo\n         ORDER BY j.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "conclusion",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "runner_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "runner_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "runner_group_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "runner_group_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "labels",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 10,
+        "name": "steps",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "completed_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "f73634c67e7df340efca56cde4626c0dcd6067e7829ee8acecf0048ae5795c03"
+}

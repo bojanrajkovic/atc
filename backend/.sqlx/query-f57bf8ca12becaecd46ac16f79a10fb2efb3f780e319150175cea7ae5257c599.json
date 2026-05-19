@@ -1,0 +1,113 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT r.id, r.org, r.repo, r.workflow_name, r.workflow_path, r.branch,\n               r.head_sha, r.commit_message, r.event, r.display_title,\n               r.status, r.conclusion, r.html_url, r.created_at,\n               r.run_started_at, r.updated_at\n          FROM runs r\n          JOIN unnest($1::text[], $2::text[]) AS scope(org, repo)\n            ON r.org = scope.org AND r.repo = scope.repo\n         WHERE r.placeholder = false\n         ORDER BY r.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "org",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "repo",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "workflow_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "workflow_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "branch",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "head_sha",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "commit_message",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "event",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "display_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "conclusion",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "html_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 14,
+        "name": "run_started_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "f57bf8ca12becaecd46ac16f79a10fb2efb3f780e319150175cea7ae5257c599"
+}

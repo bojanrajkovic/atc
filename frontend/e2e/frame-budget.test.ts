@@ -91,7 +91,13 @@ test.describe('Frame-budget tracing (informational)', () => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify(
-          { lastSeq: 1n, runs: [], jobs: [], runnerPoolCapacities: [] } satisfies StateSnapshot,
+          {
+            lastSeq: 1n,
+            runs: [],
+            jobs: [],
+            runnerPoolCapacities: [],
+            accessibleReposCount: 0n,
+          } satisfies StateSnapshot,
           bigintReplacer,
         ),
       })

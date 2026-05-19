@@ -164,6 +164,8 @@ describe('ConnectionManager', () => {
         runs: [],
         jobs: [],
         runnerPoolCapacities: [],
+
+        accessibleReposCount: 0n,
       }
 
       const snapshot2: StateSnapshot = {
@@ -171,6 +173,8 @@ describe('ConnectionManager', () => {
         runs: [],
         jobs: [],
         runnerPoolCapacities: [],
+
+        accessibleReposCount: 0n,
       }
 
       server.use(

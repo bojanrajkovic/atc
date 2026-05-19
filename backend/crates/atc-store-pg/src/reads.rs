@@ -130,6 +130,148 @@ pub(crate) async fn read_all_runs(
     Ok(runs)
 }
 
+/// Read runs whose (org, repo) appears in the supplied parameter arrays.
+///
+/// `orgs` and `repos` are positional pairs — `orgs[i]` is the org for
+/// `repos[i]`. Empty slices return an empty `Vec` without issuing the query.
+/// The (org, repo) pair filter is expressed as a join against
+/// `unnest($1, $2)` so the query plan stays stable regardless of scope size
+/// (no IN-list explosion). Placeholder stub rows are excluded — same
+/// `placeholder = false` filter as [`read_all_runs`].
+#[allow(dead_code)]
+pub(crate) async fn read_runs_for_repos(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    orgs: &[String],
+    repos: &[String],
+) -> Result<Vec<WorkflowRun>, PersistError> {
+    debug_assert_eq!(
+        orgs.len(),
+        repos.len(),
+        "read_runs_for_repos expects positional org/repo arrays of equal length"
+    );
+    if orgs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query!(
+        r#"
+        SELECT r.id, r.org, r.repo, r.workflow_name, r.workflow_path, r.branch,
+               r.head_sha, r.commit_message, r.event, r.display_title,
+               r.status, r.conclusion, r.html_url, r.created_at,
+               r.run_started_at, r.updated_at
+          FROM runs r
+          JOIN unnest($1::text[], $2::text[]) AS scope(org, repo)
+            ON r.org = scope.org AND r.repo = scope.repo
+         WHERE r.placeholder = false
+         ORDER BY r.id
+        "#,
+        orgs,
+        repos,
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| PersistError::Backend(Box::new(e)))?;
+
+    let mut runs = Vec::with_capacity(rows.len());
+    for row in rows {
+        let status = parse_run_status(&row.status)?;
+        let conclusion = match row.conclusion {
+            Some(s) => Some(parse_run_conclusion(&s)?),
+            None => None,
+        };
+        runs.push(WorkflowRun {
+            id: RunId(row.id),
+            org: row.org,
+            repo: row.repo,
+            workflow_name: row.workflow_name,
+            workflow_path: row.workflow_path,
+            branch: row.branch,
+            head_sha: row.head_sha,
+            commit_message: row.commit_message,
+            event: row.event,
+            display_title: row.display_title,
+            status,
+            conclusion,
+            html_url: row.html_url,
+            created_at: row.created_at,
+            run_started_at: row.run_started_at,
+            updated_at: row.updated_at,
+        });
+    }
+    Ok(runs)
+}
+
+/// Read jobs belonging to runs whose (org, repo) appears in the supplied
+/// parameter arrays.
+///
+/// Same shape as [`read_runs_for_repos`]: positional `orgs`/`repos` pairs,
+/// `unnest`-driven join for a stable plan. Empty input short-circuits.
+#[allow(dead_code)]
+pub(crate) async fn read_jobs_for_repos(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    orgs: &[String],
+    repos: &[String],
+) -> Result<Vec<Job>, PersistError> {
+    debug_assert_eq!(
+        orgs.len(),
+        repos.len(),
+        "read_jobs_for_repos expects positional org/repo arrays of equal length"
+    );
+    if orgs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query!(
+        r#"
+        SELECT j.id, j.run_id, j.name, j.status, j.conclusion,
+               j.runner_id, j.runner_name, j.runner_group_id, j.runner_group_name,
+               j.labels, j.steps, j.created_at, j.started_at, j.completed_at
+          FROM jobs j
+          JOIN runs r ON r.id = j.run_id
+          JOIN unnest($1::text[], $2::text[]) AS scope(org, repo)
+            ON r.org = scope.org AND r.repo = scope.repo
+         ORDER BY j.id
+        "#,
+        orgs,
+        repos,
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|e| PersistError::Backend(Box::new(e)))?;
+
+    let mut jobs = Vec::with_capacity(rows.len());
+    for row in rows {
+        let status = parse_job_status(&row.status)?;
+        let conclusion = match row.conclusion {
+            Some(s) => Some(parse_job_conclusion(&s)?),
+            None => None,
+        };
+        let runner = match (row.runner_id, row.runner_name) {
+            (Some(id), Some(name)) => Some(RunnerInfo {
+                id,
+                name,
+                group_id: row.runner_group_id,
+                group_name: row.runner_group_name,
+            }),
+            _ => None,
+        };
+        let steps: Vec<Step> =
+            serde_json::from_value(row.steps).map_err(|e| PersistError::Backend(Box::new(e)))?;
+        jobs.push(Job {
+            id: JobId(row.id),
+            name: row.name,
+            run_id: RunId(row.run_id),
+            status,
+            conclusion,
+            runner,
+            labels: row.labels,
+            steps,
+            created_at: row.created_at,
+            started_at: row.started_at,
+            completed_at: row.completed_at,
+        });
+    }
+    Ok(jobs)
+}
+
 /// Read all jobs ordered by id, reconstructing `RunnerInfo` and `steps`.
 #[allow(dead_code)]
 pub(crate) async fn read_all_jobs(

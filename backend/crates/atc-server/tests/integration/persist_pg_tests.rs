@@ -7,16 +7,19 @@
 
 use crate::common;
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use atc_core::{
     JobStatus, PersistError,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     fixed_test_timestamp,
-    types::{JobId, RunId},
+    types::{JobId, RepoKey, RunId},
 };
 use atc_persist::PersistentStore;
+use atc_store_pg::PgStore;
 use chrono::{DateTime, Utc};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 fn ts() -> DateTime<Utc> {
@@ -721,5 +724,156 @@ async fn pg_store_ping_succeeds() {
         store.ping().await.is_ok(),
         "ping should succeed with a healthy pool"
     );
+    shutdown.cancel();
+}
+
+// ---------------------------------------------------------------------------
+// read_snapshot_for_repos — repository-scoped reads
+// ---------------------------------------------------------------------------
+//
+// The scoped variant filters runs/jobs by (org, repo) but must surface the
+// same broadcast-watermark cursor as `read_snapshot` so a caller whose
+// accessible repos are quiet still reconciles against the live cursor.
+
+/// Run-event envelope targeting a specific (org, repo).
+fn run_requested_in(run_id: i64, org: &str, repo: &str) -> RunEventEnvelope {
+    let mut env = run_requested(run_id);
+    env.org = org.to_string();
+    env.repo = repo.to_string();
+    env.html_url = format!("https://github.com/{org}/{repo}/actions/runs/{run_id}");
+    env
+}
+
+/// Job envelope targeting a specific (org, repo).
+fn job_queued_in(job_id: i64, run_id: i64, org: &str, repo: &str) -> JobEventEnvelope {
+    let mut env = job_queued(job_id, run_id);
+    env.org = org.to_string();
+    env.repo = repo.to_string();
+    env
+}
+
+/// Block until the drain has advanced the broadcast watermark to `target`.
+/// Mirrors the wait pattern in `state_pg_read.rs` so scoped-read tests can
+/// assert against a known-current cursor.
+async fn wait_for_watermark(store: &PgStore, target: i64) {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            if store.broadcast_watermark().load(Ordering::Acquire) >= target {
+                return;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("drain did not advance broadcast_watermark to {target} within 5s"));
+}
+
+/// Empty `repos` slice → empty snapshot; `last_seq` still surfaces the live
+/// cursor advanced by the drain.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_read_snapshot_for_repos_empty_input_returns_empty_snapshot() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    store
+        .apply_run_event(run_requested_in(7001, "octocat", "alpha"))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(job_queued_in(8001, 7001, "octocat", "alpha"))
+        .await
+        .unwrap();
+    wait_for_watermark(&store, 2).await;
+
+    let snap = store
+        .read_snapshot_for_repos(&[])
+        .await
+        .expect("read_snapshot_for_repos should succeed");
+
+    assert!(snap.runs.is_empty(), "runs must be empty");
+    assert!(snap.jobs.is_empty(), "jobs must be empty");
+    assert_eq!(
+        snap.last_seq, 2,
+        "last_seq must reflect the live cursor, not 0"
+    );
+
+    shutdown.cancel();
+}
+
+/// Subset of repos returns only those entities; the live cursor is preserved
+/// even when it advanced past a non-matching repo's event.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_read_snapshot_for_repos_subset_filters_to_listed_repos() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Two runs: one in octocat/alpha, one in octocat/beta.
+    store
+        .apply_run_event(run_requested_in(7100, "octocat", "alpha"))
+        .await
+        .unwrap();
+    store
+        .apply_run_event(run_requested_in(7101, "octocat", "beta"))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(job_queued_in(8100, 7100, "octocat", "alpha"))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(job_queued_in(8101, 7101, "octocat", "beta"))
+        .await
+        .unwrap();
+    wait_for_watermark(&store, 4).await;
+
+    let scope = vec![RepoKey::new("octocat", "alpha")];
+    let snap = store
+        .read_snapshot_for_repos(&scope)
+        .await
+        .expect("read_snapshot_for_repos should succeed");
+
+    assert_eq!(snap.runs.len(), 1, "only alpha's run should be visible");
+    assert_eq!(snap.runs[0].id.0, 7100);
+    assert_eq!(snap.runs[0].repo, "alpha");
+    assert_eq!(snap.jobs.len(), 1, "only alpha's job should be visible");
+    assert_eq!(snap.jobs[0].id.0, 8100);
+    assert_eq!(snap.jobs[0].run_id.0, 7100);
+    assert_eq!(
+        snap.last_seq, 4,
+        "last_seq must reflect the live cursor even when matched rows are quiet"
+    );
+
+    shutdown.cancel();
+}
+
+/// Scope referencing repos that do not exist in the store returns an empty
+/// snapshot; the live cursor is preserved.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_read_snapshot_for_repos_non_existent_returns_empty_snapshot() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    store
+        .apply_run_event(run_requested_in(7200, "octocat", "alpha"))
+        .await
+        .unwrap();
+    wait_for_watermark(&store, 1).await;
+
+    let scope = vec![RepoKey::new("ghost", "nowhere")];
+    let snap = store
+        .read_snapshot_for_repos(&scope)
+        .await
+        .expect("read_snapshot_for_repos should succeed");
+
+    assert!(snap.runs.is_empty(), "no run matches the requested scope");
+    assert!(snap.jobs.is_empty(), "no job matches the requested scope");
+    assert_eq!(snap.last_seq, 1, "last_seq must reflect the live cursor");
+
     shutdown.cancel();
 }

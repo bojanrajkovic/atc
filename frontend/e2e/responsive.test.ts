@@ -42,6 +42,8 @@ async function setupWithRuns(page: Page) {
           runs: [makeRun(1, 'Queued'), makeRun(2, 'InProgress'), makeRun(3, 'Completed')],
           jobs: [],
           runnerPoolCapacities: [],
+
+          accessibleReposCount: 0n,
         } satisfies StateSnapshot,
         bigintReplacer,
       ),

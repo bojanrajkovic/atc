@@ -129,6 +129,8 @@ test.describe('run-cards', () => {
           runs: STATUS_FIXTURE.map(makeWorkflowRun),
           jobs: [],
           runnerPoolCapacities: [],
+
+          accessibleReposCount: 0n,
         } satisfies StateSnapshot),
       })
     })
@@ -180,6 +182,8 @@ test.describe('run-cards', () => {
           ],
           jobs: [],
           runnerPoolCapacities: [],
+
+          accessibleReposCount: 0n,
         } satisfies StateSnapshot),
       })
     })
@@ -262,6 +266,8 @@ test.describe('run-cards', () => {
             },
           ],
           runnerPoolCapacities: [],
+
+          accessibleReposCount: 0n,
         } satisfies StateSnapshot),
       })
     })
@@ -325,6 +331,8 @@ test.describe('run-cards', () => {
           ],
           jobs: [],
           runnerPoolCapacities: [],
+
+          accessibleReposCount: 0n,
         } satisfies StateSnapshot),
       })
     })

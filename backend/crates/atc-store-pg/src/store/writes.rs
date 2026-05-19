@@ -15,6 +15,7 @@ use std::sync::atomic::Ordering;
 use atc_core::{
     JobStatus, PersistError, RunStatus,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
+    types::RepoKey,
 };
 use atc_persist::{LivenessError, PersistentStore, join_with_timeout};
 use atc_wire::{CommittedEvent, StateSnapshot};
@@ -76,6 +77,85 @@ impl PersistentStore for PgStore {
             // Operator-declared capacities live in `AppState`, not the store —
             // composed into the response by `routes::state_handler`.
             runner_pool_capacities: Vec::new(),
+            // Auth scope is resolved at the handler boundary; the store
+            // surfaces 0 so unauthenticated / all-access paths inherit a sane
+            // default.
+            accessible_repos_count: 0,
+        };
+        let span = tracing::Span::current();
+        span.record("last_seq", snap.last_seq);
+        span.record("runs_count", snap.runs.len());
+        span.record("jobs_count", snap.jobs.len());
+        Ok(snap)
+    }
+
+    /// Repository-scoped snapshot read.
+    ///
+    /// Same watermark-before-MVCC-view ordering as `read_snapshot`, but the
+    /// runs/jobs reads filter through positional `(org, repo)` arrays joined
+    /// via `unnest`. Empty `repos` short-circuits without issuing a query and
+    /// still surfaces the live cursor as `last_seq` so a scoped caller whose
+    /// accessible repos are quiet reconciles against the live watermark.
+    #[tracing::instrument(
+        name = "persist.read.snapshot_for_repos",
+        skip_all,
+        fields(
+            scope_size = repos.len(),
+            last_seq = tracing::field::Empty,
+            runs_count = tracing::field::Empty,
+            jobs_count = tracing::field::Empty,
+        ),
+    )]
+    async fn read_snapshot_for_repos(
+        &self,
+        repos: &[RepoKey],
+    ) -> Result<StateSnapshot, PersistError> {
+        // Load the commit-order cursor BEFORE the snapshot view is taken.
+        let watermark_at_start = self.broadcast_watermark.load(Ordering::Acquire);
+        let last_seq = u64::try_from(watermark_at_start).unwrap_or(0);
+
+        if repos.is_empty() {
+            let snap = StateSnapshot {
+                last_seq,
+                runs: Vec::new(),
+                jobs: Vec::new(),
+                runner_pool_capacities: Vec::new(),
+                accessible_repos_count: 0,
+            };
+            let span = tracing::Span::current();
+            span.record("last_seq", snap.last_seq);
+            span.record("runs_count", 0_usize);
+            span.record("jobs_count", 0_usize);
+            return Ok(snap);
+        }
+
+        // Build positional parameter arrays for the unnest join.
+        let orgs: Vec<String> = repos.iter().map(|k| k.org.clone()).collect();
+        let names: Vec<String> = repos.iter().map(|k| k.repo.clone()).collect();
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| PersistError::Backend(Box::new(e)))?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| PersistError::Backend(Box::new(e)))?;
+
+        let runs = crate::reads::read_runs_for_repos(&mut tx, &orgs, &names).await?;
+        let jobs = crate::reads::read_jobs_for_repos(&mut tx, &orgs, &names).await?;
+
+        if let Err(e) = tx.commit().await {
+            tracing::warn!(error = %e, "read_snapshot_for_repos: pg commit failed");
+        }
+
+        let snap = StateSnapshot {
+            last_seq,
+            runs,
+            jobs,
+            runner_pool_capacities: Vec::new(),
+            accessible_repos_count: 0,
         };
         let span = tracing::Span::current();
         span.record("last_seq", snap.last_seq);

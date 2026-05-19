@@ -17,12 +17,34 @@
 //! store crates can share a single canonical copy.
 
 use atc_core::event::{JobEventEnvelope, RunEventEnvelope};
+use atc_core::types::RepoKey;
 use tokio::sync::broadcast;
 
 pub use atc_core::PersistError;
 
 pub mod join;
 pub use join::join_with_timeout;
+
+// ---------------------------------------------------------------------------
+// AccessScope
+// ---------------------------------------------------------------------------
+
+/// Read-side authorization scope for snapshot and event delivery.
+///
+/// `All` is the auth-disabled / synthetic-dev-user path — no repository
+/// filtering applies. `Scoped` carries the explicit set of repositories the
+/// caller may observe; an empty `Vec` is valid and means "no repositories
+/// accessible" (snapshot must come back empty). Construction is the caller's
+/// responsibility; no production handler consumes this yet — it is the
+/// foundation type that later slices will thread through `state_handler` and
+/// the WS upgrade path.
+#[derive(Debug, Clone)]
+pub enum AccessScope {
+    /// No filtering — every repository in the store is visible.
+    All,
+    /// Filter to this set of repositories.
+    Scoped(Vec<RepoKey>),
+}
 
 // ---------------------------------------------------------------------------
 // LivenessError
@@ -92,6 +114,21 @@ pub trait PersistentStore: Send + Sync {
     /// REPEATABLE READ tx, reads runs/jobs, returns snapshot with watermark as
     /// `last_seq`.
     async fn read_snapshot(&self) -> Result<atc_wire::StateSnapshot, PersistError>;
+
+    /// Return a snapshot filtered to the supplied repositories.
+    ///
+    /// `last_seq` reflects the current commit-order cursor — the same value
+    /// `read_snapshot` would return — so a caller whose accessible repos are
+    /// all quiet still reconciles against the live cursor rather than the max
+    /// seq of the matched rows. An empty `repos` slice MUST return an
+    /// otherwise-current snapshot with no runs and no jobs.
+    ///
+    /// No production caller routes through this yet; later slices compose
+    /// `accessible_repos_count` onto the response in `routes::state_handler`.
+    async fn read_snapshot_for_repos(
+        &self,
+        repos: &[RepoKey],
+    ) -> Result<atc_wire::StateSnapshot, PersistError>;
 
     /// Check whether the store is live and healthy.
     ///

@@ -1120,6 +1120,147 @@ async fn read_snapshot_contains_all_runs_and_jobs() {
 }
 
 // ---------------------------------------------------------------------------
+// read_snapshot_for_repos — repository-scoped filter
+// ---------------------------------------------------------------------------
+//
+// `read_snapshot_for_repos` is the scoped variant used by the auth layer.
+// The store filters by (org, repo) but must surface the same `last_seq`
+// cursor as `read_snapshot` so clients with quiet accessible repos still
+// reconcile against the live cursor rather than the max seq of matched rows.
+
+/// An empty repo slice returns an empty snapshot with the current cursor.
+#[tokio::test]
+async fn read_snapshot_for_repos_empty_input_returns_empty_snapshot() {
+    let store = make_store();
+    let run_id = RunId(800);
+
+    store
+        .apply_run_event(make_run_event(run_id, RunEvent::Requested))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(make_job_event(
+            JobId(801),
+            run_id,
+            "octocat",
+            "Hello-World",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        ))
+        .await
+        .unwrap();
+
+    let snapshot = store
+        .read_snapshot_for_repos(&[])
+        .await
+        .expect("read_snapshot_for_repos should succeed");
+
+    assert!(snapshot.runs.is_empty(), "runs must be empty");
+    assert!(snapshot.jobs.is_empty(), "jobs must be empty");
+    assert_eq!(
+        snapshot.last_seq, 2,
+        "last_seq must reflect the live cursor (1 run + 1 job), not the max seq of matched rows"
+    );
+}
+
+/// A subset of repos returns only those entities; `last_seq` still reflects
+/// the live cursor (which advanced past a non-matching repo's event).
+#[tokio::test]
+async fn read_snapshot_for_repos_subset_filters_to_listed_repos() {
+    let store = make_store();
+    let run_id_alpha = RunId(810);
+    let run_id_beta = RunId(811);
+
+    // Run that targets octocat/alpha
+    let mut run_alpha = make_run_event(run_id_alpha, RunEvent::Requested);
+    run_alpha.repo = "alpha".to_string();
+    store.apply_run_event(run_alpha).await.unwrap();
+
+    // Run that targets octocat/beta
+    let mut run_beta = make_run_event(run_id_beta, RunEvent::Requested);
+    run_beta.repo = "beta".to_string();
+    store.apply_run_event(run_beta).await.unwrap();
+
+    store
+        .apply_job_event(make_job_event(
+            JobId(820),
+            run_id_alpha,
+            "octocat",
+            "alpha",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        ))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(make_job_event(
+            JobId(821),
+            run_id_beta,
+            "octocat",
+            "beta",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        ))
+        .await
+        .unwrap();
+
+    let scope = vec![RepoKey::new("octocat", "alpha")];
+    let snapshot = store
+        .read_snapshot_for_repos(&scope)
+        .await
+        .expect("read_snapshot_for_repos should succeed");
+
+    assert_eq!(snapshot.runs.len(), 1, "only alpha's run should be visible");
+    assert_eq!(snapshot.runs[0].id, run_id_alpha);
+    assert_eq!(snapshot.jobs.len(), 1, "only alpha's job should be visible");
+    assert_eq!(snapshot.jobs[0].id, JobId(820));
+    // 2 runs + 2 jobs; cursor must reflect the live counter, including beta's
+    // contribution.
+    assert_eq!(
+        snapshot.last_seq, 4,
+        "last_seq must surface the live cursor even when matched rows are quiet"
+    );
+}
+
+/// Repos that aren't in the store at all return an empty snapshot with the
+/// current cursor.
+#[tokio::test]
+async fn read_snapshot_for_repos_non_existent_returns_empty_snapshot() {
+    let store = make_store();
+    let run_id = RunId(830);
+
+    store
+        .apply_run_event(make_run_event(run_id, RunEvent::Requested))
+        .await
+        .unwrap();
+
+    let scope = vec![RepoKey::new("ghost", "nowhere")];
+    let snapshot = store
+        .read_snapshot_for_repos(&scope)
+        .await
+        .expect("read_snapshot_for_repos should succeed");
+
+    assert!(
+        snapshot.runs.is_empty(),
+        "no run matches the requested scope"
+    );
+    assert!(
+        snapshot.jobs.is_empty(),
+        "no job matches the requested scope"
+    );
+    assert_eq!(
+        snapshot.last_seq, 1,
+        "last_seq must reflect the live cursor"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Invariant checks across compound sequences
 // ---------------------------------------------------------------------------
 

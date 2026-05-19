@@ -353,12 +353,22 @@ struct StateSnapshot {
                               // Operator-declared pool ceilings.
                               // serde(default) → empty vec on missing field
                               // (rolling-deploy tolerance for older replicas).
+    accessible_repos_count: u64,
+                              // Size of the caller's accessible repo set
+                              // when auth scoping is active. Composed at the
+                              // handler; the store always emits 0.
+                              // serde(default) → 0 on missing field
+                              // (rolling-deploy tolerance for older replicas).
 }
 ```
 
 **Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `CommittedEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
 
+**Repository-scoped reads:** `PersistentStore::read_snapshot_for_repos(&[RepoKey])` returns a snapshot filtered to the supplied repositories. Both implementations preserve the same `last_seq` cursor `read_snapshot` would return — empty or non-matching inputs still surface the live cursor so scoped callers with quiet accessible repos do not reconcile against a stale low seq and re-process every WS event ≥ that value. PG mode uses an `unnest($1::text[], $2::text[]) AS scope(org, repo)` join against the `runs(org, repo)` index for a stable query plan regardless of scope size; the in-memory mode reuses the `jobs_by_repo` secondary index for jobs and scans `runs` by `(org, repo)`. No production handler routes through `read_snapshot_for_repos` yet — the method is the foundation for the per-user repo scoping work tracked in the GitHub auth design plan.
+
 **Capacity composition:** `runner_pool_capacities` is operator config, not observed state. `PersistentStore` (Postgres + InMemory) leaves the field as `Vec::new()` when constructing a snapshot. `routes::state_handler` takes a short `read().await` on `AppState::runner_pool_capacities` and clones the slice onto the response after the persist call returns. The `PersistentStore` trait stays single-purpose — it owns event-derived state only. Capacity changes propagate without a process restart: the `config_watcher` task re-reads the YAML on filesystem change and replaces the RwLock contents atomically (see [Hot-reload](#hot-reload-config_watcher) below).
+
+**Accessible-repos composition:** `accessible_repos_count` follows the same handler-composes-from-AppState pattern as `runner_pool_capacities`. The store always emits `0`. `routes::state_handler` overwrites the field from the resolved `AccessScope` (an `atc-persist` type with `All` / `Scoped(Vec<RepoKey>)` variants) after the persist call returns. The `PersistentStore` trait stays single-purpose; auth state lives at the request boundary.
 
 ### Hot-reload (`config_watcher`)
 

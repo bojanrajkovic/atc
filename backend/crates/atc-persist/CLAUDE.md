@@ -1,12 +1,12 @@
 # CLAUDE.md — atc-persist
 
-Last verified: 2026-05-15
+Last verified: 2026-05-18
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
 ## Purpose
 
-The interface waist between `atc-server` and its store implementations. Defines `PersistentStore` (the trait every store implements), `LivenessError` (the `/readyz` error shape — `DbUnreachable` wraps the inner error opaquely so this crate stays free of storage-library deps), and `join_with_timeout` (the shared shutdown-join helper consumed by both stores). Re-exports `atc_core::PersistError` so call sites get one canonical name.
+The interface waist between `atc-server` and its store implementations. Defines `PersistentStore` (the trait every store implements — `apply_*_event`, `read_snapshot`, `read_snapshot_for_repos`, `liveness_check`, `subscribe`, `shutdown`), `AccessScope` (read-side authorization scope — `All` or `Scoped(Vec<RepoKey>)`, constructed at the handler boundary; no store consumes it directly), `LivenessError` (the `/readyz` error shape — `DbUnreachable` wraps the inner error opaquely so this crate stays free of storage-library deps), and `join_with_timeout` (the shared shutdown-join helper consumed by both stores). Re-exports `atc_core::PersistError` so call sites get one canonical name.
 
 ## Sharp edges
 

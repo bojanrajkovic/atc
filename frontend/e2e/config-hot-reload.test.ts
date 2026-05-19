@@ -65,6 +65,7 @@ function snapshot(running: number, capacity: number): StateSnapshot {
     runs: [makeRun(1)],
     jobs,
     runnerPoolCapacities: [{ labels: ['linux', 'self-hosted', 'x64'], capacity }],
+    accessibleReposCount: 0n,
   }
 }
 
