@@ -105,7 +105,10 @@ server {
     include /config/nginx/snippets/authelia-authrequest.conf;
     proxy_pass http://atc.svc.cluster.local:8080;
 
-    # WS upgrade headers — Upgrade and Connection are hop-by-hop, must be forwarded explicitly
+    # WS upgrade headers — Upgrade and Connection are hop-by-hop, must be forwarded explicitly.
+    # proxy_http_version 1.1 is required: nginx's default upstream protocol is HTTP/1.0,
+    # which strips the Upgrade headers and never reaches the 101 Switching Protocols response.
+    proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
 
@@ -153,18 +156,21 @@ Sources: [Caddy `forward_auth`](https://caddyserver.com/docs/caddyfile/directive
 
 ### Cloudflare Access
 
-**Cloudflare Access does not work for ATC's WebSocket route today.** Two compounding limitations make it the wrong fit:
+A single Cloudflare Access Application fronting `atc.example.com/*` works for the full SPA + REST + WS surface in the standard browser flow. The Access cookie is set when the user authenticates against the SPA load; subsequent requests — including the WebSocket upgrade — carry the cookie on the same origin, and Access validates the upgrade as the HTTP request the WS connection counts as. No split-proxy required.
 
-1. **WS upgrade fails under Access.** Cloudflare Access cannot serve its login challenge on a WebSocket upgrade — the browser receives `1008 Unauthorized` and `/v1/ws` never opens. An authenticated SPA session that loads under Access cannot establish the live event stream behind it.
-2. **`Bypass` is not a safe workaround.** Cloudflare documents the `Bypass` action as disabling Access enforcement entirely, with no identity checks. Putting `/v1/ws` behind a Bypass policy would make the live event stream — which carries the same run / job / runner-pool data the rest of the surface is gated on — fully public to anyone on the internet. ATC has no server-side session validation to backstop a Bypass.
+For the webhook bypass, add a second Access Application keyed on a more specific path with action `Bypass`. Cloudflare matches the most-specific path first.
 
-If Cloudflare Access is your standard auth path, the workable shapes are:
+| Application | Path | Action |
+|-------------|------|--------|
+| `atc-webhook` | `atc.example.com/v1/webhooks/github*` | Bypass (Everyone) — HMAC gates inside ATC |
+| `atc-app` | `atc.example.com/*` | Allow with IdP rules — gates SPA + REST + WS |
 
-- **Front `/v1/ws` with a different proxy.** Run oauth2-proxy or Pomerium in front of the WS endpoint alone (separate hostname or path-routing layer below Cloudflare), keep Access on the SPA + REST. Session-cookie continuity across two proxies on the same browser origin is tractable but operationally annoying.
-- **Accept a snapshot-only dashboard.** Configure Access for everything; the SPA loads, `/v1/state` returns snapshots, and `/v1/ws` is effectively a dead route. The UI still works for periodic reload-driven views but loses the real-time delta.
-- **Pick a different proxy.** Pomerium and oauth2-proxy both handle the full SPA + REST + WS surface natively — see the recipes above.
+**Do NOT add a `Bypass` policy for `/v1/ws`.** Cloudflare documents `Bypass` as disabling Access enforcement entirely with no identity checks. ATC has no server-side session validation to backstop, so a Bypass on `/v1/ws` would make the live event stream — which carries the same workflow / job / runner-pool data the rest of the surface is gated on — fully public. The WS route belongs under the authenticated `atc-app` Application, not under a Bypass.
 
-For path-based bypass of the webhook endpoint *alongside* a different primary auth, Cloudflare's per-application policy model (create two Applications keyed by path, one with `Bypass`, one with `Allow`) is the documented mechanism. The Bypass concern only applies to authenticated read surfaces like `/v1/ws` and `/v1/state` — `POST /v1/webhooks/github` is HMAC-gated by ATC itself, so a public Bypass there is intentional, not a regression.
+**Known limitations.**
+
+- **Non-browser WebSocket clients won't authenticate.** Access cannot serve its login challenge on a WS upgrade (a browser cannot follow a redirect on a `Connection: Upgrade` request). This only affects clients that hit `/v1/ws` directly without first loading the SPA through Access — a CLI scraper, a synthetic test, etc. ATC has no first-party non-browser WS consumers today, so this is academic; if you build one, plan to fetch a Service Token and attach it as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers on the upgrade request.
+- **Cookie expiry mid-session.** The Access session cookie has a finite lifetime (default 24 h). An already-established WebSocket keeps running until the TCP connection drops — Access doesn't tear it down mid-stream — but a reconnect attempt after the cookie expires will fail the upgrade. The user reloads the page to re-authenticate; the SPA's reconnect loop will keep retrying in the meantime, so the failure mode is "stuck reconnecting" rather than data loss.
 
 Source: [Cloudflare Access Policies](https://developers.cloudflare.com/cloudflare-one/policies/access/).
 
