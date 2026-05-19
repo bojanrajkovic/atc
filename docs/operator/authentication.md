@@ -153,14 +153,18 @@ Sources: [Caddy `forward_auth`](https://caddyserver.com/docs/caddyfile/directive
 
 ### Cloudflare Access
 
-Cloudflare Access has no per-path policy within a single Access Application — the workaround is to create **two Access Applications** keyed by path. Cloudflare matches the most-specific path first, so order in the dashboard doesn't matter.
+**Cloudflare Access does not work for ATC's WebSocket route today.** Two compounding limitations make it the wrong fit:
 
-| Application | Path | Action |
-|-------------|------|--------|
-| `atc-webhook` | `atc.example.com/v1/webhooks/github*` | Bypass (Everyone) |
-| `atc-app` | `atc.example.com/*` | Allow with IdP rules |
+1. **WS upgrade fails under Access.** Cloudflare Access cannot serve its login challenge on a WebSocket upgrade — the browser receives `1008 Unauthorized` and `/v1/ws` never opens. An authenticated SPA session that loads under Access cannot establish the live event stream behind it.
+2. **`Bypass` is not a safe workaround.** Cloudflare documents the `Bypass` action as disabling Access enforcement entirely, with no identity checks. Putting `/v1/ws` behind a Bypass policy would make the live event stream — which carries the same run / job / runner-pool data the rest of the surface is gated on — fully public to anyone on the internet. ATC has no server-side session validation to backstop a Bypass.
 
-**This same split solves the WebSocket-upgrade problem.** Cloudflare Access cannot serve its login challenge on a WS upgrade (the browser receives `1008 Unauthorized`). The standard mitigation is the same two-application split — `atc-app` for HTTP traffic, a second `atc-ws` for `/v1/ws*` with a Bypass policy, and authorization handled by whatever session token the SPA loaded under. For ATC specifically this isn't great (no built-in session validation), so Cloudflare Access is a poor fit for the WebSocket-bearing routes; consider running a different proxy in front of `/v1/ws` even if Access fronts the rest.
+If Cloudflare Access is your standard auth path, the workable shapes are:
+
+- **Front `/v1/ws` with a different proxy.** Run oauth2-proxy or Pomerium in front of the WS endpoint alone (separate hostname or path-routing layer below Cloudflare), keep Access on the SPA + REST. Session-cookie continuity across two proxies on the same browser origin is tractable but operationally annoying.
+- **Accept a snapshot-only dashboard.** Configure Access for everything; the SPA loads, `/v1/state` returns snapshots, and `/v1/ws` is effectively a dead route. The UI still works for periodic reload-driven views but loses the real-time delta.
+- **Pick a different proxy.** Pomerium and oauth2-proxy both handle the full SPA + REST + WS surface natively — see the recipes above.
+
+For path-based bypass of the webhook endpoint *alongside* a different primary auth, Cloudflare's per-application policy model (create two Applications keyed by path, one with `Bypass`, one with `Allow`) is the documented mechanism. The Bypass concern only applies to authenticated read surfaces like `/v1/ws` and `/v1/state` — `POST /v1/webhooks/github` is HMAC-gated by ATC itself, so a public Bypass there is intentional, not a regression.
 
 Source: [Cloudflare Access Policies](https://developers.cloudflare.com/cloudflare-one/policies/access/).
 

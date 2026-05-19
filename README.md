@@ -10,7 +10,7 @@ ATC ships as a single Rust binary that serves a Svelte 5 SPA, ingests GitHub web
 
 Deploy ATC behind a trusted network surface — a private VPC, a corporate VPN, a Tailscale subnet — or behind an authenticating reverse proxy that gates the SPA and proxies the API + WebSocket through once a session is established. Treat the dashboard as if it were the GitHub Actions tab of every repository whose webhooks land on it.
 
-See [`docs/operator/authentication.md`](docs/operator/authentication.md) for the per-proxy recipes (Pomerium, oauth2-proxy, Authelia + nginx/Caddy, Cloudflare Access), the path-split layout that lets `/v1/webhooks/github` bypass auth while the rest stays gated, and the cross-cutting gotchas (`Origin` not validated by `atc-server`, cookie `SameSite`, idle-timeout starvation on the long-lived WS).
+See [`docs/operator/authentication.md`](docs/operator/authentication.md) for the per-proxy recipes (Pomerium recommended; oauth2-proxy and Authelia + nginx/Caddy work; Cloudflare Access is documented but unsupported for the live WebSocket route), the path-split layout that lets `/v1/webhooks/github` bypass auth while the rest stays gated, and the cross-cutting gotchas (`Origin` not validated by `atc-server`, cookie `SameSite`, idle-timeout starvation on the long-lived WS).
 
 ## Why it exists
 
