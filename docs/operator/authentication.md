@@ -30,7 +30,7 @@ routes:
   # Webhook: public, no policy, no WS
   - from: https://atc.example.com
     to: http://atc.svc.cluster.local:8080
-    prefix: /v1/webhooks/github
+    path: /v1/webhooks/github         # exact match — prefix would also expose /v1/webhooks/githubfoo
     allow_public_unauthenticated_access: true
 
   # SPA + REST + WS: authenticated, WS enabled, explicit idle timeout

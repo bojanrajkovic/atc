@@ -68,7 +68,7 @@ helm install atc atc/atc \
   --set replicaCount=2
 ```
 
-The chart is also published as an OCI artifact: `oci://ghcr.io/bojanrajkovic/charts/atc`. Both channels are tag-triggered, Sigstore-attested, and version-locked to the application release. See [`deploy/helm/atc/README.md`](deploy/helm/atc/README.md) for the install paths, values reference, and [`docs/architecture/deployment.md`](docs/architecture/deployment.md) for the full operator surface (multi-replica preconditions, NetworkPolicy, HPA, PodDisruptionBudget, graceful shutdown, OTel wiring, runner-pool config, Grafana dashboard).
+The chart is also published as an OCI artifact: `oci://ghcr.io/bojanrajkovic/charts/atc`. Both channels are tag-triggered and version-locked to the application release; only the OCI channel carries a Sigstore build-provenance attestation today (the Pages channel mirrors via `chart-releaser` without an attestation step). Pull the OCI artifact if you need to verify provenance with `gh attestation verify`. See [`deploy/helm/atc/README.md`](deploy/helm/atc/README.md) for the install paths, values reference, and [`docs/architecture/deployment.md`](docs/architecture/deployment.md) for the full operator surface (multi-replica preconditions, NetworkPolicy, HPA, PodDisruptionBudget, graceful shutdown, OTel wiring, runner-pool config, Grafana dashboard).
 
 ### Pull the container directly
 
