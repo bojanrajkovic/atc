@@ -1,6 +1,6 @@
 # Deployment — Architecture
 
-Last verified: 2026-05-13
+Last verified: 2026-05-18 (auth section + breaking-change-callout cleanup)
 
 ## Purpose
 
@@ -139,7 +139,19 @@ When `otel.enabled: false` (the default), none of the `OTEL_*` env vars are inje
 
 **Operator dependency.** Setting `otel.enabled: true` assumes an OTel collector is reachable at the configured endpoint. Operators bring their own collector (Grafana Alloy, opentelemetry-collector-contrib, vendor distributions, etc.) — the chart documents the dependency, it does not bundle one. The collector decides which downstream backends consume the OTLP stream.
 
-**Breaking change vs prior chart versions.** Charts before 0.2 carried a `metrics.*` values block, a `config.metricsAddr` field, a dedicated `metrics` Service port, and a `templates/servicemonitor.yaml`. All of these are gone. `values.schema.json` rejects unknown properties (`additionalProperties: false`), so any operator overriding `metrics.*` or `config.metricsAddr` will see schema validation failures at install/upgrade time. Migration: remove those overrides; configure your collector to receive OTLP at `otel.endpoint`; if your monitoring stack still scrapes Prometheus exposition, configure the collector to re-expose it.
+## Authentication
+
+**ATC ships no built-in authentication.** The SPA, `GET /v1/state`, and `GET /v1/ws` are all unauthenticated. The webhook endpoint at `POST /v1/webhooks/github` validates HMAC-SHA256 signatures when `ATC_GITHUB__WEBHOOK_SECRET` is configured; nothing else is gated. Anyone who can reach the HTTP port can read every run, job, and runner-pool record for every repository whose webhooks land on the deployment.
+
+This is a deliberate scope decision. ATC is designed to live inside a trusted network surface and accept the surrounding deployment's identity model rather than ship its own auth subsystem (which would force OIDC / SAML / session-store choices that operators already make at the cluster edge). The three supported patterns are:
+
+- **Private network** — VPC, homelab subnet, Tailscale tailnet, or any network where the access-control answer is "you have to already be inside."
+- **Authenticating reverse proxy** — Pomerium (recommended), oauth2-proxy, Authelia + nginx/Caddy, or Cloudflare Access. The SPA loads under the proxy's session cookie; the same cookie flows through to the WebSocket upgrade because they're same-origin. See the operator runbook for per-proxy recipes and the cookie-expiry / non-browser-client edge cases.
+- **Ingress annotations** — wire any ingress-class-specific auth filter via the chart's `ingress.annotations` pass-through (nginx `auth_request`, Traefik middleware chains, etc.). Gateway API users attach auth through the API's native mechanisms instead (Envoy Gateway `SecurityPolicy`, HTTPRoute `filters` with `ExtensionRef`); the chart does not currently expose annotations on its `HTTPRoute` template.
+
+**Per-proxy recipes**, the cross-cutting gotchas (`Origin` validation, cookie `SameSite`, idle-timeout starvation on the long-lived WS), and the path-split layout that lets `/v1/webhooks/github` bypass auth while the rest of the surface is gated all live in the operator runbook: [`docs/operator/authentication.md`](../operator/authentication.md).
+
+**Not in scope (today):** first-class OIDC inside `atc-server`, per-repository or per-org access control, audit logging of frontend reads, native `Origin` validation on the WS endpoint. If any of these matter for your deployment, file an issue describing the operator surface you'd want.
 
 ## File-based configuration
 

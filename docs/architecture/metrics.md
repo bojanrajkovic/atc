@@ -1,26 +1,16 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-15
+Last verified: 2026-05-18
 
-> **Note on issue #16 (runner-pool capacities).** The wire field
-> `StateSnapshot.runner_pool_capacities` carries operator-declared capacity
-> from `AppState` onto the snapshot response. It is **not** a metric and
-> introduces no new `atc_runner_pool_*` instrument — ADR 0004 keeps pool
-> stats derivation on the frontend. See `docs/architecture-decisions/0004-frontend-derived-pool-stats.md` and the
-> design plan at `docs/design-plans/2026-05-13-issue-16-runner-pool-capacity.md`.
+> **Persistence layering (ADR-0008).** The broadcast envelope `CommittedEvent` lives in `atc-wire`. The `PersistentStore` trait (which owns `subscribe()` and `shutdown()`) lives in `atc-persist`. `InMemoryStore` lives in `atc-store-mem`. `PgStore` and the entire `PgMetrics` surface live in `atc-store-pg`. Metric and span names did not change — only emit-site file paths did. See [ADR-0008](../architecture-decisions/0008-persistence-crate-split.md).
 
-> **Note on the persistence crate split (ADR 0008).** The broadcast
-> envelope type — referenced throughout this document as the value drained
-> from the outbox and forwarded to WS subscribers — was renamed from
-> `SeqEvent` to `CommittedEvent` and moved into the new `atc-wire` crate.
-> No metric or span name changes. The trait that owns `subscribe()` and
-> `shutdown()` now lives in the `atc-persist` crate (the `PgStore` /
-> `InMemoryStore` impls stay in `atc-server` until the per-store crate
-> extractions land). See `docs/architecture-decisions/0008-persistence-crate-split.md`.
+> **Runner-pool capacities (issue #16).** The wire field `StateSnapshot.runner_pool_capacities` carries operator-declared capacity from `AppState` onto the snapshot response. It is **not** a metric and introduces no new `atc_runner_pool_*` instrument — ADR-0004 keeps pool-stats derivation on the frontend.
 
 ## Purpose
 
-ATC emits structured telemetry — metrics, spans, and JSON logs — through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes a tracer provider and a meter provider that export over OTLP/HTTP (HTTP/protobuf) to an operator-run collector (Grafana Alloy, OpenTelemetry Collector, etc.). The collector decides the downstream destination — Tempo for traces, Mimir or Prometheus for metrics, Loki for logs — and re-exposes whichever scrape format the monitoring stack consumes. When the env var is unset, the SDK is never initialized: the OTel global meter provider stays at the SDK's no-op default, every instrument built against it is a no-op, `tracing` events flow only to the JSON / pretty stderr subscriber, and there is no provider, no exporter, and no background-task overhead. An invalid `OTEL_EXPORTER_OTLP_ENDPOINT` (typo, missing scheme, unparseable URL) is treated as unset — `init_otel` parses the value as a URI before installing the SDK so misconfiguration disables OTel with a clear stderr warning instead of silently routing telemetry to the OTel SDK's default `http://localhost:4318` fallback.
+ATC emits structured telemetry — metrics and spans — through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes a tracer provider and a meter provider that export over OTLP/HTTP (HTTP/protobuf) to an operator-run collector (Grafana Alloy, OpenTelemetry Collector, etc.). The collector decides the downstream destination — Tempo for traces, Mimir or Prometheus for metrics — and re-exposes whichever scrape format the monitoring stack consumes. When the env var is unset, the SDK is never initialized: the OTel global meter provider stays at the SDK's no-op default, every instrument built against it is a no-op, and there is no provider, no exporter, and no background-task overhead. An invalid `OTEL_EXPORTER_OTLP_ENDPOINT` (typo, missing scheme, unparseable URL) is treated as unset — `init_otel` parses the value as a URI before installing the SDK so misconfiguration disables OTel with a clear stderr warning instead of silently routing telemetry to the OTel SDK's default `http://localhost:4318` fallback.
+
+**Logs are not in the OTel pipeline today.** All `tracing::{info,warn,error}!` events flow only to the JSON / pretty stderr subscriber registered in `main.rs`. There is no `LoggerProvider` and no OTLP log exporter — operators wanting logs in Loki or another OTel-aware store collect them through their container-log path (kubelet stdout/stderr → Fluent Bit / Vector / etc.). Adding native OTLP log export would mean building a `LoggerProvider`, registering a `tracing-opentelemetry::OpenTelemetryLayer` for logs, and threading shutdown through `OtelHandles`. File an issue if you want it.
 
 This document is the canonical home for ATC's metric and span contract. Every metric ATC emits is documented here with the seven-element interpretation block defined under [Metric and span authoring contract](#metric-and-span-authoring-contract). Every span boundary is enumerated under [Span inventory](#span-inventory). Cross-references from other docs (backend-server architecture, deployment runbooks, dashboard descriptions, alert rules) link here rather than duplicating per-metric or per-span prose.
 

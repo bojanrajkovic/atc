@@ -1,6 +1,6 @@
 # CLAUDE.md — AI Agent Index
 
-Last verified: 2026-05-15
+Last verified: 2026-05-18
 
 > **Keep this file lean.** Detailed documentation lives in `docs/`. This file provides pointers, not content. When you update a feature, update its architecture doc in `docs/architecture/` — not this file.
 
@@ -11,10 +11,14 @@ Real-time GitHub Actions dashboard. Rust backend (Axum) + Svelte 5 + Vite fronte
 
 ## Tech Stack
 
-- **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with three crates:
-  - `atc-core` — Pure domain model (WorkflowRun, Job, Step types; pure transition functions `apply_run_event` / `apply_job_event`; eviction predicate `is_evictable`). No tokio, no interior mutability.
-  - `atc-github` — GitHub API integration (webhook parsing via `parse_webhook`, HMAC-SHA256 signature verification via `verify_signature`, event translation to atc-core domain types)
-  - `atc-server` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
+- **Backend:** Rust 1.94.0 with Axum — Cargo workspace at `backend/` with seven crates. See each crate's `CLAUDE.md` for the contract; per-crate docs are kept current.
+  - `atc-core` — Pure domain model (WorkflowRun, Job, Step, RunnerPoolCapacity types; pure transition functions `apply_run_event` / `apply_job_event`; eviction predicate `is_evictable`; `Clock` trait). No tokio, no interior mutability, no I/O.
+  - `atc-github` — GitHub webhook parsing, HMAC-SHA256 verification, translation into `atc-core` events.
+  - `atc-wire` — Wire types (`CommittedEvent`, `StateSnapshot`) that cross WebSocket + REST to the frontend; ts-rs–exported.
+  - `atc-persist` — `PersistentStore` trait, `LivenessError`, `join_with_timeout`. Zero storage-library deps — the interface waist between `atc-server` and concrete stores.
+  - `atc-store-mem` — In-memory `PersistentStore` implementation (HashMap + secondary indexes + seq mutex + TTL eviction). Dev/test mode only — single replica, lossy on restart.
+  - `atc-store-pg` — Postgres-backed `PersistentStore` implementation: outbox writes, LISTEN/NOTIFY drain, retention sweep, snapshot reads, `PgMetrics`. Production path.
+  - `atc-server` — Axum HTTP server (webhook ingestion, WebSocket stream, REST snapshot, config + hot-reload watcher, OTel init, shutdown orchestration, asset serving with dev-proxy fallback). The only executable crate.
 - **Frontend:** Svelte 5 + Vite + Tailwind v4 — standalone SPA at `frontend/` with OKLCH design system
 - **Package manager:** pnpm (via Corepack)
 - **Task runner:** just (see `justfile` for all commands)
@@ -41,10 +45,14 @@ just build    # Production build
 - `.github/workflows/` — CI and release workflows (ci.yml, zizmor.yml, release-please.yml, release.yml)
 - `lefthook.yml` — Three-tier git hook definitions
 - `justfile` — Task runner recipes
-- `backend/` — Rust workspace with three crates:
-  - `backend/crates/atc-core/` — Pure domain model and transition functions (types: RunId, JobId, StepId; events: RunEvent, JobEvent; pure `apply_*_event` and `is_evictable` free functions; Clock trait). All stateful persistence concerns (HashMap state, locks, TTL eviction task) live in `atc-server::persist`.
-  - `backend/crates/atc-github/` — GitHub API integration (webhook parsing and translation to atc-core domain events, HMAC-SHA256 signature verification)
-  - `backend/crates/atc-server/` — Axum HTTP server (webhook ingestion, WebSocket event stream, REST state snapshot, config with GitHub secrets, asset serving, metrics, dev proxy)
+- `backend/` — Rust workspace with seven crates:
+  - `backend/crates/atc-core/` — Pure domain types, events, state-machine transitions, eviction predicate, `Clock` trait. No tokio, no locks, no I/O. Stateful persistence concerns live in the store crates (ADR-0008).
+  - `backend/crates/atc-github/` — GitHub webhook parsing + HMAC-SHA256 verification + translation into `atc-core` events.
+  - `backend/crates/atc-wire/` — Serializable wire types (`CommittedEvent`, `StateSnapshot`) that cross WS + REST to the frontend. ts-rs–exported.
+  - `backend/crates/atc-persist/` — `PersistentStore` trait, `LivenessError`, `join_with_timeout`. Zero storage-library deps.
+  - `backend/crates/atc-store-mem/` — In-memory `PersistentStore` implementation. Dev/test mode only.
+  - `backend/crates/atc-store-pg/` — Postgres `PersistentStore` implementation: writes + outbox + drain + retention + snapshot reads + `PgMetrics` + embedded migrations.
+  - `backend/crates/atc-server/` — Axum HTTP server: routes, WS handler, config + hot-reload watcher, OTel init, shutdown orchestration, asset serving with dev-proxy fallback. The only executable crate.
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
 - `deploy/helm/` — Helm chart at `deploy/helm/atc/`
 - `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
@@ -63,8 +71,9 @@ just build    # Production build
 
 | What | Where |
 |------|-------|
-| Architecture docs | `docs/architecture/` (created per feature) |
-| Deployment | `docs/architecture/deployment.md` |
+| Architecture docs (why + what) | `docs/architecture/` (created per feature) |
+| Operator runbooks (how) | `docs/operator/` (auth-proxy recipes, integration patterns) |
+| Deployment architecture | `docs/architecture/deployment.md` |
 | Observability (metrics + spans + OTel pipeline) | `docs/architecture/metrics.md` |
 | Architecture decisions (ADRs) | `docs/architecture-decisions/` |
 | Design plans | `docs/design-plans/` |

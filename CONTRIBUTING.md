@@ -228,19 +228,22 @@ gh attestation verify oci://ghcr.io/bojanrajkovic/atc:latest -R bojanrajkovic/at
 
 ## Documentation Conventions
 
-### Five-Layer Documentation Model
+### Six-Layer Documentation Model
 
-Each piece of information has exactly one home (**non-duplication rule**). The five layers are:
+Each piece of information has exactly one home (**non-duplication rule**). The six layers are:
 
 | Layer | Location | Purpose | Audience |
 |-------|----------|---------|----------|
-| Architecture docs | `docs/architecture/` | Canonical source of truth for implemented features | All |
+| Architecture docs | `docs/architecture/` | Canonical source of truth for implemented features — *why* and *what*: design, decisions, contracts, current-state truth | All |
+| Operator runbooks | `docs/operator/` | How-to content for the production surface around ATC — auth-proxy recipes, integration patterns, upgrade procedures, troubleshooting. *How*, not *why* | Operators |
 | Contributing guide | `CONTRIBUTING.md` | Human workflows, conventions, setup | Human developers |
 | AI agent index | `CLAUDE.md` (root) | Compact pointers, commands, project status | AI agents |
 | Directive extracts | `<subdir>/CLAUDE.md` | Sharp-edge warnings for high-risk directories | AI agents |
 | Ideation docs | `docs/ideation/` | Living documents for planned-but-unbuilt features | All |
 
-**Non-duplication rule:** Do not copy content between layers. CLAUDE.md points to docs/ — it doesn't summarize them. README.md links to CONTRIBUTING.md — it doesn't repeat setup instructions. When information changes, it changes in one place.
+**Architecture vs operator runbook split:** architecture docs describe how ATC's own internals work and why they were designed that way (`docs/architecture/deployment.md` explains why we picked RollingUpdate, why the `preStop sleep` matters, what the multi-replica invariants are). Operator runbooks describe how to operate ATC against external infrastructure that isn't part of ATC itself (`docs/operator/authentication.md` shows how to wire Pomerium / oauth2-proxy / etc. in front of it). When a runbook needs to reference an architectural decision, it links rather than restating.
+
+**Non-duplication rule:** Do not copy content between layers. CLAUDE.md points to docs/ — it doesn't summarize them. README.md links to CONTRIBUTING.md — it doesn't repeat setup instructions. Architecture docs link to operator runbooks for how-to content rather than embedding recipes. When information changes, it changes in one place.
 
 **When a feature ships:** The ideation doc archives (add "Shipped — see `docs/architecture/<topic>.md`" header) and the architecture doc becomes the source of truth.
 

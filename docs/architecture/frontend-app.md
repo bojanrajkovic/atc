@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-05-05
+Last verified: 2026-05-18 (config-reload error banner shipped — issue #203)
 
 ## Purpose
 
