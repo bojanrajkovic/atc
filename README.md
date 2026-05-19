@@ -58,6 +58,11 @@ The dev backend boots without Postgres in single-replica in-memory mode. Point G
 
 ```bash
 helm repo add atc https://bojanrajkovic.github.io/atc/charts
+
+# Multi-replica needs a PostgreSQL URL. Create the secret the chart will read:
+kubectl create secret generic atc-db \
+  --from-literal=database_url='postgres://atc:CHANGE_ME@postgres.example/atc'
+
 helm install atc atc/atc \
   --set existingSecret.name=atc-db \
   --set replicaCount=2
