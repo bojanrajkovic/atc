@@ -149,7 +149,7 @@ atc.example.com {
   # SPA + REST + WS: gated via forward_auth
   handle {
     forward_auth authelia.svc.cluster.local:9091 {
-      uri /api/verify?rd=https://auth.example.com/
+      uri /api/authz/forward-auth?authelia_url=https://auth.example.com/
       copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
     }
     reverse_proxy atc.svc.cluster.local:8080
@@ -159,7 +159,9 @@ atc.example.com {
 
 Caddy's `reverse_proxy` passes WebSocket upgrades through transparently and applies no per-stream timeouts by default, so no override is needed for long-lived ATC WS. Avoid adding `transport http { read_timeout / write_timeout }` here: those are per-read/per-write deadlines that will silently disconnect quiet dashboards because ATC sends no application-level ping. If you want a hard maximum lifetime (to force reconnects), use `stream_timeout` instead — but for ATC the safest config is no idle cutoff, letting OS-level TCP keepalive detect dead connections.
 
-Sources: [Caddy `forward_auth`](https://caddyserver.com/docs/caddyfile/directives/forward_auth), [Caddy `reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy).
+**Endpoint note:** `uri /api/authz/forward-auth` is the current Authelia `ForwardAuth` endpoint (the older `/api/verify` with `?rd=...` is the legacy path and is being phased out). The `authelia_url=` query parameter is what tells Authelia where to redirect unauthenticated users for the portal login.
+
+Sources: [Caddy `forward_auth`](https://caddyserver.com/docs/caddyfile/directives/forward_auth), [Caddy `reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy), [Authelia Caddy integration](https://www.authelia.com/integration/proxies/caddy/).
 
 ### Cloudflare Access
 
