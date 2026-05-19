@@ -53,6 +53,7 @@ Source: [Pomerium Public Access](https://www.pomerium.com/docs/reference/routes/
 The current canonical bypass flag is `--skip-auth-route`, with syntax `method=path_regex`. The older `--skip-auth-regex` is deprecated. WebSocket proxying is on by default (`--proxy-websockets`).
 
 ```bash
+# K8s/ingress shape — see security advisory below before enabling --reverse-proxy
 oauth2-proxy \
   --provider=oidc \
   --oidc-issuer-url=https://idp.example.com/ \
@@ -63,14 +64,24 @@ oauth2-proxy \
   --upstream=http://atc.svc.cluster.local:8080 \
   --skip-auth-route='POST=^/v1/webhooks/github$' \
   --proxy-websockets=true \
-  --upstream-timeout=1h          # long-lived WS; default is 30s
+  --upstream-timeout=1h \
+  --reverse-proxy=true \
+  --trusted-proxy-ip=10.0.0.0/8       # MUST narrow to ingress CIDR; default 0.0.0.0/0 is unsafe
 ```
 
 **Method scoping matters:** `POST=^/v1/webhooks/github$` only bypasses POST. A GET to the same path would still hit the auth flow (and 404 from ATC), which is the right shape.
 
+**Security advisory — `--reverse-proxy` + `--skip-auth-route` is a footgun on oauth2-proxy < 7.15.2.** [GHSA-7x63-xv5r-3p2x](https://github.com/oauth2-proxy/oauth2-proxy/security/advisories/GHSA-7x63-xv5r-3p2x) — affected versions 7.5.0 through 7.15.1, fixed in 7.15.2 — let a client-supplied `X-Forwarded-Uri` header rewrite the path oauth2-proxy evaluated against `--skip-auth-route`, so an attacker could make a request to `/v1/ws` look like `/v1/webhooks/github` and bypass auth entirely. Three layered mitigations are required for any K8s ingress shape:
+
+1. **Pin oauth2-proxy to v7.15.2 or later.** Upgrade alone is necessary but not sufficient.
+2. **Set `--trusted-proxy-ip` explicitly** to your ingress controller's pod / Service CIDR. The default is `0.0.0.0/0` for backward compatibility — leaving it unset trusts every source IP, including any attacker, which preserves the bug. Narrow it.
+3. **Strip or overwrite `X-Forwarded-Uri` at the ingress layer.** nginx-ingress: add `more_clear_input_headers "X-Forwarded-Uri";` (requires the headers-more module); Envoy / Traefik: equivalent header-removal filter on the route. This is defense-in-depth even with the trusted-proxy-ip mitigation in place.
+
+If you don't run oauth2-proxy behind a reverse proxy (single-node bare-metal, direct exposure), `--reverse-proxy=false` (the default) means `X-Forwarded-*` headers are ignored entirely and the advisory doesn't apply.
+
 **Open issue worth knowing about:** [`oauth2-proxy#2996`](https://github.com/oauth2-proxy/oauth2-proxy/issues/2996) — `Origin` is not validated on WS upgrades. See § Cross-cutting gotchas.
 
-Source: [oauth2-proxy Configuration Overview](https://oauth2-proxy.github.io/oauth2-proxy/configuration/overview).
+Source: [oauth2-proxy Configuration Overview](https://oauth2-proxy.github.io/oauth2-proxy/configuration/overview), [GHSA-7x63-xv5r-3p2x](https://github.com/oauth2-proxy/oauth2-proxy/security/advisories/GHSA-7x63-xv5r-3p2x).
 
 ### Authelia + nginx
 
