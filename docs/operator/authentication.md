@@ -210,7 +210,12 @@ Adding native `Origin` validation in `atc-server` is on the table — file an is
 
 ### Idle-timeout starvation
 
-ATC's WS is event-driven — there is no application-protocol ping inside the connection. Default proxy idle timeouts (60 s / 5 min) will drop the connection during quiet periods. The client reconnects and re-fetches `/v1/state` so it's recoverable, but noisy. Bump the idle timeout on the WS route (Pomerium: `idle_timeout: 1h`; oauth2-proxy: `--upstream-timeout=1h`; nginx: `proxy_read_timeout 3600s`; Caddy: `transport http { read_timeout 1h }`).
+ATC's WS is event-driven — there is no application-protocol ping inside the connection. Where the proxy imposes a default idle timeout, quiet periods will drop the connection. The client reconnects and re-fetches `/v1/state` so it's recoverable, but noisy. Per-proxy guidance:
+
+- **Pomerium:** set `idle_timeout: 1h` on the WS route — Pomerium's default request budget would otherwise drop the upgrade.
+- **oauth2-proxy:** set `--upstream-timeout=1h`.
+- **nginx:** set `proxy_read_timeout 3600s` — nginx's default is 60 s.
+- **Caddy:** no override needed. `reverse_proxy` passes WS upgrades through with no per-stream timeout by default; `transport http { read_timeout / write_timeout }` is per-read/per-write on the backend connection and would actively add an idle cutoff that isn't there. If you want a hard maximum lifetime (to force reconnects), use `stream_timeout`.
 
 ### Sticky sessions are not required
 
