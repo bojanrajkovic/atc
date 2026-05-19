@@ -45,8 +45,29 @@ All error types derive `Debug` for detailed logging and implement `thiserror::Er
 - **`webhook/verify.rs`** — HMAC-SHA256 signature verification implementation
 - **`webhook/types.rs`** — GitHub webhook payload serde structs (WorkflowRunWebhook, WorkflowJobWebhook, and nested types). These are `pub(crate)` only; the public API accepts raw bytes.
 - **`webhook/translate.rs`** — Translation functions (translate_run, translate_job) that map GitHub's stringly-typed fields to atc-core domain enums. Private helpers parse conclusion/status strings with structured error context. Takes ownership of webhook payloads to avoid cloning strings.
+- **`oauth/mod.rs`** — `OAuthClient`, `TokenSet`, `PkcePair`, and `generate_pkce_pair`. Implements the PKCE code-exchange and refresh-token flows against `https://github.com/login/oauth/access_token`.
+- **`oauth/user.rs`** — `OAuthClient::get_user` — `GET /user` returning `UserInfo { id, login, name, avatar_url }`.
+- **`oauth/installations.rs`** — `OAuthClient::list_user_installations` and `OAuthClient::list_installation_repositories`. Both endpoints paginate; the helpers request `per_page=100`, follow `Link: <...>; rel="next"` until absent, and aggregate every page.
+- **`oauth/errors.rs`** — `OAuthError` enum (`InvalidGrant`, `RefreshExpired`, `Unauthenticated`, `RateLimited`, `Other`).
 
-The internal boundary is strict: only the webhook module exports public types. `lib.rs` re-exports the public API surface, and consumers never touch `types.rs` directly.
+The internal boundary is strict: only the webhook and oauth modules export public types. `lib.rs` re-exports the public API surface, and consumers never touch the internal `types.rs` directly.
+
+### OAuth Client
+
+`atc-github::oauth` provides user-to-server token plumbing for the auth flow described in the design plan. It supports:
+
+- **PKCE.** `generate_pkce_pair()` produces a 64-byte base64url-no-pad verifier (86 chars, within RFC 7636's 43–128 range) and the matching `S256` challenge.
+- **Code exchange.** `OAuthClient::exchange_code(code, code_verifier, redirect_uri)` posts an `application/x-www-form-urlencoded` body to `/login/oauth/access_token` with `Accept: application/json` and returns a `TokenSet { access_token, refresh_token, access_token_expires_in, refresh_token_expires_in }`.
+- **Refresh.** `OAuthClient::refresh_token(refresh_token)` performs the refresh-token grant; both the access token and the refresh token rotate on success, and the caller must persist the new pair.
+- **REST helpers.** `get_user`, `list_user_installations`, `list_installation_repositories` for the user-token-scoped endpoints, with Link-header pagination handled internally.
+
+**Token-endpoint quirk.** GitHub returns OAuth-level errors as HTTP 200 responses whose JSON body carries an `error` field (e.g., `{"error":"bad_verification_code","error_description":"…"}`). The exchange and refresh paths parse the body and check for `error` before treating the response as success; an `error` body becomes `OAuthError::InvalidGrant` (exchange) or `OAuthError::RefreshExpired` (refresh). Status-code-coded failures from the REST endpoints map differently: 401 → `Unauthenticated`, 403/429 → `RateLimited` (with `X-RateLimit-Reset` when present), other non-2xx → `Other`.
+
+**HTTP client ownership.** `OAuthClient::new(http: reqwest::Client, client_id, client_secret)` takes an externally-owned reqwest client so the application's connection pool is shared. `OAuthClient::with_bases(...)` additionally accepts OAuth and API base URLs for tests (mockito injects its own origin) and for GitHub Enterprise Server deployments.
+
+**GitHub App prerequisite (operator-visible).** The GitHub App registration backing the OAuth client must have **"Expire user authorization tokens" enabled** in the app's settings. Without it, GitHub issues non-expiring user tokens with no refresh token, and the refresh path is dead code. With it, access tokens last ~8h and refresh tokens last ~6 months of disuse; refresh rotates both. The deployment-side write-up of this prerequisite belongs in `docs/architecture/deployment.md` and will land alongside the routes/middleware slice that consumes this client.
+
+**Boundaries.** This module is library-only: it owns the HTTP-call shapes and the protocol-error decoding. It does **not** persist sessions, broadcast revocations, or define wire types for the frontend. Those concerns belong to `atc-persist::session`, `atc-store-{pg,mem}::session`, and `atc-wire` respectively, in later slices of the auth feature.
 
 ## Domain Model
 

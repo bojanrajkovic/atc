@@ -7,9 +7,12 @@ rust-version.workspace = true
 
 [dependencies]
 atc-core = { path = "../atc-core" }
+base64 = "=0.22.1"
 chrono = { version = "=0.4.44", features = ["serde"] }
 const-hex = "=1.19.0"
 hmac = "=0.13.0"
+rand = "=0.10.1"
+reqwest = { version = "=0.13.3", default-features = false, features = ["rustls", "json", "charset", "http2", "form"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
 sha2 = "=0.11.0"
@@ -21,3 +24,5 @@ ts-rs = { workspace = true, features = ["serde-compat"] }
 # Enables `atc_core::fixed_test_timestamp` for deterministic timestamps in
 # webhook-translation test fixtures.
 atc-core = { path = "../atc-core", features = ["test-support"] }
+mockito = "=1.7.2"
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread"] }
