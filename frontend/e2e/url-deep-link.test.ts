@@ -272,6 +272,42 @@ test.describe('URL deep link', () => {
     await fresh.close()
   })
 
+  test('deep link — popstate updates lastTriggerRunId to match the displayed run (focus-restoration sync)', async ({
+    page,
+  }) => {
+    // RunDetailPanel.onCloseAutoFocus reads lastTriggerRunId to restore focus
+    // to a specific card when the panel closes. If popstate moves the panel
+    // from run B to run A but lastTriggerRunId still points at B, closing
+    // the panel jumps focus to card B — an accessibility regression.
+    await preparePage(page, snapshotWith([makeWorkflowRun(1), makeWorkflowRun(2)]))
+    await page.goto('/')
+    await waitForConnected(page)
+
+    // Open run 1 then run 2 via direct store writes (clicking a second card
+    // while the sheet is open would close it via interactOutsideBehavior).
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.lastTriggerRunId = 1n
+      window.__stores!.uiStore!.selectedRunId = 1n
+    })
+    await page.waitForFunction(() => window.location.search === '?run=1', { timeout: 3_000 })
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.lastTriggerRunId = 2n
+      window.__stores!.uiStore!.selectedRunId = 2n
+    })
+    await page.waitForFunction(() => window.location.search === '?run=2', { timeout: 3_000 })
+
+    // Back → /?run=1; selectedRunId AND lastTriggerRunId must both update.
+    await page.goBack()
+    await page.waitForFunction(() => window.location.search === '?run=1', { timeout: 3_000 })
+
+    expect(
+      await page.evaluate(() => window.__stores!.uiStore!.selectedRunId?.toString() ?? null),
+    ).toBe('1')
+    expect(
+      await page.evaluate(() => window.__stores!.uiStore!.lastTriggerRunId?.toString() ?? null),
+    ).toBe('1')
+  })
+
   test('deep link — stale popstate strips ?run= and closes the panel, keeping URL and UI in sync', async ({
     page,
   }) => {
