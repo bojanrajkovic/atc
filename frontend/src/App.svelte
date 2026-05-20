@@ -7,8 +7,48 @@
   import KanbanBoard from '$lib/components/KanbanBoard.svelte'
   import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
   import RovingFocusProvider from '$lib/components/roving/RovingFocusProvider.svelte'
+  import { connectionStore } from '$lib/stores/connection.svelte'
   import { paletteStore } from '$lib/stores/palette.svelte'
+  import { runStore } from '$lib/stores/runs.svelte'
   import { uiStore } from '$lib/stores/ui.svelte'
+  import { formatUrlForRunId, parseRunIdFromUrl } from '$lib/url-state'
+
+  // URL ↔ selectedRunId sync (issue #38). See docs/architecture/frontend-app.md
+  // § App Shell URL sync for the canonical write-up of the three-piece plumbing
+  // and the two-flag loop guard.
+  let initialRunId: bigint | null = parseRunIdFromUrl(window.location.href)
+  let initialUrlPending = $state(true)
+
+  // Outbound: selectedRunId → URL. Suppressed via initialUrlPending until the
+  // hydration effect has consumed the buffered initialRunId — without the
+  // guard, the first run with selectedRunId === null would strip ?run= before
+  // hydration ever fires. The target/current relative-URL comparison kills
+  // popstate-induced echoes.
+  $effect(() => {
+    if (initialUrlPending) return
+    const target = formatUrlForRunId(uiStore.selectedRunId, window.location.href)
+    const current = window.location.pathname + window.location.search + window.location.hash
+    if (target === current) return
+    history.pushState(null, '', target)
+  })
+
+  // Hydration: on the first connectionStore.status === 'connected' (the
+  // moment runStore.runs is guaranteed to reflect the server snapshot),
+  // apply initialRunId if the run exists, else replaceState-strip the param.
+  // initialRunId is one-shot — nulled after consumption so reconnects don't
+  // re-trigger.
+  $effect(() => {
+    if (connectionStore.status !== 'connected') return
+    if (initialRunId !== null) {
+      if (runStore.runs.has(initialRunId)) {
+        uiStore.selectedRunId = initialRunId
+      } else {
+        history.replaceState(null, '', formatUrlForRunId(null, window.location.href))
+      }
+      initialRunId = null
+    }
+    initialUrlPending = false
+  })
 
   onMount(() => {
     function handleKeydown(e: KeyboardEvent) {
@@ -51,7 +91,29 @@
       }
     }
     window.addEventListener('keydown', handleKeydown)
-    return () => window.removeEventListener('keydown', handleKeydown)
+
+    // Inbound: popstate → selectedRunId. Stale ids (run no longer in the
+    // store) are scrubbed via replaceState without touching selectedRunId, so
+    // the outbound effect doesn't fire — preventing a duplicate history entry.
+    function handlePopstate() {
+      const parsed = parseRunIdFromUrl(window.location.href)
+      if (parsed === uiStore.selectedRunId) return
+      if (parsed === null) {
+        uiStore.selectedRunId = null
+        return
+      }
+      if (runStore.runs.has(parsed)) {
+        uiStore.selectedRunId = parsed
+        return
+      }
+      history.replaceState(null, '', formatUrlForRunId(uiStore.selectedRunId, window.location.href))
+    }
+    window.addEventListener('popstate', handlePopstate)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeydown)
+      window.removeEventListener('popstate', handlePopstate)
+    }
   })
 </script>
 
