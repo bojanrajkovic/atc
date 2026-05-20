@@ -94,11 +94,12 @@
     window.addEventListener('keydown', handleKeydown)
 
     // Inbound: popstate → selectedRunId. Stale ids (run no longer in the
-    // store) are scrubbed via replaceState — strip the param unconditionally
-    // rather than rebuilding from selectedRunId, which would rewrite a stale
-    // entry back to the currently-open run and nullify the back navigation.
-    // selectedRunId is left unchanged so the outbound effect doesn't fire,
-    // preventing a duplicate history entry.
+    // store) are scrubbed via replaceState (no extra history entry), and the
+    // panel is closed so URL and panel state stay in sync — otherwise the
+    // user could be on URL `/` while still seeing run B, and a refresh or
+    // copied link would silently lose that selection. The semantic loop
+    // guard in the outbound effect ensures the synchronous follow-up assign
+    // is a no-op.
     function handlePopstate() {
       const parsed = parseRunIdFromUrl(window.location.href)
       if (parsed === uiStore.selectedRunId) return
@@ -111,6 +112,7 @@
         return
       }
       history.replaceState(null, '', formatUrlForRunId(null, window.location.href))
+      uiStore.selectedRunId = null
     }
     window.addEventListener('popstate', handlePopstate)
 

@@ -272,13 +272,14 @@ test.describe('URL deep link', () => {
     await fresh.close()
   })
 
-  test('deep link — stale popstate strips ?run= unconditionally, never rewriting to the currently-open run', async ({
+  test('deep link — stale popstate strips ?run= and closes the panel, keeping URL and UI in sync', async ({
     page,
   }) => {
     // Scenario: history contains /?run=1 (later evicted), current state is on
     // /?run=2 with selectedRunId=2. Back-navigating to the stale entry must
-    // strip the URL to `/` — rewriting it to `/?run=2` would no-op the user's
-    // back navigation and produce a duplicate history state.
+    // strip the URL to `/` AND clear selectedRunId — otherwise URL says `/`
+    // while the panel still shows run 2, and a refresh or shared link would
+    // silently lose the selection.
     await preparePage(page, snapshotWith([makeWorkflowRun(1), makeWorkflowRun(2)]))
     await page.goto('/')
     await waitForConnected(page)
@@ -293,6 +294,8 @@ test.describe('URL deep link', () => {
     })
     await page.waitForFunction(() => window.location.search === '?run=2', { timeout: 3_000 })
 
+    const lengthBeforeBack = await getHistoryLength(page)
+
     // Evict run 1 from the store (simulate retention sweep). Run 2 stays.
     await page.evaluate(() => {
       window.__stores!.runStore!.runs.delete(1n)
@@ -303,9 +306,11 @@ test.describe('URL deep link', () => {
     await page.waitForFunction(() => window.location.search === '', { timeout: 3_000 })
 
     expect(await getRelativeUrl(page)).toBe('/')
-    // selectedRunId is left unchanged so the outbound effect doesn't fire.
+    // Panel closes — selectedRunId is cleared so URL and UI stay in sync.
     expect(
       await page.evaluate(() => window.__stores!.uiStore!.selectedRunId?.toString() ?? null),
-    ).toBe('2')
+    ).toBeNull()
+    // replaceState path — no extra history entry.
+    expect(await getHistoryLength(page)).toBe(lengthBeforeBack)
   })
 })

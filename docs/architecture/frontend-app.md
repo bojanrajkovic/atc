@@ -532,7 +532,7 @@ The **relative URL shape** is what `formatUrlForRunId` emits, and is what `histo
 - `parsed === selectedRunId` → no-op.
 - `parsed === null` → assign `selectedRunId = null` (panel closes).
 - `parsed !== null` and `runStore.runs.has(parsed)` → assign `selectedRunId = parsed` (panel opens).
-- `parsed !== null` and the run is unknown — a stale link in history (run was evicted since the entry was pushed) — `history.replaceState` strips the `run` param from the current entry. **`selectedRunId` is deliberately left unchanged.** Routing the stale id through `RunDetailPanel`'s missing-run effect would echo via the outbound effect and add a duplicate history entry.
+- `parsed !== null` and the run is unknown — a stale link in history (run was evicted since the entry was pushed) — `history.replaceState` strips the `run` param from the current entry **and** `selectedRunId` is cleared so URL and panel stay in sync (otherwise a refresh or shared link would silently lose the selection). The semantic loop guard in the outbound effect (`parseRunIdFromUrl(window.location.href) === uiStore.selectedRunId` → both `null`) makes the synchronous follow-up assign a no-op, so no duplicate history entry is added.
 
 **(3) Hydration effect: gated on `connectionStore.status === 'connected'`.** This is the first moment `runStore.runs` is guaranteed to reflect the server snapshot (snapshot fetch + apply + buffered-event drain are all complete in `ConnectionManager.connect`'s prior steps).
 
