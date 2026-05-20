@@ -242,6 +242,36 @@ test.describe('URL deep link', () => {
     expect(await getHistoryLength(page)).toBe(lengthAfterOpen)
   })
 
+  test('deep link — hydration does not push a spurious entry when unrelated query params use non-canonical encoding', async ({
+    page,
+  }) => {
+    // Loading with %20 in another param: URLSearchParams serializes as `+`,
+    // so a string-equality loop guard would treat target and current as
+    // different and push. The semantic run-id guard must no-op here.
+    await preparePage(page, snapshotWith([makeWorkflowRun(1)]))
+    await page.goto('/')
+    await waitForConnected(page)
+    const baselineLength = await getHistoryLength(page)
+
+    const fresh = await page.context().newPage()
+    await preparePage(fresh, snapshotWith([makeWorkflowRun(1)]))
+    await fresh.goto('/?q=my%20term')
+    await fresh.waitForFunction(() => window.__stores?.connectionStore?.status === 'connected', {
+      timeout: 15_000,
+    })
+
+    // URL preserved verbatim (no canonicalization pass).
+    expect(
+      await fresh.evaluate(
+        () => window.location.pathname + window.location.search + window.location.hash,
+      ),
+    ).toBe('/?q=my%20term')
+    // history.length matches the no-deep-link baseline — no spurious entry.
+    expect(await fresh.evaluate(() => window.history.length)).toBe(baselineLength)
+
+    await fresh.close()
+  })
+
   test('deep link — stale popstate strips ?run= unconditionally, never rewriting to the currently-open run', async ({
     page,
   }) => {

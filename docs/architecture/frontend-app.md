@@ -518,14 +518,14 @@ No separate Esc handler exists in App.svelte — Esc dismissal is delegated enti
 - `parseRunIdFromUrl(url: string): bigint | null` — parses `?run=` via `URLSearchParams`. Returns `null` for missing/empty/non-integer/negative values. Bigints preserve precision for 64-bit GitHub run IDs.
 - `formatUrlForRunId(runId: bigint | null, currentUrl: string): string` — returns a **relative URL** (`pathname + search + hash`). Mutates only the `run` key (delete if `null`, set otherwise), preserving all other query params and the hash.
 
-The **relative URL shape** is the canonical form throughout this module. `history.pushState`/`replaceState` accept relative URLs directly, and the loop-guard comparison in `App.svelte` reads `window.location.pathname + window.location.search + window.location.hash` on both sides — mixing an absolute URL (`window.location.href`) on one side breaks the comparison silently and produces duplicate history entries.
+The **relative URL shape** is what `formatUrlForRunId` emits, and is what `history.pushState`/`replaceState` accept directly as the `url` argument. The outbound loop guard does NOT string-compare on this shape; it parses both sides and compares run-id values (see the outbound effect description below).
 
 ### Three pieces of plumbing — `App.svelte`
 
-**(1) Outbound effect: `selectedRunId` → URL.** A `$effect` reads `uiStore.selectedRunId`, computes the target relative URL via `formatUrlForRunId`, and `history.pushState`s it if it differs from the current relative URL. Two guards keep it loop-free:
+**(1) Outbound effect: `selectedRunId` → URL.** A `$effect` reads `uiStore.selectedRunId`, parses the current URL's `run` param, and `history.pushState`s a reformatted relative URL only if the two run-id values disagree. Two guards keep it loop-free:
 
 - `initialUrlPending` suppression. A `$state` boolean (initialized `true`) that gates the entire effect. Without it, the effect's first run on mount — when `selectedRunId === null` but the URL may carry `?run=42` — would strip the param before hydration ever fires.
-- `target === current` short-circuit. After a `popstate` event has already updated `window.location` and the inbound handler has written `selectedRunId`, the outbound effect re-fires with target already matching current and no-ops.
+- `parseRunIdFromUrl(window.location.href) === uiStore.selectedRunId` short-circuit. After a `popstate` event has already updated `window.location` and the inbound handler has written `selectedRunId`, the outbound effect re-fires; the two run-ids now agree and the effect no-ops. The comparison is **semantic** (bigint or null equality), not string equality — a string guard would treat `?q=my%20term` and the URLSearchParams-normalized `?q=my+term` as different and push a spurious history entry on hydration for any URL with non-canonical encoding in unrelated params.
 
 **(2) Inbound popstate handler: URL → `selectedRunId`.** Registered in `onMount`, removed on destroy. After the browser updates `window.location`:
 

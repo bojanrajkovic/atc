@@ -51,7 +51,7 @@ pnpm test:e2e     # Playwright E2E tests
 
 **E2E fixture typing.** `frontend/e2e/lib/ws-mock.ts` helpers (`makeRunEvent`, `makeJobCommittedEvent`) should use the generated discriminated-union types, not `Record<string, unknown>`, so casing mismatches surface at edit time rather than after a multi-hour debug.
 
-**URL ↔ `selectedRunId` sync.** Two flags govern the loop: `initialUrlPending` (suppresses outbound writes until the first snapshot lands) and the relative-URL `target === current` comparison (suppresses popstate echoes). Both must hold; mixing absolute (`window.location.href`) and relative (`pathname + search + hash`) URL shapes in the comparison silently produces duplicate history entries. See `docs/architecture/frontend-app.md` § App Shell URL sync for the full mechanism.
+**URL ↔ `selectedRunId` sync.** Two guards govern the loop: `initialUrlPending` (suppresses outbound writes until the first snapshot lands) and a **semantic** `parseRunIdFromUrl(window.location.href) === uiStore.selectedRunId` comparison (suppresses popstate echoes and tolerates non-canonical encoding of unrelated query params; a string-equality guard would treat `?q=my%20term` vs `?q=my+term` as different and push a spurious history entry on hydration). See `docs/architecture/frontend-app.md` § App Shell URL sync for the full mechanism.
 
 Debugging heuristic: when a page becomes unresponsive after a `page.evaluate(...)` store mutation and the snapshot shows an unrelated empty state, suspect a downstream render error from a mismatched value shape, NOT a reactivity propagation bug.
 

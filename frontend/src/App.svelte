@@ -22,14 +22,15 @@
   // Outbound: selectedRunId → URL. Suppressed via initialUrlPending until the
   // hydration effect has consumed the buffered initialRunId — without the
   // guard, the first run with selectedRunId === null would strip ?run= before
-  // hydration ever fires. The target/current relative-URL comparison kills
-  // popstate-induced echoes.
+  // hydration ever fires. The semantic run-id comparison kills popstate-
+  // induced echoes (and tolerates non-canonical encoding of other query
+  // params; a string-equality guard would treat `?q=my%20term` and
+  // `?q=my+term` as different and add a spurious entry on hydration).
   $effect(() => {
     if (initialUrlPending) return
-    const target = formatUrlForRunId(uiStore.selectedRunId, window.location.href)
-    const current = window.location.pathname + window.location.search + window.location.hash
-    if (target === current) return
-    history.pushState(null, '', target)
+    const currentRunId = parseRunIdFromUrl(window.location.href)
+    if (currentRunId === uiStore.selectedRunId) return
+    history.pushState(null, '', formatUrlForRunId(uiStore.selectedRunId, window.location.href))
   })
 
   // Hydration: on the first connectionStore.status === 'connected' (the
