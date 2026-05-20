@@ -93,8 +93,11 @@
     window.addEventListener('keydown', handleKeydown)
 
     // Inbound: popstate → selectedRunId. Stale ids (run no longer in the
-    // store) are scrubbed via replaceState without touching selectedRunId, so
-    // the outbound effect doesn't fire — preventing a duplicate history entry.
+    // store) are scrubbed via replaceState — strip the param unconditionally
+    // rather than rebuilding from selectedRunId, which would rewrite a stale
+    // entry back to the currently-open run and nullify the back navigation.
+    // selectedRunId is left unchanged so the outbound effect doesn't fire,
+    // preventing a duplicate history entry.
     function handlePopstate() {
       const parsed = parseRunIdFromUrl(window.location.href)
       if (parsed === uiStore.selectedRunId) return
@@ -106,7 +109,7 @@
         uiStore.selectedRunId = parsed
         return
       }
-      history.replaceState(null, '', formatUrlForRunId(uiStore.selectedRunId, window.location.href))
+      history.replaceState(null, '', formatUrlForRunId(null, window.location.href))
     }
     window.addEventListener('popstate', handlePopstate)
 

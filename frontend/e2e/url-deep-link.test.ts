@@ -241,4 +241,41 @@ test.describe('URL deep link', () => {
     // history.length is unchanged across the back-button transition.
     expect(await getHistoryLength(page)).toBe(lengthAfterOpen)
   })
+
+  test('deep link — stale popstate strips ?run= unconditionally, never rewriting to the currently-open run', async ({
+    page,
+  }) => {
+    // Scenario: history contains /?run=1 (later evicted), current state is on
+    // /?run=2 with selectedRunId=2. Back-navigating to the stale entry must
+    // strip the URL to `/` — rewriting it to `/?run=2` would no-op the user's
+    // back navigation and produce a duplicate history state.
+    await preparePage(page, snapshotWith([makeWorkflowRun(1), makeWorkflowRun(2)]))
+    await page.goto('/')
+    await waitForConnected(page)
+
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.selectedRunId = 1n
+    })
+    await page.waitForFunction(() => window.location.search === '?run=1', { timeout: 3_000 })
+
+    await page.evaluate(() => {
+      window.__stores!.uiStore!.selectedRunId = 2n
+    })
+    await page.waitForFunction(() => window.location.search === '?run=2', { timeout: 3_000 })
+
+    // Evict run 1 from the store (simulate retention sweep). Run 2 stays.
+    await page.evaluate(() => {
+      window.__stores!.runStore!.runs.delete(1n)
+    })
+
+    // Back: browser navigates to /?run=1; popstate fires; stale path.
+    await page.goBack()
+    await page.waitForFunction(() => window.location.search === '', { timeout: 3_000 })
+
+    expect(await getRelativeUrl(page)).toBe('/')
+    // selectedRunId is left unchanged so the outbound effect doesn't fire.
+    expect(
+      await page.evaluate(() => window.__stores!.uiStore!.selectedRunId?.toString() ?? null),
+    ).toBe('2')
+  })
 })
