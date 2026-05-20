@@ -59,6 +59,14 @@ describe('url-state/parseRunIdFromUrl', () => {
   it('returns null for a completely malformed URL', () => {
     expect(parseRunIdFromUrl('not a url')).toBeNull()
   })
+
+  it('accepts a relative URL', () => {
+    expect(parseRunIdFromUrl('/?run=42')).toBe(42n)
+  })
+
+  it('accepts a relative URL with a non-root pathname and hash', () => {
+    expect(parseRunIdFromUrl('/foo?run=7#bar')).toBe(7n)
+  })
 })
 
 describe('url-state/formatUrlForRunId', () => {
@@ -108,5 +116,14 @@ describe('url-state/formatUrlForRunId', () => {
 
   it('preserves the pathname and hash when deleting a run param that is not present', () => {
     expect(formatUrlForRunId(null, 'https://example.com/foo#bar')).toBe('/foo#bar')
+  })
+
+  it('accepts a relative URL as input', () => {
+    expect(formatUrlForRunId(42n, '/foo?bar=1')).toBe('/foo?bar=1&run=42')
+  })
+
+  it('round-trips with parseRunIdFromUrl on its own output', () => {
+    const formatted = formatUrlForRunId(42n, '/foo?bar=1#section')
+    expect(parseRunIdFromUrl(formatted)).toBe(42n)
   })
 })
