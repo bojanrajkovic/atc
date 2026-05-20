@@ -272,6 +272,31 @@ test.describe('URL deep link', () => {
     await fresh.close()
   })
 
+  test('deep link — back-button close restores focus to the originating card', async ({ page }) => {
+    // Closing via popstate-to-/ must restore focus to the card the user
+    // originally clicked. The handler must preserve lastTriggerRunId so
+    // RunDetailPanel.onCloseAutoFocus can find the trigger.
+    await preparePage(page, snapshotWith([makeWorkflowRun(1), makeWorkflowRun(2)]))
+    await page.goto('/')
+    await waitForConnected(page)
+    await page.waitForSelector('article[data-run-id="1"]', { timeout: 5_000 })
+
+    await page.locator('article[data-run-id="1"] .run-card-activate').click()
+    await page.waitForSelector('[role="dialog"]', { timeout: 5_000 })
+
+    await page.goBack()
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3_000 })
+
+    // Focus landed on the originating card (run 1), not on the kanban's
+    // initial-focus card (which would be the first non-empty column's first
+    // card — same card here but distinguishable when the kanban is wider).
+    const focusedRunId = await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null
+      return active?.closest('.run-card')?.getAttribute('data-run-id') ?? null
+    })
+    expect(focusedRunId).toBe('1')
+  })
+
   test('deep link — popstate updates lastTriggerRunId to match the displayed run (focus-restoration sync)', async ({
     page,
   }) => {

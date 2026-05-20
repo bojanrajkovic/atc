@@ -101,14 +101,20 @@
     // guard in the outbound effect ensures the synchronous follow-up assign
     // is a no-op.
     //
-    // lastTriggerRunId is updated alongside selectedRunId so RunDetailPanel's
-    // onCloseAutoFocus restores focus to a card matching the *displayed* run,
-    // not whichever card the user most recently clicked before back/forward.
+    // lastTriggerRunId handling:
+    // - run-to-run popstate: update to the new run so RunDetailPanel's
+    //   onCloseAutoFocus restores focus to the displayed card, not the
+    //   stale prior trigger.
+    // - run-to-null (panel closes): preserve so onCloseAutoFocus can route
+    //   focus back to the originating card. The panel's close handler
+    //   consumes lastTriggerRunId itself.
+    // - stale (panel closes): preserve for the same reason — the trigger
+    //   card is still in the store (the stale id is what we navigated to,
+    //   not what was displayed).
     function handlePopstate() {
       const parsed = parseRunIdFromUrl(window.location.href)
       if (parsed === uiStore.selectedRunId) return
       if (parsed === null) {
-        uiStore.lastTriggerRunId = null
         uiStore.selectedRunId = null
         return
       }
@@ -118,7 +124,6 @@
         return
       }
       history.replaceState(null, '', formatUrlForRunId(null, window.location.href))
-      uiStore.lastTriggerRunId = null
       uiStore.selectedRunId = null
     }
     window.addEventListener('popstate', handlePopstate)
