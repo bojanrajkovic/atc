@@ -38,10 +38,16 @@
   // apply initialRunId if the run exists, else replaceState-strip the param.
   // initialRunId is one-shot — nulled after consumption so reconnects don't
   // re-trigger.
+  //
+  // lastTriggerRunId is seeded to initialRunId so the deep-link case mimics
+  // a card click for focus-restoration purposes: closing the panel via Esc
+  // should land focus on the run's card, not on `<body>` (which is what
+  // RunDetailPanel.onCloseAutoFocus's null-trigger early return produces).
   $effect(() => {
     if (connectionStore.status !== 'connected') return
     if (initialRunId !== null) {
       if (runStore.runs.has(initialRunId)) {
+        uiStore.lastTriggerRunId = initialRunId
         uiStore.selectedRunId = initialRunId
       } else {
         history.replaceState(null, '', formatUrlForRunId(null, window.location.href))

@@ -272,6 +272,28 @@ test.describe('URL deep link', () => {
     await fresh.close()
   })
 
+  test('deep link — Esc-closing a deep-linked panel restores focus to the URL run card', async ({
+    page,
+  }) => {
+    // Deep-linked panel never had a card click, so without seeding
+    // lastTriggerRunId during hydration the close handler exits early and
+    // focus falls to `<body>`. Hydration must mirror a card click and
+    // populate the trigger.
+    await preparePage(page, snapshotWith([makeWorkflowRun(1), makeWorkflowRun(2)]))
+    await page.goto('/?run=1')
+    await page.waitForSelector('[role="dialog"]', { timeout: 5_000 })
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 3_000 })
+
+    // Focus lands on card 1 (the URL's run), not card 2 (initial-focus) or body.
+    const focusedRunId = await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null
+      return active?.closest('.run-card')?.getAttribute('data-run-id') ?? null
+    })
+    expect(focusedRunId).toBe('1')
+  })
+
   test('deep link — back-button close restores focus to the originating card', async ({ page }) => {
     // Closing via popstate-to-/ must restore focus to the card the user
     // originally clicked. The handler must preserve lastTriggerRunId so
