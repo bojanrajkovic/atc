@@ -7,8 +7,55 @@
   import KanbanBoard from '$lib/components/KanbanBoard.svelte'
   import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
   import RovingFocusProvider from '$lib/components/roving/RovingFocusProvider.svelte'
+  import { connectionStore } from '$lib/stores/connection.svelte'
   import { paletteStore } from '$lib/stores/palette.svelte'
+  import { runStore } from '$lib/stores/runs.svelte'
   import { uiStore } from '$lib/stores/ui.svelte'
+  import { formatUrlForRunId, parseRunIdFromUrl } from '$lib/url-state'
+
+  // URL ↔ selectedRunId sync (issue #38). See docs/architecture/frontend-app.md
+  // § App Shell URL sync for the canonical write-up of the three-piece plumbing
+  // and the two-flag loop guard.
+  let initialRunId: bigint | null = parseRunIdFromUrl(window.location.href)
+  let initialUrlPending = $state(true)
+
+  // Outbound: selectedRunId → URL. Suppressed via initialUrlPending until the
+  // hydration effect has consumed the buffered initialRunId — without the
+  // guard, the first run with selectedRunId === null would strip ?run= before
+  // hydration ever fires. The semantic run-id comparison kills popstate-
+  // induced echoes (and tolerates non-canonical encoding of other query
+  // params; a string-equality guard would treat `?q=my%20term` and
+  // `?q=my+term` as different and add a spurious entry on hydration).
+  $effect(() => {
+    if (initialUrlPending) return
+    const currentRunId = parseRunIdFromUrl(window.location.href)
+    if (currentRunId === uiStore.selectedRunId) return
+    history.pushState(null, '', formatUrlForRunId(uiStore.selectedRunId, window.location.href))
+  })
+
+  // Hydration: on the first connectionStore.status === 'connected' (the
+  // moment runStore.runs is guaranteed to reflect the server snapshot),
+  // apply initialRunId if the run exists, else replaceState-strip the param.
+  // initialRunId is one-shot — nulled after consumption so reconnects don't
+  // re-trigger.
+  //
+  // lastTriggerRunId is seeded to initialRunId so the deep-link case mimics
+  // a card click for focus-restoration purposes: closing the panel via Esc
+  // should land focus on the run's card, not on `<body>` (which is what
+  // RunDetailPanel.onCloseAutoFocus's null-trigger early return produces).
+  $effect(() => {
+    if (connectionStore.status !== 'connected') return
+    if (initialRunId !== null) {
+      if (runStore.runs.has(initialRunId)) {
+        uiStore.lastTriggerRunId = initialRunId
+        uiStore.selectedRunId = initialRunId
+      } else {
+        history.replaceState(null, '', formatUrlForRunId(null, window.location.href))
+      }
+      initialRunId = null
+    }
+    initialUrlPending = false
+  })
 
   onMount(() => {
     function handleKeydown(e: KeyboardEvent) {
@@ -51,7 +98,46 @@
       }
     }
     window.addEventListener('keydown', handleKeydown)
-    return () => window.removeEventListener('keydown', handleKeydown)
+
+    // Inbound: popstate → selectedRunId. Stale ids (run no longer in the
+    // store) are scrubbed via replaceState (no extra history entry), and the
+    // panel is closed so URL and panel state stay in sync — otherwise the
+    // user could be on URL `/` while still seeing run B, and a refresh or
+    // copied link would silently lose that selection. The semantic loop
+    // guard in the outbound effect ensures the synchronous follow-up assign
+    // is a no-op.
+    //
+    // lastTriggerRunId handling:
+    // - run-to-run popstate: update to the new run so RunDetailPanel's
+    //   onCloseAutoFocus restores focus to the displayed card, not the
+    //   stale prior trigger.
+    // - run-to-null (panel closes): preserve so onCloseAutoFocus can route
+    //   focus back to the originating card. The panel's close handler
+    //   consumes lastTriggerRunId itself.
+    // - stale (panel closes): preserve for the same reason — the trigger
+    //   card is still in the store (the stale id is what we navigated to,
+    //   not what was displayed).
+    function handlePopstate() {
+      const parsed = parseRunIdFromUrl(window.location.href)
+      if (parsed === uiStore.selectedRunId) return
+      if (parsed === null) {
+        uiStore.selectedRunId = null
+        return
+      }
+      if (runStore.runs.has(parsed)) {
+        uiStore.lastTriggerRunId = parsed
+        uiStore.selectedRunId = parsed
+        return
+      }
+      history.replaceState(null, '', formatUrlForRunId(null, window.location.href))
+      uiStore.selectedRunId = null
+    }
+    window.addEventListener('popstate', handlePopstate)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeydown)
+      window.removeEventListener('popstate', handlePopstate)
+    }
   })
 </script>
 

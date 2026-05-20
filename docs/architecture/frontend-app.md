@@ -1,6 +1,6 @@
 # Frontend App — Architecture
 
-Last verified: 2026-05-18 (config-reload error banner shipped — issue #203)
+Last verified: 2026-05-20 (URL-based deep linking for selected run shipped — issue #38)
 
 ## Purpose
 
@@ -509,6 +509,58 @@ All three chords share an editable-context guard: `e.target.closest('[data-slot=
 
 No separate Esc handler exists in App.svelte — Esc dismissal is delegated entirely to Bits UI's escape-keydown wiring on each dialog.
 
+## App Shell URL sync
+
+`uiStore.selectedRunId` is the canonical source of truth for "the detail panel is open on run X". The URL is a projection of it — visiting `https://atc.example/?run=<id>` opens the detail panel on that run, opening the panel writes `?run=<id>` to the URL, and the browser back/forward buttons navigate between panel-closed and panel-open states.
+
+### Pure helpers — `frontend/src/lib/url-state.ts`
+
+- `parseRunIdFromUrl(url: string): bigint | null` — parses `?run=` via `URLSearchParams`. Returns `null` for missing/empty/non-integer/negative values. Bigints preserve precision for 64-bit GitHub run IDs.
+- `formatUrlForRunId(runId: bigint | null, currentUrl: string): string` — returns a **relative URL** (`pathname + search + hash`). Mutates only the `run` key (delete if `null`, set otherwise), preserving all other query params and the hash.
+
+The **relative URL shape** is what `formatUrlForRunId` emits, and is what `history.pushState`/`replaceState` accept directly as the `url` argument. The outbound loop guard does NOT string-compare on this shape; it parses both sides and compares run-id values (see the outbound effect description below).
+
+### Three pieces of plumbing — `App.svelte`
+
+**(1) Outbound effect: `selectedRunId` → URL.** A `$effect` reads `uiStore.selectedRunId`, parses the current URL's `run` param, and `history.pushState`s a reformatted relative URL only if the two run-id values disagree. Two guards keep it loop-free:
+
+- `initialUrlPending` suppression. A `$state` boolean (initialized `true`) that gates the entire effect. Without it, the effect's first run on mount — when `selectedRunId === null` but the URL may carry `?run=42` — would strip the param before hydration ever fires.
+- `parseRunIdFromUrl(window.location.href) === uiStore.selectedRunId` short-circuit. After a `popstate` event has already updated `window.location` and the inbound handler has written `selectedRunId`, the outbound effect re-fires; the two run-ids now agree and the effect no-ops. The comparison is **semantic** (bigint or null equality), not string equality — a string guard would treat `?q=my%20term` and the URLSearchParams-normalized `?q=my+term` as different and push a spurious history entry on hydration for any URL with non-canonical encoding in unrelated params.
+
+**(2) Inbound popstate handler: URL → `selectedRunId`.** Registered in `onMount`, removed on destroy. After the browser updates `window.location`:
+
+- `parsed === selectedRunId` → no-op.
+- `parsed === null` → assign `selectedRunId = null` (panel closes).
+- `parsed !== null` and `runStore.runs.has(parsed)` → assign `selectedRunId = parsed` (panel opens).
+- `parsed !== null` and the run is unknown — a stale link in history (run was evicted since the entry was pushed) — `history.replaceState` strips the `run` param from the current entry **and** `selectedRunId` is cleared so URL and panel stay in sync (otherwise a refresh or shared link would silently lose the selection). The semantic loop guard in the outbound effect (`parseRunIdFromUrl(window.location.href) === uiStore.selectedRunId` → both `null`) makes the synchronous follow-up assign a no-op, so no duplicate history entry is added.
+
+`uiStore.lastTriggerRunId` (the focus-restoration trigger consumed by `RunDetailPanel.onCloseAutoFocus`) is touched only in the run-to-run branch, where it's updated to match the new `selectedRunId` so close-focus restoration lands on the displayed card and not a stale prior trigger. The close-the-panel branches (`parsed === null` and stale) leave it alone — the originally-clicked card is still the right focus target when the panel closes.
+
+**(3) Hydration effect: gated on `connectionStore.status === 'connected'`.** This is the first moment `runStore.runs` is guaranteed to reflect the server snapshot (snapshot fetch + apply + buffered-event drain are all complete in `ConnectionManager.connect`'s prior steps).
+
+- `initialRunId` is captured once at script-instance time via `parseRunIdFromUrl(window.location.href)`.
+- On the first transition to `'connected'`:
+  - If `initialRunId !== null` and `runStore.runs.has(initialRunId)` → `selectedRunId = initialRunId`. Panel opens.
+  - If `initialRunId !== null` and the run is unknown → `history.replaceState` strips the param. `selectedRunId` stays `null`.
+  - `initialRunId = null` (one-shot).
+  - `initialUrlPending = false` (unlocks outbound).
+
+Reconnects (`'connected' → 'reconnecting' → 'connected'`) don't re-trigger hydration; `initialRunId` is already null and the effect body is a no-op.
+
+### `replaceState` vs `pushState`
+
+`pushState` on open/close (so back/forward work). `replaceState` for both unknown-run cleanup paths (mount-time hydration and popstate-stale) — adding a history entry for "the URL pointed at nothing, we scrubbed it" would mean the back button takes the user back to the same broken URL where the cleanup would fire again.
+
+### Interaction with `RunDetailPanel`'s missing-run effect
+
+The defensive `$effect` at `RunDetailPanel.svelte:37–46` clears `selectedRunId` when the referenced run leaves `runStore.runs` (live eviction while the panel is open). The outbound URL effect picks that up and `pushState`s the cleared URL — the user's history correctly shows panel-open → panel-closed-because-evicted, with back-button navigation to the pre-eviction state.
+
+The popstate-stale path explicitly bypasses this effect by leaving `selectedRunId` unchanged — see the popstate handler description above.
+
+### Extending this surface
+
+Future URL-state additions (e.g., filter persistence, deferred `?job=`) should follow the same shape: the canonical store is the source of truth; `formatUrlForRunId`-style helpers in `url-state.ts` parse and reformat preserving other params; the outbound effect must respect `initialUrlPending` + the `target === current` guard; the inbound handler must check store-state validity before assigning.
+
 ## Connection Protocol
 
 The frontend uses a **WS-first protocol** with pre-connect buffering and seq-based reconciliation.
@@ -724,6 +776,7 @@ Coverage is collected from all three modalities and merged server-side by Codeco
 **Event Handling**
 - `frontend/src/lib/connection.ts` — ConnectionManager: WebSocket client with WS-first protocol, pre-connect buffering, exponential backoff reconnect
 - `frontend/src/lib/dispatcher.ts` — EventDispatcher: Batches store mutations and flushes via requestAnimationFrame
+- `frontend/src/lib/url-state.ts` — Pure helpers for the `?run=` deep-link surface: `parseRunIdFromUrl`, `formatUrlForRunId`. See § App Shell URL sync.
 
 **Components**
 - `frontend/src/lib/components/` — shadcn-svelte component library with tailwind aliases
