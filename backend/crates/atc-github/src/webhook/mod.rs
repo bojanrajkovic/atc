@@ -96,6 +96,9 @@ pub enum WebhookEvent {
     fields(
         webhook.event_type = event_type,
         webhook.action = tracing::field::Empty,
+        webhook.repo = tracing::field::Empty,
+        webhook.run_id = tracing::field::Empty,
+        webhook.job_id = tracing::field::Empty,
     ),
 )]
 pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, ParseError> {
@@ -103,11 +106,18 @@ pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, Parse
         "workflow_run" => {
             let webhook: types::WorkflowRunWebhook = serde_json::from_slice(body)?;
             let envelope = translate::translate_run(webhook)?;
-            let action_str = format!("{:?}", envelope.action);
-            tracing::Span::current().record("webhook.action", action_str.as_str());
+            let action_name = envelope.action.name();
+            let repo = format!("{}/{}", envelope.org, envelope.repo);
+            let run_id = envelope.run_id.0;
+            let span = tracing::Span::current();
+            span.record("webhook.action", action_name);
+            span.record("webhook.repo", repo.as_str());
+            span.record("webhook.run_id", run_id);
             tracing::debug!(
                 event_type = "workflow_run",
-                action = action_str,
+                action = action_name,
+                repo = repo,
+                run_id = run_id,
                 "parsed webhook"
             );
             Ok(ParseResult::Parsed(Box::new(WebhookEvent::Run(envelope))))
@@ -115,11 +125,21 @@ pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, Parse
         "workflow_job" => {
             let webhook: types::WorkflowJobWebhook = serde_json::from_slice(body)?;
             let envelope = translate::translate_job(webhook)?;
-            let action_str = format!("{:?}", envelope.action);
-            tracing::Span::current().record("webhook.action", action_str.as_str());
+            let action_name = envelope.action.name();
+            let repo = format!("{}/{}", envelope.org, envelope.repo);
+            let run_id = envelope.run_id.0;
+            let job_id = envelope.job_id.0;
+            let span = tracing::Span::current();
+            span.record("webhook.action", action_name);
+            span.record("webhook.repo", repo.as_str());
+            span.record("webhook.run_id", run_id);
+            span.record("webhook.job_id", job_id);
             tracing::debug!(
                 event_type = "workflow_job",
-                action = action_str,
+                action = action_name,
+                repo = repo,
+                run_id = run_id,
+                job_id = job_id,
                 "parsed webhook"
             );
             Ok(ParseResult::Parsed(Box::new(WebhookEvent::Job(envelope))))
