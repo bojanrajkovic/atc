@@ -26,7 +26,7 @@ tests:
       - failedTemplate:
           errorPattern: "config\\.databaseUrl"
       - failedTemplate:
-          errorPattern: "existingSecret\\.name"
+          errorPattern: "existingSecret\\.database\\.name"
 
   - it: renders successfully when autoscaling.enabled is true with maxReplicas=1 and no Postgres URL
     set:
@@ -47,12 +47,12 @@ tests:
       - notExists:
           path: spec.replicas
 
-  - it: renders successfully when autoscaling.enabled is true with maxReplicas > 1 and existingSecret credentials
+  - it: renders successfully when autoscaling.enabled is true with maxReplicas > 1 and existingSecret.database credentials
     set:
       autoscaling.enabled: true
       autoscaling.maxReplicas: 4
-      existingSecret.name: atc-db-secret
-      existingSecret.databaseUrlKey: database_url
+      existingSecret.database.name: atc-db-secret
+      existingSecret.database.urlKey: database_url
     asserts:
       - notExists:
           path: spec.replicas

@@ -23,10 +23,10 @@ tests:
             name: ATC_DATABASE_LISTENER_URL
             value: "postgres://listener:pw@pg:5432/atc"
 
-  - it: renders ATC_DATABASE_LISTENER_URL from secret when existingSecret.name and existingSecret.databaseListenerUrlKey are both set
+  - it: renders ATC_DATABASE_LISTENER_URL from secret when existingSecret.database.name and listenerUrlKey are both set
     set:
-      existingSecret.name: atc-db-secret
-      existingSecret.databaseListenerUrlKey: listener-db-url
+      existingSecret.database.name: atc-db-secret
+      existingSecret.database.listenerUrlKey: listener-db-url
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
@@ -37,20 +37,20 @@ tests:
                 name: atc-db-secret
                 key: listener-db-url
 
-  - it: does not render ATC_DATABASE_LISTENER_URL when existingSecret.name is set but databaseListenerUrlKey is empty
+  - it: does not render ATC_DATABASE_LISTENER_URL when existingSecret.database.name is set but listenerUrlKey is empty
     set:
-      existingSecret.name: atc-db-secret
-      existingSecret.databaseListenerUrlKey: ""
+      existingSecret.database.name: atc-db-secret
+      existingSecret.database.listenerUrlKey: ""
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: ATC_DATABASE_LISTENER_URL
 
-  - it: existingSecret path wins over config.databaseListenerUrl when both are set
+  - it: existingSecret.database path wins over config.databaseListenerUrl when both are set
     set:
-      existingSecret.name: atc-db-secret
-      existingSecret.databaseListenerUrlKey: listener-db-url
+      existingSecret.database.name: atc-db-secret
+      existingSecret.database.listenerUrlKey: listener-db-url
       config.databaseListenerUrl: "postgres://listener:pw@pg:5432/atc"
     asserts:
       - contains:
