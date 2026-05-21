@@ -24,6 +24,7 @@ sqlx = { version = "=0.8.6", default-features = false, features = ["postgres", "
 tokio = { version = "=1.52.3", features = ["sync", "time", "rt", "macros"] }
 tokio-util = { version = "=0.7.18", features = ["rt"] }
 tracing = { workspace = true }
+tracing-opentelemetry = { version = "=0.32.1", default-features = false }
 uuid = { version = "=1.23.1", features = ["v4", "fast-rng"] }
 
 [dev-dependencies]

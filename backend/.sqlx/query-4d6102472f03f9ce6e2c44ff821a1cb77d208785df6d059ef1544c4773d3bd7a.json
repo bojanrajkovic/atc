@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO outbox (kind, run_id, payload) VALUES ('run', $1, $2::jsonb) RETURNING seq\n        ",
+  "query": "\n        INSERT INTO outbox (kind, run_id, payload, traceparent)\n        VALUES ('run', $1, $2::jsonb, $3)\n        RETURNING seq\n        ",
   "describe": {
     "columns": [
       {
@@ -12,12 +12,13 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Jsonb"
+        "Jsonb",
+        "Varchar"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "bdb94936f45af65204c5a3692fffac96e72db051891f9924685f88d375a72cba"
+  "hash": "4d6102472f03f9ce6e2c44ff821a1cb77d208785df6d059ef1544c4773d3bd7a"
 }

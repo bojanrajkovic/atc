@@ -18,6 +18,7 @@ pub mod listener;
 pub mod metrics;
 pub mod reads;
 pub mod store;
+pub(crate) mod traceparent;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod invariants;

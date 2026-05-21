@@ -448,7 +448,7 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 | Span | Source | Attributes |
 |---|---|---|
 | `drain.pass` | `drain_pass` in `listener.rs` — per-pass root span. The spawn site (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) carries no task-lifetime wrapper; each invocation of `drain_pass` emits its own root. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
-| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`, nested under `drain.pass` via `broadcast_span.in_scope(...)`. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
+| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`, nested under `drain.pass` via `broadcast_span.in_scope(...)`. When the outbox row carries a W3C `traceparent` (captured at INSERT time from the originating `webhook.handler` span), this span gets an OTel span LINK to that trace via `Span::add_link` — Link, not parent, because `drain.pass` is intentionally a per-tick root (see § "Task-lifetime root spans"). Operators trace "webhook in → frame out" by following the link in Tempo. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
 
 ### Eviction path (in-memory mode only)
 

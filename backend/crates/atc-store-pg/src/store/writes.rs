@@ -464,13 +464,20 @@ pub(crate) async fn insert_outbox_run_in_txn(
 ) -> Result<i64, PersistError> {
     let run_id = env.run_id.0;
     let payload = serde_json::to_value(env).map_err(|e| PersistError::Backend(Box::new(e)))?;
+    // Capture the current span's W3C traceparent. Stored on the outbox row so
+    // the drain task can attach an OTel span link from `drain.broadcast` back
+    // to this `webhook.handler` trace. `None` under no-op OTel SDK.
+    let traceparent = crate::traceparent::current();
 
     let row = sqlx::query!(
         r#"
-        INSERT INTO outbox (kind, run_id, payload) VALUES ('run', $1, $2::jsonb) RETURNING seq
+        INSERT INTO outbox (kind, run_id, payload, traceparent)
+        VALUES ('run', $1, $2::jsonb, $3)
+        RETURNING seq
         "#,
         run_id,
         payload,
+        traceparent.as_deref(),
     )
     .fetch_one(&mut **tx)
     .await
@@ -517,14 +524,19 @@ pub(crate) async fn insert_outbox_job_in_txn(
     let run_id = env.run_id.0;
     let job_id = env.job_id.0;
     let payload = serde_json::to_value(env).map_err(|e| PersistError::Backend(Box::new(e)))?;
+    // See `insert_outbox_run_in_txn` for the traceparent rationale.
+    let traceparent = crate::traceparent::current();
 
     let row = sqlx::query!(
         r#"
-        INSERT INTO outbox (kind, run_id, job_id, payload) VALUES ('job', $1, $2, $3::jsonb) RETURNING seq
+        INSERT INTO outbox (kind, run_id, job_id, payload, traceparent)
+        VALUES ('job', $1, $2, $3::jsonb, $4)
+        RETURNING seq
         "#,
         run_id,
         job_id,
         payload,
+        traceparent.as_deref(),
     )
     .fetch_one(&mut **tx)
     .await
