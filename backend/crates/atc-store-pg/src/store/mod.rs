@@ -17,12 +17,12 @@ use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::TracedPool;
 use atc_core::{
     Clock, JobConclusion, JobStatus, RunConclusion, RunStatus,
     event::{JobEvent, RunEvent},
 };
 use atc_wire::CommittedEvent;
-use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio::sync::{Notify, broadcast};
 use tokio::task::JoinHandle;
@@ -251,7 +251,7 @@ pub(crate) fn derive_job_target(action: &JobEvent) -> JobStatus {
 /// [`PgStore::start`] (production) or [`PgStore::start_with_test_hooks`]
 /// (tests; behind the `test-support` feature).
 pub struct PgStore {
-    pub(crate) pool: PgPool,
+    pub(crate) pool: TracedPool,
     /// Wall-clock source for the drain heartbeat, outbox-lag observation, and
     /// retention path. Owning this here (rather than reading `Utc::now()`
     /// directly at each call site) lets tests advance time deterministically
@@ -335,7 +335,7 @@ impl PgStore {
     /// tasks before returning `Err`.
     pub async fn start(
         clock: Arc<dyn Clock>,
-        pool: PgPool,
+        pool: TracedPool,
         listener_conn: PgListener,
         shutdown: CancellationToken,
         outbox_retention: Duration,
@@ -360,7 +360,7 @@ impl PgStore {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn start_inner(
         clock: Arc<dyn Clock>,
-        pool: PgPool,
+        pool: TracedPool,
         listener_conn: PgListener,
         shutdown: CancellationToken,
         outbox_retention: Duration,

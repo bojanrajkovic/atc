@@ -16,6 +16,8 @@
 //! the wire types themselves.
 
 use std::sync::Arc;
+use std::sync::Weak;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use atc_core::RunnerPoolCapacity;
 use atc_wire::CommittedEvent;
@@ -26,11 +28,106 @@ use axum::{
     },
     response::IntoResponse,
 };
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use crate::config_watcher::ConfigEvent;
 use crate::state::AppState;
+
+/// Meter scope for WS instruments. Mirrors the `ConfigWatcherMetrics` and
+/// `PgMetrics` conventions.
+const METER_SCOPE: &str = "atc";
+
+/// OTel-instrumentation surface for the WebSocket layer.
+///
+/// Registered once at startup via [`WsMetrics::register`] and threaded onto
+/// `AppState` so the handler can record per-connection events.
+///
+/// Mirrors the cached-instrument + observable-gauge-via-`Weak<Arc<AtomicI64>>`
+/// pattern used by [`crate::config_watcher::ConfigWatcherMetrics`] and
+/// `atc_store_pg::metrics::PgMetrics` — see `docs/architecture/metrics.md`
+/// § "Cached instrument convention".
+pub struct WsMetrics {
+    lagged_evictions: Counter<u64>,
+    active_connections: Arc<AtomicI64>,
+    attrs_committed: [KeyValue; 1],
+    attrs_config: [KeyValue; 1],
+}
+
+/// Which broadcast channel a WS connection lagged on. Bounded label set —
+/// labeled on the `atc_ws_lagged_evictions_total` counter.
+#[derive(Clone, Copy)]
+pub enum LaggedChannel {
+    /// `state.persist.subscribe()` — the `CommittedEvent` broadcast.
+    Committed,
+    /// `state.config_events_tx.subscribe()` — the operator-config broadcast.
+    Config,
+}
+
+impl WsMetrics {
+    /// Register OTel instruments against the global meter.
+    ///
+    /// Must run after `otel::init_otel`. Safe to call under the no-op meter
+    /// (everything compiles to no-ops).
+    #[must_use]
+    pub fn register() -> Arc<Self> {
+        let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
+
+        let lagged_evictions = meter
+            .u64_counter("atc_ws_lagged_evictions_total")
+            .with_description(
+                "WebSocket clients force-disconnected because their broadcast \
+                 receiver fell behind and the bounded buffer (capacity 256) \
+                 overflowed. A sustained nonzero rate means the broadcast \
+                 buffer is undersized for current traffic OR a client is \
+                 stalled. Labeled by channel: \
+                 channel=committed → CommittedEvent stream (webhook fan-out); \
+                 channel=config → ConfigEvent stream (operator-config reloads).",
+            )
+            .build();
+
+        let active_connections = Arc::new(AtomicI64::new(0));
+        let active_weak: Weak<AtomicI64> = Arc::downgrade(&active_connections);
+        let _gauge = meter
+            .i64_observable_gauge("atc_ws_connections_active")
+            .with_description(
+                "Number of WebSocket clients currently connected to /v1/ws. \
+                 Reflects the count of in-flight `handle_socket` tasks.",
+            )
+            .with_callback(move |observer| {
+                if let Some(atomic) = active_weak.upgrade() {
+                    observer.observe(atomic.load(Ordering::Acquire), &[]);
+                }
+            })
+            .build();
+
+        Arc::new(Self {
+            lagged_evictions,
+            active_connections,
+            attrs_committed: [KeyValue::new("channel", "committed")],
+            attrs_config: [KeyValue::new("channel", "config")],
+        })
+    }
+
+    fn record_connection_started(&self) {
+        self.active_connections.fetch_add(1, Ordering::Release);
+    }
+
+    fn record_connection_ended(&self) {
+        self.active_connections.fetch_sub(1, Ordering::Release);
+    }
+
+    fn record_lagged(&self, channel: LaggedChannel) {
+        let attrs = match channel {
+            LaggedChannel::Committed => &self.attrs_committed,
+            LaggedChannel::Config => &self.attrs_config,
+        };
+        self.lagged_evictions.add(1, attrs);
+    }
+}
 
 /// Outer wire frame for the `/v1/ws` event stream.
 ///
@@ -100,10 +197,15 @@ pub async fn ws_handler(
     let committed_rx = state.persist.subscribe();
     let config_rx = state.config_events_tx.subscribe();
     let shutdown = state.shutdown.clone();
+    let ws_metrics = Arc::clone(&state.ws_metrics);
     ws.on_upgrade(move |socket| {
-        state
-            .ws_tracker
-            .track_future(handle_socket(socket, committed_rx, config_rx, shutdown))
+        state.ws_tracker.track_future(handle_socket(
+            socket,
+            committed_rx,
+            config_rx,
+            shutdown,
+            ws_metrics,
+        ))
     })
 }
 
@@ -136,11 +238,44 @@ pub async fn ws_handler(
 /// `Arc<dyn PersistentStore>` inside it) through orchestration, so the
 /// store's broadcast sender stays open through the cancel-fire window.
 async fn handle_socket(
+    socket: WebSocket,
+    committed_rx: broadcast::Receiver<CommittedEvent>,
+    config_rx: broadcast::Receiver<ConfigEvent>,
+    shutdown: CancellationToken,
+    ws_metrics: Arc<WsMetrics>,
+) {
+    // One info-span wraps the whole connection lifetime so the trace surfaces
+    // close reason + lagged flag as late-bound fields once the loop returns.
+    // `ws.close_reason` is mandatory on disconnect; `ws.lagged` is recorded
+    // only on the lagged-eviction branches.
+    let span = tracing::info_span!(
+        "ws.connection",
+        ws.close_reason = tracing::field::Empty,
+        ws.lagged_channel = tracing::field::Empty,
+    );
+    handle_socket_inner(socket, committed_rx, config_rx, shutdown, ws_metrics)
+        .instrument(span)
+        .await;
+}
+
+async fn handle_socket_inner(
     mut socket: WebSocket,
     mut committed_rx: broadcast::Receiver<CommittedEvent>,
     mut config_rx: broadcast::Receiver<ConfigEvent>,
     shutdown: CancellationToken,
+    ws_metrics: Arc<WsMetrics>,
 ) {
+    ws_metrics.record_connection_started();
+    // Decrement on every exit path via a drop guard. Inline because the only
+    // thing it does is the matching `record_connection_ended` call.
+    struct ConnectionGuard<'a>(&'a WsMetrics);
+    impl<'a> Drop for ConnectionGuard<'a> {
+        fn drop(&mut self) {
+            self.0.record_connection_ended();
+        }
+    }
+    let _conn_guard = ConnectionGuard(&ws_metrics);
+
     tracing::info!("WebSocket client connected");
 
     // Synchronously send ServerHello as the first text frame on this
@@ -202,6 +337,8 @@ async fn handle_socket(
                         // Symmetric with the committed channel: close on lag,
                         // client reconnects and re-fetches /v1/state to pick
                         // up the latest capacities from the snapshot rail.
+                        ws_metrics.record_lagged(LaggedChannel::Config);
+                        tracing::Span::current().record("ws.lagged_channel", "config");
                         tracing::warn!(
                             missed = n,
                             "WebSocket client lagging on config channel; closing to force re-snapshot",
@@ -240,6 +377,8 @@ async fn handle_socket(
                         // past their cursor. Close the socket — the frontend's
                         // reconnect handler will fetch /v1/state and
                         // re-establish the seq cursor from the snapshot.
+                        ws_metrics.record_lagged(LaggedChannel::Committed);
+                        tracing::Span::current().record("ws.lagged_channel", "committed");
                         tracing::warn!(
                             missed = n,
                             "WebSocket client lagging on committed channel; closing to force re-snapshot",
@@ -254,6 +393,7 @@ async fn handle_socket(
         }
     };
 
+    tracing::Span::current().record("ws.close_reason", reason);
     tracing::info!(reason, "WebSocket client disconnected");
 }
 

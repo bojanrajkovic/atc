@@ -189,7 +189,7 @@ async fn start_rejects_sub_floor_retention() {
 /// SQL `now()` (which `TestClock` cannot influence). Returns the allocated
 /// `seq`.
 async fn insert_outbox_at(
-    pool: &sqlx::PgPool,
+    pool: &atc_store_pg::TracedPool,
     run_id: i64,
     inserted_at: chrono::DateTime<chrono::Utc>,
 ) -> i64 {

@@ -101,8 +101,6 @@ rg -nU --multiline \
 
 The grep should return no matches: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new hit anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
 
-`atc_pg_in_memory_drift_total` is registered in `PgMetrics::register_with_meter` but no field is cached: the metric is part of the documented surface but has no production emit site today. If a future writer adds an emit, the cached-instrument field MUST be added in the same change.
-
 ### W3C trace context propagation
 
 The OTel SDK installs `TraceContextPropagator` globally in `init_otel`. The webhook handler extracts the incoming `traceparent` header before constructing the request span:
@@ -199,16 +197,6 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Per-replica vs cluster:** Per-replica — only the writer replica increments. In multi-replica deployments any single replica can be the writer for a given webhook (GitHub picks one ingress).
 - **Aggregation:** `sum by (kind)` cluster-wide for severity routing (parity → page; transient → alert on sustained rate). `max by (pod)` to localize a misbehaving replica.
 - **Example PromQL:** `sum by (kind) (rate(atc_pg_write_failures_total[5m]))`
-
-### `atc_pg_in_memory_drift_total`
-
-- **Name:** `atc_pg_in_memory_drift_total`
-- **Type:** counter
-- **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** Events where the PG transaction committed successfully but the in-memory `RunStateMachine` apply on the same replica subsequently diverged. The committed PG row is durable and recoverable from the outbox, so a single increment is not data loss — but a sustained rate signals a code defect in the in-memory state machine and warrants a page.
-- **Per-replica vs cluster:** Per-replica observation; cluster-relevant signal because any replica's drift indicates a logic bug independent of which one observed it.
-- **Aggregation:** `sum without (pod, instance)` for cluster-wide drift rate; alert on any nonzero sustained rate.
-- **Example PromQL:** `sum(rate(atc_pg_in_memory_drift_total[5m]))`
 
 ### `atc_pg_notify_emitted_total`
 
@@ -390,6 +378,26 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Aggregation:** `max without (pod, instance) (atc_config_runner_pools)` for the cluster-wide pool count; per-pod divergence during a rolling reload is expected.
 - **Example PromQL:** `max without (pod, instance) (atc_config_runner_pools)`
 
+### `atc_ws_connections_active`
+
+- **Name:** `atc_ws_connections_active`
+- **Type:** gauge
+- **Attributes:** none emitted; `pod`, `instance` (injected)
+- **Measures:** Number of WebSocket clients currently connected to `/v1/ws` on this replica — the count of in-flight `handle_socket` tasks. Implemented as an OTel `ObservableGauge<i64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention). The atomic is incremented at the start of each `handle_socket_inner` and decremented via a drop guard on every exit path. `Weak<AtomicI64>` registration ensures the callback no-ops after the owning `WsMetrics` Arc is released.
+- **Per-replica vs cluster:** Per-replica — each replica counts its own connected clients. Cluster-wide value is the sum across pods.
+- **Aggregation:** `sum without (pod, instance) (atc_ws_connections_active)` for the cluster-wide connection count.
+- **Example PromQL:** `sum without (pod, instance) (atc_ws_connections_active)`
+
+### `atc_ws_lagged_evictions_total`
+
+- **Name:** `atc_ws_lagged_evictions_total`
+- **Type:** counter
+- **Attributes:** `channel` (`"committed"` | `"config"`); `pod`, `instance` (injected)
+- **Measures:** WebSocket clients force-disconnected because their broadcast receiver fell behind and the bounded buffer (capacity 256) overflowed. `channel="committed"` is the `CommittedEvent` fan-out from `PersistentStore::subscribe()`; `channel="config"` is the operator-config reload stream from `config_events_tx`. A sustained nonzero rate means the broadcast buffer is undersized for current traffic OR a specific client is stalled. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 1]` attribute slices per channel (cached-instrument convention) — call sites incur no allocation on emit.
+- **Per-replica vs cluster:** Per-replica — each replica counts its own lagged-eviction events.
+- **Aggregation:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))` for per-channel eviction rate; `sum (rate(atc_ws_lagged_evictions_total[5m]))` for the total. A steady stream on `channel="config"` is suspicious because operator-config reloads are low-volume; on `channel="committed"` it indicates a slow client under high webhook traffic.
+- **Example PromQL:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))`
+
 ### `atc_pg_outbox_oldest_row_age_seconds`
 
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`
@@ -415,7 +423,7 @@ Spans declared by ATC, grouped by the boundary they decorate.
 
 | Span | Source | Attributes |
 |---|---|---|
-| `webhook.handler` | `backend/crates/atc-server/src/routes.rs` (`webhook_handler`) — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `webhook.delivery_id` (recorded after parsing `x-github-delivery`), `webhook.event_type` (recorded after parsing `x-github-event`). The two `webhook.*` fields are declared as `tracing::field::Empty` at construction. |
+| `webhook.handler` | `backend/crates/atc-server/src/routes.rs` (`webhook_handler`) — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"` (the route is POST-only by axum's router), `http.response.status_code` (u16; late-bound, recorded at the single exit point after a labeled-block funnels all return branches), `webhook.delivery_id` (recorded after parsing `x-github-delivery`), `webhook.event_type` (recorded after parsing `x-github-event`). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
 | `webhook.verify` | `backend/crates/atc-github/src/webhook/verify.rs` (`verify_signature`) | `webhook.signature.present` (bool), `webhook.signature.algorithm="sha256"`. Secret, body bytes, and the signature value are explicitly skipped (`skip(secret, body, signature)`). |
 | `webhook.parse` | `backend/crates/atc-github/src/webhook/mod.rs` (`parse_webhook`) | `webhook.event_type`, `webhook.action` (late-bound; recorded after the action is decoded). Body bytes are skipped. |
 
@@ -427,7 +435,7 @@ Spans declared by ATC, grouped by the boundary they decorate.
 | `persist.apply.job_event` | `PgStore::apply_job_event` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::apply_job_event` in `persist/in_memory.rs` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
 | `persist.notify.emit` | `notify_outbox_seq_in_txn` in `atc-store-pg/src/store/writes.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
 
-Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`) carry default `#[tracing::instrument(skip_all)]` spans and inherit context from the surrounding `persist.apply.*` span.
+Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.upsert.run`, `persist.upsert.job`, `persist.outbox.insert.run`, `persist.outbox.insert.job`) and inherit context from the surrounding `persist.apply.*` span. The function-name defaults (`upsert_run_in_txn`, …) leaked crate-internal Rust names into the trace surface; explicit names keep span identifiers in the `persist.*` namespace.
 
 ### Listener path
 
@@ -440,7 +448,7 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 | Span | Source | Attributes |
 |---|---|---|
 | `drain.pass` | `drain_pass` in `listener.rs` — per-pass root span. The spawn site (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) carries no task-lifetime wrapper; each invocation of `drain_pass` emits its own root. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
-| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`, nested under `drain.pass` via `broadcast_span.in_scope(...)`. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
+| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`, nested under `drain.pass` via `broadcast_span.in_scope(...)`. When the outbox row carries a W3C `traceparent` (captured at INSERT time from the originating `webhook.handler` span), this span gets an OTel span LINK to that trace via `Span::add_link` — Link, not parent, because `drain.pass` is intentionally a per-tick root (see § "Task-lifetime root spans"). Operators trace "webhook in → frame out" by following the link in Tempo. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
 
 ### Eviction path (in-memory mode only)
 
@@ -454,3 +462,22 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 |---|---|---|
 | `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
 | `outbox.sweep.tick` | `outbox_sweep_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |
+
+### sqlx-tracing per-query spans (PG mode)
+
+| Span | Source | Attributes |
+|---|---|---|
+| `sqlx.execute`, `sqlx.fetch_one`, `sqlx.fetch_optional`, `sqlx.fetch_all`, `sqlx.execute_many`, `sqlx.fetch_many`, `sqlx.describe` | Emitted by the `sqlx-tracing` crate when the wrapped `crate::TracedPool` or a transaction's `.executor()` is the `sqlx::Executor` for a query. Each span is a child of whatever `#[tracing::instrument]` boundary it runs inside (e.g., `persist.upsert.run` → `sqlx.execute`). | `db.system.name="postgresql"` (constant), `db.query.text` (template SQL with bind placeholders `$1`/`$2`/…; bind values are physically inaccessible via sqlx's `Execute` trait so they cannot leak — verified against `sqlx-tracing v0.2.1`), `db.name` (the database name extracted from the pool URL), `net.peer.name` / `net.peer.port` (host/port from pool URL), `otel.kind="client"`. On error: `error.type` (`"client"` / `"server"`), `error.message`, `error.stacktrace`, `otel.status_code="error"`, `otel.status_description`. On fetch_one / fetch_optional / fetch_all: `db.response.returned_rows`. |
+
+### WebSocket connection lifetime
+
+| Span | Source | Attributes |
+|---|---|---|
+| `ws.connection` | `ws::handle_socket` in `atc-server/src/ws.rs` — root span wrapping the entire connection lifetime from upgrade to disconnect. Built via `info_span!` and applied through `Instrument`-ed inner function so late-bound fields are recorded before the span exits. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). | `ws.close_reason` (`&'static str`; late-bound, the loop's `break` reason — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded when the loop exits via a lagged-eviction branch — paired with `atc_ws_lagged_evictions_total`). |
+
+### Liveness + config-reload internals
+
+| Span | Source | Attributes |
+|---|---|---|
+| `persist.liveness` | `PgStore::liveness_check` in `atc-store-pg/src/store/writes.rs` — child of the inbound `/readyz` request frame (Axum auto-instruments the route). Wraps the `SELECT 1` round-trip AND the drain-heartbeat staleness check so an operator looking at a 503 trace can see which side broke. | `liveness.outcome` (`"ok"` / `"db_unreachable"` / `"drain_stale"`; late-bound, recorded once at the function exit). `liveness.heartbeat_age_ms` (i64; late-bound, recorded after the DB ping succeeds — absent when the DB ping itself failed). |
+| `config.reload` | `config::reload_runner_pools` in `atc-server/src/config.rs` — root span on each watcher-driven reload attempt. Decorates the file read, YAML parse, and validation pipeline so an operator can see exactly which stage of a failed reload took how long. | `config.path` (string; the watched file path), `config.outcome` (`"ok"` / `"read_error"` / `"parse_error"` / `"validate_error"`; late-bound), `config.pools` (usize; late-bound, only recorded on the `ok` path — the loaded pool count). Pairs with `atc_config_reload_total{result,reason}`. |

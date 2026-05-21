@@ -44,6 +44,7 @@ async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let main_router = routes::api_routes()
@@ -561,6 +562,7 @@ async fn config_channel_lagged_closes_socket() {
         config_events_tx: config_tx.clone(),
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let router = routes::api_routes()

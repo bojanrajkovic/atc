@@ -183,13 +183,13 @@ async fn dedup_suppresses_rescan_rebroadcast() {
         "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 42000000001, $1) RETURNING seq",
     )
     .bind(&payload_a)
-    .fetch_one(&mut *tx_a)
+    .fetch_one(&mut tx_a.executor())
     .await
     .expect("outbox INSERT A failed");
 
     sqlx::query("SELECT pg_notify('atc_outbox', $1::text)")
         .bind(seq_a)
-        .execute(&mut *tx_a)
+        .execute(&mut tx_a.executor())
         .await
         .expect("pg_notify A queued");
 
@@ -200,13 +200,13 @@ async fn dedup_suppresses_rescan_rebroadcast() {
         "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 42000000002, $1) RETURNING seq",
     )
     .bind(&payload_b)
-    .fetch_one(&mut *tx_b)
+    .fetch_one(&mut tx_b.executor())
     .await
     .expect("outbox INSERT B failed");
 
     sqlx::query("SELECT pg_notify('atc_outbox', $1::text)")
         .bind(seq_b)
-        .execute(&mut *tx_b)
+        .execute(&mut tx_b.executor())
         .await
         .expect("pg_notify B queued");
 

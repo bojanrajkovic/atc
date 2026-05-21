@@ -251,16 +251,36 @@ impl std::error::Error for ReloadError {}
 /// - [`ReloadError::Parse`] — YAML deserialization failed.
 /// - [`ReloadError::Validate`] — zero capacity, empty labels, or duplicate
 ///   canonicalized label set.
+#[tracing::instrument(
+    name = "config.reload",
+    skip(path),
+    fields(
+        config.path = %path.display(),
+        config.pools = tracing::field::Empty,
+        config.outcome = tracing::field::Empty,
+    ),
+)]
 pub fn reload_runner_pools(path: &Path) -> Result<Vec<RunnerPoolCapacity>, ReloadError> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| ReloadError::Read(format!("failed to read {}: {e}", path.display())))?;
+    let span = tracing::Span::current();
+    let contents = std::fs::read_to_string(path).map_err(|e| {
+        span.record("config.outcome", "read_error");
+        ReloadError::Read(format!("failed to read {}: {e}", path.display()))
+    })?;
 
     let payload: ReloadPayload = Figment::from(Yaml::string(&contents))
         .extract()
-        .map_err(|e| ReloadError::Parse(format!("failed to parse {}: {e}", path.display())))?;
+        .map_err(|e| {
+            span.record("config.outcome", "parse_error");
+            ReloadError::Parse(format!("failed to parse {}: {e}", path.display()))
+        })?;
 
-    validate_capacities(&payload.runner_pools).map_err(ReloadError::Validate)?;
+    validate_capacities(&payload.runner_pools).map_err(|e| {
+        span.record("config.outcome", "validate_error");
+        ReloadError::Validate(e)
+    })?;
 
+    span.record("config.pools", payload.runner_pools.len());
+    span.record("config.outcome", "ok");
     Ok(payload.runner_pools)
 }
 

@@ -140,10 +140,6 @@ impl PgMetrics {
     /// test binary constructs multiple `PgStore` instances across tests; each
     /// re-registration is idempotent.
     ///
-    /// `atc_pg_in_memory_drift_total` is declared but no handle is cached:
-    /// the metric is part of the documented surface but has no production
-    /// emit site today. Future writers that add an emit site MUST cache a
-    /// handle here.
     pub fn register(
         broadcast_watermark: &Arc<AtomicI64>,
         min_pending_seq: &Arc<AtomicI64>,
@@ -187,10 +183,6 @@ impl PgMetrics {
         let write_failures = meter
             .u64_counter("atc_pg_write_failures_total")
             .with_description("PG write failures by kind (parity or transient)")
-            .build();
-        let _in_memory_drift = meter
-            .u64_counter("atc_pg_in_memory_drift_total")
-            .with_description("PG committed but in-memory apply diverged")
             .build();
         let notify_emitted = meter
             .u64_counter("atc_pg_notify_emitted_total")

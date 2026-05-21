@@ -85,7 +85,7 @@ pub(super) fn parse_job_conclusion(s: &str) -> Result<JobConclusion, PersistErro
 /// into the `StateSnapshot` wire contract.
 #[allow(dead_code)]
 pub(crate) async fn read_all_runs(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
 ) -> Result<Vec<WorkflowRun>, PersistError> {
     let rows = sqlx::query!(
         r#"
@@ -97,7 +97,7 @@ pub(crate) async fn read_all_runs(
          ORDER BY id
         "#,
     )
-    .fetch_all(&mut **tx)
+    .fetch_all(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -133,7 +133,7 @@ pub(crate) async fn read_all_runs(
 /// Read all jobs ordered by id, reconstructing `RunnerInfo` and `steps`.
 #[allow(dead_code)]
 pub(crate) async fn read_all_jobs(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
 ) -> Result<Vec<Job>, PersistError> {
     let rows = sqlx::query!(
         r#"
@@ -144,7 +144,7 @@ pub(crate) async fn read_all_jobs(
          ORDER BY id
         "#,
     )
-    .fetch_all(&mut **tx)
+    .fetch_all(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 

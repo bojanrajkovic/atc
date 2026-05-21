@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64};
 use std::time::Duration;
 
+use crate::TracedPool;
 use atc_core::Clock;
-use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tokio::sync::Notify;
 use tokio::task::AbortHandle;
@@ -57,7 +57,7 @@ impl PgStore {
     /// the drain mid-pass.
     pub async fn start_with_test_hooks(
         clock: Arc<dyn Clock>,
-        pool: PgPool,
+        pool: TracedPool,
         listener_conn: PgListener,
         shutdown: CancellationToken,
         outbox_retention: Duration,

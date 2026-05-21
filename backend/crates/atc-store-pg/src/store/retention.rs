@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
+use crate::TracedPool;
 use atc_core::Clock;
-use sqlx::PgPool;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -40,7 +40,7 @@ use super::{
 /// are an anti-pattern".
 pub(crate) fn spawn_outbox_heartbeat(
     clock: Arc<dyn Clock>,
-    pool: PgPool,
+    pool: TracedPool,
     replica_id: Arc<str>,
     broadcast_watermark: Arc<AtomicI64>,
     min_replica_watermark_atomic: Arc<AtomicI64>,
@@ -96,7 +96,7 @@ pub(crate) fn spawn_outbox_heartbeat(
 )]
 pub(crate) async fn outbox_heartbeat_tick(
     clock: &dyn Clock,
-    pool: &PgPool,
+    pool: &TracedPool,
     replica_id: &str,
     broadcast_watermark: &AtomicI64,
     min_replica_watermark_atomic: &AtomicI64,
@@ -185,7 +185,7 @@ pub(crate) async fn outbox_heartbeat_tick(
 /// dashboards before any destructive work fires.
 pub(crate) fn spawn_outbox_sweep(
     clock: Arc<dyn Clock>,
-    pool: PgPool,
+    pool: TracedPool,
     outbox_retention: Duration,
     metrics: Arc<PgMetrics>,
     cancel: CancellationToken,
@@ -225,7 +225,7 @@ pub(crate) fn spawn_outbox_sweep(
 )]
 pub(crate) async fn outbox_sweep_tick(
     clock: &dyn Clock,
-    pool: &PgPool,
+    pool: &TracedPool,
     outbox_retention: Duration,
     metrics: &PgMetrics,
 ) -> Result<u64, sqlx::Error> {

@@ -30,7 +30,7 @@ use tower::ServiceExt;
 
 /// Build a full router with a real PG pool mounted.
 async fn build_app_with_pg(
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
 ) -> (
     axum::Router,
@@ -49,6 +49,7 @@ async fn build_app_with_pg(
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
@@ -83,7 +84,7 @@ fn write_failure_attrs(kind: &'static str) -> Vec<KeyValue> {
 }
 
 /// Insert a minimal stub runs row for FK satisfaction. Uses untyped sqlx API.
-async fn insert_stub_run(pool: &sqlx::PgPool, run_id: i64) {
+async fn insert_stub_run(pool: &atc_store_pg::TracedPool, run_id: i64) {
     sqlx::query(
         r#"
         INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at)
@@ -98,7 +99,7 @@ async fn insert_stub_run(pool: &sqlx::PgPool, run_id: i64) {
 }
 
 /// Insert a Completed run directly (to trigger parity rejection on subsequent Requested webhook).
-async fn insert_completed_run(pool: &sqlx::PgPool, run_id: i64) {
+async fn insert_completed_run(pool: &atc_store_pg::TracedPool, run_id: i64) {
     sqlx::query(
         r#"
         INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at)
@@ -112,7 +113,7 @@ async fn insert_completed_run(pool: &sqlx::PgPool, run_id: i64) {
 }
 
 /// Count rows in a table.
-async fn count_rows(pool: &sqlx::PgPool, table: &str) -> i64 {
+async fn count_rows(pool: &atc_store_pg::TracedPool, table: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*)::bigint FROM {table}"))
         .fetch_one(pool)
         .await
@@ -120,7 +121,7 @@ async fn count_rows(pool: &sqlx::PgPool, table: &str) -> i64 {
 }
 
 /// Count outbox rows by kind.
-async fn count_outbox_by_kind(pool: &sqlx::PgPool, kind: &str) -> i64 {
+async fn count_outbox_by_kind(pool: &atc_store_pg::TracedPool, kind: &str) -> i64 {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*)::bigint FROM outbox WHERE kind = $1")
         .bind(kind)
         .fetch_one(pool)
@@ -129,7 +130,7 @@ async fn count_outbox_by_kind(pool: &sqlx::PgPool, kind: &str) -> i64 {
 }
 
 /// Count rows matching an integer id filter.
-async fn count_by_id(pool: &sqlx::PgPool, table: &str, id: i64) -> i64 {
+async fn count_by_id(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> i64 {
     sqlx::query_scalar::<_, i64>(&format!(
         "SELECT COUNT(*)::bigint FROM {table} WHERE id = $1"
     ))
@@ -140,7 +141,7 @@ async fn count_by_id(pool: &sqlx::PgPool, table: &str, id: i64) -> i64 {
 }
 
 /// Fetch status string from a table by id.
-async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
+async fn fetch_status(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> String {
     sqlx::query_scalar::<_, String>(&format!("SELECT status FROM {table} WHERE id = $1"))
         .bind(id)
         .fetch_one(pool)
@@ -348,7 +349,7 @@ async fn bigserial_gap_property() {
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 99001, '{}'::jsonb) RETURNING seq",
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut tx.executor())
         .await
         .unwrap();
         tx.rollback().await.unwrap();
@@ -361,7 +362,7 @@ async fn bigserial_gap_property() {
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 99001, '{}'::jsonb) RETURNING seq",
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut tx.executor())
         .await
         .unwrap();
         tx.commit().await.unwrap();
@@ -752,25 +753,22 @@ async fn payload_is_envelope_not_seq_event() {
 }
 
 // ---------------------------------------------------------------------------
-// Post-commit in-memory drift
+// PG-mode handler is silent on in-memory state
 // ---------------------------------------------------------------------------
 
-/// In-memory drift is structurally unreachable in PG mode.
-///
-/// The in-memory apply is silenced in PG mode — the handler commits to PG,
+/// In PG mode the in-memory apply is silenced — the handler commits to PG,
 /// emits NOTIFY, and returns. The drain task is the sole writer to
 /// `webhook_tx`, and the in-memory `state.store` is never written. There is
-/// no in-memory state to drift from, so `atc_pg_in_memory_drift_total` is a
-/// stuck-at-zero counter under PG mode.
+/// no in-memory state to drift from in PG mode.
 ///
-/// This test asserts the **invariant** instead of the **mechanism**: after a
-/// webhook commits in PG mode, the in-memory store is still empty, no drift
-/// counter incremented, and the response shape advertises the outbox seq
-/// (status="accepted" with seq, not "processed"). The original drift detection
-/// is preserved at the metric level — drift_total stays at baseline.
+/// This test asserts the invariant: after a webhook commits in PG mode, the
+/// response shape advertises the outbox seq (status="accepted" with seq, not
+/// "processed"), the PG row exists, and the snapshot reads the committed run
+/// from the database (not from any in-memory mirror). The write-failures
+/// counters stay at baseline since the commit succeeded.
 #[tokio::test]
 #[serial_test::serial]
-async fn no_in_memory_drift_in_pg_mode() {
+async fn pg_mode_does_not_write_in_memory_state() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
@@ -811,13 +809,7 @@ async fn no_in_memory_drift_in_pg_mode() {
         "PG snapshot must contain the committed run"
     );
 
-    // Drift counter is stuck at zero — no apply, no detection.
     let snapshot = common::snapshot_metrics();
-    assert_eq!(
-        common::counter_value(&snapshot, "atc_pg_in_memory_drift_total", &[]),
-        0,
-        "drift counter must not increment in PG mode (handler doesn't write in-memory)"
-    );
     assert_eq!(
         common::counter_value(
             &snapshot,

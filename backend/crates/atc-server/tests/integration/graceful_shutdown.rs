@@ -45,7 +45,7 @@ struct FullServerFixture {
     orchestration_handle: JoinHandle<bool>,
 }
 
-async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixture {
+async fn start_full_server(pool: atc_store_pg::TracedPool, db_url: String) -> FullServerFixture {
     common::ensure_recorder_installed();
 
     let shutdown = CancellationToken::new();
@@ -61,6 +61,7 @@ async fn start_full_server(pool: sqlx::PgPool, db_url: String) -> FullServerFixt
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());

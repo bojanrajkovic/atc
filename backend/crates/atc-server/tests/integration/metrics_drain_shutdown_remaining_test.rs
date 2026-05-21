@@ -15,7 +15,7 @@ const METRIC: &str = "atc_pg_drain_shutdown_remaining_rows";
 /// Insert a minimal stub runs row to satisfy the outbox FK constraint. Uses
 /// the untyped sqlx API so the new query does not require regenerating
 /// `.sqlx/`.
-async fn insert_stub_run(pool: &sqlx::PgPool, run_id: i64) {
+async fn insert_stub_run(pool: &atc_store_pg::TracedPool, run_id: i64) {
     sqlx::query(
         r"
         INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at)
@@ -34,7 +34,7 @@ async fn insert_stub_run(pool: &sqlx::PgPool, run_id: i64) {
 /// arm never fires for these rows. Combined with the heartbeat-only arm not
 /// scanning the outbox, the drain leaves them undelivered until shutdown — at
 /// which point the shutdown count query observes them.
-async fn insert_outbox_row_silent(pool: &sqlx::PgPool, run_id: i64) {
+async fn insert_outbox_row_silent(pool: &atc_store_pg::TracedPool, run_id: i64) {
     sqlx::query("INSERT INTO outbox (kind, run_id, payload) VALUES ('run', $1, '{}'::jsonb)")
         .bind(run_id)
         .execute(pool)

@@ -223,6 +223,12 @@ async fn main() {
     // shouldn't be able to backpressure other consumers.
     let (config_events_tx, _) = broadcast::channel::<ConfigEvent>(256);
 
+    // Register WS-layer OTel instruments against the global meter. Must come
+    // after init_otel (already wired earlier in this fn). The returned
+    // `Arc<WsMetrics>` rides on AppState so every WS handler shares one
+    // instrument-cache and one active-connection atomic.
+    let ws_metrics = atc_server::ws::WsMetrics::register();
+
     let app_state = Arc::new(AppState {
         persist: Arc::clone(&persist),
         webhook_secret: cfg.github.webhook_secret.clone(),
@@ -230,6 +236,7 @@ async fn main() {
         config_events_tx,
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
+        ws_metrics,
     });
 
     // Spawn the process-metrics observer (wraps `opentelemetry-system-metrics`).

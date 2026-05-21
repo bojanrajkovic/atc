@@ -55,7 +55,7 @@ impl PersistentStore for PgStore {
             .await
             .map_err(|e| PersistError::Backend(Box::new(e)))?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await
             .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -126,19 +126,29 @@ impl PersistentStore for PgStore {
     /// The drain task refreshes the heartbeat at the top of every loop iteration
     /// (whether woken by NOTIFY or the 5 s heartbeat tick). If the heartbeat is
     /// older than 30 s the drain task has stalled; return `DrainStale`.
+    #[tracing::instrument(
+        name = "persist.liveness",
+        skip(self),
+        fields(liveness.outcome = tracing::field::Empty, liveness.heartbeat_age_ms = tracing::field::Empty),
+    )]
     async fn liveness_check(&self) -> Result<(), LivenessError> {
+        let span = tracing::Span::current();
         if let Err(e) = sqlx::query("SELECT 1").execute(&self.pool).await {
+            span.record("liveness.outcome", "db_unreachable");
             return Err(LivenessError::DbUnreachable(Box::new(e)));
         }
 
         let now_ms = self.clock.now().timestamp_millis();
         let last = self.last_drain_pass_at.load(Ordering::Relaxed);
         let age = now_ms.saturating_sub(last);
+        span.record("liveness.heartbeat_age_ms", age);
         const READYZ_HEARTBEAT_STALENESS_MS: i64 = 30_000;
         if age > READYZ_HEARTBEAT_STALENESS_MS {
+            span.record("liveness.outcome", "drain_stale");
             return Err(LivenessError::DrainStale { age_ms: age });
         }
 
+        span.record("liveness.outcome", "ok");
         Ok(())
     }
 
@@ -255,9 +265,9 @@ impl PersistentStore for PgStore {
 /// Uses `&mut **tx` (double-deref through `Transaction<Postgres>` →
 /// `PgConnection`) as required by sqlx 0.8's `Executor` bound.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0))]
+#[tracing::instrument(name = "persist.upsert.run", skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn upsert_run_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
 ) -> Result<(), PersistError> {
     let target = derive_run_target(&env.action);
@@ -319,7 +329,7 @@ pub(crate) async fn upsert_run_in_txn(
         env.updated_at,
         &preds_strs as &[&str],
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -340,9 +350,9 @@ pub(crate) async fn upsert_run_in_txn(
 /// stub-row and the job row are written in the same transaction, so PostgreSQL
 /// same-transaction visibility satisfies the FK check.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
+#[tracing::instrument(name = "persist.upsert.job", skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn upsert_job_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
 ) -> Result<(), PersistError> {
     let target = derive_job_target(&env.action);
@@ -389,7 +399,7 @@ pub(crate) async fn upsert_job_in_txn(
         env.repo,
         env.created_at,
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -439,7 +449,7 @@ pub(crate) async fn upsert_job_in_txn(
         env.created_at,
         &preds_strs as &[&str],
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -457,22 +467,29 @@ pub(crate) async fn upsert_job_in_txn(
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0))]
+#[tracing::instrument(name = "persist.outbox.insert.run", skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn insert_outbox_run_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
 ) -> Result<i64, PersistError> {
     let run_id = env.run_id.0;
     let payload = serde_json::to_value(env).map_err(|e| PersistError::Backend(Box::new(e)))?;
+    // Capture the current span's W3C traceparent. Stored on the outbox row so
+    // the drain task can attach an OTel span link from `drain.broadcast` back
+    // to this `webhook.handler` trace. `None` under no-op OTel SDK.
+    let traceparent = crate::traceparent::current();
 
     let row = sqlx::query!(
         r#"
-        INSERT INTO outbox (kind, run_id, payload) VALUES ('run', $1, $2::jsonb) RETURNING seq
+        INSERT INTO outbox (kind, run_id, payload, traceparent)
+        VALUES ('run', $1, $2::jsonb, $3)
+        RETURNING seq
         "#,
         run_id,
         payload,
+        traceparent.as_deref(),
     )
-    .fetch_one(&mut **tx)
+    .fetch_one(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -490,7 +507,7 @@ pub(crate) async fn insert_outbox_run_in_txn(
     fields(notify.kind = kind, notify.seq = seq),
 )]
 pub(crate) async fn notify_outbox_seq_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     kind: &'static str,
     seq: i64,
 ) -> Result<(), atc_core::PersistError> {
@@ -499,7 +516,7 @@ pub(crate) async fn notify_outbox_seq_in_txn(
         listener::NOTIFY_CHANNEL,
         seq.to_string(),
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| atc_core::PersistError::Backend(Box::new(e)))?;
     Ok(())
@@ -509,24 +526,29 @@ pub(crate) async fn notify_outbox_seq_in_txn(
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
+#[tracing::instrument(name = "persist.outbox.insert.job", skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn insert_outbox_job_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
 ) -> Result<i64, PersistError> {
     let run_id = env.run_id.0;
     let job_id = env.job_id.0;
     let payload = serde_json::to_value(env).map_err(|e| PersistError::Backend(Box::new(e)))?;
+    // See `insert_outbox_run_in_txn` for the traceparent rationale.
+    let traceparent = crate::traceparent::current();
 
     let row = sqlx::query!(
         r#"
-        INSERT INTO outbox (kind, run_id, job_id, payload) VALUES ('job', $1, $2, $3::jsonb) RETURNING seq
+        INSERT INTO outbox (kind, run_id, job_id, payload, traceparent)
+        VALUES ('job', $1, $2, $3::jsonb, $4)
+        RETURNING seq
         "#,
         run_id,
         job_id,
         payload,
+        traceparent.as_deref(),
     )
-    .fetch_one(&mut **tx)
+    .fetch_one(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 

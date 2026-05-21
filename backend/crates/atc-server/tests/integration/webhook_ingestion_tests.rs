@@ -440,6 +440,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown,
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let main_router = atc_server::routes::api_routes()

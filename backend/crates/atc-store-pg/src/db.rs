@@ -9,9 +9,13 @@
 
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
+use std::time::Duration;
 
+use sqlx::ConnectOptions;
 use sqlx::PgPool;
 use sqlx::migrate::Migrator;
+use sqlx::postgres::PgConnectOptions;
 
 /// The embedded migrator, anchored on the four SQL files under
 /// `atc-store-pg/migrations/`. Exposed publicly so test fixtures can run
@@ -64,15 +68,46 @@ impl Error for DbInitError {
 /// `sqlx::migrate!("./migrations")` resolves the migration directory relative
 /// to `CARGO_MANIFEST_DIR` at compile time, so this anchor binds to the four
 /// SQL files co-located with this crate (`backend/crates/atc-store-pg/migrations/`).
-pub async fn init_pool(database_url: &str) -> Result<PgPool, DbInitError> {
-    let pool = PgPool::connect(database_url)
+pub async fn init_pool(database_url: &str) -> Result<crate::TracedPool, DbInitError> {
+    let pool = PgPool::connect_with(connect_options(database_url)?)
         .await
         .map_err(DbInitError::Connect)?;
     MIGRATOR
         .run(&pool)
         .await
         .map_err(|e| DbInitError::Migrate(Box::new(e)))?;
-    Ok(pool)
+    // Wrap once at startup; downstream consumers thread `crate::TracedPool`
+    // (cloneable, transparently implements `sqlx::Executor`). Bind values
+    // are physically inaccessible through the wrapper, so per-query spans
+    // are safe to enable by default — see `crate::TracedPool` doc-comment.
+    Ok(sqlx_tracing::Pool::from(pool))
+}
+
+/// Build the [`PgConnectOptions`] used by [`init_pool`].
+///
+/// Tuned for operator observability:
+///
+/// - `log_statements(Debug)` — every query emits a `tracing::event!(Level::DEBUG)`
+///   with the SQL statement, bind values, and elapsed time. Visible when the
+///   `logFilter` chart value is bumped to `debug` (or scoped to
+///   `info,sqlx::query=debug`). This is sqlx's default but stated explicitly
+///   so future contributors don't have to read the upstream defaults.
+///
+/// - `log_slow_statements(Warn, 200ms)` — any query taking longer than 200ms
+///   emits at `WARN` level (visible under the default `info` filter). 200ms is
+///   ~10x the expected outbox-write hot-path budget on a healthy CNPG cluster,
+///   so a steady stream of WARN events here is an operational signal that
+///   either the DB is overloaded or the query plan regressed.
+///
+/// Note: sqlx 0.8 emits these as `tracing::event!`s, not as spans. Application-
+/// level spans for write-path observability live with the `upsert_*_in_txn` /
+/// `insert_outbox_*_in_txn` helpers in `store/writes.rs`.
+fn connect_options(database_url: &str) -> Result<PgConnectOptions, DbInitError> {
+    let mut options = PgConnectOptions::from_str(database_url).map_err(DbInitError::Connect)?;
+    options = options
+        .log_statements(tracing::log::LevelFilter::Debug)
+        .log_slow_statements(tracing::log::LevelFilter::Warn, Duration::from_millis(200));
+    Ok(options)
 }
 
 #[cfg(test)]

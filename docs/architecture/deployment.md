@@ -364,7 +364,7 @@ networkPolicy:
 
 ## Grafana dashboard
 
-The chart ships an opt-in Grafana dashboard at `deploy/helm/atc/dashboards/atc-overview.json` covering HTTP, webhook ingestion, PG outbox+drain pipeline, watermarks, retention, startup/shutdown lifecycle, process resource usage, and config reloads. Default off — provisioning a dashboard is an operator decision. Two discovery paths are supported from one chart-shipped JSON; enable whichever (or both) matches your stack.
+The chart ships an opt-in Grafana dashboard at `deploy/helm/atc/dashboards/atc-overview.json` covering HTTP traffic (request rate, latency, status codes, body sizes, in-flight count), webhook ingestion, PG outbox+drain pipeline, watermarks, retention, startup/shutdown lifecycle, process resource usage, config reloads, and WebSocket client lifecycle (active connections, lagged-eviction rate by channel). Default off — provisioning a dashboard is an operator decision. Two discovery paths are supported from one chart-shipped JSON; enable whichever (or both) matches your stack.
 
 ### Discovery paths
 

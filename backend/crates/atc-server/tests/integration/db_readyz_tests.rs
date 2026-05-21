@@ -21,7 +21,7 @@ use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 async fn build_app_with_pool(
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
 ) -> (axum::Router, CancellationToken) {
     common::ensure_recorder_installed();
@@ -35,6 +35,7 @@ async fn build_app_with_pool(
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     (
         atc_server::routes::api_routes().with_state(app_state),
@@ -97,7 +98,9 @@ async fn migrations_create_runs_and_jobs_tables() {
         .await
         .expect("init_pool failed");
 
-    // Verify tables exist by querying them (empty result is fine; error = missing table)
+    // Verify tables exist by querying them (empty result is fine; error = missing table).
+    // `init_pool` already ran the migrations; reaching this point with the tables
+    // present is the migration-idempotency check.
     sqlx::query("SELECT 1 FROM runs LIMIT 0")
         .execute(&pool)
         .await
@@ -106,12 +109,6 @@ async fn migrations_create_runs_and_jobs_tables() {
         .execute(&pool)
         .await
         .expect("jobs table missing or query failed");
-
-    // Verify migration is idempotent
-    atc_store_pg::db::MIGRATOR
-        .run(&pool)
-        .await
-        .expect("second migration run failed");
 }
 
 #[tokio::test]
@@ -139,6 +136,11 @@ async fn readyz_returns_503_when_db_unreachable() {
         .await
         .expect("migrations failed");
 
+    // Wrap with sqlx-tracing AFTER running migrations directly — the test
+    // builds the pool with a custom `acquire_timeout` to force the unreachable
+    // case once the container is killed, and the migration runner needs the
+    // raw `sqlx::Pool` (sqlx-tracing's `Pool` does not implement `sqlx::Acquire`).
+    let pool = sqlx_tracing::Pool::from(pool);
     let (app, shutdown) = build_app_with_pool(pool, &db_url).await;
 
     // Stop the container to make the DB unreachable

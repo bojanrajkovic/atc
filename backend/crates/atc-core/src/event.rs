@@ -27,6 +27,23 @@ pub enum RunEvent {
     },
 }
 
+impl RunEvent {
+    /// Bounded `&'static str` discriminant name, suitable for span attributes.
+    ///
+    /// Use this instead of `format!("{:?}", event)` — `Debug` recurses through
+    /// payload fields (including `Vec<Step>` and `RunnerInfo`) and can produce
+    /// multi-KB strings that risk being dropped past OTLP message-size limits.
+    /// The names mirror GitHub's `workflow_run` action strings.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            RunEvent::Requested => "requested",
+            RunEvent::InProgress => "in_progress",
+            RunEvent::Completed { .. } => "completed",
+        }
+    }
+}
+
 /// Full run event data for state store ingestion.
 ///
 /// Carries all fields needed to create or update a `WorkflowRun`.
@@ -109,6 +126,21 @@ pub enum JobEvent {
     },
 }
 
+impl JobEvent {
+    /// Bounded `&'static str` discriminant name, suitable for span attributes.
+    ///
+    /// See [`RunEvent::name`] for the rationale.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            JobEvent::Queued { .. } => "queued",
+            JobEvent::Waiting { .. } => "waiting",
+            JobEvent::InProgress { .. } => "in_progress",
+            JobEvent::Completed { .. } => "completed",
+        }
+    }
+}
+
 /// Full job event data for state store ingestion.
 ///
 /// Carries all fields needed to create or update a `Job`.
@@ -134,4 +166,71 @@ pub struct JobEventEnvelope {
     pub completed_at: Option<DateTime<Utc>>,
     /// The action that occurred.
     pub action: JobEvent,
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+    use crate::job::JobConclusion;
+    use crate::run::RunConclusion;
+
+    // The exhaustive match in each variant table pins the variant set: a new
+    // RunEvent / JobEvent variant added without updating name() AND this test
+    // produces a compile-time non-exhaustive-match warning at name() and a
+    // missing-variant assertion failure here.
+
+    #[test]
+    fn run_event_names() {
+        for (ev, expected) in [
+            (RunEvent::Requested, "requested"),
+            (RunEvent::InProgress, "in_progress"),
+            (
+                RunEvent::Completed {
+                    conclusion: RunConclusion::Success,
+                },
+                "completed",
+            ),
+        ] {
+            assert_eq!(ev.name(), expected);
+        }
+    }
+
+    #[test]
+    fn job_event_names() {
+        for (ev, expected) in [
+            (
+                JobEvent::Queued {
+                    labels: vec![],
+                    steps: vec![],
+                },
+                "queued",
+            ),
+            (
+                JobEvent::Waiting {
+                    labels: vec![],
+                    steps: vec![],
+                },
+                "waiting",
+            ),
+            (
+                JobEvent::InProgress {
+                    runner: None,
+                    labels: vec![],
+                    steps: vec![],
+                },
+                "in_progress",
+            ),
+            (
+                JobEvent::Completed {
+                    conclusion: JobConclusion::Success,
+                    runner: None,
+                    labels: vec![],
+                    steps: vec![],
+                },
+                "completed",
+            ),
+        ] {
+            assert_eq!(ev.name(), expected);
+        }
+    }
 }

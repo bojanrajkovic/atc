@@ -182,7 +182,7 @@ fn handle_listener_notification(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_drain_task(
     clock: Arc<dyn Clock>,
-    pool: sqlx::PgPool,
+    pool: crate::TracedPool,
     initial_watermark: i64,
     startup_at: Instant,
     drain_notify: Arc<Notify>,
@@ -359,7 +359,7 @@ pub fn spawn_drain_task(
 /// signal arrival — the webhook handler keeps writing until axum's graceful
 /// shutdown drains in-flight requests, so the count includes anything
 /// committed during that window.
-async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics: &PgMetrics) {
+async fn record_shutdown_remaining(pool: &crate::TracedPool, watermark: i64, metrics: &PgMetrics) {
     let query = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!: i64" FROM outbox WHERE seq > $1"#,
         watermark,
@@ -412,7 +412,7 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics:
 )]
 async fn drain_pass(
     clock: &dyn Clock,
-    pool: &sqlx::PgPool,
+    pool: &crate::TracedPool,
     pass_start_floor: i64,
     watermark: &mut i64,
     recent_ring: &mut VecDeque<i64>,
@@ -431,7 +431,7 @@ async fn drain_pass(
 
     loop {
         let rows = sqlx::query!(
-            "SELECT seq, kind, payload, inserted_at FROM outbox \
+            "SELECT seq, kind, payload, inserted_at, traceparent FROM outbox \
              WHERE seq > $1 ORDER BY seq LIMIT $2",
             page_cursor,
             DRAIN_BATCH_SIZE,
@@ -515,6 +515,13 @@ async fn drain_pass(
                     kind = row.kind.as_str(),
                     outbox_lag_ms,
                 );
+                // Attach an OTel span link back to the originating
+                // `webhook.handler` trace (when the traceparent was captured
+                // at INSERT time and the SDK is enabled). Drain stays a
+                // per-tick root by design — this is a Link, not a parent
+                // relationship. See `docs/architecture/metrics.md` § "Outbox
+                // causal-trace chain".
+                crate::traceparent::attach_link(&broadcast_span, row.traceparent.as_deref());
                 broadcast_span.in_scope(|| {
                     // BIGSERIAL is positive; u64 always fits.
                     let seq_u64 = u64::try_from(row.seq).unwrap_or_else(|_| {
