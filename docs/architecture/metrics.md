@@ -423,7 +423,7 @@ Spans declared by ATC, grouped by the boundary they decorate.
 
 | Span | Source | Attributes |
 |---|---|---|
-| `webhook.handler` | `backend/crates/atc-server/src/routes.rs` (`webhook_handler`) — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `webhook.delivery_id` (recorded after parsing `x-github-delivery`), `webhook.event_type` (recorded after parsing `x-github-event`). The two `webhook.*` fields are declared as `tracing::field::Empty` at construction. |
+| `webhook.handler` | `backend/crates/atc-server/src/routes.rs` (`webhook_handler`) — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"` (the route is POST-only by axum's router), `http.response.status_code` (u16; late-bound, recorded at the single exit point after a labeled-block funnels all return branches), `webhook.delivery_id` (recorded after parsing `x-github-delivery`), `webhook.event_type` (recorded after parsing `x-github-event`). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
 | `webhook.verify` | `backend/crates/atc-github/src/webhook/verify.rs` (`verify_signature`) | `webhook.signature.present` (bool), `webhook.signature.algorithm="sha256"`. Secret, body bytes, and the signature value are explicitly skipped (`skip(secret, body, signature)`). |
 | `webhook.parse` | `backend/crates/atc-github/src/webhook/mod.rs` (`parse_webhook`) | `webhook.event_type`, `webhook.action` (late-bound; recorded after the action is decoded). Body bytes are skipped. |
 
