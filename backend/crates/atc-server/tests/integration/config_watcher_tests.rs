@@ -44,6 +44,7 @@ fn build_app_state() -> (Arc<AppState>, broadcast::Sender<ConfigEvent>) {
         config_events_tx: tx.clone(),
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     (state, tx)
 }

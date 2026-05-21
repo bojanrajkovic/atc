@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::config_watcher::ConfigEvent;
+use crate::ws::WsMetrics;
 
 /// Shared application state passed to all Axum handlers via `State<Arc<AppState>>`.
 pub struct AppState {
@@ -62,4 +63,9 @@ pub struct AppState {
     /// `SHUTDOWN_TIMEOUT_WS`) during shutdown so connected clients have time
     /// to emit their Close frames before process exit.
     pub ws_tracker: TaskTracker,
+    /// OTel instruments owned by the WS layer. Registered once at startup and
+    /// shared via `Arc` so each `handle_socket` task can record per-connection
+    /// events (connection start/end, lagged-channel evictions). See
+    /// `ws::WsMetrics` for the metric surface.
+    pub ws_metrics: Arc<WsMetrics>,
 }

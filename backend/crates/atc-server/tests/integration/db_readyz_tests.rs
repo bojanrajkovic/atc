@@ -35,6 +35,7 @@ async fn build_app_with_pool(
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     (
         atc_server::routes::api_routes().with_state(app_state),

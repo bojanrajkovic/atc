@@ -390,6 +390,26 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Aggregation:** `max without (pod, instance) (atc_config_runner_pools)` for the cluster-wide pool count; per-pod divergence during a rolling reload is expected.
 - **Example PromQL:** `max without (pod, instance) (atc_config_runner_pools)`
 
+### `atc_ws_connections_active`
+
+- **Name:** `atc_ws_connections_active`
+- **Type:** gauge
+- **Attributes:** none emitted; `pod`, `instance` (injected)
+- **Measures:** Number of WebSocket clients currently connected to `/v1/ws` on this replica — the count of in-flight `handle_socket` tasks. Implemented as an OTel `ObservableGauge<i64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention). The atomic is incremented at the start of each `handle_socket_inner` and decremented via a drop guard on every exit path. `Weak<AtomicI64>` registration ensures the callback no-ops after the owning `WsMetrics` Arc is released.
+- **Per-replica vs cluster:** Per-replica — each replica counts its own connected clients. Cluster-wide value is the sum across pods.
+- **Aggregation:** `sum without (pod, instance) (atc_ws_connections_active)` for the cluster-wide connection count.
+- **Example PromQL:** `sum without (pod, instance) (atc_ws_connections_active)`
+
+### `atc_ws_lagged_evictions_total`
+
+- **Name:** `atc_ws_lagged_evictions_total`
+- **Type:** counter
+- **Attributes:** `channel` (`"committed"` | `"config"`); `pod`, `instance` (injected)
+- **Measures:** WebSocket clients force-disconnected because their broadcast receiver fell behind and the bounded buffer (capacity 256) overflowed. `channel="committed"` is the `CommittedEvent` fan-out from `PersistentStore::subscribe()`; `channel="config"` is the operator-config reload stream from `config_events_tx`. A sustained nonzero rate means the broadcast buffer is undersized for current traffic OR a specific client is stalled. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 1]` attribute slices per channel (cached-instrument convention) — call sites incur no allocation on emit.
+- **Per-replica vs cluster:** Per-replica — each replica counts its own lagged-eviction events.
+- **Aggregation:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))` for per-channel eviction rate; `sum (rate(atc_ws_lagged_evictions_total[5m]))` for the total. A steady stream on `channel="config"` is suspicious because operator-config reloads are low-volume; on `channel="committed"` it indicates a slow client under high webhook traffic.
+- **Example PromQL:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))`
+
 ### `atc_pg_outbox_oldest_row_age_seconds`
 
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`
@@ -454,3 +474,9 @@ Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_out
 |---|---|---|
 | `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
 | `outbox.sweep.tick` | `outbox_sweep_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |
+
+### WebSocket connection lifetime
+
+| Span | Source | Attributes |
+|---|---|---|
+| `ws.connection` | `ws::handle_socket` in `atc-server/src/ws.rs` — root span wrapping the entire connection lifetime from upgrade to disconnect. Built via `info_span!` and applied through `Instrument`-ed inner function so late-bound fields are recorded before the span exits. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). | `ws.close_reason` (`&'static str`; late-bound, the loop's `break` reason — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded when the loop exits via a lagged-eviction branch — paired with `atc_ws_lagged_evictions_total`). |

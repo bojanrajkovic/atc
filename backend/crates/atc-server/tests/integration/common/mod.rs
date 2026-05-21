@@ -339,6 +339,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
@@ -364,6 +365,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())
@@ -635,6 +637,7 @@ async fn build_app_inner(
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let router = atc_server::routes::api_routes()

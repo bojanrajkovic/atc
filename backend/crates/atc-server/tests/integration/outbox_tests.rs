@@ -49,6 +49,7 @@ async fn build_app_with_pg(
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
     let app = atc_server::routes::api_routes()
         .with_state(app_state.clone())

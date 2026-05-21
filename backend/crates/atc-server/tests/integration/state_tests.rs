@@ -94,6 +94,7 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let app = atc_server::routes::api_routes()
@@ -164,6 +165,7 @@ async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let app = atc_server::routes::api_routes()

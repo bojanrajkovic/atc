@@ -50,6 +50,7 @@ async fn test_setup() -> (SocketAddr, Arc<AppState>) {
         config_events_tx: tokio::sync::broadcast::channel(16).0,
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
     });
 
     let router = routes::api_routes()
