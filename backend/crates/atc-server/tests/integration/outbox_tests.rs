@@ -753,25 +753,22 @@ async fn payload_is_envelope_not_seq_event() {
 }
 
 // ---------------------------------------------------------------------------
-// Post-commit in-memory drift
+// PG-mode handler is silent on in-memory state
 // ---------------------------------------------------------------------------
 
-/// In-memory drift is structurally unreachable in PG mode.
-///
-/// The in-memory apply is silenced in PG mode — the handler commits to PG,
+/// In PG mode the in-memory apply is silenced — the handler commits to PG,
 /// emits NOTIFY, and returns. The drain task is the sole writer to
 /// `webhook_tx`, and the in-memory `state.store` is never written. There is
-/// no in-memory state to drift from, so `atc_pg_in_memory_drift_total` is a
-/// stuck-at-zero counter under PG mode.
+/// no in-memory state to drift from in PG mode.
 ///
-/// This test asserts the **invariant** instead of the **mechanism**: after a
-/// webhook commits in PG mode, the in-memory store is still empty, no drift
-/// counter incremented, and the response shape advertises the outbox seq
-/// (status="accepted" with seq, not "processed"). The original drift detection
-/// is preserved at the metric level — drift_total stays at baseline.
+/// This test asserts the invariant: after a webhook commits in PG mode, the
+/// response shape advertises the outbox seq (status="accepted" with seq, not
+/// "processed"), the PG row exists, and the snapshot reads the committed run
+/// from the database (not from any in-memory mirror). The write-failures
+/// counters stay at baseline since the commit succeeded.
 #[tokio::test]
 #[serial_test::serial]
-async fn no_in_memory_drift_in_pg_mode() {
+async fn pg_mode_does_not_write_in_memory_state() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
@@ -812,13 +809,7 @@ async fn no_in_memory_drift_in_pg_mode() {
         "PG snapshot must contain the committed run"
     );
 
-    // Drift counter is stuck at zero — no apply, no detection.
     let snapshot = common::snapshot_metrics();
-    assert_eq!(
-        common::counter_value(&snapshot, "atc_pg_in_memory_drift_total", &[]),
-        0,
-        "drift counter must not increment in PG mode (handler doesn't write in-memory)"
-    );
     assert_eq!(
         common::counter_value(
             &snapshot,

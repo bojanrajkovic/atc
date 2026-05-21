@@ -101,8 +101,6 @@ rg -nU --multiline \
 
 The grep should return no matches: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new hit anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
 
-`atc_pg_in_memory_drift_total` is registered in `PgMetrics::register_with_meter` but no field is cached: the metric is part of the documented surface but has no production emit site today. If a future writer adds an emit, the cached-instrument field MUST be added in the same change.
-
 ### W3C trace context propagation
 
 The OTel SDK installs `TraceContextPropagator` globally in `init_otel`. The webhook handler extracts the incoming `traceparent` header before constructing the request span:
@@ -199,16 +197,6 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Per-replica vs cluster:** Per-replica — only the writer replica increments. In multi-replica deployments any single replica can be the writer for a given webhook (GitHub picks one ingress).
 - **Aggregation:** `sum by (kind)` cluster-wide for severity routing (parity → page; transient → alert on sustained rate). `max by (pod)` to localize a misbehaving replica.
 - **Example PromQL:** `sum by (kind) (rate(atc_pg_write_failures_total[5m]))`
-
-### `atc_pg_in_memory_drift_total`
-
-- **Name:** `atc_pg_in_memory_drift_total`
-- **Type:** counter
-- **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** Events where the PG transaction committed successfully but the in-memory `RunStateMachine` apply on the same replica subsequently diverged. The committed PG row is durable and recoverable from the outbox, so a single increment is not data loss — but a sustained rate signals a code defect in the in-memory state machine and warrants a page.
-- **Per-replica vs cluster:** Per-replica observation; cluster-relevant signal because any replica's drift indicates a logic bug independent of which one observed it.
-- **Aggregation:** `sum without (pod, instance)` for cluster-wide drift rate; alert on any nonzero sustained rate.
-- **Example PromQL:** `sum(rate(atc_pg_in_memory_drift_total[5m]))`
 
 ### `atc_pg_notify_emitted_total`
 
