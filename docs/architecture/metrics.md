@@ -435,7 +435,7 @@ Spans declared by ATC, grouped by the boundary they decorate.
 | `persist.apply.job_event` | `PgStore::apply_job_event` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::apply_job_event` in `persist/in_memory.rs` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
 | `persist.notify.emit` | `notify_outbox_seq_in_txn` in `atc-store-pg/src/store/writes.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
 
-Inner transaction helpers (`upsert_run_in_txn`, `upsert_job_in_txn`, `insert_outbox_run_in_txn`, `insert_outbox_job_in_txn`) carry default `#[tracing::instrument(skip_all)]` spans and inherit context from the surrounding `persist.apply.*` span.
+Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.upsert.run`, `persist.upsert.job`, `persist.outbox.insert.run`, `persist.outbox.insert.job`) and inherit context from the surrounding `persist.apply.*` span. The function-name defaults (`upsert_run_in_txn`, …) leaked crate-internal Rust names into the trace surface; explicit names keep span identifiers in the `persist.*` namespace.
 
 ### Listener path
 

@@ -255,7 +255,7 @@ impl PersistentStore for PgStore {
 /// Uses `&mut **tx` (double-deref through `Transaction<Postgres>` →
 /// `PgConnection`) as required by sqlx 0.8's `Executor` bound.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0))]
+#[tracing::instrument(name = "persist.upsert.run", skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn upsert_run_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
@@ -340,7 +340,7 @@ pub(crate) async fn upsert_run_in_txn(
 /// stub-row and the job row are written in the same transaction, so PostgreSQL
 /// same-transaction visibility satisfies the FK check.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
+#[tracing::instrument(name = "persist.upsert.job", skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn upsert_job_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
@@ -457,7 +457,7 @@ pub(crate) async fn upsert_job_in_txn(
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0))]
+#[tracing::instrument(name = "persist.outbox.insert.run", skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn insert_outbox_run_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
@@ -516,7 +516,7 @@ pub(crate) async fn notify_outbox_seq_in_txn(
 ///
 /// Returns the `seq` (BIGSERIAL primary key) assigned to the inserted row.
 #[allow(dead_code)]
-#[tracing::instrument(skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
+#[tracing::instrument(name = "persist.outbox.insert.job", skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn insert_outbox_job_in_txn(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
