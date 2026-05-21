@@ -468,3 +468,10 @@ Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.
 | Span | Source | Attributes |
 |---|---|---|
 | `ws.connection` | `ws::handle_socket` in `atc-server/src/ws.rs` — root span wrapping the entire connection lifetime from upgrade to disconnect. Built via `info_span!` and applied through `Instrument`-ed inner function so late-bound fields are recorded before the span exits. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). | `ws.close_reason` (`&'static str`; late-bound, the loop's `break` reason — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded when the loop exits via a lagged-eviction branch — paired with `atc_ws_lagged_evictions_total`). |
+
+### Liveness + config-reload internals
+
+| Span | Source | Attributes |
+|---|---|---|
+| `persist.liveness` | `PgStore::liveness_check` in `atc-store-pg/src/store/writes.rs` — child of the inbound `/readyz` request frame (Axum auto-instruments the route). Wraps the `SELECT 1` round-trip AND the drain-heartbeat staleness check so an operator looking at a 503 trace can see which side broke. | `liveness.outcome` (`"ok"` / `"db_unreachable"` / `"drain_stale"`; late-bound, recorded once at the function exit). `liveness.heartbeat_age_ms` (i64; late-bound, recorded after the DB ping succeeds — absent when the DB ping itself failed). |
+| `config.reload` | `config::reload_runner_pools` in `atc-server/src/config.rs` — root span on each watcher-driven reload attempt. Decorates the file read, YAML parse, and validation pipeline so an operator can see exactly which stage of a failed reload took how long. | `config.path` (string; the watched file path), `config.outcome` (`"ok"` / `"read_error"` / `"parse_error"` / `"validate_error"`; late-bound), `config.pools` (usize; late-bound, only recorded on the `ok` path — the loaded pool count). Pairs with `atc_config_reload_total{result,reason}`. |

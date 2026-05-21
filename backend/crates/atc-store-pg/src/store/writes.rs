@@ -126,19 +126,29 @@ impl PersistentStore for PgStore {
     /// The drain task refreshes the heartbeat at the top of every loop iteration
     /// (whether woken by NOTIFY or the 5 s heartbeat tick). If the heartbeat is
     /// older than 30 s the drain task has stalled; return `DrainStale`.
+    #[tracing::instrument(
+        name = "persist.liveness",
+        skip(self),
+        fields(liveness.outcome = tracing::field::Empty, liveness.heartbeat_age_ms = tracing::field::Empty),
+    )]
     async fn liveness_check(&self) -> Result<(), LivenessError> {
+        let span = tracing::Span::current();
         if let Err(e) = sqlx::query("SELECT 1").execute(&self.pool).await {
+            span.record("liveness.outcome", "db_unreachable");
             return Err(LivenessError::DbUnreachable(Box::new(e)));
         }
 
         let now_ms = self.clock.now().timestamp_millis();
         let last = self.last_drain_pass_at.load(Ordering::Relaxed);
         let age = now_ms.saturating_sub(last);
+        span.record("liveness.heartbeat_age_ms", age);
         const READYZ_HEARTBEAT_STALENESS_MS: i64 = 30_000;
         if age > READYZ_HEARTBEAT_STALENESS_MS {
+            span.record("liveness.outcome", "drain_stale");
             return Err(LivenessError::DrainStale { age_ms: age });
         }
 
+        span.record("liveness.outcome", "ok");
         Ok(())
     }
 
