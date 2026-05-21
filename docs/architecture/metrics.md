@@ -463,6 +463,12 @@ Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.
 | `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
 | `outbox.sweep.tick` | `outbox_sweep_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |
 
+### sqlx-tracing per-query spans (PG mode)
+
+| Span | Source | Attributes |
+|---|---|---|
+| `sqlx.execute`, `sqlx.fetch_one`, `sqlx.fetch_optional`, `sqlx.fetch_all`, `sqlx.execute_many`, `sqlx.fetch_many`, `sqlx.describe` | Emitted by the `sqlx-tracing` crate when the wrapped `crate::TracedPool` or a transaction's `.executor()` is the `sqlx::Executor` for a query. Each span is a child of whatever `#[tracing::instrument]` boundary it runs inside (e.g., `persist.upsert.run` → `sqlx.execute`). | `db.system.name="postgresql"` (constant), `db.query.text` (template SQL with bind placeholders `$1`/`$2`/…; bind values are physically inaccessible via sqlx's `Execute` trait so they cannot leak — verified against `sqlx-tracing v0.2.1`), `db.name` (the database name extracted from the pool URL), `net.peer.name` / `net.peer.port` (host/port from pool URL), `otel.kind="client"`. On error: `error.type` (`"client"` / `"server"`), `error.message`, `error.stacktrace`, `otel.status_code="error"`, `otel.status_description`. On fetch_one / fetch_optional / fetch_all: `db.response.returned_rows`. |
+
 ### WebSocket connection lifetime
 
 | Span | Source | Attributes |

@@ -425,7 +425,11 @@ pub fn fixture_workflow_job_completed() -> Vec<u8> {
 /// `docker rm -f atc-test-pg` (or wait for OrbStack/Docker GC). Per-test
 /// databases accumulate inside the container but are tiny; if they pile up
 /// beyond comfort, drop the container.
-pub async fn start_pg() -> (sqlx::PgPool, impl Drop, String) {
+pub async fn start_pg() -> (
+    atc_store_pg::TracedPool,
+    testcontainers::ContainerAsync<testcontainers_modules::postgres::Postgres>,
+    String,
+) {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use testcontainers::ImageExt;
@@ -529,7 +533,7 @@ pub async fn start_pg() -> (sqlx::PgPool, impl Drop, String) {
 /// handles (extracted before the store stored the `JoinHandle`s) plus the
 /// watermark and heartbeat atomics for tests that poll them.
 pub struct AppFixture {
-    pub pool: sqlx::PgPool,
+    pub pool: atc_store_pg::TracedPool,
     pub router: axum::Router,
     pub state: Arc<atc_server::state::AppState>,
     pub broadcast_rx: tokio::sync::broadcast::Receiver<atc_wire::CommittedEvent>,
@@ -560,7 +564,10 @@ pub struct AppFixture {
 /// before returning — this guarantees the watermark is initialized and
 /// the first unconditional pass has run, so tests can capture a stable
 /// baseline.
-pub async fn build_app_with_pg_and_listener(pool: sqlx::PgPool, db_url: String) -> AppFixture {
+pub async fn build_app_with_pg_and_listener(
+    pool: atc_store_pg::TracedPool,
+    db_url: String,
+) -> AppFixture {
     build_app_inner(Arc::new(SystemClock), pool, db_url, None).await
 }
 
@@ -572,7 +579,7 @@ pub async fn build_app_with_pg_and_listener(pool: sqlx::PgPool, db_url: String) 
 /// arrive while the drain is still sleeping. This forces coalescing to be
 /// observable in the coalescing test.
 pub async fn build_app_with_pg_and_slow_drain(
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: String,
     drain_delay: Duration,
 ) -> AppFixture {
@@ -584,7 +591,7 @@ pub async fn build_app_with_pg_and_slow_drain(
 /// observation) use this entry point with a `TestClock`.
 pub async fn build_app_with_pg_clock(
     clock: Arc<dyn atc_core::Clock>,
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: String,
 ) -> AppFixture {
     build_app_inner(clock, pool, db_url, None).await
@@ -593,7 +600,7 @@ pub async fn build_app_with_pg_clock(
 /// Shared implementation for both fixture builders.
 async fn build_app_inner(
     clock: Arc<dyn atc_core::Clock>,
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: String,
     drain_delay: Option<Duration>,
 ) -> AppFixture {
@@ -684,7 +691,7 @@ async fn build_app_inner(
 /// milliseconds. Tests that want to synchronously confirm the join can
 /// additionally `store.shutdown().await` afterward.
 pub async fn start_pg_store_for_test(
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
     shutdown: CancellationToken,
 ) -> Arc<atc_store_pg::PgStore> {
@@ -695,7 +702,7 @@ pub async fn start_pg_store_for_test(
 /// that need to drive heartbeat / outbox-lag observations deterministically.
 pub async fn start_pg_store_for_test_with_clock(
     clock: Arc<dyn atc_core::Clock>,
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
     shutdown: CancellationToken,
 ) -> Arc<atc_store_pg::PgStore> {
@@ -714,7 +721,7 @@ pub async fn start_pg_store_for_test_with_clock(
 /// drive the retention path with a non-default value.
 pub async fn start_pg_store_for_test_with_clock_and_retention(
     clock: Arc<dyn atc_core::Clock>,
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
     shutdown: CancellationToken,
     outbox_retention: Duration,

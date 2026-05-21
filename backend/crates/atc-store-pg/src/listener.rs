@@ -182,7 +182,7 @@ fn handle_listener_notification(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_drain_task(
     clock: Arc<dyn Clock>,
-    pool: sqlx::PgPool,
+    pool: crate::TracedPool,
     initial_watermark: i64,
     startup_at: Instant,
     drain_notify: Arc<Notify>,
@@ -359,7 +359,7 @@ pub fn spawn_drain_task(
 /// signal arrival — the webhook handler keeps writing until axum's graceful
 /// shutdown drains in-flight requests, so the count includes anything
 /// committed during that window.
-async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics: &PgMetrics) {
+async fn record_shutdown_remaining(pool: &crate::TracedPool, watermark: i64, metrics: &PgMetrics) {
     let query = sqlx::query_scalar!(
         r#"SELECT COUNT(*) AS "count!: i64" FROM outbox WHERE seq > $1"#,
         watermark,
@@ -412,7 +412,7 @@ async fn record_shutdown_remaining(pool: &sqlx::PgPool, watermark: i64, metrics:
 )]
 async fn drain_pass(
     clock: &dyn Clock,
-    pool: &sqlx::PgPool,
+    pool: &crate::TracedPool,
     pass_start_floor: i64,
     watermark: &mut i64,
     recent_ring: &mut VecDeque<i64>,

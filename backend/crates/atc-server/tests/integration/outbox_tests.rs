@@ -30,7 +30,7 @@ use tower::ServiceExt;
 
 /// Build a full router with a real PG pool mounted.
 async fn build_app_with_pg(
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
 ) -> (
     axum::Router,
@@ -84,7 +84,7 @@ fn write_failure_attrs(kind: &'static str) -> Vec<KeyValue> {
 }
 
 /// Insert a minimal stub runs row for FK satisfaction. Uses untyped sqlx API.
-async fn insert_stub_run(pool: &sqlx::PgPool, run_id: i64) {
+async fn insert_stub_run(pool: &atc_store_pg::TracedPool, run_id: i64) {
     sqlx::query(
         r#"
         INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at)
@@ -99,7 +99,7 @@ async fn insert_stub_run(pool: &sqlx::PgPool, run_id: i64) {
 }
 
 /// Insert a Completed run directly (to trigger parity rejection on subsequent Requested webhook).
-async fn insert_completed_run(pool: &sqlx::PgPool, run_id: i64) {
+async fn insert_completed_run(pool: &atc_store_pg::TracedPool, run_id: i64) {
     sqlx::query(
         r#"
         INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at)
@@ -113,7 +113,7 @@ async fn insert_completed_run(pool: &sqlx::PgPool, run_id: i64) {
 }
 
 /// Count rows in a table.
-async fn count_rows(pool: &sqlx::PgPool, table: &str) -> i64 {
+async fn count_rows(pool: &atc_store_pg::TracedPool, table: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*)::bigint FROM {table}"))
         .fetch_one(pool)
         .await
@@ -121,7 +121,7 @@ async fn count_rows(pool: &sqlx::PgPool, table: &str) -> i64 {
 }
 
 /// Count outbox rows by kind.
-async fn count_outbox_by_kind(pool: &sqlx::PgPool, kind: &str) -> i64 {
+async fn count_outbox_by_kind(pool: &atc_store_pg::TracedPool, kind: &str) -> i64 {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*)::bigint FROM outbox WHERE kind = $1")
         .bind(kind)
         .fetch_one(pool)
@@ -130,7 +130,7 @@ async fn count_outbox_by_kind(pool: &sqlx::PgPool, kind: &str) -> i64 {
 }
 
 /// Count rows matching an integer id filter.
-async fn count_by_id(pool: &sqlx::PgPool, table: &str, id: i64) -> i64 {
+async fn count_by_id(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> i64 {
     sqlx::query_scalar::<_, i64>(&format!(
         "SELECT COUNT(*)::bigint FROM {table} WHERE id = $1"
     ))
@@ -141,7 +141,7 @@ async fn count_by_id(pool: &sqlx::PgPool, table: &str, id: i64) -> i64 {
 }
 
 /// Fetch status string from a table by id.
-async fn fetch_status(pool: &sqlx::PgPool, table: &str, id: i64) -> String {
+async fn fetch_status(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> String {
     sqlx::query_scalar::<_, String>(&format!("SELECT status FROM {table} WHERE id = $1"))
         .bind(id)
         .fetch_one(pool)
@@ -349,7 +349,7 @@ async fn bigserial_gap_property() {
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 99001, '{}'::jsonb) RETURNING seq",
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut tx.executor())
         .await
         .unwrap();
         tx.rollback().await.unwrap();
@@ -362,7 +362,7 @@ async fn bigserial_gap_property() {
         let seq: i64 = sqlx::query_scalar(
             "INSERT INTO outbox (kind, run_id, payload) VALUES ('run', 99001, '{}'::jsonb) RETURNING seq",
         )
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut tx.executor())
         .await
         .unwrap();
         tx.commit().await.unwrap();

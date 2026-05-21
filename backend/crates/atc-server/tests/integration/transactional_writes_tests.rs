@@ -41,7 +41,7 @@ fn notify_attrs(kind: &'static str) -> Vec<KeyValue> {
 /// `state.shutdown.cancel()` at end-of-test stops both the WS surface and
 /// the store's background tasks.
 pub async fn build_app_with_pg(
-    pool: sqlx::PgPool,
+    pool: atc_store_pg::TracedPool,
     db_url: &str,
 ) -> (
     axum::Router,
@@ -392,12 +392,15 @@ async fn transient_metric_increments_on_db_outage() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, _c, db_url) = common::start_pg().await;
+    let (pool, container, db_url) = common::start_pg().await;
     let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
 
-    // Close the pool BEFORE firing any webhook (simulate outage from the start).
-    // This causes pool.begin() to fail immediately → 503 with transient counter.
-    pool.close().await;
+    // Stop the container to simulate the DB outage. We previously called
+    // `pool.close()` for the same effect, but `sqlx_tracing::Pool` does not
+    // expose `close()` (no accessor for the inner `sqlx::Pool`). Stopping the
+    // container forces the same operational state — `pool.begin()` fails on
+    // the next webhook because the upstream is unreachable.
+    container.stop().await.expect("stop container");
 
     // Fire the webhook with the pool closed.
     let (status, _json) = post_webhook_full(

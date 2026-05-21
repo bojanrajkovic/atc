@@ -55,7 +55,7 @@ impl PersistentStore for PgStore {
             .await
             .map_err(|e| PersistError::Backend(Box::new(e)))?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-            .execute(&mut *tx)
+            .execute(&mut tx.executor())
             .await
             .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -267,7 +267,7 @@ impl PersistentStore for PgStore {
 #[allow(dead_code)]
 #[tracing::instrument(name = "persist.upsert.run", skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn upsert_run_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
 ) -> Result<(), PersistError> {
     let target = derive_run_target(&env.action);
@@ -329,7 +329,7 @@ pub(crate) async fn upsert_run_in_txn(
         env.updated_at,
         &preds_strs as &[&str],
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -352,7 +352,7 @@ pub(crate) async fn upsert_run_in_txn(
 #[allow(dead_code)]
 #[tracing::instrument(name = "persist.upsert.job", skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn upsert_job_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
 ) -> Result<(), PersistError> {
     let target = derive_job_target(&env.action);
@@ -399,7 +399,7 @@ pub(crate) async fn upsert_job_in_txn(
         env.repo,
         env.created_at,
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -449,7 +449,7 @@ pub(crate) async fn upsert_job_in_txn(
         env.created_at,
         &preds_strs as &[&str],
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -469,7 +469,7 @@ pub(crate) async fn upsert_job_in_txn(
 #[allow(dead_code)]
 #[tracing::instrument(name = "persist.outbox.insert.run", skip_all, fields(run_id = env.run_id.0))]
 pub(crate) async fn insert_outbox_run_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &RunEventEnvelope,
 ) -> Result<i64, PersistError> {
     let run_id = env.run_id.0;
@@ -489,7 +489,7 @@ pub(crate) async fn insert_outbox_run_in_txn(
         payload,
         traceparent.as_deref(),
     )
-    .fetch_one(&mut **tx)
+    .fetch_one(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
@@ -507,7 +507,7 @@ pub(crate) async fn insert_outbox_run_in_txn(
     fields(notify.kind = kind, notify.seq = seq),
 )]
 pub(crate) async fn notify_outbox_seq_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     kind: &'static str,
     seq: i64,
 ) -> Result<(), atc_core::PersistError> {
@@ -516,7 +516,7 @@ pub(crate) async fn notify_outbox_seq_in_txn(
         listener::NOTIFY_CHANNEL,
         seq.to_string(),
     )
-    .execute(&mut **tx)
+    .execute(&mut tx.executor())
     .await
     .map_err(|e| atc_core::PersistError::Backend(Box::new(e)))?;
     Ok(())
@@ -528,7 +528,7 @@ pub(crate) async fn notify_outbox_seq_in_txn(
 #[allow(dead_code)]
 #[tracing::instrument(name = "persist.outbox.insert.job", skip_all, fields(run_id = env.run_id.0, job_id = env.job_id.0))]
 pub(crate) async fn insert_outbox_job_in_txn(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
     env: &JobEventEnvelope,
 ) -> Result<i64, PersistError> {
     let run_id = env.run_id.0;
@@ -548,7 +548,7 @@ pub(crate) async fn insert_outbox_job_in_txn(
         payload,
         traceparent.as_deref(),
     )
-    .fetch_one(&mut **tx)
+    .fetch_one(&mut tx.executor())
     .await
     .map_err(|e| PersistError::Backend(Box::new(e)))?;
 

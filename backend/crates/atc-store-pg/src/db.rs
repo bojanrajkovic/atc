@@ -68,7 +68,7 @@ impl Error for DbInitError {
 /// `sqlx::migrate!("./migrations")` resolves the migration directory relative
 /// to `CARGO_MANIFEST_DIR` at compile time, so this anchor binds to the four
 /// SQL files co-located with this crate (`backend/crates/atc-store-pg/migrations/`).
-pub async fn init_pool(database_url: &str) -> Result<PgPool, DbInitError> {
+pub async fn init_pool(database_url: &str) -> Result<crate::TracedPool, DbInitError> {
     let pool = PgPool::connect_with(connect_options(database_url)?)
         .await
         .map_err(DbInitError::Connect)?;
@@ -76,7 +76,11 @@ pub async fn init_pool(database_url: &str) -> Result<PgPool, DbInitError> {
         .run(&pool)
         .await
         .map_err(|e| DbInitError::Migrate(Box::new(e)))?;
-    Ok(pool)
+    // Wrap once at startup; downstream consumers thread `crate::TracedPool`
+    // (cloneable, transparently implements `sqlx::Executor`). Bind values
+    // are physically inaccessible through the wrapper, so per-query spans
+    // are safe to enable by default — see `crate::TracedPool` doc-comment.
+    Ok(sqlx_tracing::Pool::from(pool))
 }
 
 /// Build the [`PgConnectOptions`] used by [`init_pool`].

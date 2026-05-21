@@ -24,6 +24,22 @@ pub(crate) mod traceparent;
 pub mod invariants;
 
 pub use db::{DbInitError, init_pool};
+
+/// Tracing-instrumented Postgres pool used throughout `atc-store-pg`.
+///
+/// Wraps `sqlx::PgPool` with `sqlx-tracing` so every query execution emits an
+/// OTel-compatible span (`sqlx.execute`, `sqlx.fetch_one`, `sqlx.fetch_optional`,
+/// `sqlx.fetch_all`, …) with `db.system.name="postgresql"`, `db.query.text`
+/// (template SQL only — bind values are inaccessible via sqlx's public
+/// `Execute` trait, so they cannot leak), `net.peer.name`, `net.peer.port`,
+/// and `db.name`. Errors are auto-annotated. Spans inherit the surrounding
+/// `#[tracing::instrument]` context, giving "webhook.handler → … → individual
+/// sqlx.execute" trace correlation in Tempo.
+///
+/// `init_pool` builds this; `PgStore` stores it; all internal helpers thread
+/// it through. Construction is a one-time wrap at startup; the inner
+/// `sqlx::Pool` is consumed by `sqlx_tracing::Pool::from(_)`.
+pub type TracedPool = sqlx_tracing::Pool<sqlx::Postgres>;
 pub use store::{PgStore, PgStoreStartError};
 
 #[cfg(any(test, feature = "test-support"))]
