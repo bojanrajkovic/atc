@@ -89,7 +89,7 @@ spec:
             {{- end }}
             - name: ATC_OUTBOX_RETENTION
               value: {{ .Values.config.outboxRetention | quote }}
-            {{- if .Values.existingSecret.database.name }}
+            {{- if and .Values.existingSecret.database.name .Values.existingSecret.database.urlKey }}
             - name: ATC_DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -109,7 +109,7 @@ spec:
             - name: ATC_DATABASE_LISTENER_URL
               value: {{ .Values.config.databaseListenerUrl | quote }}
             {{- end }}
-            {{- if .Values.existingSecret.githubWebhook.name }}
+            {{- if and .Values.existingSecret.githubWebhook.name .Values.existingSecret.githubWebhook.secretKey }}
             - name: ATC_GITHUB__WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
