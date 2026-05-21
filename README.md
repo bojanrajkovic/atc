@@ -64,7 +64,7 @@ kubectl create secret generic atc-db \
   --from-literal=database_url='postgres://atc:CHANGE_ME@postgres.example/atc'
 
 helm install atc atc/atc \
-  --set existingSecret.name=atc-db \
+  --set existingSecret.database.name=atc-db \
   --set replicaCount=2
 ```
 

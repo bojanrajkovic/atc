@@ -130,7 +130,7 @@ config:
   #
   # Mode 2 — External Postgres (any replica count):
   #   Set databaseUrl: "postgres://user:pass@host:5432/atc"
-  #   OR provide existingSecret.name with existingSecret.databaseUrlKey.
+  #   OR provide existingSecret.database.name with existingSecret.database.urlKey.
   #   ATC writes via the transactional outbox and reads from the live PG
   #   state. Multi-replica: each replica runs its own LISTEN/NOTIFY listener
   #   and drain task; symmetric, no leader.
@@ -165,20 +165,51 @@ config:
   #
   # See docs/architecture-decisions/0007-outbox-retention-policy.md.
   outboxRetention: "7d"
+  # -- GitHub configuration.
+  github:
+    # -- GitHub webhook secret used for HMAC-SHA256 signature validation.
+    # Maps to ATC_GITHUB__WEBHOOK_SECRET.
+    #
+    # When set, the webhook endpoint at POST /v1/webhooks/github validates the
+    # X-Hub-Signature-256 header against this secret. Payloads that fail
+    # verification are rejected with 401.
+    #
+    # When unset (the default) AND existingSecret.githubWebhook.name is also
+    # null, webhook signature validation is DISABLED — the server accepts
+    # unsigned payloads. This is safe only when the webhook endpoint is
+    # protected by another layer (private network, authenticating proxy).
+    #
+    # To supply the secret from an existing Kubernetes Secret instead, set
+    # existingSecret.githubWebhook.name and existingSecret.githubWebhook.secretKey;
+    # that path wins over this inline value when both are configured.
+    webhookSecret: null
 
-# -- Reference an existing Kubernetes Secret for the database URL instead of
-# providing it in plain text in values. When set, config.databaseUrl is ignored
-# and the connection string is sourced from the named Secret key.
+# -- Per-credential references to existing Kubernetes Secrets. Each credential
+# can reference its own Secret independently, enabling the common homelab
+# pattern where the database URL lives in a CNPG-managed Secret that cannot be
+# mutated and the webhook secret lives in a separately-created Secret.
+#
+# existingSecret.database.name wins over config.databaseUrl when both are set.
+# existingSecret.githubWebhook.name wins over config.github.webhookSecret when
+# both are set.
 existingSecret:
-  # -- Name of the existing Secret. Set to use secret-based DB credential injection.
-  name: null
-  # -- Key inside the Secret whose value is the database URL.
-  databaseUrlKey: "database_url"
-  # -- Key inside the Secret whose value is the listener database URL (optional).
-  # When set (non-empty) and existingSecret.name is also set, the listener task
-  # uses this secret key for its connection. When empty, the listener falls back
-  # to ATC_DATABASE_URL (the main pool's connection string).
-  databaseListenerUrlKey: ""
+  # -- Existing-Secret reference for the database URL pair.
+  database:
+    # -- Name of the Kubernetes Secret containing the database credentials.
+    # When null, falls back to config.databaseUrl / config.databaseListenerUrl.
+    name: null
+    # -- Key inside the Secret whose value is the main pool's database URL.
+    urlKey: "database_url"
+    # -- Key inside the Secret whose value is the listener task's database URL.
+    # When empty, the listener falls back to ATC_DATABASE_URL.
+    listenerUrlKey: ""
+  # -- Existing-Secret reference for the GitHub webhook signing secret.
+  githubWebhook:
+    # -- Name of the Kubernetes Secret containing the webhook secret.
+    # When null, falls back to config.github.webhookSecret.
+    name: null
+    # -- Key inside the Secret whose value is the GitHub webhook secret.
+    secretKey: "webhook_secret"
 
 otel:
   # -- Enable OpenTelemetry export. When false, no OTEL_* env vars are injected

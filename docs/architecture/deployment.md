@@ -73,6 +73,23 @@ seccompProfile:
 
 The chart wires Helm values to two distinct env-var surfaces: the application's `ATC_*` config (canonical list in `backend/crates/atc-server/src/config.rs`) and the spec-standard `OTEL_*` envs read by the OpenTelemetry SDK.
 
+### `ATC_GITHUB__WEBHOOK_SECRET`
+
+| Property | Value |
+|----------|-------|
+| Type | Optional string |
+| Default | Unset — signature validation disabled |
+
+**When to set:** Set this to enable HMAC-SHA256 validation of the `X-Hub-Signature-256` header on incoming GitHub webhook payloads at `POST /v1/webhooks/github`. Payloads that fail verification are rejected with 401. When unset, the server accepts unsigned payloads — safe only when the webhook endpoint is protected by a surrounding network or proxy layer.
+
+**Helm:** Settable via:
+- `config.github.webhookSecret` (plain value, sets env var directly)
+- `existingSecret.githubWebhook.name` + `existingSecret.githubWebhook.secretKey` (secret key reference; wins over `config.github.webhookSecret` when both are set)
+
+When neither is configured, `ATC_GITHUB__WEBHOOK_SECRET` is not injected into the pod. No render-time fail guard is applied — leaving signature validation off is an operator decision, not a chart error. See also the Authentication section below, which places this in context with the broader access-control surface.
+
+**Per-credential secret shape:** `existingSecret.githubWebhook.name` references a Secret independently from `existingSecret.database.name`. This lets the webhook secret live in a separately-managed Secret (e.g. `atc-webhook-secret`) while the database credentials live in a CNPG-managed Secret (e.g. `atc-cluster-app`) — two different Secrets, no duplication required.
+
 ### `ATC_DATABASE_LISTENER_URL`
 
 | Property | Value |
@@ -84,7 +101,7 @@ The chart wires Helm values to two distinct env-var surfaces: the application's 
 
 **Helm:** Settable via:
 - `config.databaseListenerUrl` (plain value, sets env var directly)
-- `existingSecret.databaseListenerUrlKey` (secret key reference; wins over `config.databaseListenerUrl` when both are set)
+- `existingSecret.database.name` + `existingSecret.database.listenerUrlKey` (secret key reference; wins over `config.databaseListenerUrl` when both are set)
 
 When neither is set, the listener falls back to `ATC_DATABASE_URL` and no `ATC_DATABASE_LISTENER_URL` env entry is injected into the pod.
 
@@ -210,7 +227,7 @@ Edits to `/etc/atc/config.yaml` are picked up without a pod roll. A `config_watc
 
 ## Multi-replica
 
-`replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard at the top of `templates/deployment.yaml`. The same template also rejects any non-PostgreSQL scheme on the inline `config.databaseUrl` path (`postgres://` and `postgresql://` are the only accepted prefixes); the `existingSecret` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`) that exits with a remediation-naming log line before any sqlx connect call. The chart's ephemeral in-memory mode is single-replica only.
+`replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.database.name`+`existingSecret.database.urlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard at the top of `templates/deployment.yaml`. The same template also rejects any non-PostgreSQL scheme on the inline `config.databaseUrl` path (`postgres://` and `postgresql://` are the only accepted prefixes); the `existingSecret.database` path is opaque at render time and falls through to a startup-time scheme check in the binary (`ensure_pg_scheme()` in `backend/crates/atc-server/src/main.rs`) that exits with a remediation-naming log line before any sqlx connect call. The chart's ephemeral in-memory mode is single-replica only.
 
 The runtime invariants that make symmetric multi-replica safe (see [`state-externalization-research/`](state-externalization-research/README.md)):
 
@@ -559,7 +576,7 @@ The chart supports two storage modes — ephemeral in-memory and external Postgr
 - **SQLite not supported.** SQLite has no `LISTEN/NOTIFY` equivalent. Supporting it as a single-replica durable mode would require dual SQL flavors with different forwarder implementations (Postgres push, SQLite poll). The maintenance and test-matrix cost of dual SQL backends outweighs the value of "single-binary + PVC durable mode" as a deployment shape.
 - **No `persistence.*` chart machinery.** The chart has no PVC template, `persistence:` values block, or persistence-conditional volume mounts. An audit found no application-code consumer of Kubernetes PVCs (only in-memory state, sessionStorage/localStorage in the frontend, and the PostgreSQL layer). With zero current or planned consumers, a templated PVC would be dead code.
 - **Constant `RollingUpdate` strategy.** Both supported modes are RWO-volume-free, so a constant `RollingUpdate` (`maxSurge: 1, maxUnavailable: 0`) gives zero-downtime in both.
-- **Multi-replica precondition guard.** A template-render-time `{{ fail }}` guard rejects `replicaCount > 1` without a Postgres URL (via either `config.databaseUrl` or `existingSecret`).
+- **Multi-replica precondition guard.** A template-render-time `{{ fail }}` guard rejects `replicaCount > 1` without a Postgres URL (via either `config.databaseUrl` or `existingSecret.database.name`+`existingSecret.database.urlKey`).
 
 Operators whose values files contain a `persistence:` key will see schema validation reject the unknown property (`additionalProperties: false`). Mitigation: remove the `persistence:` block from operator values files. There is no programmatic migration tool — this is a deliberate breaking change in a 0.x chart.
 

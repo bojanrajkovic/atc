@@ -64,7 +64,7 @@ Then install the chart:
 
 ```bash
 helm install atc oci://ghcr.io/bojanrajkovic/charts/atc \
-  --set existingSecret.name=atc-db
+  --set existingSecret.database.name=atc-db
 ```
 
 Alternatively, pass the URL directly (not recommended for production):
@@ -78,12 +78,12 @@ helm install atc oci://ghcr.io/bojanrajkovic/charts/atc \
 
 ## Multi-replica with External Postgres
 
-`replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.name`+`existingSecret.databaseUrlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard. Per ADR 0003 D3: ephemeral in-memory mode is single-replica only.
+`replicaCount > 1` requires a PostgreSQL connection string via either `config.databaseUrl` or `existingSecret.database.name`+`existingSecret.database.urlKey`. The chart enforces this at template-render time with a `{{ fail }}` guard. Per ADR 0003 D3: ephemeral in-memory mode is single-replica only.
 
 ```bash
 helm install atc oci://ghcr.io/bojanrajkovic/charts/atc \
   --set replicaCount=2 \
-  --set existingSecret.name=atc-db
+  --set existingSecret.database.name=atc-db
 ```
 
 **Sticky sessions are NOT required** and are discouraged outside specific cost-tuning scenarios. Each replica serves `/v1/state` and `/v1/ws` independently; clients reconnect-then-snapshot via `/v1/state`+`lastSeq` and resume from any replica.
@@ -97,8 +97,8 @@ See `values.yaml` for the complete list of configurable parameters. Every field 
 Key sections:
 - `replicaCount` — Number of Pod replicas. Values > 1 require an external Postgres connection string (chart-render-time guard).
 - `image` — Container image repository, tag, and pull policy
-- `config` — ATC application configuration (HTTP addr, database URL, listener URL, logging)
-- `existingSecret` — Reference an existing Secret for the database URL and listener URL
+- `config` — ATC application configuration (HTTP addr, database URL, listener URL, logging, GitHub webhook secret)
+- `existingSecret` — Per-credential Secret references (`existingSecret.database` for DB credentials, `existingSecret.githubWebhook` for the webhook signing secret); each can reference a different Secret independently
 - `otel` — OpenTelemetry export. Set `enabled: true` and point `endpoint` at an OTLP/HTTP collector to inject the spec-standard `OTEL_*` env vars; defaults to disabled
 - `serviceAccount` — ServiceAccount creation and annotations
 - `service` — Service type and port configuration
