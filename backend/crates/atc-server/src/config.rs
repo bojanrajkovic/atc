@@ -30,6 +30,15 @@ fn default_display_ttl() -> Duration {
 /// the snapshot meaningful.
 const DISPLAY_TTL_FLOOR: Duration = Duration::from_secs(60);
 
+/// Upper bound on `display_ttl`. Caps the operator-configurable window
+/// at 365 days — well beyond any practical visibility need, well within
+/// `chrono::Duration::from_std`'s representable range, and well within
+/// the `display_ttl_seconds: u32` wire field's capacity. Without this
+/// ceiling, `routes::state_handler`'s `chrono::Duration::from_std` could
+/// fail at request time and the `.expect` would panic per-request — a
+/// startup-time rejection with a clear message is operationally cheaper.
+const DISPLAY_TTL_CEILING: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
 /// Environment variable that overrides the path of the YAML configuration file.
 const CONFIG_FILE_ENV: &str = "ATC_CONFIG_FILE";
 
@@ -176,13 +185,22 @@ impl Config {
     }
 }
 
-/// Reject a `display_ttl` value below the 60-second floor. Returns an
-/// operator-friendly message naming the floor; consumers wrap into the
-/// caller's error type.
+/// Reject a `display_ttl` value outside the supported `[60s, 365d]` window.
+/// Returns an operator-friendly message; consumers wrap into the caller's
+/// error type. The upper bound exists so the per-request
+/// `chrono::Duration::from_std` conversion in `routes::state_handler`
+/// is always safe — a startup-time error is operationally cheaper than a
+/// per-request panic.
 fn validate_display_ttl(ttl: Duration) -> Result<(), String> {
     if ttl < DISPLAY_TTL_FLOOR {
         return Err(format!(
             "display_ttl: must be at least 60s (got {:?}); shorter values cause completed runs to disappear mid-view",
+            ttl,
+        ));
+    }
+    if ttl > DISPLAY_TTL_CEILING {
+        return Err(format!(
+            "display_ttl: must be at most 365d (got {:?}); larger values exceed practical visibility needs and risk per-request conversion failures",
             ttl,
         ));
     }
@@ -849,6 +867,41 @@ runner_pools:
         };
         let config = Config::load().expect("2h override should load");
         assert_eq!(config.display_ttl, Duration::from_secs(2 * 60 * 60));
+    }
+
+    #[test]
+    #[serial]
+    fn display_ttl_above_ceiling_is_rejected() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV, "ATC_DISPLAY_TTL"]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+            // 366 days — one day past the 365-day ceiling.
+            std::env::set_var("ATC_DISPLAY_TTL", "366d");
+        };
+        let err = Config::load().expect_err("> 365d should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("display_ttl") && msg.contains("365d"),
+            "error should mention display_ttl and the 365d ceiling, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn display_ttl_at_ceiling_is_accepted() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV, "ATC_DISPLAY_TTL"]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+            std::env::set_var("ATC_DISPLAY_TTL", "365d");
+        };
+        let config = Config::load().expect("exactly 365d should load");
+        assert_eq!(config.display_ttl, Duration::from_secs(365 * 24 * 60 * 60));
     }
 
     #[test]

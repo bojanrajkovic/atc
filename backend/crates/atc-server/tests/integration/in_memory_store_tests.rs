@@ -1229,6 +1229,59 @@ async fn read_snapshot_filters_completed_older_than_cutoff() {
     );
 }
 
+/// Jobs whose parent run is filtered out by the cutoff are also dropped,
+/// even if the job's own status / completed_at would have kept it alive
+/// (orphan-job guard, mirroring the PG `JOIN runs r ON ...` predicate).
+#[tokio::test]
+async fn read_snapshot_drops_jobs_whose_parent_run_is_filtered() {
+    let store = make_store();
+    let now = fixed_test_timestamp();
+
+    // Old completed run — will be filtered by cutoff.
+    let parent_run = RunId(7300);
+    store
+        .apply_run_event(make_run_event(
+            parent_run,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Success,
+            },
+        ))
+        .await
+        .unwrap();
+
+    // Sub-job that is still InProgress (no completed_at) under that aged-out
+    // run. Without the orphan guard, this would survive the cutoff because
+    // status != 'Completed' is a keep-arm in the predicate.
+    let orphan_candidate = JobId(73_000);
+    store
+        .apply_job_event(make_job_event(
+            orphan_candidate,
+            parent_run,
+            "octocat",
+            "Hello-World",
+            JobEvent::InProgress {
+                runner: None,
+                labels: vec![],
+                steps: vec![],
+            },
+        ))
+        .await
+        .unwrap();
+
+    let cutoff = now + chrono::Duration::hours(1);
+    let snap = store.read_snapshot(Some(cutoff)).await.expect("snapshot");
+    let run_ids: Vec<_> = snap.runs.iter().map(|r| r.id).collect();
+    let job_ids: Vec<_> = snap.jobs.iter().map(|j| j.id).collect();
+    assert!(
+        !run_ids.contains(&parent_run),
+        "parent run should be filtered: {run_ids:?}"
+    );
+    assert!(
+        !job_ids.contains(&orphan_candidate),
+        "orphan job should be filtered with its parent: {job_ids:?}"
+    );
+}
+
 /// Completed rows with `completed_at == None` are kept (permissive); the
 /// permissive arm exists so a row whose backfill hasn't landed, or whose
 /// recent event arrived without the timestamp, doesn't disappear from view.

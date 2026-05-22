@@ -234,6 +234,17 @@ impl InMemoryStore {
         // PG `WHERE` clause: cutoff absent → keep; status != Completed →
         // keep; completed_at missing → keep (permissive); else keep iff
         // completed_at >= cutoff.
+        //
+        // Jobs additionally require their parent run to pass the cutoff —
+        // matching the PG `JOIN runs r ON ...` predicate. Without this gate,
+        // a completed run aged past the cutoff with a non-`Completed`
+        // sub-job would produce an orphan job in the snapshot.
+        let visible_run_ids: HashSet<RunId> = state
+            .runs
+            .iter()
+            .filter(|(_, r)| run_passes_cutoff(r, cutoff))
+            .map(|(id, _)| *id)
+            .collect();
         let runs: Vec<WorkflowRun> = state
             .runs
             .values()
@@ -243,7 +254,7 @@ impl InMemoryStore {
         let jobs: Vec<Job> = state
             .jobs
             .values()
-            .filter(|j| job_passes_cutoff(j, cutoff))
+            .filter(|j| visible_run_ids.contains(&j.run_id) && job_passes_cutoff(j, cutoff))
             .cloned()
             .collect();
         drop(seq_guard);
