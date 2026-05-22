@@ -28,8 +28,11 @@ async fn build_app_with_pool(
     let shutdown = CancellationToken::new();
     let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
     let persist = store as Arc<dyn atc_persist::PersistentStore>;
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,

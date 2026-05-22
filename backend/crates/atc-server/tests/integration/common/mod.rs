@@ -327,13 +327,16 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 /// use their own helpers.
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
     let persist = InMemoryStore::new_for_test(
-        Arc::new(SystemClock),
+        Arc::clone(&clock),
         Duration::from_hours(1),
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: Some(secret.to_string()),
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,
@@ -353,13 +356,16 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
 /// why eviction isn't spawned here.
 pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
     let persist = InMemoryStore::new_for_test(
-        Arc::new(SystemClock),
+        Arc::clone(&clock),
         Duration::from_hours(1),
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,
@@ -624,7 +630,7 @@ async fn build_app_inner(
     };
 
     let (pg_store, handles) = PgStore::start_with_test_hooks(
-        clock,
+        Arc::clone(&clock),
         pool.clone(),
         pg_listener,
         shutdown.clone(),
@@ -639,6 +645,8 @@ async fn build_app_inner(
 
     let state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,

@@ -44,6 +44,7 @@ fn make_store_with_clock_and_ttl(
 
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
     let now = fixed_test_timestamp();
+    let completed_at = matches!(action, RunEvent::Completed { .. }).then_some(now);
     RunEventEnvelope {
         run_id,
         org: "octocat".to_string(),
@@ -59,6 +60,7 @@ fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
         created_at: now,
         run_started_at: None,
         updated_at: now,
+        completed_at,
         action,
     }
 }
@@ -740,6 +742,7 @@ async fn workflow_name_preserved_on_in_progress_without_name() {
         created_at: now,
         run_started_at: None,
         updated_at: now,
+        completed_at: None,
         action: RunEvent::InProgress,
     };
     store.apply_run_event(env).await.unwrap();
@@ -1109,13 +1112,165 @@ async fn read_snapshot_contains_all_runs_and_jobs() {
         .unwrap();
 
     let snapshot = store
-        .read_snapshot()
+        .read_snapshot(None)
         .await
         .expect("read_snapshot should succeed");
 
     assert_eq!(snapshot.runs.len(), 1);
     assert_eq!(snapshot.jobs.len(), 2);
     assert_eq!(snapshot.last_seq, 3); // 1 run + 2 jobs
+}
+
+// ---------------------------------------------------------------------------
+// Display-TTL cutoff filter
+// ---------------------------------------------------------------------------
+//
+// `InMemoryStore::read_snapshot(cutoff)` filters completed runs and jobs whose
+// `completed_at` is strictly older than `cutoff`. Active rows are always kept;
+// completed rows with `completed_at = None` are also kept (permissive — see
+// `atc-store-mem::run_passes_cutoff`).
+
+/// `read_snapshot(None)` returns every non-evicted row regardless of age.
+#[tokio::test]
+async fn read_snapshot_none_returns_everything() {
+    let store = make_store();
+    let run_id = RunId(7001);
+    let job_id = JobId(70_001);
+    store
+        .apply_run_event(make_run_event(
+            run_id,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Success,
+            },
+        ))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(make_job_event(
+            job_id,
+            run_id,
+            "octocat",
+            "Hello-World",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: None,
+                labels: vec![],
+                steps: vec![],
+            },
+        ))
+        .await
+        .unwrap();
+
+    let snap = store.read_snapshot(None).await.expect("snapshot");
+    assert_eq!(snap.runs.len(), 1);
+    assert_eq!(snap.jobs.len(), 1);
+}
+
+/// A completed run/job whose `completed_at` is older than the cutoff is
+/// excluded; one whose `completed_at` is within the window stays visible.
+#[tokio::test]
+async fn read_snapshot_filters_completed_older_than_cutoff() {
+    let store = make_store();
+    let now = fixed_test_timestamp();
+
+    // Aged-out: completed_at is `now` (the default for Completed envelopes
+    // built by `make_run_event`), which is well before `cutoff = now + 1h`.
+    let old_run = RunId(7100);
+    let old_job = JobId(71_000);
+    store
+        .apply_run_event(make_run_event(
+            old_run,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Success,
+            },
+        ))
+        .await
+        .unwrap();
+    store
+        .apply_job_event(make_job_event_with_completed_at(
+            old_job,
+            old_run,
+            "octocat",
+            "Hello-World",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: None,
+                labels: vec![],
+                steps: vec![],
+            },
+            Some(now),
+        ))
+        .await
+        .unwrap();
+
+    // Active run + job: completed_at None, status not Completed — must
+    // remain regardless of cutoff.
+    let active_run = RunId(7101);
+    store
+        .apply_run_event(make_run_event(active_run, RunEvent::Requested))
+        .await
+        .unwrap();
+
+    let cutoff = now + chrono::Duration::hours(1);
+    let snap = store.read_snapshot(Some(cutoff)).await.expect("snapshot");
+    let run_ids: Vec<_> = snap.runs.iter().map(|r| r.id).collect();
+    assert!(
+        run_ids.contains(&active_run),
+        "active run must survive cutoff: {run_ids:?}"
+    );
+    assert!(
+        !run_ids.contains(&old_run),
+        "aged-out completed run must be filtered: {run_ids:?}"
+    );
+    let job_ids: Vec<_> = snap.jobs.iter().map(|j| j.id).collect();
+    assert!(
+        !job_ids.contains(&old_job),
+        "aged-out completed job must be filtered: {job_ids:?}"
+    );
+}
+
+/// Completed rows with `completed_at == None` are kept (permissive); the
+/// permissive arm exists so a row whose backfill hasn't landed, or whose
+/// recent event arrived without the timestamp, doesn't disappear from view.
+#[tokio::test]
+async fn read_snapshot_keeps_completed_rows_with_null_completed_at() {
+    let store = make_store();
+    let now = fixed_test_timestamp();
+    let run_id = RunId(7200);
+    let job_id = JobId(72_000);
+
+    // Manually clear completed_at on the envelope so the store records None.
+    let mut env = make_run_event(
+        run_id,
+        RunEvent::Completed {
+            conclusion: RunConclusion::Success,
+        },
+    );
+    env.completed_at = None;
+    store.apply_run_event(env).await.unwrap();
+    store
+        .apply_job_event(make_job_event_with_completed_at(
+            job_id,
+            run_id,
+            "octocat",
+            "Hello-World",
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: None,
+                labels: vec![],
+                steps: vec![],
+            },
+            None,
+        ))
+        .await
+        .unwrap();
+
+    // Cutoff arbitrarily far in the future: would normally filter out a
+    // Completed row, but the None completed_at takes the permissive arm.
+    let cutoff = now + chrono::Duration::days(365);
+    let snap = store.read_snapshot(Some(cutoff)).await.expect("snapshot");
+    assert_eq!(snap.runs.len(), 1);
+    assert_eq!(snap.jobs.len(), 1);
 }
 
 // ---------------------------------------------------------------------------

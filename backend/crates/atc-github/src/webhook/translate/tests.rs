@@ -161,6 +161,30 @@ fn test_translate_run_with_null_workflow() {
     assert_eq!(result.workflow_path, None);
 }
 
+#[test]
+fn test_translate_run_completed_populates_completed_at_from_updated_at() {
+    // GitHub does not surface a dedicated `completed_at` on workflow_run;
+    // `updated_at` is the best-available proxy at the moment the run
+    // transitions to `completed`.
+    let webhook = make_workflow_run_webhook("completed", Some("success"));
+    let expected_updated_at = webhook.workflow_run.updated_at;
+    let result = translate_run(webhook).expect("should translate");
+
+    assert_eq!(result.completed_at, Some(expected_updated_at));
+}
+
+#[test]
+fn test_translate_run_non_completed_actions_leave_completed_at_none() {
+    for action in ["requested", "in_progress"] {
+        let webhook = make_workflow_run_webhook(action, None);
+        let result = translate_run(webhook).expect("should translate");
+        assert_eq!(
+            result.completed_at, None,
+            "non-completed action {action} must not stamp completed_at"
+        );
+    }
+}
+
 // ===== Job event translation tests =====
 
 #[test]

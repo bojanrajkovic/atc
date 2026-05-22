@@ -9,5 +9,10 @@ rust-version.workspace = true
 atc-core = { path = "../atc-core" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
+# `chrono` is used in the public trait surface (`read_snapshot` cutoff).
+# Not a storage-backend dep — the "no sqlx/redis here" rule in the crate
+# README still applies; chrono is a value-typed time crate consumed by
+# both stores and the snapshot reader.
+chrono = { version = "=0.4.44", features = ["serde"] }
 tokio = { version = "=1.52.3", features = ["sync", "time", "rt"] }
 tracing = { workspace = true }

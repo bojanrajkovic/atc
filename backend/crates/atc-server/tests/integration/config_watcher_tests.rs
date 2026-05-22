@@ -29,8 +29,9 @@ fn write_yaml(path: &Path, contents: &str) {
 
 /// Build a minimal `AppState` that the watcher can mutate.
 fn build_app_state() -> (Arc<AppState>, broadcast::Sender<ConfigEvent>) {
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
     let persist = atc_store_mem::InMemoryStore::new_for_test(
-        Arc::new(SystemClock),
+        Arc::clone(&clock),
         Duration::from_secs(3600),
         256,
     ) as Arc<dyn PersistentStore>;
@@ -39,6 +40,8 @@ fn build_app_state() -> (Arc<AppState>, broadcast::Sender<ConfigEvent>) {
 
     let state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_secs(3600),
         webhook_secret: None,
         runner_pool_capacities: RwLock::new(Vec::new()),
         config_events_tx: tx.clone(),

@@ -40,11 +40,14 @@ use tokio_tungstenite::tungstenite::Message;
 async fn test_setup() -> (SocketAddr, Arc<AppState>) {
     common::ensure_recorder_installed();
 
-    let persist = InMemoryStore::new_for_test(Arc::new(SystemClock), Duration::from_hours(1), 256)
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
+    let persist = InMemoryStore::new_for_test(Arc::clone(&clock), Duration::from_hours(1), 256)
         as Arc<dyn atc_persist::PersistentStore>;
 
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,

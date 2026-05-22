@@ -8,6 +8,7 @@ use atc_core::{
     Job, JobConclusion, JobId, JobStatus, PersistError, RunConclusion, RunId, RunStatus,
     RunnerInfo, Step, WorkflowRun,
 };
+use chrono::{DateTime, Utc};
 
 /// Parse a SQL CHECK constraint string back to [`RunStatus`].
 ///
@@ -83,19 +84,32 @@ pub(super) fn parse_job_conclusion(s: &str) -> Result<JobConclusion, PersistErro
 /// Filters out FK-only stub rows created by `upsert_job_in_txn` for
 /// job-before-run delivery. Used by the PG path to project the PG state
 /// into the `StateSnapshot` wire contract.
+///
+/// `cutoff = Some(t)` hides completed rows whose `completed_at` is strictly
+/// earlier than `t` (display-TTL gate). The predicate is permissive on
+/// `completed_at IS NULL` so newly-deployed code can still surface a
+/// completed row that has not yet been backfilled or has received no event
+/// since the deploy; the `(status, completed_at)` composite index keeps
+/// the filter cheap. Symmetric with `atc-store-mem`'s `run_passes_cutoff`.
 #[allow(dead_code)]
 pub(crate) async fn read_all_runs(
     tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+    cutoff: Option<DateTime<Utc>>,
 ) -> Result<Vec<WorkflowRun>, PersistError> {
     let rows = sqlx::query!(
         r#"
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, status, conclusion,
-               html_url, created_at, run_started_at, updated_at
+               html_url, created_at, run_started_at, updated_at, completed_at
           FROM runs
          WHERE placeholder = false
+           AND ($1::timestamptz IS NULL
+                OR status != 'Completed'
+                OR completed_at IS NULL
+                OR completed_at >= $1::timestamptz)
          ORDER BY id
         "#,
+        cutoff,
     )
     .fetch_all(&mut tx.executor())
     .await
@@ -125,15 +139,21 @@ pub(crate) async fn read_all_runs(
             created_at: row.created_at,
             run_started_at: row.run_started_at,
             updated_at: row.updated_at,
+            completed_at: row.completed_at,
         });
     }
     Ok(runs)
 }
 
 /// Read all jobs ordered by id, reconstructing `RunnerInfo` and `steps`.
+///
+/// `cutoff` filters completed jobs with the same predicate as
+/// [`read_all_runs`], leveraging the existing
+/// `jobs_status_completed_at_idx` composite index.
 #[allow(dead_code)]
 pub(crate) async fn read_all_jobs(
     tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+    cutoff: Option<DateTime<Utc>>,
 ) -> Result<Vec<Job>, PersistError> {
     let rows = sqlx::query!(
         r#"
@@ -141,8 +161,13 @@ pub(crate) async fn read_all_jobs(
                runner_id, runner_name, runner_group_name,
                labels, steps, created_at, started_at, completed_at
           FROM jobs
+         WHERE $1::timestamptz IS NULL
+            OR status != 'Completed'
+            OR completed_at IS NULL
+            OR completed_at >= $1::timestamptz
          ORDER BY id
         "#,
+        cutoff,
     )
     .fetch_all(&mut tx.executor())
     .await

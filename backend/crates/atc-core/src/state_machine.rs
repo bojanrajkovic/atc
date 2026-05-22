@@ -97,6 +97,11 @@ pub fn apply_run_event(
             html_url: envelope.html_url,
             run_started_at: envelope.run_started_at.or(existing.run_started_at),
             updated_at: envelope.updated_at,
+            // Preserve-first semantics. The run FSM is forward-only (Completed
+            // never reverts), so a second arrival on the same run cannot
+            // legitimately move `completed_at` backward; preserve the first
+            // observation across idempotent replay.
+            completed_at: envelope.completed_at.or(existing.completed_at),
             ..existing
         },
         None => WorkflowRun {
@@ -116,6 +121,7 @@ pub fn apply_run_event(
             created_at: envelope.created_at,
             run_started_at: envelope.run_started_at,
             updated_at: envelope.updated_at,
+            completed_at: envelope.completed_at,
         },
     };
 

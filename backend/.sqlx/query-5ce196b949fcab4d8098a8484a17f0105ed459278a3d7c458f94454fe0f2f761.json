@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, run_id, name, status, conclusion,\n               runner_id, runner_name, runner_group_name,\n               labels, steps, created_at, started_at, completed_at\n          FROM jobs\n         ORDER BY id\n        ",
+  "query": "\n        SELECT id, run_id, name, status, conclusion,\n               runner_id, runner_name, runner_group_name,\n               labels, steps, created_at, started_at, completed_at\n          FROM jobs\n         WHERE $1::timestamptz IS NULL\n            OR status != 'Completed'\n            OR completed_at IS NULL\n            OR completed_at >= $1::timestamptz\n         ORDER BY id\n        ",
   "describe": {
     "columns": [
       {
@@ -70,7 +70,9 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Timestamptz"
+      ]
     },
     "nullable": [
       false,
@@ -88,5 +90,5 @@
       true
     ]
   },
-  "hash": "84416bcd2abd19f71a82f3f996db436622f4e6b133810de3d0bf1baa3648d788"
+  "hash": "5ce196b949fcab4d8098a8484a17f0105ed459278a3d7c458f94454fe0f2f761"
 }

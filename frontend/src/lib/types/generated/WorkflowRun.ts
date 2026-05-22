@@ -73,4 +73,19 @@ runStartedAt: string | null,
 /**
  * When the run was last updated.
  */
-updatedAt: string, };
+updatedAt: string, 
+/**
+ * When the run reached its terminal state. `None` for non-completed
+ * runs; set on the `Completed` transition by `apply_run_event` and
+ * preserved across idempotent replay via `envelope.completed_at.or(existing)`.
+ * Carried into the snapshot read path so the display-TTL cutoff
+ * (`ATC_DISPLAY_TTL`) can filter aged-out completed runs from `/v1/state`.
+ *
+ * `#[ts(optional)]` + `#[serde(skip_serializing_if = "Option::is_none")]`
+ * keep the TS type (`completedAt?: string`) honest against the wire
+ * shape — `None` serializes as field omission rather than `null`,
+ * matching `string | undefined` rather than `string | null`. The
+ * `default` attr keeps inbound deserialization permissive when the
+ * field is missing.
+ */
+completedAt?: string, };

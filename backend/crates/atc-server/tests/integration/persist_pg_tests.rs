@@ -40,6 +40,7 @@ fn run_requested(run_id: i64) -> RunEventEnvelope {
         created_at: ts(),
         run_started_at: None,
         updated_at: ts(),
+        completed_at: None,
         action: RunEvent::Requested,
     }
 }
@@ -61,6 +62,7 @@ fn run_in_progress(run_id: i64) -> RunEventEnvelope {
         created_at: ts(),
         run_started_at: Some(ts()),
         updated_at: ts(),
+        completed_at: None,
         action: RunEvent::InProgress,
     }
 }
@@ -82,6 +84,7 @@ fn run_completed(run_id: i64) -> RunEventEnvelope {
         created_at: ts(),
         run_started_at: Some(ts()),
         updated_at: ts(),
+        completed_at: Some(ts()),
         action: RunEvent::Completed {
             conclusion: atc_core::RunConclusion::Success,
         },
@@ -714,4 +717,66 @@ async fn pg_store_ping_succeeds() {
         "ping should succeed with a healthy pool"
     );
     shutdown.cancel();
+}
+
+/// The `0007_runs_completed_at.sql` migration backfills `completed_at` from
+/// `updated_at` for any pre-existing `status='Completed'` row whose
+/// `completed_at` is NULL. Migrations run once per database in
+/// `common::start_pg()`, so we cannot literally re-apply them — but we can
+/// seed a row that matches the pre-migration shape (NULL `completed_at`,
+/// status='Completed') and run the same UPDATE statement to verify the
+/// backfill clause is correct.
+#[tokio::test]
+#[serial_test::serial]
+async fn migration_backfills_completed_at_from_updated_at_for_legacy_rows() {
+    let (pool, _c, _db_url) = common::start_pg().await;
+    let now = ts();
+
+    // Seed a Completed row with completed_at = NULL (the pre-migration
+    // shape — the column was added nullable and would be NULL for every
+    // previously-completed row before the backfill ran).
+    sqlx::query(
+        r#"
+        INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url,
+                          status, conclusion, created_at, updated_at, completed_at,
+                          placeholder)
+        VALUES ($1, 'org', 'repo', 'sha', 'push', 'Test', 'http://x',
+                'Completed', 'Success', $2, $2, NULL, false)
+        "#,
+    )
+    .bind(9_000_001i64)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("insert legacy completed row");
+
+    // Run the same backfill statement the migration uses.
+    let result = sqlx::query(
+        r#"
+        UPDATE runs
+           SET completed_at = updated_at
+         WHERE status = 'Completed'
+           AND completed_at IS NULL
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("backfill update");
+    assert!(
+        result.rows_affected() >= 1,
+        "backfill should touch at least our seeded row"
+    );
+
+    // Verify the seeded row's completed_at now matches its updated_at.
+    let row: (Option<DateTime<Utc>>, DateTime<Utc>) =
+        sqlx::query_as("SELECT completed_at, updated_at FROM runs WHERE id = $1")
+            .bind(9_000_001i64)
+            .fetch_one(&pool)
+            .await
+            .expect("re-fetch seeded row");
+    assert_eq!(
+        row.0,
+        Some(row.1),
+        "completed_at should equal updated_at after backfill"
+    );
 }

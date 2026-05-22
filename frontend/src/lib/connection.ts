@@ -187,8 +187,16 @@ export class ConnectionManager {
       // Step 4: Drain any stale dispatcher events from prior connection
       eventDispatcher.clear()
 
-      // Step 5: Load snapshot into stores
-      runStore.loadSnapshot(snapshot.runs, snapshot.jobs, snapshot.runnerPoolCapacities ?? [])
+      // Step 5: Load snapshot into stores. `displayTtlSeconds` defaults to
+      // 0 ("no filter") when the field is missing — a pre-feature backend
+      // replica during a rolling deploy emits no field, and the safe
+      // posture is to keep showing completed rows rather than hide them.
+      runStore.loadSnapshot(
+        snapshot.runs,
+        snapshot.jobs,
+        snapshot.runnerPoolCapacities ?? [],
+        snapshot.displayTtlSeconds ?? 0,
+      )
       this.snapshotLastSeq = snapshot.lastSeq
 
       // Step 5b: Drain any pre-snapshot ConfigUpdate that arrived between

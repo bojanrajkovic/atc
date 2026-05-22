@@ -1,6 +1,7 @@
 use std::sync::Arc;
+use std::time::Duration;
 
-use atc_core::RunnerPoolCapacity;
+use atc_core::{Clock, RunnerPoolCapacity};
 use atc_persist::PersistentStore;
 use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
@@ -20,6 +21,20 @@ pub struct AppState {
     /// cheaply and used across `async` handler closures. WS handlers obtain
     /// their broadcast receiver via `persist.subscribe()`.
     pub persist: Arc<dyn PersistentStore>,
+    /// Wall-clock source. The same `Arc<dyn Clock>` handed to the active
+    /// store, so a `TestClock` in integration tests drives both the
+    /// snapshot cutoff in `state_handler` and the store's internal
+    /// time-dependent operations (PG drain heartbeat staleness check,
+    /// in-memory eviction). Production uses `SystemClock`.
+    pub clock: Arc<dyn Clock>,
+    /// Operator-configured display TTL (`ATC_DISPLAY_TTL`, default 1h).
+    /// `state_handler` computes `cutoff = clock.now() - display_ttl` and
+    /// passes it to `PersistentStore::read_snapshot` so completed runs and
+    /// jobs older than the cutoff are excluded from `/v1/state`. The same
+    /// value is stamped onto the snapshot's `display_ttl_seconds` so the
+    /// frontend can reactively age out completed rows against
+    /// `uiStore.nowMs` without an event arriving.
+    pub display_ttl: Duration,
     /// HMAC-SHA256 secret for verifying GitHub webhook signatures.
     /// `None` means verification is skipped.
     pub webhook_secret: Option<String>,

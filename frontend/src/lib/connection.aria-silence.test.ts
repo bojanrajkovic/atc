@@ -114,6 +114,7 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
       runs: [],
       jobs: [],
       runnerPoolCapacities: [],
+      displayTtlSeconds: 0,
     }
 
     // --- Spy on liveRegion.observeFlush ---
@@ -241,7 +242,13 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
     server.use(
       http.get('http://localhost:*/v1/state', () =>
         HttpResponse.json(
-          snapshotToJSON({ lastSeq: 5n, runs: [], jobs: [], runnerPoolCapacities: [] }),
+          snapshotToJSON({
+            lastSeq: 5n,
+            runs: [],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          }),
         ),
       ),
     )
@@ -271,7 +278,13 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
     server.use(
       http.get('http://localhost:*/v1/state', () =>
         HttpResponse.json(
-          snapshotToJSON({ lastSeq: 5n, runs: [], jobs: [], runnerPoolCapacities: [] }),
+          snapshotToJSON({
+            lastSeq: 5n,
+            runs: [],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          }),
         ),
       ),
     )
@@ -297,7 +310,13 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
     server.use(
       http.get('http://localhost:*/v1/state', () =>
         HttpResponse.json(
-          snapshotToJSON({ lastSeq: 5n, runs: [], jobs: [], runnerPoolCapacities: [] }),
+          snapshotToJSON({
+            lastSeq: 5n,
+            runs: [],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          }),
         ),
       ),
     )

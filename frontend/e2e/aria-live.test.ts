@@ -17,7 +17,13 @@ test.describe('ARIA live region', () => {
       route.fulfill({
         contentType: 'application/json',
         body: JSON.stringify(
-          { lastSeq: 1n, runs: [], jobs: [], runnerPoolCapacities: [] } satisfies StateSnapshot,
+          {
+            lastSeq: 1n,
+            runs: [],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          } satisfies StateSnapshot,
           bigintReplacer,
         ),
       })

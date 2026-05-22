@@ -17,6 +17,7 @@
 //! store crates can share a single canonical copy.
 
 use atc_core::event::{JobEventEnvelope, RunEventEnvelope};
+use chrono::{DateTime, Utc};
 use tokio::sync::broadcast;
 
 pub use atc_core::PersistError;
@@ -87,11 +88,26 @@ pub trait PersistentStore: Send + Sync {
 
     /// Return a consistent snapshot of all state with the current seq cursor.
     ///
+    /// `cutoff` is the wall-clock time below which a completed run or job is
+    /// hidden from the snapshot — the display-TTL gate (`ATC_DISPLAY_TTL`).
+    /// `None` disables filtering and returns every non-evicted row; the
+    /// `state_handler` route always supplies `Some(now - display_ttl)`, but
+    /// internal callers in tests pass `None` when they want the unfiltered
+    /// snapshot. The store does not know the configured TTL — that lives in
+    /// `AppState`; the trait surface stays free of config (ADR-0008).
+    /// `completed_at IS NULL` is permissive on both store paths: rows that
+    /// reached `Completed` before the migration backfill, or before the
+    /// rolling-deploy window's first event, remain visible until they next
+    /// receive an event with a populated timestamp.
+    ///
     /// For the in-memory store: locks seq, reads state under a read lock.
     /// For the PG-backed store: loads broadcast watermark (Acquire), opens
     /// REPEATABLE READ tx, reads runs/jobs, returns snapshot with watermark as
     /// `last_seq`.
-    async fn read_snapshot(&self) -> Result<atc_wire::StateSnapshot, PersistError>;
+    async fn read_snapshot(
+        &self,
+        cutoff: Option<DateTime<Utc>>,
+    ) -> Result<atc_wire::StateSnapshot, PersistError>;
 
     /// Check whether the store is live and healthy.
     ///

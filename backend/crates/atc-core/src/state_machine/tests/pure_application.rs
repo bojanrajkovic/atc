@@ -35,6 +35,7 @@ fn run_forward_only_rejects_completed_to_in_progress() {
         created_at: now,
         run_started_at: Some(now),
         updated_at: now,
+        completed_at: Some(now),
     };
 
     let envelope = make_run_event(run_id, RunEvent::InProgress);
@@ -81,6 +82,7 @@ fn run_first_sight_from_none_creates_run() {
         created_at: now,
         run_started_at: None,
         updated_at: now,
+        completed_at: None,
         action: RunEvent::Requested,
     };
 
@@ -120,6 +122,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
         created_at: now,
         run_started_at: None,
         updated_at: now,
+        completed_at: None,
     };
 
     // Envelope with workflow_name = None (common for in_progress events).
@@ -138,6 +141,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
         created_at: now,
         run_started_at: None,
         updated_at: now,
+        completed_at: None,
         action: RunEvent::InProgress,
     };
 
@@ -149,6 +153,59 @@ fn run_struct_update_merge_preserves_workflow_name() {
         updated.workflow_path,
         Some(".github/workflows/my.yml".to_string())
     );
+}
+
+/// `apply_run_event` on the `Completed` transition sets `completed_at` from
+/// the envelope. First-sight creation captures the envelope's
+/// `completed_at` directly.
+#[test]
+fn run_completed_sets_completed_at_on_first_sight() {
+    let now = fixed_test_timestamp();
+    let run_id = RunId(1005);
+    let mut envelope = make_run_event(
+        run_id,
+        RunEvent::Completed {
+            conclusion: RunConclusion::Success,
+        },
+    );
+    envelope.completed_at = Some(now);
+
+    let run = apply_run_event(None, envelope).expect("first-sight should succeed");
+    assert_eq!(run.status, RunStatus::Completed);
+    assert_eq!(run.completed_at, Some(now));
+}
+
+/// `envelope.completed_at.or(existing.completed_at)` preserves the existing
+/// timestamp when a subsequent event arrives with no `completed_at`. This is
+/// the protective shape against losing a recorded terminal moment when an
+/// out-of-order replay (e.g., a fixture or a late non-completed event) does
+/// not carry the field.
+#[test]
+fn run_completed_at_preserved_when_envelope_lacks_it() {
+    let first = fixed_test_timestamp();
+    let run_id = RunId(1006);
+
+    let mut env1 = make_run_event(
+        run_id,
+        RunEvent::Completed {
+            conclusion: RunConclusion::Success,
+        },
+    );
+    env1.completed_at = Some(first);
+    let first_completed = apply_run_event(None, env1).expect("first-sight should succeed");
+    assert_eq!(first_completed.completed_at, Some(first));
+
+    // Subsequent same-state replay with no completed_at — the .or() shape must
+    // keep the existing value.
+    let mut env2 = make_run_event(
+        run_id,
+        RunEvent::Completed {
+            conclusion: RunConclusion::Success,
+        },
+    );
+    env2.completed_at = None;
+    let replayed = apply_run_event(Some(first_completed), env2).expect("idempotent should succeed");
+    assert_eq!(replayed.completed_at, Some(first));
 }
 
 // ===== apply_job_event =====

@@ -66,6 +66,20 @@ runStartedAt: string | null,
  */
 updatedAt: string, 
 /**
+ * When the run reached its terminal state. Populated by the GitHub
+ * translation layer from `workflow_run.updated_at` ONLY when the action
+ * is `Completed` (GitHub does not surface a dedicated `completed_at`
+ * field on `workflow_run` — see `atc-github/src/webhook/translate.rs`).
+ * `None` for non-completed actions; carried into `WorkflowRun.completed_at`
+ * by `apply_run_event` with preserve-first semantics (`.or(existing)`).
+ *
+ * `#[ts(optional)]` + `#[serde(skip_serializing_if)]` keep the TS
+ * type honest against the wire shape; mirrors `WorkflowRun.completed_at`.
+ * Pre-feature replicas may emit `RunEventEnvelope` over WS without
+ * this field during a rolling deploy.
+ */
+completedAt?: string, 
+/**
  * The action that occurred.
  */
 action: RunEvent, };

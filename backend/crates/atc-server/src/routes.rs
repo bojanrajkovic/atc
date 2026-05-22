@@ -69,7 +69,10 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 /// Return current state snapshot with lastSeq cursor.
 ///
-/// Dispatches uniformly through `state.persist.read_snapshot()`.
+/// Dispatches uniformly through `state.persist.read_snapshot(cutoff)`. The
+/// cutoff is computed here from `AppState.clock` and `AppState.display_ttl`
+/// — the store trait stays config-agnostic (ADR-0008) and the cutoff is
+/// the only event-vs-config interaction on the read path.
 ///
 /// For `PgStore`: loads `broadcast_watermark` (Acquire) BEFORE the REPEATABLE
 /// READ snapshot — the drain's commit-order cursor ensures every seq ≤ lastSeq
@@ -86,7 +89,15 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         snapshot.last_seq = field::Empty,
     );
     async move {
-        match state.persist.read_snapshot().await {
+        // Compute the display-TTL cutoff once per request. The 60s startup
+        // floor and the use of `std::time::Duration` make this conversion
+        // infallible for any realistic configured value — chrono's
+        // `TimeDelta` range comfortably exceeds humantime-parseable inputs.
+        let display_ttl_chrono = chrono::Duration::from_std(state.display_ttl)
+            .expect("display_ttl fits chrono::Duration");
+        let cutoff = state.clock.now() - display_ttl_chrono;
+
+        match state.persist.read_snapshot(Some(cutoff)).await {
             Ok(mut snap) => {
                 // Compose operator-declared pool capacities from `AppState`
                 // onto the persistent-store-derived snapshot. The store trait
@@ -94,6 +105,13 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 // here so the snapshot rail carries everything the frontend
                 // needs for its first render.
                 snap.runner_pool_capacities = state.runner_pool_capacities.read().await.clone();
+                // Stamp the configured TTL onto the snapshot so the frontend
+                // can age out completed rows reactively against
+                // `uiStore.nowMs`. `u32::try_from` is defensive — any
+                // realistic humantime-parseable value fits in `u32::MAX`
+                // seconds (~136 years).
+                snap.display_ttl_seconds =
+                    u32::try_from(state.display_ttl.as_secs()).unwrap_or(u32::MAX);
                 let current = tracing::Span::current();
                 current.record("snapshot.runs_count", snap.runs.len());
                 current.record("snapshot.jobs_count", snap.jobs.len());

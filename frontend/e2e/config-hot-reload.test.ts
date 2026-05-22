@@ -66,6 +66,7 @@ function snapshot(running: number, capacity: number): StateSnapshot {
     runs: [makeRun(1)],
     jobs,
     runnerPoolCapacities: [{ labels: ['linux', 'self-hosted', 'x64'], capacity }],
+    displayTtlSeconds: 0,
   }
 }
 
@@ -98,6 +99,7 @@ test.describe('Config hot reload', () => {
       JSON.stringify({
         kind: 'ConfigUpdate',
         runnerPoolCapacities: [{ labels: ['linux', 'self-hosted', 'x64'], capacity: 20 }],
+        displayTtlSeconds: 0,
       }),
     )
 

@@ -125,6 +125,7 @@ dependencies = [
  "async-trait",
  "atc-core",
  "atc-wire",
+ "chrono",
  "tokio",
  "tracing",
 ]
@@ -190,6 +191,7 @@ dependencies = [
  "atc-persist",
  "atc-store-mem",
  "atc-wire",
+ "chrono",
  "tokio",
  "tokio-util",
  "tracing",

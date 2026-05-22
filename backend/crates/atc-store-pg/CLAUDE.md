@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-store-pg
 
-Last verified: 2026-05-15
+Last verified: 2026-05-22
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence § PG mode) and `docs/architecture/metrics.md` (PG-mode emit sites + `PgMetrics`). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture docs.
 
@@ -22,7 +22,7 @@ PostgreSQL-backed [`PersistentStore`](../atc-persist/src/lib.rs) implementation.
 | `src/db.rs` | `init_pool`, the `MIGRATOR` static, and the `DbInitError { Migrate(Box<MigrateError>), Connect(sqlx::Error) }` enum. |
 | `src/metrics.rs` | `PgMetrics` struct + cached OTel instruments + pre-built `[KeyValue; 1]` slices; observable-gauge registration via `Weak<AtomicI64>`. |
 | `src/invariants.rs` | `cfg(any(test, feature = "test-support"))` — placeholder for future PG-side invariant assertion helpers. |
-| `migrations/` | `0001_initial_runs_jobs.sql`, `0002_outbox.sql`, `0003_runs_placeholder.sql`, `0004_outbox_watermarks.sql`. |
+| `migrations/` | `0001_initial_runs_jobs.sql`, `0002_outbox.sql`, `0003_runs_placeholder.sql`, `0004_outbox_watermarks.sql`, `0005_drop_runner_group_id.sql`, `0006_outbox_traceparent.sql`, `0007_runs_completed_at.sql`. |
 
 ## Sharp edges
 

@@ -16,5 +16,22 @@ import type { WorkflowRun } from "./WorkflowRun";
  * `#[serde(default)]` so a snapshot from an older replica that does not
  * emit the field still deserializes — the field defaults to `Vec::new()`
  * and the frontend behaves as if no capacities were declared.
+ *
+ * `display_ttl_seconds` is the operator-configured visibility TTL for
+ * completed runs and jobs (`ATC_DISPLAY_TTL`, default 1h). The server
+ * applies the same cutoff to the snapshot's `runs`/`jobs` SQL, so the
+ * frontend uses this value purely to keep aging-out completed rows
+ * reactive against `uiStore.nowMs`. `#[serde(default)]` for rolling-deploy
+ * tolerance — a pre-feature replica emits no field; the frontend treats
+ * `0` (the `u32` default) as "no filter".
  */
-export type StateSnapshot = { lastSeq: bigint, runs: Array<WorkflowRun>, jobs: Array<Job>, runnerPoolCapacities: Array<RunnerPoolCapacity>, };
+export type StateSnapshot = { lastSeq: bigint, runs: Array<WorkflowRun>, jobs: Array<Job>, runnerPoolCapacities: Array<RunnerPoolCapacity>, 
+/**
+ * `#[serde(default)]` so a pre-feature replica's snapshot still
+ * deserializes — `u32`'s default is `0`, and the frontend treats `0`
+ * as "no filter armed". The TS type still lists the field as
+ * required (ts-rs `#[ts(optional)]` is restricted to `Option<T>`),
+ * but `connection.ts` reads `snapshot.displayTtlSeconds ?? 0` so a
+ * missing field on the wire is normalized at the boundary.
+ */
+displayTtlSeconds: number, };

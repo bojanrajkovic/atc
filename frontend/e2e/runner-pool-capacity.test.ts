@@ -67,6 +67,7 @@ function snapshot(running: number, capacity: number): StateSnapshot {
     runs: [makeRun(1)],
     jobs,
     runnerPoolCapacities: [{ labels: ['linux', 'self-hosted', 'x64'], capacity }],
+    displayTtlSeconds: 0,
   }
 }
 
@@ -145,6 +146,7 @@ test.describe('Runner pool capacity', () => {
             jobs: [makeRunningJob(1, 1, ['ubuntu-latest'])],
             // Capacity declared for a different label set
             runnerPoolCapacities: [{ labels: ['self-hosted'], capacity: 5 }],
+            displayTtlSeconds: 0,
           } satisfies StateSnapshot,
           bigintReplacer,
         ),
@@ -179,6 +181,7 @@ test.describe('Runner pool capacity', () => {
               makeRunningJob(5, 1, ['ubuntu-latest']),
             ],
             runnerPoolCapacities: [{ labels: ['ubuntu-latest'], capacity: null }],
+            displayTtlSeconds: 0,
           } satisfies StateSnapshot,
           bigintReplacer,
         ),

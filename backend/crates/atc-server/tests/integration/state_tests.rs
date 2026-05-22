@@ -68,8 +68,9 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
 
     common::ensure_recorder_installed();
 
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
     let persist = atc_store_mem::InMemoryStore::new_for_test(
-        Arc::new(atc_core::SystemClock),
+        Arc::clone(&clock),
         Duration::from_secs(3600),
         256,
     ) as Arc<dyn atc_persist::PersistentStore>;
@@ -80,6 +81,8 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
     // `capacity: null` rail end-to-end through serialization.
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_secs(3600),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(vec![
             RunnerPoolCapacity {
@@ -152,14 +155,17 @@ async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
 
     common::ensure_recorder_installed();
 
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
     let persist = atc_store_mem::InMemoryStore::new_for_test(
-        Arc::new(atc_core::SystemClock),
+        Arc::clone(&clock),
         Duration::from_secs(3600),
         256,
     ) as Arc<dyn atc_persist::PersistentStore>;
 
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_secs(3600),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,

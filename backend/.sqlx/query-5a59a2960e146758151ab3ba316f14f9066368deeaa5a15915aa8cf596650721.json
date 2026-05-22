@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO runs (\n            id, org, repo, workflow_name, workflow_path, branch, head_sha,\n            commit_message, event, display_title, status, conclusion,\n            html_url, created_at, run_started_at, updated_at, completed_at\n        ) VALUES (\n            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,\n            $13, $14, $15, $16, $17\n        )\n        ON CONFLICT (id) DO UPDATE SET\n            workflow_name  = COALESCE(EXCLUDED.workflow_name, runs.workflow_name),\n            workflow_path  = COALESCE(EXCLUDED.workflow_path, runs.workflow_path),\n            branch         = EXCLUDED.branch,\n            head_sha       = EXCLUDED.head_sha,\n            commit_message = EXCLUDED.commit_message,\n            event          = EXCLUDED.event,\n            display_title  = EXCLUDED.display_title,\n            status         = EXCLUDED.status,\n            conclusion     = COALESCE(EXCLUDED.conclusion, runs.conclusion),\n            html_url       = EXCLUDED.html_url,\n            created_at     = EXCLUDED.created_at,\n            run_started_at = COALESCE(EXCLUDED.run_started_at, runs.run_started_at),\n            updated_at     = EXCLUDED.updated_at,\n            completed_at   = COALESCE(EXCLUDED.completed_at, runs.completed_at),\n            placeholder    = false\n        WHERE runs.status = ANY($18::text[])\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5a59a2960e146758151ab3ba316f14f9066368deeaa5a15915aa8cf596650721"
+}

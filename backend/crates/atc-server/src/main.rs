@@ -231,6 +231,8 @@ async fn main() {
 
     let app_state = Arc::new(AppState {
         persist: Arc::clone(&persist),
+        clock: Arc::clone(&clock),
+        display_ttl: cfg.display_ttl,
         webhook_secret: cfg.github.webhook_secret.clone(),
         runner_pool_capacities: RwLock::new(initial_capacities),
         config_events_tx,

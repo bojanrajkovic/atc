@@ -398,6 +398,10 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Aggregation:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))` for per-channel eviction rate; `sum (rate(atc_ws_lagged_evictions_total[5m]))` for the total. A steady stream on `channel="config"` is suspicious because operator-config reloads are low-volume; on `channel="committed"` it indicates a slow client under high webhook traffic.
 - **Example PromQL:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))`
 
+### `atc_display_ttl_seconds` — intentionally absent
+
+`ATC_DISPLAY_TTL` (the snapshot/UI visibility gate, see [ADR 0009](../architecture-decisions/0009-display-vs-data-retention.md) and [deployment.md](deployment.md#atc_display_ttl)) deliberately does not emit a metric. Operationally there is no urgency to monitor it: the value is restart-only, the snapshot's `display_ttl_seconds` field already carries it to clients on every reconnect, and the boundary-band edge cases are bounded by clock skew rather than by anything the server can measure. Operators tuning the value rely on the snapshot or `helm get values` to confirm the active setting.
+
 ### `atc_pg_outbox_oldest_row_age_seconds`
 
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`
