@@ -89,6 +89,8 @@ spec:
             {{- end }}
             - name: ATC_OUTBOX_RETENTION
               value: {{ .Values.config.outboxRetention | quote }}
+            - name: ATC_DISPLAY_TTL
+              value: {{ .Values.config.displayTtl | quote }}
             {{- if and .Values.existingSecret.database.name .Values.existingSecret.database.urlKey }}
             - name: ATC_DATABASE_URL
               valueFrom:

@@ -130,6 +130,26 @@ Two per-tick root spans (`outbox.heartbeat.tick`, `outbox.sweep.tick`) carry rep
 
 See [ADR 0007](../architecture-decisions/0007-outbox-retention-policy.md) for the design rationale.
 
+### `ATC_DISPLAY_TTL`
+
+| Property | Value |
+|----------|-------|
+| Type | humantime-parseable duration string (`1h`, `30m`, `2h`) |
+| Default | `1h` |
+| Minimum supported | `60s` — values below the floor fail process startup |
+
+**When to set:** Override the kanban / flat-jobs visibility window for completed runs and jobs. Completed entries older than `now - ATC_DISPLAY_TTL` are filtered out of `/v1/state` (server-side SQL `WHERE`) and aged out of the live UI (client-side `$derived` against `uiStore.nowMs`). The underlying `runs` / `jobs` rows are **not** deleted — display TTL gates visibility, not data lifetime. Independent of `ATC_OUTBOX_RETENTION` (different concern: outbox retention is durability, display TTL is UX).
+
+**60 s floor.** `Config::load` rejects values below 60 s with a clear startup error. Below this floor a tight TTL would cause completed runs to disappear mid-view as the wall-clock ticker advances, which is hostile UX even on a debugging workstation.
+
+**Restart-only.** Operators editing the live config file with a new `display_ttl` value get a `ScalarSnapshot::diff` warn-log; the value applies on the next pod roll. Hot-reload is a deliberate v1 non-goal — see [ADR 0009](../architecture-decisions/0009-display-vs-data-retention.md) § "Restart-only".
+
+**In-memory mode caveat.** The in-memory store (dev-only) keeps a hardcoded 1 h completed-eviction TTL. For `ATC_DISPLAY_TTL > 1h` against `InMemoryStore`, eviction wins — rows aged past 1 h are gone from the map and cannot be surfaced. Production uses PG mode, where eviction is independent.
+
+**Helm:** Set via `config.displayTtl` (default `"1h"`).
+
+See [ADR 0009](../architecture-decisions/0009-display-vs-data-retention.md) for the design rationale.
+
 ### OpenTelemetry (`OTEL_*`)
 
 The deployment template injects five spec-standard env vars when `otel.enabled: true`:

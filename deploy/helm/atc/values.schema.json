@@ -147,6 +147,11 @@
           "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
           "description": "Outbox retention age in humantime format (e.g. '7d', '24h', '90m'). Maps to ATC_OUTBOX_RETENTION. Default '7d'. Minimum supported is '1h' — sub-floor values fail process startup (Postgres `inserted_at` is transaction-start, not commit, time; shorter retention is unsafe under MVCC). See ADR 0007."
         },
+        "displayTtl": {
+          "type": "string",
+          "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
+          "description": "Display TTL in humantime format (e.g. '1h', '30m', '2h'). Maps to ATC_DISPLAY_TTL. Default '1h'. Completed runs and jobs older than `now - displayTtl` are filtered out of /v1/state and aged out of the live UI; the underlying rows persist. Restart-only. Minimum supported is '60s' — sub-floor values fail process startup. See ADR 0009."
+        },
         "github": {
           "type": "object",
           "additionalProperties": false,

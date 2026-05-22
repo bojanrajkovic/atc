@@ -31,6 +31,17 @@ pub(crate) fn translate_run(webhook: WorkflowRunWebhook) -> Result<RunEventEnvel
         }
     };
 
+    // GitHub's `workflow_run` payload has no dedicated `completed_at` (unlike
+    // `workflow_job`); on the `completed` action, `updated_at` is the
+    // best-available proxy because GitHub writes the row at the moment the
+    // run completes. For other actions the field stays `None` so the
+    // `apply_run_event` preserve-first semantics (`.or(existing)`) leave
+    // any prior `completed_at` alone — important under out-of-order
+    // delivery where a late non-completed event must not clobber an
+    // already-recorded terminal timestamp.
+    let completed_at =
+        matches!(action, RunEvent::Completed { .. }).then_some(webhook.workflow_run.updated_at);
+
     Ok(RunEventEnvelope {
         run_id: RunId(webhook.workflow_run.id),
         org: webhook.repository.owner.login,
@@ -46,6 +57,7 @@ pub(crate) fn translate_run(webhook: WorkflowRunWebhook) -> Result<RunEventEnvel
         created_at: webhook.workflow_run.created_at,
         run_started_at: webhook.workflow_run.run_started_at,
         updated_at: webhook.workflow_run.updated_at,
+        completed_at,
         action,
     })
 }

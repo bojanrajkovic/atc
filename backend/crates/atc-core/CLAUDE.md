@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-core
 
-Last verified: 2026-05-15
+Last verified: 2026-05-22
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Domain Model section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -13,9 +13,9 @@ Pure domain types, state machine transition rules, and business logic for ATC. S
 | Module | Role |
 |--------|------|
 | `types` | Newtypes: `RunId`, `JobId`, `RepoKey`, `LabelSet`; `RunnerPoolStats` (frontend-derived; `total: RunnerPoolTotal`, no elasticity flag); `RunnerPoolTotal` (adjacent-tagged enum `Bounded(u32) | Unbounded | Undeclared`); `RunnerPoolCapacity { labels: LabelSet, capacity: Option<u32> }` (operator-declared, surfaced on `StateSnapshot.runnerPoolCapacities`; `None` = `capacity: null` = unbounded; struct-level custom `Deserialize` on `RunnerPoolCapacity` enforces explicit-`capacity`-key presence and rejects unknown fields — `atc-server` deserializes YAML directly into this type, so there is no separate config-side mirror type) |
-| `run` | `WorkflowRun`, `RunStatus`, `RunConclusion`; `RunStatus::predecessors_of(target)` |
+| `run` | `WorkflowRun` (carries `completed_at: Option<DateTime<Utc>>` set on the `Completed` transition with preserve-first semantics; consumed by the snapshot read path's display-TTL cutoff — `#[ts(optional)]` so the field renders as optional on the TS side for rolling-deploy tolerance), `RunStatus`, `RunConclusion`; `RunStatus::predecessors_of(target)` |
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`; `JobStatus::predecessors_of(target)` |
-| `event` | `RunEvent`, `JobEvent` and their envelope structs |
+| `event` | `RunEvent`, `JobEvent` and their envelope structs. `RunEventEnvelope.completed_at: Option<DateTime<Utc>>` is the channel by which `atc-github` carries the GitHub-side completion timestamp into `apply_run_event` — `#[ts(optional)]` for the same reason as `WorkflowRun.completed_at` |
 | `state_machine` | Pure free functions: `apply_run_event(Option<WorkflowRun>, RunEventEnvelope) -> Result<WorkflowRun, StateMachineError>`, `apply_job_event(Option<Job>, JobEventEnvelope) -> Result<Job, StateMachineError>`, and `is_evictable(&Job, DateTime<Utc>, Duration) -> bool`. No locks, no async, no shared state — `atc_store_mem::InMemoryStore` wraps these with its HashMap + RwLock. |
 | `persist` | `PersistError` with `InvalidTransition` and `Backend(Box<dyn Error>)` variants. The `PersistentStore` trait lives in `atc-server::persist` (ADR 0005). |
 | `clock` | `Clock` trait (wall-clock only — monotonic latency stays direct, see the trait doc-comment), `SystemClock`, `TestClock` and `fixed_test_timestamp` (both behind `test-support` feature) |
@@ -35,6 +35,7 @@ Enforced by the pure transition functions and verified by tests including propte
 - **Eviction predicate:** `is_evictable(&Job, now, ttl)` returns `true` only for jobs whose status is `Completed` AND whose `completed_at + ttl < now`. Active jobs (queued/waiting/in-progress) are never evictable regardless of age. Server-side iteration + index updates live in `atc_store_mem::InMemoryStore::evict_expired`.
 - **Conclusion ↔ status invariant:** If `conclusion.is_some()` then `status == Completed`. Verified by atc-core property tests over random event sequences.
 - **Predecessor predicates:** `predecessors_of(target)` returns `&'static [Self]` including the target itself. `atc-server::persist::PgStore` parameterizes SQL WHERE clauses with this slice for predicated UPSERTs; including the target enables idempotent replay.
+- **Run `completed_at` preserve-first:** `apply_run_event` on the `Completed` arm sets `completed_at` to `envelope.completed_at.or(existing.completed_at)`. The run FSM is forward-only, so once a `Some(t)` is recorded, a later idempotent replay cannot move it backward. Parallel to the existing job `completed_at` pattern.
 
 Index-consistency invariants (every job in `jobs_by_run` under its `run_id`, every job in exactly one `jobs_by_repo` set, no empty index entries) are owned by `InMemoryStore` and verified by its test-only `assert_invariants()` impl in `atc-store-mem` (gated behind the `test-support` feature).
 

@@ -18,6 +18,7 @@ use atc_core::{
 };
 use atc_persist::{LivenessError, PersistentStore, join_with_timeout};
 use atc_wire::{CommittedEvent, StateSnapshot};
+use chrono::{DateTime, Utc};
 use tokio::sync::broadcast;
 
 use crate::listener;
@@ -44,7 +45,10 @@ impl PersistentStore for PgStore {
         skip_all,
         fields(last_seq = tracing::field::Empty, runs_count = tracing::field::Empty, jobs_count = tracing::field::Empty),
     )]
-    async fn read_snapshot(&self) -> Result<StateSnapshot, PersistError> {
+    async fn read_snapshot(
+        &self,
+        cutoff: Option<DateTime<Utc>>,
+    ) -> Result<StateSnapshot, PersistError> {
         // (1) Load the commit-order cursor BEFORE the snapshot view is taken.
         let watermark_at_start = self.broadcast_watermark.load(Ordering::Acquire);
 
@@ -59,8 +63,8 @@ impl PersistentStore for PgStore {
             .await
             .map_err(|e| PersistError::Backend(Box::new(e)))?;
 
-        let runs = reads::read_all_runs(&mut tx).await?;
-        let jobs = reads::read_all_jobs(&mut tx).await?;
+        let runs = reads::read_all_runs(&mut tx, cutoff).await?;
+        let jobs = reads::read_all_jobs(&mut tx, cutoff).await?;
 
         if let Err(e) = tx.commit().await {
             tracing::warn!(error = %e, "read_snapshot: pg commit failed");
@@ -76,6 +80,10 @@ impl PersistentStore for PgStore {
             // Operator-declared capacities live in `AppState`, not the store —
             // composed into the response by `routes::state_handler`.
             runner_pool_capacities: Vec::new(),
+            // Stamped by `routes::state_handler` from `AppState::display_ttl`
+            // — `display_ttl` is a server-level config concern, not store
+            // state, so the trait surface stays config-agnostic.
+            display_ttl_seconds: 0,
         };
         let span = tracing::Span::current();
         span.record("last_seq", snap.last_seq);
@@ -289,10 +297,10 @@ pub(crate) async fn upsert_run_in_txn(
         INSERT INTO runs (
             id, org, repo, workflow_name, workflow_path, branch, head_sha,
             commit_message, event, display_title, status, conclusion,
-            html_url, created_at, run_started_at, updated_at
+            html_url, created_at, run_started_at, updated_at, completed_at
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16
+            $13, $14, $15, $16, $17
         )
         ON CONFLICT (id) DO UPDATE SET
             workflow_name  = COALESCE(EXCLUDED.workflow_name, runs.workflow_name),
@@ -308,8 +316,9 @@ pub(crate) async fn upsert_run_in_txn(
             created_at     = EXCLUDED.created_at,
             run_started_at = COALESCE(EXCLUDED.run_started_at, runs.run_started_at),
             updated_at     = EXCLUDED.updated_at,
+            completed_at   = COALESCE(EXCLUDED.completed_at, runs.completed_at),
             placeholder    = false
-        WHERE runs.status = ANY($17::text[])
+        WHERE runs.status = ANY($18::text[])
         "#,
         run_id,
         env.org,
@@ -327,6 +336,7 @@ pub(crate) async fn upsert_run_in_txn(
         env.created_at,
         env.run_started_at,
         env.updated_at,
+        env.completed_at,
         &preds_strs as &[&str],
     )
     .execute(&mut tx.executor())

@@ -359,12 +359,28 @@ struct StateSnapshot {
                               // Operator-declared pool ceilings.
                               // serde(default) → empty vec on missing field
                               // (rolling-deploy tolerance for older replicas).
+    display_ttl_seconds: u32, // Operator-configured display TTL, stamped by
+                              // state_handler. serde(default) → 0 (no filter)
+                              // on missing field; the frontend uses it to age
+                              // out completed rows reactively. See ADR 0009.
 }
 ```
 
 **Cursor semantics:** `last_seq` is the highest committed seq the drain has broadcast (PG mode) or the in-memory counter's current value (in-memory mode). `last_seq = 0` is the cold-start sentinel. All events with `seq <= last_seq` are guaranteed reflected in the snapshot. In PG mode the snapshot may additionally include commits the drain has not yet broadcast — those are buffered on the WS side and applied idempotently when their `CommittedEvent`s arrive. The frontend filters `seq > lastSeq` against the buffer.
 
 **Capacity composition:** `runner_pool_capacities` is operator config, not observed state. `PersistentStore` (Postgres + InMemory) leaves the field as `Vec::new()` when constructing a snapshot. `routes::state_handler` takes a short `read().await` on `AppState::runner_pool_capacities` and clones the slice onto the response after the persist call returns. The `PersistentStore` trait stays single-purpose — it owns event-derived state only. Capacity changes propagate without a process restart: the `config_watcher` task re-reads the YAML on filesystem change and replaces the RwLock contents atomically (see [Hot-reload](#hot-reload-config_watcher) below).
+
+#### Snapshot cutoff and display TTL
+
+`PersistentStore::read_snapshot(cutoff: Option<DateTime<Utc>>)` filters out completed runs and jobs whose terminal timestamp is older than the supplied cutoff. The cutoff is computed in `routes::state_handler` from `AppState.clock.now() - AppState.display_ttl` (the configured `ATC_DISPLAY_TTL`) — the store is config-agnostic; the route layer is the only place where event-derived state and config meet on the read path.
+
+The predicate is identical on both backends and permissive on `completed_at IS NULL`:
+
+```sql
+WHERE (cutoff IS NULL OR status != 'Completed' OR completed_at IS NULL OR completed_at >= cutoff)
+```
+
+(`atc-store-mem` evaluates an equivalent Rust expression pre-collect.) PG-mode reads use the composite `(status, completed_at)` index on `runs` added by migration `0007_runs_completed_at.sql` (and the existing `jobs_status_completed_at_idx` for jobs). `cutoff = None` disables filtering — used by test callers that need the unfiltered snapshot. The frontend mirrors the predicate against `uiStore.nowMs` so completed rows age out reactively without an event arriving. See [ADR 0009](../architecture-decisions/0009-display-vs-data-retention.md) for the design rationale and the deliberate in-memory mode narrowing (the in-memory store keeps its hardcoded 1 h completed-eviction TTL; with `ATC_DISPLAY_TTL > 1h` eviction wins).
 
 ### Hot-reload (`config_watcher`)
 
@@ -432,7 +448,7 @@ In `main.rs`:
 5. Construct `persist: Arc<dyn PersistentStore>` via the mode-appropriate `start` constructor:
     - **PG mode** (`ATC_DATABASE_URL` set): `db::init_pool(url)` → `listener::connect_listener(listener_url)` → `PgStore::start(pool, listener_conn, shutdown.clone())`. `PgStore::start` runs `SELECT COALESCE(MAX(seq), 0) FROM outbox` to seed the watermark (last fallible step), then spawns the listener and drain tasks internally and stores their `JoinHandle`s on the returned `Arc<PgStore>` (ADR 0006).
     - **In-memory mode**: `InMemoryStore::start(clock, completed_ttl, eviction_period, shutdown.clone())`. The store constructs its own `broadcast::channel(256)`, spawns the eviction task internally, and stores the `JoinHandle` on the returned `Arc<InMemoryStore>` (ADR 0006).
-6. Create `AppState { persist, webhook_secret, runner_pool_capacities, config_events_tx, shutdown, ws_tracker }` (six fields) and pass to Axum via `.with_state()`. The `runner_pool_capacities` field is built once at startup by walking `Config::runner_pools` (already validated and canonicalized by `Config::load`) and replaced atomically by `config_watcher` on filesystem changes (see § Hot-reload below). `config_events_tx` is the bounded broadcast sender the watcher uses to deliver `ConfigEvent::{Update, ReloadError}` to WS handlers. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not branch on storage mode. WS handlers obtain their broadcast receiver via `state.persist.subscribe()` and additionally subscribe to `state.config_events_tx`.
+6. Create `AppState { persist, clock, display_ttl, webhook_secret, runner_pool_capacities, config_events_tx, shutdown, ws_tracker, ws_metrics }` and pass to Axum via `.with_state()`. The `runner_pool_capacities` field is built once at startup by walking `Config::runner_pools` (already validated and canonicalized by `Config::load`) and replaced atomically by `config_watcher` on filesystem changes (see § Hot-reload below). `config_events_tx` is the bounded broadcast sender the watcher uses to deliver `ConfigEvent::{Update, ReloadError}` to WS handlers. The `clock` field is the same `Arc<dyn Clock>` handed to the active store, so a `TestClock` in integration tests drives both the snapshot cutoff in `state_handler` and the store's internal time-dependent operations. The `display_ttl` field carries the operator-configured visibility window — see § Snapshot cutoff and display TTL below. The webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; the route handler does not branch on storage mode. WS handlers obtain their broadcast receiver via `state.persist.subscribe()` and additionally subscribe to `state.config_events_tx`.
 7. Bind the server to `http_addr` via `axum::serve`.
 8. On graceful shutdown, execute the cooperative shutdown sequence — see § [Supervision and Shutdown](#supervision-and-shutdown) below.
 

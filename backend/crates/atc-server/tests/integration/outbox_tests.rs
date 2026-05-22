@@ -42,8 +42,11 @@ async fn build_app_with_pg(
     let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
     let rx = store.subscribe();
     let persist = store as Arc<dyn atc_persist::PersistentStore>;
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: std::time::Duration::from_secs(60 * 60),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,
@@ -585,7 +588,11 @@ async fn no_pg_pool_uses_in_memory_path() {
     );
 
     // In-memory store reflects the event — verify via read_snapshot.
-    let snap = app_state.persist.read_snapshot().await.expect("snapshot");
+    let snap = app_state
+        .persist
+        .read_snapshot(None)
+        .await
+        .expect("snapshot");
     assert_eq!(snap.runs.len(), 1, "run must be in the in-memory store");
 }
 
@@ -802,7 +809,11 @@ async fn pg_mode_does_not_write_in_memory_state() {
     // PG mode has no in-memory state; reads go directly to the database.
     // Verify read_snapshot returns the committed run (confirming PG-mode
     // reads are consistent with what was written).
-    let snap = app_state.persist.read_snapshot().await.expect("snapshot");
+    let snap = app_state
+        .persist
+        .read_snapshot(None)
+        .await
+        .expect("snapshot");
     assert_eq!(
         snap.runs.len(),
         1,

@@ -31,6 +31,7 @@ function snapshotWith(runs: WorkflowRun[]): StateSnapshot {
     runs,
     jobs: [],
     runnerPoolCapacities: [],
+    displayTtlSeconds: 0,
   }
 }
 

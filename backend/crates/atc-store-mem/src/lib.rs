@@ -17,14 +17,44 @@ use atc_core::{
 use atc_github::WebhookEvent;
 use atc_persist::{LivenessError, PersistentStore};
 use atc_wire::{CommittedEvent, StateSnapshot};
+use chrono::{DateTime, Utc};
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use atc_core::types::RepoKey;
+use atc_core::{JobStatus, RunStatus};
 
 #[cfg(any(test, feature = "test-support"))]
 mod invariants;
+
+/// Display-TTL filter for runs: keep the row when the operator has not
+/// armed a cutoff, when the run is not yet `Completed`, when its
+/// `completed_at` is `None` (permissive — pre-migration or pre-feature
+/// rows stay visible), or when its `completed_at` is at or beyond the
+/// cutoff. Mirrors the SQL `WHERE` in `atc-store-pg::reads`.
+fn run_passes_cutoff(run: &WorkflowRun, cutoff: Option<DateTime<Utc>>) -> bool {
+    let Some(cutoff) = cutoff else {
+        return true;
+    };
+    if run.status != RunStatus::Completed {
+        return true;
+    }
+    run.completed_at.is_none_or(|t| t >= cutoff)
+}
+
+/// Display-TTL filter for jobs. Same predicate shape as `run_passes_cutoff`
+/// — split into a sibling function for clarity at the call site and so the
+/// status enum can stay strongly-typed.
+fn job_passes_cutoff(job: &atc_core::Job, cutoff: Option<DateTime<Utc>>) -> bool {
+    let Some(cutoff) = cutoff else {
+        return true;
+    };
+    if job.status != JobStatus::Completed {
+        return true;
+    }
+    job.completed_at.is_none_or(|t| t >= cutoff)
+}
 
 /// Per-task shutdown timeout for the eviction sweep task. Public so the
 /// shutdown-orchestration test in `atc-server` can include this value in its
@@ -181,12 +211,57 @@ impl InMemoryStore {
     ///
     /// Locks seq then read-locks state so snapshot content and cursor
     /// describe the same point in time — concurrent writers cannot interleave.
-    pub(crate) async fn read_snapshot_inner(&self) -> StateSnapshot {
+    ///
+    /// `cutoff = Some(t)` excludes completed runs and jobs whose
+    /// `completed_at` is set and earlier than `t`. Completed entries with
+    /// `completed_at == None` are kept (permissive) — symmetric with the PG
+    /// `WHERE` clause. Active (non-completed) entries are always kept
+    /// regardless of timestamp.
+    ///
+    /// Note that in-memory mode also retains the existing eviction TTL
+    /// (currently 1h, hardcoded in `main.rs`). When `cutoff > now - 1h`, the
+    /// eviction sweep wins: rows older than the eviction TTL have already
+    /// been removed and cannot be surfaced via the cutoff filter. This is
+    /// acceptable because in-memory mode is dev-only — production uses PG,
+    /// where eviction and display-TTL are independent concerns. See
+    /// ADR-0009.
+    pub(crate) async fn read_snapshot_inner(&self, cutoff: Option<DateTime<Utc>>) -> StateSnapshot {
         let seq_guard = self.seq.lock().await;
         let state = self.state.read().await;
         let last_seq = *seq_guard;
-        let runs: Vec<WorkflowRun> = state.runs.values().cloned().collect();
-        let jobs: Vec<Job> = state.jobs.values().cloned().collect();
+        // Filter pre-collect so the snapshot vectors never carry rows the
+        // display-TTL gate has rejected. The predicate is symmetric with the
+        // PG `WHERE` clause: cutoff absent → keep; status != Completed →
+        // keep; completed_at missing → keep (permissive); else keep iff
+        // completed_at >= cutoff.
+        //
+        // Jobs additionally drop when their parent run is filtered by the
+        // cutoff — matching the PG `JOIN runs r ON ...` predicate. Without
+        // this gate, a completed run aged past the cutoff with a
+        // non-`Completed` sub-job would produce an orphan job in the
+        // snapshot. A job whose parent run does not yet exist in
+        // `state.runs` (out-of-order job-before-run delivery — in-memory
+        // has no FK stub, see PG's `placeholder` runs) is treated as live
+        // and kept: the parent webhook has not arrived yet, so the cutoff
+        // semantics do not yet apply to it.
+        let runs: Vec<WorkflowRun> = state
+            .runs
+            .values()
+            .filter(|r| run_passes_cutoff(r, cutoff))
+            .cloned()
+            .collect();
+        let jobs: Vec<Job> = state
+            .jobs
+            .values()
+            .filter(|j| {
+                let parent_alive = state
+                    .runs
+                    .get(&j.run_id)
+                    .is_none_or(|r| run_passes_cutoff(r, cutoff));
+                parent_alive && job_passes_cutoff(j, cutoff)
+            })
+            .cloned()
+            .collect();
         drop(seq_guard);
         StateSnapshot {
             last_seq,
@@ -195,6 +270,8 @@ impl InMemoryStore {
             // Operator-declared capacities live in `AppState`, not the store —
             // composed into the response by `routes::state_handler`.
             runner_pool_capacities: Vec::new(),
+            // Stamped by `routes::state_handler` from `AppState::display_ttl`.
+            display_ttl_seconds: 0,
         }
     }
 
@@ -300,13 +377,20 @@ impl PersistentStore for InMemoryStore {
     ///
     /// Locks seq then read-locks state so snapshot content and cursor describe
     /// the same point in time — concurrent writers cannot interleave.
+    ///
+    /// `cutoff` filters out completed runs and jobs older than the supplied
+    /// instant (display-TTL gate). See the trait doc on
+    /// [`PersistentStore::read_snapshot`] for the exact predicate.
     #[tracing::instrument(
         name = "persist.read.snapshot",
         skip_all,
         fields(last_seq = tracing::field::Empty, runs_count = tracing::field::Empty, jobs_count = tracing::field::Empty),
     )]
-    async fn read_snapshot(&self) -> Result<StateSnapshot, PersistError> {
-        let snap = self.read_snapshot_inner().await;
+    async fn read_snapshot(
+        &self,
+        cutoff: Option<DateTime<Utc>>,
+    ) -> Result<StateSnapshot, PersistError> {
+        let snap = self.read_snapshot_inner(cutoff).await;
         let span = tracing::Span::current();
         span.record("last_seq", snap.last_seq);
         span.record("runs_count", snap.runs.len());

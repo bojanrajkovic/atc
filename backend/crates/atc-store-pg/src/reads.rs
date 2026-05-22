@@ -8,6 +8,7 @@ use atc_core::{
     Job, JobConclusion, JobId, JobStatus, PersistError, RunConclusion, RunId, RunStatus,
     RunnerInfo, Step, WorkflowRun,
 };
+use chrono::{DateTime, Utc};
 
 /// Parse a SQL CHECK constraint string back to [`RunStatus`].
 ///
@@ -83,19 +84,32 @@ pub(super) fn parse_job_conclusion(s: &str) -> Result<JobConclusion, PersistErro
 /// Filters out FK-only stub rows created by `upsert_job_in_txn` for
 /// job-before-run delivery. Used by the PG path to project the PG state
 /// into the `StateSnapshot` wire contract.
+///
+/// `cutoff = Some(t)` hides completed rows whose `completed_at` is strictly
+/// earlier than `t` (display-TTL gate). The predicate is permissive on
+/// `completed_at IS NULL` so newly-deployed code can still surface a
+/// completed row that has not yet been backfilled or has received no event
+/// since the deploy; the `(status, completed_at)` composite index keeps
+/// the filter cheap. Symmetric with `atc-store-mem`'s `run_passes_cutoff`.
 #[allow(dead_code)]
 pub(crate) async fn read_all_runs(
     tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+    cutoff: Option<DateTime<Utc>>,
 ) -> Result<Vec<WorkflowRun>, PersistError> {
     let rows = sqlx::query!(
         r#"
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, status, conclusion,
-               html_url, created_at, run_started_at, updated_at
+               html_url, created_at, run_started_at, updated_at, completed_at
           FROM runs
          WHERE placeholder = false
+           AND ($1::timestamptz IS NULL
+                OR status != 'Completed'
+                OR completed_at IS NULL
+                OR completed_at >= $1::timestamptz)
          ORDER BY id
         "#,
+        cutoff,
     )
     .fetch_all(&mut tx.executor())
     .await
@@ -125,24 +139,72 @@ pub(crate) async fn read_all_runs(
             created_at: row.created_at,
             run_started_at: row.run_started_at,
             updated_at: row.updated_at,
+            completed_at: row.completed_at,
         });
     }
     Ok(runs)
 }
 
 /// Read all jobs ordered by id, reconstructing `RunnerInfo` and `steps`.
+///
+/// `cutoff` filters jobs in two dimensions:
+///   1. The job's own `(status, completed_at)` predicate, mirroring
+///      [`read_all_runs`]'s shape and leveraging the existing
+///      `jobs_status_completed_at_idx` composite index.
+///   2. The parent run's cutoff predicate — a job whose run is itself
+///      filtered out by the run-level cutoff is also excluded. Without
+///      this gate, a completed run aged past the cutoff with a
+///      non-`Completed` (or `completed_at IS NULL`) sub-job would produce
+///      an orphan job on the wire. The frontend's runner-pool derivation
+///      tolerates orphan jobs by treating them as live, so the orphan
+///      would inflate pool capacity stats after the run had aged out of
+///      view.
+///
+/// Placeholder parent runs are intentionally NOT excluded: when a job
+/// webhook arrives before its run webhook, `upsert_job_in_txn` inserts a
+/// stub run with `placeholder=true` to satisfy the FK. The wire contract
+/// is that the job is still visible (the placeholder row itself is hidden
+/// by `read_all_runs`). The parent-cutoff predicate keeps placeholder
+/// runs because their status defaults to non-`Completed`.
 #[allow(dead_code)]
 pub(crate) async fn read_all_jobs(
     tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+    cutoff: Option<DateTime<Utc>>,
 ) -> Result<Vec<Job>, PersistError> {
+    // Column annotations: sqlx 0.8's compile-time JOIN analysis is
+    // conservative and would otherwise lose the NOT NULL guarantees on
+    // `j.*` columns (since a JOIN could in principle produce NULL rows).
+    // Explicit `as "name!"` and `as "name?"` annotations restore the
+    // correct nullability the schema enforces, matching the row struct
+    // the no-JOIN `read_all_runs` produces.
     let rows = sqlx::query!(
         r#"
-        SELECT id, run_id, name, status, conclusion,
-               runner_id, runner_name, runner_group_name,
-               labels, steps, created_at, started_at, completed_at
-          FROM jobs
-         ORDER BY id
+        SELECT j.id            AS "id!",
+               j.run_id        AS "run_id!",
+               j.name          AS "name!",
+               j.status        AS "status!",
+               j.conclusion    AS "conclusion?",
+               j.runner_id     AS "runner_id?",
+               j.runner_name   AS "runner_name?",
+               j.runner_group_name AS "runner_group_name?",
+               j.labels        AS "labels!: Vec<String>",
+               j.steps         AS "steps!: serde_json::Value",
+               j.created_at    AS "created_at!",
+               j.started_at    AS "started_at?",
+               j.completed_at  AS "completed_at?"
+          FROM jobs j
+          JOIN runs r ON r.id = j.run_id
+         WHERE ($1::timestamptz IS NULL
+                OR r.status != 'Completed'
+                OR r.completed_at IS NULL
+                OR r.completed_at >= $1::timestamptz)
+           AND ($1::timestamptz IS NULL
+                OR j.status != 'Completed'
+                OR j.completed_at IS NULL
+                OR j.completed_at >= $1::timestamptz)
+         ORDER BY j.id
         "#,
+        cutoff,
     )
     .fetch_all(&mut tx.executor())
     .await

@@ -7,8 +7,14 @@ use crate::types::{JobId, RunId};
 mod pure_application;
 
 /// Helper to build a `RunEventEnvelope` with sensible defaults.
+///
+/// `completed_at` defaults to `Some(now)` only when the action is
+/// `RunEvent::Completed`, mirroring the GitHub translation layer's behavior
+/// (`workflow_run.updated_at` is the best-available proxy for the completion
+/// timestamp on the `completed` action; absent on non-completed actions).
 fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
     let now = fixed_test_timestamp();
+    let completed_at = matches!(action, RunEvent::Completed { .. }).then_some(now);
     RunEventEnvelope {
         run_id,
         org: "octocat".to_string(),
@@ -24,6 +30,7 @@ fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
         created_at: now,
         run_started_at: None,
         updated_at: now,
+        completed_at,
         action,
     }
 }

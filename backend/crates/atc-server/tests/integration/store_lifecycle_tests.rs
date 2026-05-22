@@ -36,6 +36,7 @@ fn run_requested(run_id: i64) -> RunEventEnvelope {
         created_at: fixed_test_timestamp(),
         run_started_at: None,
         updated_at: fixed_test_timestamp(),
+        completed_at: None,
         action: RunEvent::Requested,
     }
 }

@@ -425,8 +425,9 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     use tokio_util::task::TaskTracker;
 
     let shutdown = CancellationToken::new();
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
     let store = InMemoryStore::start(
-        Arc::new(SystemClock),
+        Arc::clone(&clock),
         Duration::from_hours(1),
         Duration::from_mins(1),
         shutdown.clone(),
@@ -435,6 +436,8 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     let persist = store as Arc<dyn PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,
@@ -600,12 +603,12 @@ async fn in_memory_invalid_transition_returns_rejected() {
     );
     let snap_after_success = state
         .persist
-        .read_snapshot()
+        .read_snapshot(None)
         .await
         .expect("snapshot after success");
     assert_eq!(
         snap_after_success.last_seq, seq_after_success,
-        "persist.read_snapshot().last_seq must equal the broadcast seq after a successful apply"
+        "persist.read_snapshot(None).last_seq must equal the broadcast seq after a successful apply"
     );
 
     // Backward transition: Completed → InProgress (parity rejection).
@@ -646,7 +649,7 @@ async fn in_memory_invalid_transition_returns_rejected() {
     );
     let snap_after_reject = state
         .persist
-        .read_snapshot()
+        .read_snapshot(None)
         .await
         .expect("snapshot after reject");
     assert_eq!(

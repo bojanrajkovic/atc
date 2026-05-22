@@ -165,6 +165,19 @@ config:
   #
   # See docs/architecture-decisions/0007-outbox-retention-policy.md.
   outboxRetention: "7d"
+  # -- Display TTL (humantime: "1h", "30m", "2h"). Maps to ATC_DISPLAY_TTL.
+  # Default 1 hour.
+  #
+  # Completed runs and jobs older than `now - displayTtl` are filtered out
+  # of `/v1/state` (server-side SQL) and aged out of the live UI
+  # (client-side $derived against uiStore.nowMs). The underlying rows are
+  # NOT deleted — this gates visibility, not data lifetime. Restart-only:
+  # operators editing the live config file get a warn-log and apply the
+  # value on the next pod roll. The minimum supported value is "60s"
+  # (`Config::load` rejects shorter values at startup).
+  #
+  # See docs/architecture-decisions/0009-display-vs-data-retention.md.
+  displayTtl: "1h"
   # -- GitHub configuration.
   github:
     # -- GitHub webhook secret used for HMAC-SHA256 signature validation.

@@ -1,12 +1,15 @@
 import { SvelteMap } from 'svelte/reactivity'
 import { summarizeRunners } from '$lib/format/runners'
+import { uiStore } from '$lib/stores/ui.svelte'
 import type { Job } from '$lib/types/generated/Job'
 import type { JobConclusion } from '$lib/types/generated/JobConclusion'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
+import type { JobStatus } from '$lib/types/generated/JobStatus'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
 import type { RunnerPoolCapacity } from '$lib/types/generated/RunnerPoolCapacity'
+import type { RunStatus } from '$lib/types/generated/RunStatus'
 import type { Step } from '$lib/types/generated/Step'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 
@@ -14,6 +17,38 @@ export interface JobStats {
   readonly completed: number
   readonly total: number
   readonly runnerSummary: string | null
+}
+
+/**
+ * Display-TTL filter predicate, applied identically to runs and jobs.
+ *
+ * Mirrors the server-side SQL `WHERE` and the in-memory store's
+ * `run_passes_cutoff` / `job_passes_cutoff`. Three escape hatches keep
+ * the row visible:
+ *   1. `displayTtlSeconds === 0` — no filter armed (default for snapshots
+ *      from pre-feature replicas during a rolling deploy).
+ *   2. Status is anything other than `'Completed'`.
+ *   3. `completedAt` is missing or null — `null` on the wire for a row
+ *      that completed before the migration backfill landed; `undefined`
+ *      when a pre-feature replica omits the field entirely. Both treated
+ *      as "no cutoff applies yet" so a mixed-version snapshot cannot
+ *      accidentally hide rows the user expects to see.
+ */
+function isExpired(
+  status: RunStatus | JobStatus,
+  completedAt: string | null | undefined,
+  displayTtlSeconds: number,
+  nowMs: number,
+): boolean {
+  if (displayTtlSeconds === 0) return false
+  if (status !== 'Completed') return false
+  if (!completedAt) return false
+  // Server SQL uses `completed_at >= cutoff` (keeps the row at exactly the
+  // boundary), where `cutoff = now - ttl`. Rearranged: keep iff
+  // `now - completed_at <= ttl`; expire iff `now - completed_at > ttl`.
+  // Strict `>` here mirrors the SQL — agreement matters for the
+  // borderline parity check.
+  return nowMs - Date.parse(completedAt) > displayTtlSeconds * 1000
 }
 
 class RunStore {
@@ -28,6 +63,18 @@ class RunStore {
    * decodes to `[]` and the merge in `computePoolStats` is a no-op.
    */
   runnerPoolCapacities = $state<RunnerPoolCapacity[]>([])
+  /**
+   * Display TTL in seconds, mirrored from the snapshot's `displayTtlSeconds`.
+   *
+   * `0` means "no filter armed" — the snapshot came from a pre-feature
+   * backend replica during a rolling deploy, or the operator deliberately
+   * disabled the gate. Replaced atomically on every `loadSnapshot()` so a
+   * reconnect against a freshly-rolled pod picks up the latest configured
+   * value. Drives the `completedRuns` and `jobs` derivers below, paired
+   * with `uiStore.nowMs` so completed rows age out reactively without an
+   * event arriving.
+   */
+  displayTtlSeconds = $state<number>(0)
 
   queuedRuns = $derived(
     [...this.runs.values()]
@@ -55,9 +102,23 @@ class RunStore {
       }),
   )
 
-  completedRuns = $derived(
+  /**
+   * Completed runs visible to the kanban "Completed" column.
+   *
+   * The TTL filter reads `uiStore.nowMs` inside the deriver body so a tick
+   * past the threshold reactively drops rows without an event arriving.
+   * (Capturing `nowMs` into a local before the deriver expression would
+   * sever the reactive dependency — uiStore.nowMs MUST be touched inside
+   * `$derived.by`.) Rows without `completedAt` stay visible — see
+   * `isExpired` for the predicate.
+   */
+  completedRuns = $derived.by(() =>
     [...this.runs.values()]
-      .filter((r) => r.status === 'Completed')
+      .filter(
+        (r) =>
+          r.status === 'Completed' &&
+          !isExpired(r.status, r.completedAt, this.displayTtlSeconds, uiStore.nowMs),
+      )
       .sort((a, b) =>
         a.updatedAt === b.updatedAt
           ? a.id > b.id
@@ -112,11 +173,21 @@ class RunStore {
     return result
   })
 
-  /** Flat view across all runs. */
+  /**
+   * Flat view across all runs, with the same display-TTL filter as
+   * `completedRuns`. `jobsByRun` (the run-keyed map) is intentionally
+   * left unfiltered — `RunDetailPanel` still needs the full job list for
+   * any visible run, and run-level filtering already culls the runs
+   * whose jobs would otherwise be shown anywhere else.
+   */
   jobs = $derived.by<Job[]>(() => {
     const result: Job[] = []
     for (const arr of this.jobsByRun.values()) {
-      for (const job of arr) result.push(job)
+      for (const job of arr) {
+        if (!isExpired(job.status, job.completedAt, this.displayTtlSeconds, uiStore.nowMs)) {
+          result.push(job)
+        }
+      }
     }
     return result
   })
@@ -148,9 +219,20 @@ class RunStore {
     // would not invalidate per-key subscribers. Mirrors applyJobEvent's
     // immutable-update pattern and the backend atc-core CoW semantics.
     const existing = this.runs.get(runId)
+    // Mirror the backend's `envelope.completed_at.or(existing.completed_at)`:
+    // envelope wins when defined, existing carries through otherwise. The
+    // field is `completedAt?: string` (TS optional), so we only include it
+    // when defined — `exactOptionalPropertyTypes: true` rejects explicit
+    // `completedAt: undefined`. Without this carry, a WS Completed event
+    // would leave `completedAt` undefined and the display-TTL filter would
+    // never expire the row until the next snapshot fetch.
+    const completedAt = envelope.completedAt ?? existing?.completedAt
+    const completedAtPatch = completedAt === undefined ? {} : { completedAt }
+
     const run: WorkflowRun = existing
       ? {
           ...existing,
+          ...completedAtPatch,
           status,
           conclusion: conclusion ?? existing.conclusion,
           // Preserve optional fields that may be absent in some events
@@ -182,6 +264,7 @@ class RunStore {
           createdAt: envelope.createdAt,
           runStartedAt: envelope.runStartedAt,
           updatedAt: envelope.updatedAt,
+          ...completedAtPatch,
         }
 
     this.runs.set(runId, run)
@@ -288,6 +371,7 @@ class RunStore {
     runs: WorkflowRun[],
     jobs: Job[],
     runnerPoolCapacities: RunnerPoolCapacity[] = [],
+    displayTtlSeconds: number = 0,
   ): void {
     this.runs.clear()
     for (const r of runs) this.runs.set(r.id, r)
@@ -306,12 +390,14 @@ class RunStore {
     for (const [runId, arr] of grouped) this.jobsByRun.set(runId, arr)
 
     this.runnerPoolCapacities = runnerPoolCapacities
+    this.displayTtlSeconds = displayTtlSeconds
   }
 
   clear(): void {
     this.runs.clear()
     this.jobsByRun.clear()
     this.runnerPoolCapacities = []
+    this.displayTtlSeconds = 0
   }
 }
 

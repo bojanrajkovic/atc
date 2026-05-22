@@ -128,6 +128,7 @@ describe('ConnectionManager', () => {
         runs: [],
         jobs: [],
         runnerPoolCapacities: [],
+        displayTtlSeconds: 0,
       }
 
       let resolveStateFetch: (() => void) | undefined
@@ -207,6 +208,7 @@ describe('ConnectionManager', () => {
         runs: [],
         jobs: [],
         runnerPoolCapacities: [],
+        displayTtlSeconds: 0,
       }
 
       let resolveStateFetch: (() => void) | undefined
@@ -286,6 +288,7 @@ describe('ConnectionManager', () => {
         runs: [],
         jobs: [],
         runnerPoolCapacities: [],
+        displayTtlSeconds: 0,
       }
 
       let resolveStateFetch: (() => void) | undefined

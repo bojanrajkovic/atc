@@ -84,6 +84,21 @@ pub struct WorkflowRun {
     pub run_started_at: Option<DateTime<Utc>>,
     /// When the run was last updated.
     pub updated_at: DateTime<Utc>,
+    /// When the run reached its terminal state. `None` for non-completed
+    /// runs; set on the `Completed` transition by `apply_run_event` and
+    /// preserved across idempotent replay via `envelope.completed_at.or(existing)`.
+    /// Carried into the snapshot read path so the display-TTL cutoff
+    /// (`ATC_DISPLAY_TTL`) can filter aged-out completed runs from `/v1/state`.
+    ///
+    /// `#[ts(optional)]` + `#[serde(skip_serializing_if = "Option::is_none")]`
+    /// keep the TS type (`completedAt?: string`) honest against the wire
+    /// shape — `None` serializes as field omission rather than `null`,
+    /// matching `string | undefined` rather than `string | null`. The
+    /// `default` attr keeps inbound deserialization permissive when the
+    /// field is missing.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 impl WorkflowRun {
@@ -206,6 +221,7 @@ mod tests {
             created_at: now,
             run_started_at: Some(now),
             updated_at: now,
+            completed_at: None,
         };
 
         assert_eq!(run.id, RunId(123));
@@ -252,6 +268,7 @@ mod tests {
             created_at: now,
             run_started_at: None,
             updated_at: now,
+            completed_at: None,
         };
 
         let repo_key = run.repo_key();
@@ -303,6 +320,7 @@ mod tests {
             created_at: now,
             run_started_at: Some(now),
             updated_at: now,
+            completed_at: Some(now),
         };
 
         let json_str = serde_json::to_string(&original).expect("serialize to JSON");
@@ -332,6 +350,7 @@ mod tests {
             created_at: now,
             run_started_at: None,
             updated_at: now,
+            completed_at: None,
         };
 
         assert_eq!(run.branch, None);

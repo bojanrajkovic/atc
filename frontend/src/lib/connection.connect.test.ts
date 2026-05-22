@@ -84,6 +84,7 @@ describe('ConnectionManager', () => {
         ],
         jobs: [],
         runnerPoolCapacities: [],
+        displayTtlSeconds: 0,
       }
 
       server.use(

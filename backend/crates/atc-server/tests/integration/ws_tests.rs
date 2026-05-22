@@ -32,13 +32,16 @@ use tokio_tungstenite::tungstenite::Message;
 async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
     common::ensure_recorder_installed();
 
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
     let persist = InMemoryStore::new_for_test(
-        Arc::new(SystemClock),
+        Arc::clone(&clock),
         Duration::from_hours(1),
         broadcast_capacity,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: tokio::sync::broadcast::channel(16).0,
@@ -552,11 +555,14 @@ async fn config_channel_lagged_closes_socket() {
     // lag from committed-channel lag here.
     common::ensure_recorder_installed();
 
-    let persist = InMemoryStore::new_for_test(Arc::new(SystemClock), Duration::from_hours(1), 256)
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
+    let persist = InMemoryStore::new_for_test(Arc::clone(&clock), Duration::from_hours(1), 256)
         as Arc<dyn atc_persist::PersistentStore>;
     let (config_tx, _) = tokio::sync::broadcast::channel::<ConfigEvent>(2);
     let state = Arc::new(AppState {
         persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
         webhook_secret: None,
         runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
         config_events_tx: config_tx.clone(),
