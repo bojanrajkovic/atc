@@ -1282,6 +1282,59 @@ async fn read_snapshot_drops_jobs_whose_parent_run_is_filtered() {
     );
 }
 
+/// A job whose parent run has not yet been received (out-of-order
+/// job-before-run delivery — in-memory has no FK stub) is kept in the
+/// snapshot regardless of whether a cutoff is active. Matches the PG
+/// `placeholder` semantics: the placeholder run is hidden by
+/// `read_all_runs` but its job survives `read_all_jobs`. Without this
+/// carve-out the snapshot would silently hide active jobs whose run
+/// webhook lags behind their first job webhook.
+#[tokio::test]
+async fn read_snapshot_keeps_job_before_run_orphan() {
+    let store = make_store();
+    let now = fixed_test_timestamp();
+
+    // Job arrives before any run event — no parent in `state.runs`.
+    let orphan_run = RunId(7400);
+    let orphan_job = JobId(74_000);
+    store
+        .apply_job_event(make_job_event(
+            orphan_job,
+            orphan_run,
+            "octocat",
+            "Hello-World",
+            JobEvent::InProgress {
+                runner: None,
+                labels: vec![],
+                steps: vec![],
+            },
+        ))
+        .await
+        .unwrap();
+
+    // cutoff=None: full snapshot. Job must survive.
+    let snap_full = store.read_snapshot(None).await.expect("snapshot full");
+    assert!(
+        snap_full.jobs.iter().any(|j| j.id == orphan_job),
+        "job-before-run orphan must survive cutoff=None: {:?}",
+        snap_full.jobs.iter().map(|j| j.id).collect::<Vec<_>>(),
+    );
+
+    // cutoff=Some(future): the job is InProgress, not Completed, so its
+    // own predicate would keep it. The missing-parent check must not
+    // override that.
+    let cutoff = now + chrono::Duration::hours(1);
+    let snap_cutoff = store
+        .read_snapshot(Some(cutoff))
+        .await
+        .expect("snapshot cutoff");
+    assert!(
+        snap_cutoff.jobs.iter().any(|j| j.id == orphan_job),
+        "job-before-run orphan must survive cutoff=Some(..): {:?}",
+        snap_cutoff.jobs.iter().map(|j| j.id).collect::<Vec<_>>(),
+    );
+}
+
 /// Completed rows with `completed_at == None` are kept (permissive); the
 /// permissive arm exists so a row whose backfill hasn't landed, or whose
 /// recent event arrived without the timestamp, doesn't disappear from view.
