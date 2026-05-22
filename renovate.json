@@ -77,8 +77,14 @@
       "automerge": false
     },
     {
-      "description": "opentelemetry-rust monorepo: manual review. 0.x ecosystem upgrades are coordinated breaking changes.",
-      "matchSourceUrls": ["https://github.com/open-telemetry/opentelemetry-rust"],
+      "description": "OpenTelemetry Rust ecosystem (cross-repo): bundle every otel-coupled crate into one PR. Covers opentelemetry-rust monorepo, tracing-opentelemetry, opentelemetry-system-metrics, axum-otel-metrics. 0.x ecosystem upgrades are coordinated breaking changes, so manual review and a single coherent PR are both required.",
+      "matchSourceUrls": [
+        "https://github.com/open-telemetry/opentelemetry-rust",
+        "https://github.com/tokio-rs/tracing-opentelemetry",
+        "https://github.com/haixuanTao/opentelemetry-system-metrics",
+        "https://github.com/ttys3/axum-otel-metrics"
+      ],
+      "groupName": "opentelemetry ecosystem",
       "automerge": false
     },
     {

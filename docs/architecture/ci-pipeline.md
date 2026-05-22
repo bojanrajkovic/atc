@@ -96,7 +96,7 @@ Auto-merge gating combines three mechanisms:
 
 - **Required status checks on the `main` ruleset** (`Backend Result`, `Frontend Result`, `Helm Result`, `PR Checks`) — applies to manual merges from the GitHub UI as well as Renovate's platform auto-merge.
 - **3-day release-age delay** (`minimumReleaseAge: "3 days"` at the top level) — gives upstream time to yank or patch before ATC's CI sees the bump.
-- **Per-rule overrides** — major updates open but never auto-merge; pre-1.0 minor bumps require manual review (Renovate's `isBreaking()` already classifies them as major for cargo, but npm classification is less reliable); `ts-rs`, `sqlx`, and `opentelemetry-rust` carry no-automerge overrides because their bumps cross compile-time contracts (regenerated TypeScript types, sqlx macros, OTel 0.x ecosystem coordination).
+- **Per-rule overrides** — major updates open but never auto-merge; pre-1.0 minor bumps require manual review (Renovate's `isBreaking()` already classifies them as major for cargo, but npm classification is less reliable); `ts-rs`, `sqlx`, and the cross-repo `opentelemetry ecosystem` group (opentelemetry-rust, tracing-opentelemetry, opentelemetry-system-metrics, axum-otel-metrics) carry no-automerge overrides because their bumps cross compile-time contracts (regenerated TypeScript types, sqlx macros, OTel 0.x ecosystem coordination across four upstream repos).
 
 Security advisories (Dependabot + OSV via `osvVulnerabilityAlerts: true`) bypass the release-age delay, automerge non-major updates, and require manual review for major. `schedule` is set to `at any time` on the security override so branch creation is not gated.
 
