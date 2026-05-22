@@ -219,9 +219,20 @@ class RunStore {
     // would not invalidate per-key subscribers. Mirrors applyJobEvent's
     // immutable-update pattern and the backend atc-core CoW semantics.
     const existing = this.runs.get(runId)
+    // Mirror the backend's `envelope.completed_at.or(existing.completed_at)`:
+    // envelope wins when defined, existing carries through otherwise. The
+    // field is `completedAt?: string` (TS optional), so we only include it
+    // when defined — `exactOptionalPropertyTypes: true` rejects explicit
+    // `completedAt: undefined`. Without this carry, a WS Completed event
+    // would leave `completedAt` undefined and the display-TTL filter would
+    // never expire the row until the next snapshot fetch.
+    const completedAt = envelope.completedAt ?? existing?.completedAt
+    const completedAtPatch = completedAt === undefined ? {} : { completedAt }
+
     const run: WorkflowRun = existing
       ? {
           ...existing,
+          ...completedAtPatch,
           status,
           conclusion: conclusion ?? existing.conclusion,
           // Preserve optional fields that may be absent in some events
@@ -253,6 +264,7 @@ class RunStore {
           createdAt: envelope.createdAt,
           runStartedAt: envelope.runStartedAt,
           updatedAt: envelope.updatedAt,
+          ...completedAtPatch,
         }
 
     this.runs.set(runId, run)

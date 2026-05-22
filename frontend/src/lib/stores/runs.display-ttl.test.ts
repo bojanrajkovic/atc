@@ -239,3 +239,155 @@ describe('RunStore.loadSnapshot — displayTtlSeconds wiring', () => {
     expect(runStore.displayTtlSeconds).toBe(0)
   })
 })
+
+describe('RunStore.applyRunEvent — completedAt carry-through (WS path)', () => {
+  // The display-TTL filter operates on `WorkflowRun.completedAt`. The snapshot
+  // path populates this from the server SQL, but the WS path goes through
+  // `applyRunEvent` which constructs the run object from the envelope. If
+  // applyRunEvent drops `envelope.completedAt`, a run that completes via WS
+  // after initial load stays visible forever because the predicate's "missing
+  // completedAt → keep" arm always wins.
+  let runStore: typeof import('./runs.svelte')['runStore']
+  let uiStore: typeof import('./ui.svelte')['uiStore']
+
+  beforeEach(async () => {
+    mockLocalStorage.clear()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-17T10:00:00Z'))
+    vi.resetModules()
+    uiStore = (await import('./ui.svelte')).uiStore
+    runStore = (await import('./runs.svelte')).runStore
+    runStore.clear()
+  })
+
+  afterEach(() => {
+    runStore.clear()
+    uiStore.destroy()
+    vi.useRealTimers()
+    mockLocalStorage.clear()
+  })
+
+  it('carries envelope.completedAt into the stored run on a WS Completed event', () => {
+    const runId = 500n
+    const completedAt = new Date(uiStore.nowMs).toISOString()
+
+    runStore.applyRunEvent({
+      runId,
+      org: 'o',
+      repo: 'r',
+      workflowName: 'CI',
+      workflowPath: '.github/workflows/ci.yml',
+      branch: 'main',
+      headSha: 'sha',
+      commitMessage: 'msg',
+      triggerEvent: 'push',
+      displayTitle: 'Run',
+      htmlUrl: 'http://x',
+      createdAt: '2026-04-17T09:00:00Z',
+      runStartedAt: '2026-04-17T09:00:01Z',
+      updatedAt: completedAt,
+      completedAt,
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+
+    expect(runStore.runs.get(runId)?.completedAt).toBe(completedAt)
+  })
+
+  it('preserves existing completedAt when a later event arrives without it', () => {
+    const runId = 501n
+    const firstCompletedAt = new Date(uiStore.nowMs).toISOString()
+
+    // First: Completed with timestamp.
+    runStore.applyRunEvent({
+      runId,
+      org: 'o',
+      repo: 'r',
+      workflowName: 'CI',
+      workflowPath: '.github/workflows/ci.yml',
+      branch: 'main',
+      headSha: 'sha',
+      commitMessage: 'msg',
+      triggerEvent: 'push',
+      displayTitle: 'Run',
+      htmlUrl: 'http://x',
+      createdAt: '2026-04-17T09:00:00Z',
+      runStartedAt: '2026-04-17T09:00:01Z',
+      updatedAt: firstCompletedAt,
+      completedAt: firstCompletedAt,
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    expect(runStore.runs.get(runId)?.completedAt).toBe(firstCompletedAt)
+
+    // Second: idempotent replay omitting completedAt — existing must survive.
+    runStore.applyRunEvent({
+      runId,
+      org: 'o',
+      repo: 'r',
+      workflowName: 'CI',
+      workflowPath: '.github/workflows/ci.yml',
+      branch: 'main',
+      headSha: 'sha',
+      commitMessage: 'msg',
+      triggerEvent: 'push',
+      displayTitle: 'Run',
+      htmlUrl: 'http://x',
+      createdAt: '2026-04-17T09:00:00Z',
+      runStartedAt: '2026-04-17T09:00:01Z',
+      updatedAt: '2026-04-17T10:05:00Z',
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+    expect(runStore.runs.get(runId)?.completedAt).toBe(firstCompletedAt)
+  })
+
+  it('lets a WS-completed run age out reactively without a snapshot refresh', () => {
+    const runId = 502n
+    const completedAt = new Date(uiStore.nowMs - 30 * 60 * 1000).toISOString()
+
+    // Seed an active run.
+    runStore.applyRunEvent({
+      runId,
+      org: 'o',
+      repo: 'r',
+      workflowName: 'CI',
+      workflowPath: '.github/workflows/ci.yml',
+      branch: 'main',
+      headSha: 'sha',
+      commitMessage: 'msg',
+      triggerEvent: 'push',
+      displayTitle: 'Run',
+      htmlUrl: 'http://x',
+      createdAt: '2026-04-17T09:00:00Z',
+      runStartedAt: '2026-04-17T09:00:01Z',
+      updatedAt: '2026-04-17T09:00:01Z',
+      action: { type: 'InProgress' },
+    })
+
+    // Arm the filter and complete via WS.
+    runStore.displayTtlSeconds = 3600
+    runStore.applyRunEvent({
+      runId,
+      org: 'o',
+      repo: 'r',
+      workflowName: 'CI',
+      workflowPath: '.github/workflows/ci.yml',
+      branch: 'main',
+      headSha: 'sha',
+      commitMessage: 'msg',
+      triggerEvent: 'push',
+      displayTitle: 'Run',
+      htmlUrl: 'http://x',
+      createdAt: '2026-04-17T09:00:00Z',
+      runStartedAt: '2026-04-17T09:00:01Z',
+      updatedAt: completedAt,
+      completedAt,
+      action: { type: 'Completed', data: { conclusion: 'Success' } },
+    })
+
+    expect(runStore.completedRuns.map((r) => r.id)).toContain(runId)
+
+    // Advance past the TTL boundary — the run must drop without any further
+    // event, just from the nowMs ticker.
+    vi.advanceTimersByTime(45 * 60 * 1000)
+    expect(runStore.completedRuns.map((r) => r.id)).not.toContain(runId)
+  })
+})
