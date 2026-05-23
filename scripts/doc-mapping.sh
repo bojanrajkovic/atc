@@ -49,9 +49,9 @@ get_docs_for_file() {
             return
             ;;
         backend/crates/atc-store-pg/src/metrics.rs|backend/crates/atc-store-pg/src/listener.rs)
-            # Straddlers (post-#169 phase 2 location): PgMetrics + listener carry
-            # both the PersistentStore drain-pipeline contract and the metric
-            # emission surface. Both docs must update.
+            # Straddlers: PgMetrics + listener carry both the PersistentStore
+            # drain-pipeline contract and the metric emission surface. Both
+            # docs must update.
             # Listed BEFORE the atc-store-pg/src/* catch-all because `case`
             # matching is first-match — keep more specific patterns above the
             # general one (Tuvok C3 § 7 Rule 4).
@@ -60,17 +60,17 @@ get_docs_for_file() {
             return
             ;;
         backend/crates/atc-store-pg/src/*|backend/crates/atc-store-pg/migrations/*)
-            # Catch-all for the PG store crate (introduced in issue #169 phase 2).
-            # listener.rs and metrics.rs are straddlers above; everything else
-            # (store/, db.rs, reads.rs, invariants.rs, plus migrations/) is owned
-            # solely by backend-server.md.
+            # Catch-all for the PG store crate. listener.rs and metrics.rs are
+            # straddlers above; everything else (store/, db.rs, reads.rs,
+            # invariants.rs, plus migrations/) is owned solely by
+            # backend-server.md.
             echo "docs/architecture/backend-server.md"
             return
             ;;
         backend/crates/atc-store-mem/src/*|backend/crates/atc-wire/src/*|backend/crates/atc-persist/src/*)
             # The in-memory store, the wire-types crate, and the trait crate
-            # (all introduced in issue #169 phases 1–3) carry only backend-server
-            # contracts; they emit no metrics directly.
+            # carry only backend-server contracts; they emit no metrics
+            # directly.
             echo "docs/architecture/backend-server.md"
             return
             ;;
