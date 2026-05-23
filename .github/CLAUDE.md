@@ -6,22 +6,7 @@ Last verified: 2026-05-23
 
 ## Purpose
 
-GitHub Actions workflows for CI, security linting, versioning, and release artifact production.
-
-## Workflows
-
-| File | Trigger | Role |
-|------|---------|------|
-| `workflows/ci.yml` | PR + push to main | Lint, type-check, test, build (path-filtered on PRs, full matrix on main) |
-| `workflows/zizmor.yml` | Workflow file changes | Security linter for Actions workflow files |
-| `workflows/release-please.yml` | Push to main | Conventional commit analysis, version bumps, release PR management |
-| `workflows/release.yml` | Tag `v*` | Multi-arch binary builds, Docker image, Helm chart, Sigstore attestation |
-
-## Contracts
-
-- **Path filtering on PRs:** Only affected stacks run (backend, frontend, helm). Main always runs full matrix.
-- **Helm validate sweep:** 2 Kubernetes versions × 10 values files (`defaults`, `ingress`, `gateway`, `multi-replica`, `otel`, `existing-secret-listener`, `pdb`, `networkpolicy`, `autoscaling`, `grafana-dashboard`) run sequentially inside a single `helm-validate` runner via `scripts/helm-kubeconform.sh`. Emits a Markdown pass/fail table to `$GITHUB_STEP_SUMMARY`.
-- **Linked versions:** All crates + frontend version in lockstep via release-please.
+GitHub Actions workflows for CI, security linting, versioning, and release artifact production. The workflow files in `workflows/` are individually self-documenting via their `name:` and trigger blocks; the arch docs cover the contracts (path filtering, helm validate sweep, linked versions, multi-arch image build, Sigstore attestation).
 
 ## Key References
 
