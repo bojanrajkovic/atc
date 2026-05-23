@@ -1,10 +1,10 @@
 # 0002 — PostgreSQL outbox + symmetric replicas for live state
 
-**Status:** Accepted (Phase 1 of state-externalization rollout, 2026-05-03)
+**Status:** Accepted (2026-05-03)
 
-Last verified: 2026-05-04
+Last verified: 2026-05-23
 
-> **Geographic note (per ADR-0008):** This ADR's references to `atc-server::persist` reflect the layout that held through ADR-0005 and ADR-0006. After issue #169 ships its phase 2 PR, the `upsert_*_in_txn` / `insert_outbox_*_in_txn` helpers move into `atc-store-pg`. The transactional outbox semantics described below are unchanged. See `docs/architecture-decisions/0008-persistence-crate-split.md`.
+> **Geographic note (per ADR-0008):** This ADR's references to `atc-server::persist` reflect the layout that held through ADR-0005 and ADR-0006. The `upsert_*_in_txn` / `insert_outbox_*_in_txn` helpers have since moved into `atc-store-pg` per ADR-0008. The transactional outbox semantics described below are unchanged.
 
 ## Context
 
@@ -154,6 +154,41 @@ on derived state.
 
 ### 5. Replica topology: symmetric replicas, one serialized forwarder loop each
 
+```mermaid
+flowchart LR
+    subgraph pg["PostgreSQL"]
+        outbox[("outbox table&#10;(BIGSERIAL seq)")]
+        notify(("NOTIFY&#10;atc_outbox"))
+    end
+
+    subgraph rA["Replica A"]
+        webhA["webhook&#10;handler"]
+        listenA["LISTEN&#10;session"]
+        drainA["drain task"]
+        wsA["WS subscribers"]
+    end
+
+    subgraph rB["Replica B"]
+        webhB["webhook&#10;handler"]
+        listenB["LISTEN&#10;session"]
+        drainB["drain task"]
+        wsB["WS subscribers"]
+    end
+
+    webhA -- "single tx:&#10;upsert + outbox INSERT&#10;+ pg_notify" --> outbox
+    webhB -- "single tx:&#10;upsert + outbox INSERT&#10;+ pg_notify" --> outbox
+
+    outbox -. commit .-> notify
+    notify --> listenA
+    notify --> listenB
+    listenA --> drainA
+    listenB --> drainB
+    drainA -. "SELECT&#10;seq > watermark" .-> outbox
+    drainB -. "SELECT&#10;seq > watermark" .-> outbox
+    drainA --> wsA
+    drainB --> wsB
+```
+
 Each app replica:
 
 - runs its own outbox forwarder loop
@@ -224,17 +259,6 @@ catch-up runs through the snapshot path, not through the live WS forwarder.
   dedupe) — see ADR 0003
 - **Operator-surface decisions** (Helm gating, SQLite mode removal,
   retention) — see ADR 0003
-
-## Implementation Status
-
-- **Decision 1** (PostgreSQL as durable state backend, sqlx crate, `sqlx::migrate!` for migrations): implemented in Phase 2a (PR #48). Schema: `runs` and `jobs` tables in `0001_initial_runs_jobs.sql`.
-- **Decision 2** (atomic current-state UPSERT + outbox INSERT in one transaction): implemented in Phase 2c, refined in #50 / ADR 0005. `migrations/0002_outbox.sql` adds the outbox table; `upsert_*_in_txn` and `insert_outbox_*_in_txn` helpers in `atc-server::persist` drive the transaction. After ADR 0005 the webhook handler dispatches uniformly through `state.persist.apply_*_event(env)`; `PgStore::apply_*_event` owns its own transaction lifecycle (begin → upsert → outbox INSERT → `pg_notify` → commit) and does not touch the seq mutex. Broadcast order = durable order is preserved by the drain task's commit-order watermark, not by the seq mutex.
-- **Decision 3** (NOTIFY emission after commit; listener connection using session-compatible path): IMPLEMENTED in Phase 2d — see feat/phase-2d-notify-listener branch. `SELECT pg_notify('atc_outbox', seq::text)` emitted inside the webhook transaction before `tx.commit()`. Dedicated `PgListener` listener task; `ATC_DATABASE_LISTENER_URL` config option for session-mode override. Five new metrics wired.
-- **Decision 4** (original pool-stats persistence — superseded by ADR 0004): outbox payload stores `RunEventEnvelope`/`JobEventEnvelope` only (no `pool_stats_after`). ADR 0004 governs pool stats from Phase 3b onward.
-- **Decision 5** (startup watermark and forwarder design): PARTIAL — listener structure, coalescing via `Arc<Notify>`, and watermark init (`COALESCE(MAX(seq), 0)`) implemented in Phase 2d. Drain task fetches `seq > watermark ORDER BY seq` and logs rows (stub). Only `forward_to_ws_clients` step deferred to Phase 3c, when the drain loop gains the actual WS forwarding call.
-- **Operational metrics** (Out of scope item, now implemented): six metrics shipped on 2026-05-06 in `docs/design-plans/2026-05-06-phase-5-operational-metrics.md` — `atc_pg_outbox_lag_seconds`, `atc_pg_drain_pass_duration_seconds`, `atc_pg_wake_coalesced_total`, `atc_pg_drain_startup_seconds`, `atc_pg_broadcast_watermark`, `atc_pg_min_pending_seq`. Per-metric documentation lives in `docs/architecture/backend-server.md` § Operational metrics, governed by the Metric authoring contract subsection codified in the same file. The original ADR text said "replay duration" — the implemented metric is `atc_pg_drain_startup_seconds` and measures startup-init latency, not replay backlog (Phase 3c restart-recovery contract precludes a historical-replay backlog).
-
-Phase 2c PR: `feat(server): add transactional outbox and reverse webhook error policy` (squash-merge commits `877b2c6`–`02ddd72`).
 
 ## Related
 

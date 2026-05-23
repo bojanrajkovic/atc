@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-13
+Last verified: 2026-05-23
 
 ## Purpose
 
@@ -10,7 +10,22 @@ For execution-time rules (after the plan is approved and context is cleared), se
 
 ## Workflow Phases
 
-Feature design follows six phases in order. Each has an explicit gate before the next.
+```mermaid
+flowchart TD
+    P1[1. Context Gathering] --> P2[2. Clarification]
+    P2 --> P3[3. Definition of Done]
+    P3 -->|DoD not confirmed| P2
+    P3 -->|DoD confirmed| P4[4. Brainstorming]
+    P4 --> P5[5. Design Documentation]
+    P5 --> P6[6. Plan Review]
+    P6 --> SC{Self-consistency check}
+    SC -->|passes| CR{Codex review\nnon-trivial plans}
+    CR -->|review finds issues| P5
+    CR -->|approved| P7[7. Finalize and Hand Off]
+    SC -->|trivial plan, skip codex| P7
+```
+
+Feature design follows seven phases in order. Each has an explicit gate before the next.
 
 ### 1. Context Gathering
 
@@ -70,11 +85,15 @@ Write the full design plan to the file created in Phase 3. Required sections, in
 4. **Architecture** — design decisions with rejected alternatives and rationale; include file:line citations where relevant.
 5. **Implementation Phases** — TDD-ordered (≤8; phases are checkpoints, not padding targets — do not add phases to reach 8). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
 6. **Acceptance Criteria** — success AND failure cases for each DoD item, numbered (AC1, AC2, …) so the implementation context can check them off.
-7. **Documents to Update** — every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.sh` entry that must change alongside the implementation, with the specific change.
-9. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
-10. **Glossary** — if the plan introduces or relies on non-obvious terminology.
+7. **Documents to Update** — every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.yaml` entry that must change alongside the implementation, with the specific change.
+8. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
+9. **Glossary** — if the plan introduces or relies on non-obvious terminology.
 
 A "Summary" section is optional; Context usually carries it. If included, keep it to a paragraph.
+
+When a design plan calls for extracting content from one document to another (e.g., moving Documentation Conventions from `CONTRIBUTING.md` into `docs/documentation-system.md`), the plan must include an audit step *after* the extraction: re-read the destination document with fresh eyes, ask whether every section there now actually belongs there, and update or remove sections whose category no longer fits. Without this step, content drifts into wrong homes during the move.
+
+When the Brainstorming phase reasons through technology choices, framework picks, or other decisions with weighed alternatives, Phase 5 should explicitly ask: is each decision ADR-worthy? If yes, call for a same-commit-cluster ADR draft alongside the design plan. Decisions made during ideation are zero-cost ADRs at decision time — they become backfill work if left implicit and caught by a later audit.
 
 ### 6. Plan Review
 
@@ -88,11 +107,13 @@ Before exiting plan mode and handing off to the user, **the planning Claude** ru
 
 The first step of your plan should include creating a feature branch, copying the plan from its location into the project at `docs/design-plans/YYYY-MM-DD-{slug}.md`, then committing it to the feature branch. This is the artifact the rest of the context reads from and the commit that makes the branch concrete.
 
+When the design plan lists planned commits with specific `<type>(scope): subject` prefixes, verify the type tokens against this repo's commitlint allow-list before handing off: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`. Shorthand like `adr(0012): subject` is not valid — transcribe to `docs(adr-0012): subject` (scopes are free-form; only the leading type token is constrained). Surfacing this in the plan prevents a commit-msg hook rejection mid-execution.
+
 ## Design Conventions
 
 ### Documents to Update
 
-Every design plan must include a "Documents to Update" section listing every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.sh` entry that must change alongside the implementation. Fill this in before coding begins.
+Every design plan must include a "Documents to Update" section listing every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.yaml` entry that must change alongside the implementation. Fill this in before coding begins.
 
 ### Branch and PR Workflow
 
@@ -114,7 +135,7 @@ When creating an ADR, sweep **all** existing documents, tests, and code comments
 
 ## Cross-References
 
-These conventions are defined in `CONTRIBUTING.md > Documentation Conventions` and apply to design work without exception:
-- **Non-duplication rule** — each piece of information has exactly one home across the five documentation layers
+These conventions are defined in [`docs/documentation-system.md`](documentation-system.md) and apply to design work without exception:
+- **Non-duplication rule** — each piece of information has exactly one home across the six documentation layers
 - **Architecture doc template** — required anchor sections (Purpose, Key Decisions, Boundaries, Files) with timestamps
 - **Directory-level CLAUDE.md files** — created only for high-risk directories; always reference canonical architecture docs

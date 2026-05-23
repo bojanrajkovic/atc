@@ -1,6 +1,8 @@
 # 0003 — `last_seq` cursor and multi-replica operator policy
 
-**Status:** Accepted (Phase 1 of state-externalization rollout, 2026-05-03)
+**Status:** Accepted (2026-05-03)
+
+Last verified: 2026-05-23
 
 ## Context
 
@@ -166,30 +168,6 @@ independent run-row TTL) is a Phase 2 schema decision.
 - Whether the in-memory mode survives in production binaries or becomes a
   dev-only feature flag
 
-## Implementation Status
-
-- **Decision 1** (`StateSnapshot.seq` → `lastSeq` rename, `>=` → `>` comparator flip): **complete (Phase 3a, feat/phase-3a-3b-wire-contract).** The wire field is `lastSeq` (`#[serde(rename_all = "camelCase")]` over `last_seq: u64`); the snapshot reflects all events with `seq <= lastSeq`. The frontend buffer filter is `buffered.seq > snapshotLastSeq` (strict `>`); the bigint reviver allowlist now includes `'lastSeq'`. The in-memory `Mutex<u64>` counter shifted from post-increment to pre-increment (`*seq_guard += 1; let seq = *seq_guard;`) — first successful commit broadcasts `seq=1`, never `seq=0`. `lastSeq=0` is therefore the unambiguous "no events committed since startup" cold-start sentinel. Pre-increment was chosen over the alternative of leaving the counter post-increment and serializing `last_seq = *seq_guard - 1`: pre-increment is simpler at the call site, keeps `lastSeq=0` semantically clean, and produces no transient negative-cursor states during reorg.
-- **Decision 2** (monotonic-not-gapless BIGSERIAL cursor on outbox): implemented in Phase 2c. The `outbox.seq BIGSERIAL PRIMARY KEY` materializes the durable cursor. Aborted transactions consume seq values without producing committed rows — verified by `phase_2c_outbox_ac2_2_bigserial_gap_property` test. The in-memory `Mutex<u64>` cursor remains the broadcast source through Phase 3c.
-- **Decision 3** (operator error policy: 503 for transient PG failures): implemented in Phase 2c. Webhook handler returns 503 when `pool.begin()` or `tx.commit()` fail; parity rejections (predicated UPSERT 0 rows) return 200 `{"status":"rejected"}`.
-- **Decision 4** (TTL eviction via SQL DELETE; outbox retention separate from current-state retention): outbox retention design **tracked at [#67](https://github.com/bojanrajkovic/atc/issues/67)** as of 2026-05-07. Current-state TTL eviction is implemented (in-memory store has 1h eviction); outbox retention remains a future design call per ADR Decision 4's separation principle.
-
-## Phase 3c implementation notes (2026-05-06)
-
-REPEATABLE READ on snapshot reads is now the contract: `state_handler`'s PG branch opens a REPEATABLE READ transaction and reads runs/jobs/MAX(outbox.seq) from the same MVCC snapshot. This guarantees `lastSeq` is a true upper bound on the runs/jobs content. Without REPEATABLE READ, a concurrent webhook commit between the runs SELECT and the seq SELECT could advance `lastSeq` past content that the snapshot hasn't materialized — the frontend's `seq > lastSeq` filter at `connection.ts:113` would then permanently drop a real event.
-
-The drain task implements bounded ring-buffer dedup (2048 seqs / ~16 KB per replica) to preserve this ADR's no-frontend-dedup stance under Phase 3c's gap-healing rescans. The rescan window can re-fetch a row already broadcast (when a delayed commit arrives after a rescan-eligible commit was forwarded); the ring suppresses the duplicate broadcast. Counter: `atc_pg_drain_duplicate_skipped_total`.
-
-Decision 4 (PG-side TTL eviction deferred from Phase 3c) is now tracked at [#67](https://github.com/bojanrajkovic/atc/issues/67) — the in-memory eviction task remains, but in PG mode the in-memory store stays empty so eviction is a no-op until the design call lands.
-
-## Phase 4 implementation note (2026-05-06)
-
-Decision 3 was implemented in Phase 4 (`docs/design-plans/2026-05-06-phase-4-multi-replica-enablement.md`, PR closing #7). Two clarifications worth recording for later readers:
-
-- **`persistence.*` machinery removed alongside SQLite.** ADR 0003 D3 says SQLite is "removed entirely" but does not directly speak to the chart's `persistence.*` value surface, the `templates/pvc.yaml` template, or the persistence-conditional volume mounts in `deployment.yaml` — those existed only because SQLite-with-PVC was Mode 2. With SQLite gone, an audit (`grep -rn -i "persistence|persistent_volume|PersistentVolume|PVC"` over `backend/`, `frontend/src/`, and non-Helm `docs/`) returned zero hits referring to Kubernetes PVCs. There was no current consumer and no roadmapped consumer that requires a PVC over a ConfigMap/env-var configuration model, so the persistence surface was retired. If a future use case requires a PVC (e.g., a sidecar buffering audit logs to disk), the surface should be re-introduced tightly scoped to that consumer rather than as a general-purpose toggle.
-- **The "existing guard ... stays in place" passage above no longer applies.** It referred to the pre-Phase-4 `persistence.enabled=true` + `replicaCount > 1` guard. That guard became unreachable when persistence was removed; Phase 4 replaced it with a `replicaCount > 1` ⇒ Postgres URL required guard at the same site in `templates/deployment.yaml`. The new guard is checked at template-render time, allowing remediation guidance in the failure message.
-
-The chart now has two storage modes (ephemeral, external-Postgres) and a constant `RollingUpdate` strategy. Operators upgrading from a pre-Phase-4 chart with `persistence:` keys in their values files will see schema validation reject the unknown property — a deliberate breaking change in a 0.x chart, called out in the Phase 4 PR's release notes. See `docs/architecture/deployment.md` § "Storage-mode evolution" for the full historical context.
-
 ## Related
 
 - ADR 0002 — [PostgreSQL outbox + symmetric replicas for live state](./0002-state-externalization-postgres-outbox.md)
@@ -201,4 +179,4 @@ The chart now has two storage modes (ephemeral, external-Postgres) and a constan
 - Frontend cursor handling: `frontend/src/lib/connection.ts:14` (private field), `:116` (comparator)
 - Helm multi-replica guard (Phase 4): `deploy/helm/atc/templates/deployment.yaml` (top of file)
 - Chart storage-mode docs (Phase 4): `deploy/helm/atc/values.yaml` (the two-mode block under `config.databaseUrl`)
-- Storage-mode-evolution history: `docs/architecture/deployment.md` § "Storage-mode evolution"
+- Storage-mode context: `docs/architecture/deployment.md` § "Storage modes and multi-replica constraints"

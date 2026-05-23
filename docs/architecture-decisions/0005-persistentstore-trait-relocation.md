@@ -2,7 +2,7 @@
 
 **Status:** Accepted (issue #50, 2026-05-07)
 
-Last verified: 2026-05-15
+Last verified: 2026-05-23
 
 > **Revised by ADR-0008:** The `PersistentStore` trait moves out of `atc-server::persist` into a dedicated `atc-persist` crate, alongside `atc-wire` (data types) and the per-implementation `atc-store-pg` / `atc-store-mem` crates. The geographic claim ("trait lives in `atc-server::persist`") is superseded; the architectural reasoning (trait owned by the layer that wires it, with each backend owning its own transaction lifecycle) is preserved by the four-crate split. See `docs/architecture-decisions/0008-persistence-crate-split.md` (introduced in issue #169 phase 1).
 
@@ -25,19 +25,11 @@ The trait's location also needed to change. `atc-core` is the pure domain layer 
 
 The trait moves from `atc-core::persist` to `atc-server::persist` and is removed from `atc-core`'s public API. The move co-locates the trait with both its impls and the private helpers they call.
 
-Trait signature:
+The trait surface names two async methods — one per webhook event variant — each applying the event envelope to the store and returning the assigned monotonic seq on success, or a `PersistError` otherwise. Subsequent ADRs extended this surface (ADR-0006 added lifecycle methods; later work added read-path methods); the foundational two-method shape this ADR records is preserved.
 
-```rust
-#[async_trait::async_trait]
-pub trait PersistentStore: Send + Sync {
-    async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<u64, PersistError>;
-    async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError>;
-}
-```
+The trait carries the `#[async_trait]` attribute so `Arc<dyn PersistentStore>` dispatch works — native async-fn-in-traits does not yet support object safety in stable Rust.
 
-`#[async_trait]` is required for `Arc<dyn PersistentStore>` dyn dispatch; native async-fn-in-traits does not yet support object safety in stable Rust.
-
-`PersistError` stays in `atc-core` as a domain error type shared by the `RunStateMachine` inherent methods and the trait impls.
+`PersistError` stays in `atc-core` as a domain error shared by both backends.
 
 ### 2. Two impls, each owning its own transaction lifecycle
 
@@ -53,32 +45,11 @@ Both impls emit `PersistError::InvalidTransition` on rejected transitions and `P
 
 > **Revised by ADR-0006:** Each store now owns the background tasks that read its state and emit broadcast events (listener + drain for `PgStore`; eviction for `InMemoryStore`). The trait gains `subscribe()` and `shutdown()`, `AppState` drops `webhook_tx`, and WS handlers obtain their receiver via `state.persist.subscribe()`. `main.rs` no longer plumbs Arcs or spawns the per-store tasks; it constructs the store via `PgStore::start` / `InMemoryStore::start` and hands the resulting `Arc<dyn PersistentStore>` to the shutdown orchestrator, which calls `persist.shutdown()` once.
 
-`main.rs` constructs the right impl at startup:
-
-```rust
-let persist: Arc<dyn PersistentStore> = match pg_pool.clone() {
-    Some(pool) => Arc::new(PgStore::new(pool)),
-    None => Arc::new(InMemoryStore::new(state_machine.clone(), seq.clone(), webhook_tx.clone())),
-};
-```
+`main.rs` selects the impl at startup based on whether `ATC_DATABASE_URL` is configured. Both branches build an `Arc<dyn PersistentStore>` that `AppState` then dispatches against; the executable crate never names a concrete backend in the request path. ADR-0006 later refined this ADR's original `new(...)` construction into a `start(...)` shape that owns the per-store background-task lifecycle.
 
 ### 4. Route handler dispatches uniformly through the trait
 
-The webhook handler's two-branch body collapses to a single trait dispatch:
-
-```rust
-let persist_result = match &event {
-    WebhookEvent::Run(env) => state.persist.apply_run_event(env.clone()).await,
-    WebhookEvent::Job(env) => state.persist.apply_job_event(env.clone()).await,
-};
-match persist_result {
-    Ok(seq) => (StatusCode::OK, Json(json!({"status":"accepted","seq": seq}))),
-    Err(PersistError::InvalidTransition) => (StatusCode::OK, Json(json!({"status":"rejected"}))),
-    Err(PersistError::Backend(e)) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"status":"error"}))),
-}
-```
-
-`PersistError::InvalidTransition` preserves the existing 200 OK contract for parity rejections — it is not propagated through `?` to a 4xx.
+The webhook handler's two-branch body collapses to a single match on the webhook event variant, calling through the trait in both arms. Response mapping is uniform across modes: successful application returns 200 with the assigned seq; `PersistError::InvalidTransition` returns 200 with a rejection body (parity rejections preserve the 200 OK contract — they are not propagated through `?` to a 4xx); `PersistError::Backend(_)` returns 503.
 
 ### 5. Response body unifies on `"accepted"` for success
 

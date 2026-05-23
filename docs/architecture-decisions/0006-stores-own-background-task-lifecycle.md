@@ -2,7 +2,17 @@
 
 **Status:** Accepted (issue #104, 2026-05-13)
 
-Last verified: 2026-05-15
+Last verified: 2026-05-23
+
+```mermaid
+stateDiagram-v2
+    [*] --> Starting
+    Starting --> Running: background tasks spawned, handles registered
+    Running --> Running: subscribers attach, writes apply, reads return
+    Running --> ShuttingDown: orchestrator triggers coordinated shutdown
+    ShuttingDown --> Stopped: handles joined with per-task timeout
+    Stopped --> Stopped: re-entry is no-op
+```
 
 > **Revised by ADR-0008:** Geographic claims in this ADR (the trait lives in `atc-server::persist`; `PgStore::start` spawns listener and drain from inside `atc-server`; the per-task `SHUTDOWN_TIMEOUT_*` constants are atc-server-internal) are superseded by the four-crate split. The lifecycle ownership reasoning (each store owns its background tasks and exposes one `shutdown()` join point) is preserved — only the source locations move: `PersistentStore` to `atc-persist`, `PgStore` machinery to `atc-store-pg`, `InMemoryStore` machinery to `atc-store-mem`, and the per-store shutdown timeouts move into the store crates that consume them. See `docs/architecture-decisions/0008-persistence-crate-split.md` (introduced in issue #169 phase 1).
 
@@ -70,14 +80,7 @@ production subscribers come from `subscribe()`.
 
 ### 3. The `PersistentStore` trait gains `subscribe()` and `shutdown()`
 
-```rust
-#[async_trait::async_trait]
-pub trait PersistentStore: Send + Sync {
-    // ... existing four methods unchanged ...
-    fn subscribe(&self) -> broadcast::Receiver<SeqEvent>;
-    async fn shutdown(&self);
-}
-```
+The trait gains two methods: a synchronous one that registers a broadcast subscriber for committed events (returns a `broadcast::Receiver`), and an async one that drives coordinated shutdown of the store's background tasks. The broadcast event type was named `SeqEvent` when this ADR was written; ADR-0008 renamed it to `CommittedEvent`.
 
 `subscribe()` delegates to the store's internal `broadcast_tx`. `shutdown()`
 takes the handles out of the mutex via `take()` and joins them with
@@ -124,14 +127,7 @@ events via `persist.apply_run_event(...)` with distinct run IDs.
 
 ### 6. `AppState` drops `webhook_tx`; WS handlers subscribe via `persist`
 
-```rust
-pub struct AppState {
-    pub persist: Arc<dyn PersistentStore>,
-    pub webhook_secret: Option<String>,
-    pub shutdown: CancellationToken,
-    pub ws_tracker: TaskTracker,
-}
-```
+`AppState` loses its `webhook_tx` field — the broadcast sender now lives inside whichever store `AppState.persist` points at, and `subscribe()` is the public seam. (`AppState` has grown additional fields since this ADR for unrelated reasons — config watcher, display TTL, etc. — see the current source for the canonical shape.)
 
 `ws_handler` calls `state.persist.subscribe()` to obtain its
 `broadcast::Receiver<SeqEvent>`. The store keeps the broadcast sender alive
@@ -142,16 +138,7 @@ racing against `RecvError::Closed`.
 
 ### 7. `run_shutdown_orchestration` takes `Arc<dyn PersistentStore>`
 
-```rust
-pub async fn run_shutdown_orchestration(
-    shutdown: CancellationToken,
-    ws_tracker: TaskTracker,
-    main_serve_task: JoinHandle<io::Result<()>>,
-    persist: Arc<dyn PersistentStore>,
-    metrics_handle: JoinHandle<()>,
-    otel_handles: Option<OtelHandles>,
-) -> bool
-```
+The orchestrator's signature changes shape: a single `persist: Arc<dyn PersistentStore>` parameter replaces the three per-mode `Option<JoinHandle<()>>` parameters that previously carried per-mode shutdown handles (drain + listener for PG mode; eviction for in-memory mode).
 
 The three per-mode handle params (`drain_handle`, `listener_handle`,
 `eviction_handle`, each `Option<JoinHandle<()>>`) collapse to a single

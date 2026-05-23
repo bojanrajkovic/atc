@@ -3,6 +3,8 @@
 Date: 2026-05-15
 Status: Accepted
 
+Last verified: 2026-05-23
+
 ## Context
 
 Until this issue, the entire persistence layer lived inside `atc-server`. The `PersistentStore` trait sat in `backend/crates/atc-server/src/persist/mod.rs`, the wire envelope `SeqEvent` and the REST baseline `StateSnapshot` sat in `backend/crates/atc-server/src/state.rs`, and both the in-memory store and the PG-backed store were sibling files under `backend/crates/atc-server/src/persist/`. PG-mode binaries compiled the in-memory state machine that they never executed, and in-memory-mode binaries compiled the entire sqlx-based PG path. Eviction (in-memory) and outbox retention (PG) had no place to live except the executable crate that consumed them.
@@ -15,11 +17,20 @@ Until this issue, the entire persistence layer lived inside `atc-server`. The `P
 
 ## Decision
 
-The persistence layer splits into **four crates** along the cycle constraints:
+The persistence layer splits into **four crates** along the cycle constraints. Dependency direction (arrows point from depender to dependency):
 
-```
-atc-core ─ atc-wire ─ atc-persist ─┬─ atc-store-pg
-                                   └─ atc-store-mem
+```mermaid
+flowchart TD
+    sp["atc-store-pg"]
+    sm["atc-store-mem"]
+    persist["atc-persist<br/>(trait + helpers)"]
+    wire["atc-wire<br/>(wire types)"]
+    core["atc-core<br/>(pure domain)"]
+
+    sp --> persist
+    sm --> persist
+    persist --> wire
+    wire --> core
 ```
 
 | Crate | Role | Direct deps allowed |

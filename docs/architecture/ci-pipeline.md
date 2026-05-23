@@ -1,124 +1,113 @@
 # CI Pipeline — Architecture
 
-Last verified: 2026-05-17 (public-flip undo: back to GitHub-hosted runners)
+Last verified: 2026-05-23
 
-## Purpose
+The CI pipeline spans two workflow files. `ci.yml` gates every merge and every push to main: it lints, type-checks, tests, and builds the Rust backend, Svelte frontend, and Helm chart. `zizmor.yml` scans GitHub Actions workflow files for security violations and reports findings to the Security tab. The two are intentionally separate so the security linter runs only when workflow files change rather than on every commit.
 
-The CI pipeline ensures code quality and security across the ATC project through two specialized workflows:
+All Linux jobs run on pinned GitHub-hosted runners (`ubuntu-24.04` for amd64, `ubuntu-24.04-arm` for arm64). macOS jobs use `macos-26`. All `runs-on` labels are pinned to versioned tags — never `*-latest` — so runner-OS changes appear as reviewable diffs. `ubuntu-24.04-arm` provides native arm64 compilation; no QEMU emulation in either the CI or the release pipeline.
 
-1. **Quality pipeline (ci.yml)** — Lints, type-checks, tests, and builds the Rust backend, Svelte frontend, and Helm chart. Runs on every pull request and push to main, with path-based filtering to only run affected stacks on PRs.
-2. **Workflow security linter (zizmor.yml)** — Scans GitHub Actions workflow files for security violations, hardcoded secrets, unsafe ref pinning, and permission creep. Runs only when workflow files change.
+## Job structure and path filtering
 
-Both workflows are gated by lefthook pre-push hooks at development time, preventing broken or insecure code from reaching the remote.
+On pull requests, `ci.yml` path-filters each stack: backend jobs only trigger when `backend/` changes, frontend jobs when `frontend/` changes, helm jobs when `deploy/helm/` changes. Two jobs always run regardless of which files changed: PR title validation (commitlint against the PR title) and dependency review. On push to main the path filters are dropped and all stacks run unconditionally.
 
-## Key Decisions
+A gate job per stack (`backend-result`, `frontend-result`, `helm-result`) translates "skipped due to path filter" into a passing status check. GitHub branch protection cannot distinguish a skipped job from a failed one; the gate pattern makes a Rust-only PR pass all required checks without triggering helm validation.
 
-**Decision:** Separate workflow files for quality vs. security linting
-**Alternatives considered:** Monolithic single workflow with all jobs
-**Rationale:** Separation of concerns allows the security linter to trigger only on workflow changes (path filtering) rather than on every commit. This keeps CI feedback focused and reduces noise. Each workflow can be maintained and updated independently.
+```mermaid
+flowchart TD
+    PR[pull_request event]
+    PUSH[push to main]
 
-**Decision:** Path-based filtering on pull requests
-**Alternatives considered:** Always run all checks, run on label, run based on file extensions
-**Rationale:** PRs often touch only one stack (frontend or backend). Running only the affected stack's tests reduces CI time and feedback latency. Pushes to main always run both stacks to catch integration issues.
+    PR --> PATHB{backend/ changed?}
+    PR --> PATHF{frontend/ changed?}
+    PR --> PATHH{deploy/helm/ changed?}
+    PR --> ALWAYS[PR title validate\nDependency review]
 
-**Decision:** Helm validation is split across three jobs — `helm-lint` (single instance, runs `helm lint` + `helm unittest`), `helm-validate` (single runner, runs the full 2 × 9 k8s-version × values-file matrix via `scripts/helm-kubeconform.sh`), and `helm-install` (`ct install` against an ephemeral kind cluster)
-**Alternatives considered:** Single k8s version; GHA matrix job (one runner per combination); combine lint and matrix into one job; matrix-multiply lint over k8s versions; skip the `ct install` step in favour of template-only validation
-**Rationale:** A two-endpoint kubeconform sweep (chart's declared `kubeVersion` floor, latest stable) catches API deprecations and removals without the combinatorial overhead of testing every minor version. `scripts/helm-kubeconform-one.sh` passes `--kube-version` to `helm template` so Helm enforces the chart's own `kubeVersion` constraint at render time — without that flag, kubeconform alone validates only resource schemas, and a chart declaring an incompatible `kubeVersion` would still render green. Nine values files correspond to the nine distinct feature surfaces (defaults, ingress, gateway, multi-replica, otel, existing-secret-listener, pdb, networkpolicy, autoscaling) — exhaustive coverage without duplication. The 18-combination sweep runs sequentially inside a single runner (`scripts/helm-kubeconform.sh`), which loops over both k8s versions × all values files, delegates each pair to `helm-kubeconform-one.sh`, collects results, and emits a Markdown pass/fail table to stdout and `$GITHUB_STEP_SUMMARY`. Sequential execution across 18 schema validations is fast enough (kubeconform is network-bound on the first CRD schema fetch; subsequent runs hit the OS page cache) that wall-clock time is not a concern; running it as a GHA matrix would consume 18 runner slots for the same wall-clock outcome. `helm lint` and `helm unittest` are k8s-version-independent (no API server), so they stay in a separate single-instance `helm-lint` job. The `helm-install` job goes one level deeper than kubeconform: it spins up a kind cluster, builds and `kind load`s the chart's container image, and runs `ct install` (chart-testing) which exercises admission, controller acceptance, Pod readiness (livenessProbe `/healthz`, readinessProbe `/readyz`), and the in-cluster `helm test` hook. Why both kubeconform and `ct install`: kubeconform validates schema and `kubeVersion` against frozen JSON schemas — fast, no cluster needed, runs across the full values matrix. `ct install` validates the chart against a real API server, which catches cluster-side regressions kubeconform cannot see (admission policies, CRD ordering, probe configuration drift, image references that don't actually start) but is too expensive to matrix across k8s versions and values fixtures. The three jobs land under one `helm-result` gate so branch protection treats them as a single required check.
+    PATHB -->|yes| BFMT[cargo fmt]
+    PATHB -->|yes| BCLIP[cargo clippy]
+    PATHB -->|yes| BCHECK[cargo check --locked]
+    PATHB -->|yes| BTEST[cargo llvm-cov --locked]
+    PATHB -->|no| BSKIP[skip]
 
-**Decision:** kubeconform uses datreeio/CRDs-catalog as a supplemental schema location
-**Alternatives considered:** Skip CRD validation; vendor CRD schemas into the repo; use kubeconform's built-in `--ignore-missing-schemas`
-**Rationale:** The chart includes an `HTTPRoute` (gateway.networking.k8s.io/v1), a CRD absent from the upstream Kubernetes JSON schema repository. The datreeio/CRDs-catalog provides community-maintained schemas for it (and any future chart-included CRDs), enabling `-strict` mode without false negatives on custom resources. Vendoring schemas into the repo would require manual maintenance on each CRD version bump; the catalog URL is resolved at CI time and kept current by the catalog maintainers.
+    PATHF -->|yes| FLINT[eslint / svelte-check]
+    PATHF -->|yes| FTEST[vitest + playwright]
+    PATHF -->|yes| FBLD[vite build]
+    PATHF -->|no| FSKIP[skip]
 
-**Decision:** `helm-result` gate job translates skipped-to-passed for branch protection
-**Alternatives considered:** No gate job (use the matrix job directly as required check); GitHub's "required checks can be skipped" setting
-**Rationale:** GitHub branch protection does not distinguish between "job skipped" and "job failed" — both cause a required status check to block the PR. The `helm-result` gate pattern (already used for `backend-result` and `frontend-result`) reads the `changes` output and emits success when the job was intentionally skipped due to no path-filter match. This allows a Rust-only PR to pass all required checks without triggering helm validation.
+    PATHH -->|yes| HLINT[helm-lint\nhelm unittest]
+    PATHH -->|yes| HVAL[helm-validate\n2 k8s × 10 values]
+    PATHH -->|yes| HINST[helm-install\nkind + ct install]
+    PATHH -->|no| HSKIP[skip]
 
-**Decision:** Zizmor findings are security advisories, not required status checks
-**Alternatives considered:** Required status check, blocking gate, optional warning
-**Rationale:** Zizmor findings are security improvement opportunities, not build blockers. Displaying them in the Security tab allows teams to triage and fix them as part of the security review process without blocking PRs on first occurrence.
+    BFMT & BCLIP & BCHECK & BTEST & BSKIP --> BGATE[Backend Result]
+    FLINT & FTEST & FBLD & FSKIP --> FGATE[Frontend Result]
+    HLINT & HVAL & HINST & HSKIP --> HGATE[Helm Result]
 
-**Decision:** All Linux jobs run on pinned GitHub-hosted runners — `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64). macOS jobs use `macos-26`.
-**Alternatives considered:** Stay on self-hosted ARC indefinitely; use a third-party Linux runner provider; mix per-job ad-hoc; bring back QEMU emulation for arm64 release artifacts
-**Rationale:** The repo is public (or about to be), and GitHub's own guidance warns that self-hosted runners should not be used with public repositories because a fork PR can run arbitrary code on the runner host. Flipping to GitHub-hosted runners closes that fork-PR attack surface entirely. Build deps the workflows need but the GitHub-hosted ubuntu-24.04 image lacks are installed at job runtime via short apt-get steps: `mold` (linker, see Decision below) + `cmake`/`pkg-config`/`perl` in the backend job; `musl-tools`/`musl-dev` in the release-pipeline binary matrix; `libatomic1` in `build-frontend` (Node 25 runtime linkage); and Playwright's chromium runtime libs via `playwright install --with-deps` in the frontend job. All runs-on labels are pinned to versioned tags (`ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-26`) — never `*-latest` — so runner OS changes are reviewable in commits. `ubuntu-24.04-arm` provides native arm64 compilation for the `aarch64-unknown-linux-musl` release binary and the `linux/arm64` container image (see release-pipeline.md); no QEMU emulation in the release pipeline.
+    PUSH --> BFMT2[cargo fmt]
+    PUSH --> BCLIP2[cargo clippy]
+    PUSH --> BCHECK2[cargo check --locked]
+    PUSH --> BTEST2[cargo llvm-cov --locked]
+    PUSH --> FLINT2[eslint / svelte-check]
+    PUSH --> FTEST2[vitest + playwright]
+    PUSH --> FBLD2[vite build]
+    PUSH --> HLINT2[helm-lint / helm unittest]
+    PUSH --> HVAL2[helm-validate]
+    PUSH --> HINST2[helm-install]
 
-**Historical (private-dev phase, 2026-04 to 2026-05):** Linux jobs ran on a homelab Kubernetes cluster via GitHub's Actions Runner Controller (ARC). Workflows targeted the scale set via `runs-on: [self-hosted, linux, amd64]`. The scale set ran a custom `ghcr.io/<owner>/atc-runner` image built from `.github/runner/Dockerfile` with the apt deps pre-baked, and a weekly K8s CronJob (`gha-arc-personal/image-updater`) rolled the `:latest` digest into the AutoscalingRunnerSet. The release pipeline cross-compiled `aarch64-unknown-linux-musl` on the amd64 self-hosted pool via `taiki-e/setup-cross-toolchain-action`, then packaged the pre-built binary into a thin `Dockerfile.release` distroless image. All of that was deleted in the public-flip undo (issue #74). The motivation for the move had been GitHub-hosted-runner-minute consumption during development; once the repo flipped to public, fork-PR safety made GitHub-hosted runners the right answer (and public repositories have unlimited free runner minutes).
+    BFMT2 & BCLIP2 & BCHECK2 & BTEST2 --> BGATE2[Backend Result]
+    FLINT2 & FTEST2 & FBLD2 --> FGATE2[Frontend Result]
+    HLINT2 & HVAL2 & HINST2 --> HGATE2[Helm Result]
+```
 
-**Decision:** All cargo build/check/test invocations use `--locked`
-**Alternatives considered:** No lockfile enforcement; only enforce in release builds
-**Rationale:** `--locked` makes CI fail loudly when `Cargo.toml` is edited without committing the regenerated `Cargo.lock`, preventing dependency drift between developer machines, CI, and the released artifacts. Pairs with the release pipeline's bot-driven `Cargo.lock` refresh on release PRs (see release-pipeline.md), so the release PR's own CI passes under the same `--locked` rule. Applied to clippy, check, llvm-cov, and the release build; `cargo fmt` is exempt because it is not a build command.
+## Backend job
 
-**Decision:** Jobs that only need a subset of `.mise.toml` tools use `mise-action` with `install: false` and an explicit `mise install <tools>` step
-**Alternatives considered:** Let `mise install` install everything (default behavior); split `.mise.toml` into per-job manifests; bake the full toolset into the runner image
-**Rationale:** `.mise.toml` lists every tool the project needs across all surfaces — Rust, Node, pnpm, helm, kubeconform, actionlint, zizmor, lefthook, cargo-binstall, and the `cargo:` tools (sqlx-cli, cargo-nextest). `mise-action`'s default behavior runs `mise install`, which installs the entire set. For jobs that only need a subset (helm-lint needs `helm`, the helm validate matrix needs `helm + kubeconform`, publish-helm-chart needs `helm`) this drags in the full Rust toolchain plus a `cargo install` of sqlx-cli + cargo-nextest — minutes of overhead per cold runner. Each of these jobs sets `install: false` and runs an explicit `mise install <tools>`, keeping the install graph tight. The Backend and Frontend jobs already use `install: false` (Rust comes from `dtolnay/rust-toolchain`, Node from `setup-node`); this generalises that pattern to the helm-flavoured jobs as well.
+All cargo invocations use `--locked` ([ADR-0008](../architecture-decisions/0008-persistence-crate-split.md) established the four-crate workspace; `--locked` makes CI fail loudly when any `Cargo.toml` edit lands without a committed `Cargo.lock` regeneration, preventing dependency drift across developer machines, CI, and released artifacts).
 
----
+The backend job runs two cargo build passes: `cargo test --workspace --lib -- export_bindings` first (to verify ts-rs type generation without compiling the full integration binary), then `cargo llvm-cov --workspace` for coverage. Reordering verify-types before coverage ensures deps built without instrumentation are reused by the coverage pass rather than rebuilt in the opposite direction.
 
-**Decision:** `cargo:` tools in `.mise.toml` install via `cargo-binstall` (prebuilt binaries) rather than `cargo install` (compile from source)
-**Alternatives considered:** Keep `cargo install` (source compile); replace `cargo:` entries with `aqua:` or `github:` entries pointing at upstream releases; install via `taiki-e/install-action` in workflows
-**Rationale:** mise's `cargo:` backend defaults to `cargo install`, which compiles from source — typically 2–4 minutes per tool on a fresh runner for `cargo-nextest` (large dep graph) and ~1 minute for `sqlx-cli`. `MISE_CARGO_BINSTALL=1` (set in `.mise.toml`'s `[env]` block) tells mise to invoke `cargo-binstall` instead, which downloads the project's prebuilt release binary in seconds. cargo-binstall itself is provisioned via `aqua:cargo-bins/cargo-binstall` (mise registry default for `cargo-binstall`) — also a prebuilt download, no chicken-and-egg compile. Replacing `cargo:` with `aqua:` directly was rejected because cargo-binstall handles the prebuilt-vs-fallback decision more cleanly: if a tool publishes prebuilt binaries it uses them, otherwise it transparently falls back to source compile. `taiki-e/install-action` is a workflow-only solution; `.mise.toml` is also the source of truth for local dev provisioning, where the same speedup applies. The Backend job in CI uses `install: false` and never runs `mise install` — cargo-nextest there is just the lefthook/local recipe path; the actual coverage run uses `cargo llvm-cov` (built-in `cargo test`) per the nextest-in-CI Decision above. So the binstall speedup primarily benefits the helm/release/publish-helm jobs that DO run `mise install` (after the helm-trim Decision above) and local dev `mise install` cold-starts.
+`RUSTFLAGS="-C link-arg=-fuse-ld=mold"` is set at the job level. `lld`'s parallel link stage exceeded available memory when linking large test binaries on GitHub-hosted runners, producing reproducible `SIGBUS` linker crashes. `mold` uses a fundamentally different incremental linking approach with much lower peak memory. A leading `jlumbroso/free-disk-space` step reclaims ~10–15 GB of preinstalled software the backend job never uses; without it the coverage build hits "No space left on device" mid-link.
 
----
+Tests run via `cargo llvm-cov` (built-in `cargo test`) in CI rather than `cargo nextest run`. Local `just test` uses nextest and gets ~9× parallelism on a multi-core machine. On the 4-vCPU GitHub-hosted runner, nextest's per-test-process model multiplies coverage-instrumentation init cost across ~319 processes (vs. ~30 binary processes under `cargo test`), and concurrent testcontainers boots contend on the Docker daemon. The measured CI wall-clock time was longer under nextest. Local tooling keeps using nextest; CI keeps using `cargo llvm-cov`.
 
-**Decision:** Backend job sets `RUSTFLAGS="-C link-arg=-fuse-ld=mold"` and installs `mold` (alongside `cmake`, `pkg-config`, and `perl`) via apt in a single `Install build dependencies` step on the GitHub-hosted `ubuntu-24.04` runner
-**Alternatives considered:** Keep `lld` (default); limit lld thread count via `-Wl,--threads=1`; use `sccache`
-**Rationale:** `lld`'s parallel link stage materialises the full link graph across multiple threads simultaneously and exceeds available memory when linking large test binaries (`ws_tests`, `notify_listener_tests`). This produced reproducible `SIGBUS` (signal 7) linker crashes on GitHub-hosted runners. `mold` uses a fundamentally different incremental linking approach with much lower peak memory, and is available in apt on Ubuntu 24.04 without a third-party installer. `cmake` and `pkg-config` and `perl` are bundled into the same step because `aws-lc-sys` (pulled by `tls-rustls-aws-lc-rs`) needs `cmake` at build time and various other sys crates need `pkg-config`/`perl`; bundling avoids extra sudo invocations. `cmake` and `perl` are present on the GitHub-hosted ubuntu-24.04 default image, so the apt-install is a portability no-op for them; `mold` is the only strictly mandatory new package. Setting `RUSTFLAGS` at the backend job level means every cargo invocation that links (`llvm-cov`, `cargo build --release`) uses `mold`; steps that do not link (`cargo fmt`, `cargo clippy`, `cargo check`) are unaffected. Local macOS development is unaffected since the flag is CI-only.
+### Shared testcontainers `atc-test-pg` container
 
-**Decision:** Backend tests run via `cargo llvm-cov` (built-in `cargo test`) in CI, not `cargo llvm-cov nextest` — even though local `just test` uses `cargo nextest run`
-**Alternatives considered:** Use `cargo llvm-cov nextest` in CI to match the local runner
-**Rationale:** Local `cargo nextest run --workspace` is dramatically faster than `cargo test --workspace` (~9× on macOS/OrbStack with 18 cores) because nextest parallelizes across the workspace's ~25 PG-backed integration test binaries. In CI, however, the same change measured *slower* than `cargo llvm-cov`: the test step went from 5:28 to 8:07. The likely cause is the interaction between three CI-specific factors — (1) coverage instrumentation runs once per test process, and nextest's per-test process model (319 processes vs. ~30 binary processes under `cargo test`) multiplies that init cost, (2) GitHub-hosted runners have only 4 vCPUs, so the per-test overhead saturates the runner's compute, and (3) up to 4 concurrent testcontainers boots contend on the Docker daemon under coverage-instrumented load. The local 9× win does not survive these constraints. Local tooling (mise, justfile, lefthook, `backend/.config/nextest.toml`) keeps using nextest; CI keeps using `cargo llvm-cov`. Re-evaluate when GitHub-hosted runners gain more vCPUs or when coverage tooling supports merged per-binary profiling under nextest.
+Backend integration tests share a single Postgres container (`atc-test-pg`) across test processes via the testcontainers `reusable-containers` feature. Each test gets its own freshly-created database inside that container (`CREATE DATABASE test_<pid>_<nanos>_<counter>`). This gives full schema independence (each test runs migrations from zero) without transaction-rollback tricks that break tests asserting on database state visible across connections.
 
----
+Booting a Postgres container takes ~1.5 s and Docker daemon boot-pressure is the dominant cost in a parallel test run. Sharing one container with `ReuseDirective::Always` means the entire workspace pays that boot cost once; subsequent test processes attach to the already-running container. The `atc-server` architecture doc ([`backend-server.md`](backend-server.md) § Postgres schema) describes the schema under test — the outbox retention policy tested here is defined in [ADR-0007](../architecture-decisions/0007-outbox-retention-policy.md).
 
-**Decision:** Backend integration tests share a single Postgres container (`atc-test-pg`) across nextest test processes via the testcontainers `reusable-containers` feature; each test gets its own freshly-created database inside that container
-**Alternatives considered:** One ephemeral container per test (no reuse); one container per test binary (less aggressive sharing); shared schema with per-test transactions/savepoints; `pg_tmp` rather than testcontainers
-**Rationale:** Booting a Postgres container takes ~1.5 s and Docker daemon boot-pressure is the dominant cost in a parallel test run. Sharing one container with `ReuseDirective::Always` and `with_container_name("atc-test-pg")` means the entire workspace pays that boot cost once (across all nextest processes), then every test gets a fresh database via `CREATE DATABASE test_<pid>_<nanos>_<counter>` from an admin connection. Per-database isolation gives full schema independence (each test runs migrations from zero) without the transaction-rollback or savepoint tricks that break tests asserting on database state visible across connections. The PID + nanos + counter combination guarantees uniqueness across nextest's parallel test processes even at the same nanosecond.
+Two retry loops protect against races:
 
-The implementation lives at `backend/crates/atc-server/tests/integration/common/mod.rs` in `start_pg()`. **Race protection — two retry loops:**
+1. **Container creation race.** `ReuseDirective::Always` does an `inspect → create` sequence that is not atomic. Concurrent test processes can both pass the `inspect`, then one wins `docker create` while the others get a 409 Conflict. The first loop retries `start()` with exponential backoff (50 ms doubling, capped at ~4 s).
 
-1. **Container creation race.** `testcontainers`'s `ReuseDirective::Always` does an `inspect → create` sequence that is not atomic. Concurrent test processes can both pass the `inspect` (container does not exist), then one wins `docker create` while the others get a 409 Conflict. The first loop retries `Postgres::default().with_reuse(Always).start()` with exponential backoff (50ms doubling, capped at ~4 s) so the losers re-`inspect` and attach to the now-created container.
-2. **Postgres-readiness race.** Even once the container exists, the Postgres process inside may still be starting up; the admin connection sees `Connection reset by peer` or `database system is starting up`. The second loop retries `sqlx::PgConnection::connect()` against the admin URL with the same exponential backoff. Typical convergence is <1 s.
+2. **Postgres-readiness race.** Even once the container exists, the Postgres process inside may still be starting. The second loop retries the admin connection with the same exponential backoff. Typical convergence is <1 s.
 
-**Cleanup contract:** the shared container persists past `cargo test` / `cargo nextest run` (that's the whole point of reuse). Per-test databases accumulate inside it — ~10 MB each, scaling with test count. The `just cleanup-test-pg` recipe is the cleanup primitive: it runs `docker rm -f atc-test-pg`, nuking the whole container (and every `test_*` database inside it as a side effect). The next test run boots a fresh container via the start-up retry loop. Run the recipe manually when the container's storage footprint becomes uncomfortable; cleanup is **not automatic**, since per-test container boot would defeat the reuse decision.
+In CI (single ephemeral runner per job), the container starts on first `start_pg()` and dies with the runner; no cumulative residue. Locally, the container persists between test runs. `just cleanup-test-pg` (`docker rm -f atc-test-pg`) is the cleanup primitive when local storage footprint becomes uncomfortable.
 
-CI (single ephemeral runner per job) is unaffected: the container starts on first `start_pg()` and dies with the runner pod; no cumulative residue.
+## Helm validation
 
-Crate-side pin: `backend/crates/atc-server/Cargo.toml` carries `testcontainers = { version = "=0.27.3", features = ["reusable-containers"] }`. The `reusable-containers` feature gates the `ReuseDirective` API; Renovate's no-automerge override for this crate means a major bump gets manual review (the feature surface is unstable across testcontainers majors).
+Helm validation spans three jobs that land under the single `helm-result` gate.
 
-**Decision:** Backend job's CI target/ footprint is reduced via four layered tweaks: a leading `jlumbroso/free-disk-space` step reclaims ~10–15 GB of preinstalled software, the workspace dev/test profile uses `debug = "line-tables-only"`, `CARGO_INCREMENTAL=0` is set at the job level, and the verify-types step runs `cargo test --workspace --lib -- export_bindings` (not `--workspace` alone)
-**Alternatives considered:** `cargo clean` between heavy steps; split verify-types into its own job (extra runner spinup); `strip = "debuginfo"` in dev/test profile (would undo the line tables and lose file:line in backtraces); `debug = 0` (no file:line in backtraces); sccache (orthogonal — speeds repeated runs but doesn't shrink peak disk in a single job); `cargo llvm-cov --no-clean` chained with `cargo test --no-run` (rustflags differ between coverage and non-coverage builds, so cargo can't share artifacts regardless of flags)
-**Rationale:** The GitHub-hosted `ubuntu-24.04` image starts with only ~14 GB of free disk after the runner OS layers on ~10–15 GB of preinstalled software (Android SDK, .NET, Haskell, Docker images) that the Backend job never uses. `jlumbroso/free-disk-space` (first step of the job, before checkout) reclaims that space — without it the coverage build hits "No space left on device" mid-link. The Backend job then runs two cargo builds — `cargo test --workspace -- export_bindings` (no instrumentation) and `cargo llvm-cov --workspace` (coverage-instrumented). cargo-llvm-cov 0.8+ uses `RUSTC_WRAPPER=cargo-llvm-cov` to inject `-C instrument-coverage` per first-party crate while pointing cargo at the same `target/` directory; deps are reused from the verify-types build via fingerprint matching, and only the first-party crates (atc-core, atc-github, atc-server, integration) rebuild under instrumentation. Reordering verify-types BEFORE coverage matters because the reverse order would force every first-party crate to rebuild *without* instrumentation after the coverage build, doubling the peak. Pre-issue-#55 the verify-types build was twice as large as it needed to be — `cargo test --workspace -- export_bindings` compiled every test binary in the workspace, including the multi-GB consolidated `integration` binary, just to discover the auto-generated ts-rs tests. Those tests live in `src/` (library targets) — every `#[derive(TS)]` emits its `export_bindings_<TypeName>` test in the type's defining module. Adding `--lib` skips the integration binary entirely at verify-types time; the coverage step compiles it (necessary for full coverage), but only once. `debug = "line-tables-only"` in the dev/test profile (backend/Cargo.toml) preserves `.debug_line` (file:line per stack frame in backtraces) and `.symtab` (function names) but drops `.debug_info` (variable/type metadata used only by an attached debugger); panic locations (`#[track_caller]`), unwinding (`.eh_frame`), and cargo-llvm-cov's coverage maps (LLVM source-based, instrumentation-emitted) are independent of debug level. `CARGO_INCREMENTAL=0` saves ~10% of `target/debug/` on a fresh runner because cargo would otherwise materialise an incremental cache it has nothing prior to incrementalize against. A `Report disk usage` step (`if: always()`) emits the post-coverage disk state to the job log for ongoing visibility.
+`helm-lint` runs `helm lint` and `helm unittest` — both are k8s-version-independent (no API server needed), so they run once in a single job.
+
+`helm-validate` runs a 2 × 10 sweep: two Kubernetes API versions (the chart's declared `kubeVersion` floor and the current stable) × ten values fixtures representing distinct feature surfaces (defaults, ingress, gateway, multi-replica, otel, existing-secret-listener, pdb, networkpolicy, autoscaling, and a ct-install fixture). The sweep runs sequentially inside a single runner via `scripts/helm-kubeconform.sh`, which loops over both k8s versions × all values files, delegates each pair to `scripts/helm-kubeconform-one.sh`, collects results, and emits a Markdown pass/fail table to `$GITHUB_STEP_SUMMARY`. Running 20 combinations sequentially on one runner consumes one runner slot; kubeconform is fast enough (network-bound on the first CRD schema fetch; subsequent runs hit the OS page cache) that wall-clock time is not a concern.
+
+`scripts/helm-kubeconform-one.sh` passes `--kube-version` to `helm template` so Helm enforces the chart's own `kubeVersion` constraint at render time. Without that flag, kubeconform validates resource schemas but a chart declaring an incompatible `kubeVersion` renders green anyway. The supplemental schema location is `datreeio/CRDs-catalog`, which provides community-maintained schemas for `HTTPRoute` (gateway.networking.k8s.io/v1) and other CRDs absent from the upstream Kubernetes JSON schema repository, enabling `--strict` mode without false negatives.
+
+`helm-install` goes deeper: it spins up a kind cluster, `kind load`s the chart's container image, and runs `ct install` (chart-testing) — which exercises admission, controller acceptance, Pod readiness (`/healthz`, `/readyz`), and the in-cluster `helm test` hook. `ct install` validates against a real API server and catches cluster-side regressions that kubeconform cannot see (admission policies, CRD ordering, probe configuration drift, image references that don't start). It runs against a single k8s version and values fixture because the cluster spinup cost makes a full matrix prohibitive.
+
+## Zizmor security scan
+
+`zizmor.yml` runs when workflow files change. Findings appear in the GitHub Security tab as advisories rather than as required status checks. Zizmor findings are security improvement opportunities, not merge blockers; surfacing them in the Security tab allows triage without blocking PRs on first occurrence.
 
 ## Dependency updates
 
-Mend Renovate manages every dependency surface (Cargo, npm/pnpm, Dockerfile, docker-compose, GitHub Actions, mise) under one configuration at `renovate.json`. It extends `config:best-practices`, which bundles digest pinning for Docker FROMs and GitHub Action `uses:` references, dev-dependency pinning, weekly lockfile maintenance, the npm security minimum-release-age, and abandoned-package surfacing on the dependency dashboard. Manifests are pinned exactly (`=X.Y.Z` for Cargo, caret stripped for npm/pnpm), and `lockFileMaintenance` is scheduled weekly on Sunday morning to regenerate `Cargo.lock` and `pnpm-lock.yaml` and absorb transitive bumps.
+Mend Renovate manages every dependency surface (Cargo, npm/pnpm, Dockerfile, docker-compose, GitHub Actions, mise) under one configuration at `renovate.json`. It extends `config:best-practices`, which bundles digest pinning for Docker FROMs and GitHub Action `uses:` references, dev-dependency pinning, weekly lockfile maintenance, the npm security minimum-release-age, and abandoned-package surfacing.
 
-Auto-merge gating combines three mechanisms:
+The auto-merge policy: a 3-day release-age delay gives upstream time to yank or patch before ATC's CI sees the bump; security advisories (via `osvVulnerabilityAlerts: true`) bypass the delay and auto-merge non-major updates; major versions open a PR but require manual review. Several packages carry explicit no-automerge overrides — `ts-rs` and `sqlx` (bumps cross compile-time contracts: regenerated TypeScript types and sqlx macros), and the cross-repo `opentelemetry ecosystem` group (four upstream repos that must coordinate together). Conventional-commit prefix mapping: runtime dependency bumps land as `fix(deps):` (release-please ships a patch release); dev/tooling bumps land as `chore(deps):` (no release). See `renovate.json` for the full configuration.
 
-- **Required status checks on the `main` ruleset** (`Backend Result`, `Frontend Result`, `Helm Result`, `PR Checks`) — applies to manual merges from the GitHub UI as well as Renovate's platform auto-merge.
-- **3-day release-age delay** (`minimumReleaseAge: "3 days"` at the top level) — gives upstream time to yank or patch before ATC's CI sees the bump.
-- **Per-rule overrides** — major updates open but never auto-merge; pre-1.0 minor bumps require manual review (Renovate's `isBreaking()` already classifies them as major for cargo, but npm classification is less reliable); `ts-rs`, `sqlx`, and the cross-repo `opentelemetry ecosystem` group (opentelemetry-rust, tracing-opentelemetry, opentelemetry-system-metrics, axum-otel-metrics) carry no-automerge overrides because their bumps cross compile-time contracts (regenerated TypeScript types, sqlx macros, OTel 0.x ecosystem coordination across four upstream repos).
+The release pipeline boundary ([`release-pipeline.md`](release-pipeline.md)) is: `ci.yml` gates merges; `release.yml` runs on tags created by release-please. Release-please's role in the toolchain is recorded in [ADR-0011](../architecture-decisions/0011-release-toolchain.md). The release PR's own CI passes under the same `--locked` rule because release-please includes a bot-driven `Cargo.lock` refresh in the release PR itself.
 
-Security advisories (Dependabot + OSV via `osvVulnerabilityAlerts: true`) bypass the release-age delay, automerge non-major updates, and require manual review for major. `schedule` is set to `at any time` on the security override so branch creation is not gated.
+## mise tool provisioning
 
-Conventional-commit prefix mapping: runtime dependency bumps land as `fix(deps):` (release-please ships a patch release); dev/tooling bumps land as `chore(deps):` (no release). The Svelte ecosystem custom group does not force a prefix — Renovate picks `fix(deps):` only when the group's update set includes a runtime member (`svelte`).
+`.mise.toml` lists every tool the project needs across all surfaces. Jobs that need only a subset (`helm`, `kubeconform`, `helm + ct`) set `install: false` on `mise-action` and run an explicit `mise install <tools>` to avoid dragging in the full Rust toolchain plus `cargo install` of sqlx-cli and cargo-nextest on every cold runner. The Backend and Frontend jobs provision their primary language runtimes via `dtolnay/rust-toolchain` and `setup-node` respectively; they also set `install: false`.
 
-Cross-manager groups keep multi-manager pins in lockstep: `rust-toolchain` couples `.mise.toml`'s `rust` pin with the Dockerfile's `ARG RUST_VERSION` default (current: 1.95.0); `pnpm-version` couples `.mise.toml`'s `pnpm` pin with the `packageManager` field on `package.json` and `frontend/package.json`. The helm-install CI job reads `tools.rust` and `tools.node` from `.mise.toml` via `mise config get` and threads them through `--build-arg` on `docker build`, so a mise bump that lands without a corresponding Dockerfile ARG default bump still produces a CI build using the mise-pinned version (the ARG default remains as a fallback for standalone `docker build`).
-
-Design rationale and the post-merge ruleset runbook (required status checks + Mend Renovate App bypass actor) are documented in [`docs/design-plans/2026-05-10-renovate-onboarding.md`](../design-plans/2026-05-10-renovate-onboarding.md).
-
-## Boundaries
-
-**Owns:** Workflow file definitions (.github/workflows/), test execution configuration, linting rules, security scanning configuration, Renovate dependency policy (`renovate.json`)
-**Does not own:** Application code (test by backend/frontend tests), deployment pipelines, artifact generation, secret management
-**Prohibitions:** Never store secrets in workflow files — use GitHub Secrets. Never commit workflow files without matching updates to ci-pipeline.md. Never bypass the pre-push gate (no --no-verify).
-
-## Files
-
-- `.github/workflows/ci.yml` — Quality pipeline (linting, type-checking, testing, building); includes `helm-validate` job (single runner, full 2×9 kubeconform sweep via `scripts/helm-kubeconform.sh`), `helm-install` job with kind + chart-testing, and `helm-result` gate. Frontend artifact upload includes `coverage/vitest/lcov.info`, `coverage/e2e/lcov.info`, and `test-results/frame-budget-trace.json` (the Tier 2 informational frame-budget trace produced by `e2e/frame-budget.test.ts`). Codecov receives both lcov files in a single upload and merges them server-side by `SF:` path — see `docs/architecture/frontend-app.md` § Coverage Pipeline for the merge contract.
-- `scripts/helm-kubeconform.sh` — Full 2×9 k8s-version × values-file sweep; collects results and emits a Markdown pass/fail table to stdout and `$GITHUB_STEP_SUMMARY`. Delegates each pair to `scripts/helm-kubeconform-one.sh`.
-- `scripts/helm-kubeconform-one.sh` — Validates a single (k8s version, values file) pair via `helm template --kube-version | kubeconform`.
-- `.github/workflows/zizmor.yml` — Workflow security linter
-- `deploy/helm/ct.yaml` — chart-testing config consumed by the `helm-install` job
-- `deploy/helm/atc/ci/test-values.yaml` — `ct install` values fixture (image override + `pullPolicy: Never`)
-- `scripts/doc-mapping.sh` — Maps workflow file changes to this architecture doc
-- `renovate.json` — Mend Renovate configuration (see § Dependency updates)
+`cargo:` tools in `.mise.toml` install via `cargo-binstall` (prebuilt binaries) rather than `cargo install` (compile from source). `MISE_CARGO_BINSTALL=1` in the `.mise.toml` `[env]` block tells mise to invoke `cargo-binstall`, downloading prebuilt release binaries in seconds rather than compiling from source (2–4 minutes per tool on a fresh runner). This speedup applies equally to local `mise install` cold-starts.

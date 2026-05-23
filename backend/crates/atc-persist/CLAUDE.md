@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-persist
 
-Last verified: 2026-05-15
+Last verified: 2026-05-23
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
