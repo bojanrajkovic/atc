@@ -1,6 +1,6 @@
 # CLAUDE.md — .github
 
-Last verified: 2026-05-17
+Last verified: 2026-05-23
 
 > Canonical documentation lives in `docs/architecture/ci-pipeline.md` and `docs/architecture/release-pipeline.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture docs.
 
@@ -20,7 +20,7 @@ GitHub Actions workflows for CI, security linting, versioning, and release artif
 ## Contracts
 
 - **Path filtering on PRs:** Only affected stacks run (backend, frontend, helm). Main always runs full matrix.
-- **Helm validate sweep:** 2 Kubernetes versions × 9 values files (`defaults`, `ingress`, `gateway`, `multi-replica`, `otel`, `existing-secret-listener`, `pdb`, `networkpolicy`, `autoscaling`) run sequentially inside a single `helm-validate` runner via `scripts/helm-kubeconform.sh`. Emits a Markdown pass/fail table to `$GITHUB_STEP_SUMMARY`.
+- **Helm validate sweep:** 2 Kubernetes versions × 10 values files (`defaults`, `ingress`, `gateway`, `multi-replica`, `otel`, `existing-secret-listener`, `pdb`, `networkpolicy`, `autoscaling`, `grafana-dashboard`) run sequentially inside a single `helm-validate` runner via `scripts/helm-kubeconform.sh`. Emits a Markdown pass/fail table to `$GITHUB_STEP_SUMMARY`.
 - **Linked versions:** All crates + frontend version in lockstep via release-please.
 
 ## Key References
