@@ -23,6 +23,9 @@
 #   - docs/architecture/*              — the canonical arch docs themselves
 #   - docs/planning-workflow.md        — plan-mode behavior
 #   - docs/implementation-guidance.md  — execution-mode rules
+#   - docs/testing.md                  — backend-test foot-gun patterns
+#                                        (changes when patterns evolve,
+#                                        not when test code changes)
 #   - docs/design-plans/*              — committed design plans
 #   - docs/ideation/*                  — pre-code design artifacts
 #   - CONTRIBUTING.md                  — human workflows + conventions
