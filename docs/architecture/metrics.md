@@ -1,32 +1,57 @@
 # Observability — metric and span surface
 
-Last verified: 2026-05-18
+Last verified: 2026-05-23
 
 > **Persistence layering (ADR-0008).** The broadcast envelope `CommittedEvent` lives in `atc-wire`. The `PersistentStore` trait (which owns `subscribe()` and `shutdown()`) lives in `atc-persist`. `InMemoryStore` lives in `atc-store-mem`. `PgStore` and the entire `PgMetrics` surface live in `atc-store-pg`. Metric and span names did not change — only emit-site file paths did. See [ADR-0008](../architecture-decisions/0008-persistence-crate-split.md).
 
 > **Runner-pool capacities (issue #16).** The wire field `StateSnapshot.runner_pool_capacities` carries operator-declared capacity from `AppState` onto the snapshot response. It is **not** a metric and introduces no new `atc_runner_pool_*` instrument — ADR-0004 keeps pool-stats derivation on the frontend.
 
-## Purpose
+This document is the canonical home for ATC's metric and span contract. Every metric ATC emits is documented here with the seven-element authoring block defined under [Metric and span authoring contract](#metric-and-span-authoring-contract). Every span boundary is enumerated under [Span inventory](#span-inventory). Cross-references from other docs (backend-server architecture, deployment runbooks, dashboard descriptions, alert rules) link here rather than duplicating per-metric or per-span prose.
 
-ATC emits structured telemetry — metrics and spans — through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes a tracer provider and a meter provider that export over OTLP/HTTP (HTTP/protobuf) to an operator-run collector (Grafana Alloy, OpenTelemetry Collector, etc.). The collector decides the downstream destination — Tempo for traces, Mimir or Prometheus for metrics — and re-exposes whichever scrape format the monitoring stack consumes. When the env var is unset, the SDK is never initialized: the OTel global meter provider stays at the SDK's no-op default, every instrument built against it is a no-op, and there is no provider, no exporter, and no background-task overhead. An invalid `OTEL_EXPORTER_OTLP_ENDPOINT` (typo, missing scheme, unparseable URL) is treated as unset — `init_otel` parses the value as a URI before installing the SDK so misconfiguration disables OTel with a clear stderr warning instead of silently routing telemetry to the OTel SDK's default `http://localhost:4318` fallback.
+For operator interpretation — NaN-sentinel meanings, sustained-rate heuristics, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
 
-**Logs are not in the OTel pipeline today.** All `tracing::{info,warn,error}!` events flow only to the JSON / pretty stderr subscriber registered in `main.rs`. There is no `LoggerProvider` and no OTLP log exporter — operators wanting logs in Loki or another OTel-aware store collect them through their container-log path (kubelet stdout/stderr → Fluent Bit / Vector / etc.). Adding native OTLP log export would mean building a `LoggerProvider`, registering a `tracing-opentelemetry::OpenTelemetryLayer` for logs, and threading shutdown through `OtelHandles`. File an issue if you want it.
+## OTel pipeline
 
-This document is the canonical home for ATC's metric and span contract. Every metric ATC emits is documented here with the seven-element interpretation block defined under [Metric and span authoring contract](#metric-and-span-authoring-contract). Every span boundary is enumerated under [Span inventory](#span-inventory). Cross-references from other docs (backend-server architecture, deployment runbooks, dashboard descriptions, alert rules) link here rather than duplicating per-metric or per-span prose.
+ATC emits structured telemetry through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes a tracer provider and a meter provider that export over OTLP/HTTP (HTTP/protobuf) to an operator-run collector (Grafana Alloy, OpenTelemetry Collector, etc.). The collector decides the downstream destination — Tempo for traces, Mimir or Prometheus for metrics.
+
+```mermaid
+flowchart LR
+    EMIT["Source emit sites\n(tracing spans, axum middleware,\nCounter/Histogram emits, sqlx-tracing)"]
+    SDK["OTel SDK\n(TracerProvider + MeterProvider)"]
+    EXP["OTLP/HTTP exporter"]
+    COL["Collector\n(Alloy / OTel Collector)"]
+    TEMPO["Tempo\n(traces)"]
+    MIMIR["Mimir / Prometheus\n(metrics)"]
+
+    EMIT --> SDK
+    SDK -->|"OTEL_EXPORTER_OTLP_ENDPOINT set"| EXP
+    SDK -->|"unset: no-op providers\nno exporter, no background tasks"| NOOP["(silent no-op)"]
+    EXP --> COL
+    COL --> TEMPO
+    COL --> MIMIR
+```
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, the SDK is never initialized: the OTel global meter provider stays at the no-op default, every instrument built against it is a no-op, and there is no exporter and no background-task overhead. An invalid value (typo, missing scheme, unparseable URL) is treated as unset — `init_otel` parses the value as a URI before installing the SDK so misconfiguration disables OTel with a clear stderr warning instead of silently routing telemetry to the SDK's default fallback.
+
+**Logs are not in the OTel pipeline.** All `tracing::{info,warn,error}!` events flow only to the JSON / pretty stderr subscriber registered in `main.rs`. There is no `LoggerProvider` and no OTLP log exporter — operators wanting logs in Loki or another OTel-aware store collect them through their container-log path (kubelet stdout/stderr → Fluent Bit / Vector / etc.).
+
+**OTel SDK init wiring.** `init_otel` installs a `W3CTraceContextPropagator` globally, registers `Base2ExponentialHistogram` as the aggregation view for every histogram instrument (see [Histogram aggregation](#histogram-aggregation)), and constructs both the tracer provider and the meter provider against the OTLP/HTTP exporter before returning `OtelHandles`. `OtelHandles` carries the two providers; `run_shutdown_orchestration` in `shutdown.rs` calls their shutdown methods after every emitter has joined. See [backend-server.md](backend-server.md) § "Supervision and shutdown" for the sequence diagram.
+
+**Sampler.** The default SDK sampler (`OTEL_TRACES_SAMPLER` env, defaulting to `parentbased_always_on`) is used without override. Operators wishing to tail-sample pass a sampling collector in front of the OTLP endpoint.
 
 ## Metric and span authoring contract
 
-Every metric ATC emits MUST ship with documentation in this section covering its interpretation surface — the contextual information an operator needs to read alerts, build dashboards, and decide which aggregator to use. Every span boundary ATC adds MUST be enumerated in [Span inventory](#span-inventory).
+Every metric ATC emits MUST ship with documentation in this section covering its interpretation surface. Every span boundary ATC adds MUST be enumerated in [Span inventory](#span-inventory).
 
 ### Metric naming
 
 - `atc_` project prefix on every application metric.
 - `pg_` subsystem prefix for Postgres-path metrics; reserve future subsystem prefixes (`http_`, `ws_`, etc.) for analogous separation.
 - `_total` suffix for monotonic counters.
-- `_seconds` suffix for time-valued metrics regardless of metric type (counter, gauge, histogram). This follows Prometheus convention — `process_start_time_seconds` is a gauge, the HTTP request duration histogram is `_seconds`.
+- `_seconds` suffix for time-valued metrics regardless of metric type (counter, gauge, histogram).
 - `_bytes` suffix for memory or byte-valued metrics.
 - Gauges that are not time- or byte-valued carry no unit suffix; the description names the unit.
-- snake_case throughout. The OTLP→Prometheus path leaves names alone, so the production exposition matches the source.
+- snake_case throughout. The OTLP→Prometheus path leaves names alone.
 
 ### Metric attribute conventions
 
@@ -44,7 +69,7 @@ The seven elements:
 4. **Measures** — one sentence stating what the metric value means in operational terms (not implementation terms).
 5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (pod)` or `without (pod)`.
 6. **Aggregation guidance** — recommended cross-replica aggregator (`avg`/`max`/`sum`/`p99`) with one-sentence rationale.
-7. **Example PromQL** — one canonical query an operator can paste into Grafana to see meaningful data. Queries assume the OTLP→Prometheus path (the collector translates OTel exponential histograms into Prometheus native histograms; see [Histogram aggregation](#histogram-aggregation) for the cross-format note on `*_bucket` series).
+7. **Example PromQL** — one canonical query an operator can paste into Grafana to see meaningful data. Queries assume the OTLP→Prometheus path (the collector translates OTel exponential histograms into Prometheus native histograms; see [Histogram aggregation](#histogram-aggregation) for the cross-format note on `*_bucket` series). Keep this element only when the query shape is non-obvious; standard forms (`rate(...)`, `sum by (...) (rate(...))`) are described in the operator guide and not repeated here.
 
 ### Span naming
 
@@ -57,15 +82,13 @@ ATC spans use a dotted hierarchy that names the boundary, not the implementation
 - `persist.apply.run_event`, `persist.apply.job_event` — `PgStore` / `InMemoryStore` write-path entries.
 - `persist.notify.emit` — the in-transaction `pg_notify` after the outbox INSERT.
 - `listener.recv` — per-NOTIFY root span for the PG listener. Each notification exports as its own root trace.
-- `drain.pass`, `drain.broadcast` — per-pass root and per-row child for the outbox drain. `drain.broadcast` is nested under `drain.pass` because `info_span!("drain.broadcast").in_scope(...)` runs inside the `drain_pass`-instrumented function.
-- `eviction.sweep` — per-tick root span for the in-memory-mode TTL eviction sweep. Each `InMemoryStore::evict_expired` call is its own root, so every tick exports as one tidy trace.
-
-Span names are stable identifiers — operators build dashboards and alerts that filter on them. Do not rename a span without coordinating with the dashboard owners; in particular, do not change `webhook.*`, `persist.*`, `listener.*`, or `drain.*` names without updating the doc here in lockstep.
+- `drain.pass`, `drain.broadcast` — per-pass root and per-row child for the outbox drain.
+- `eviction.sweep` — per-tick root span for the in-memory-mode TTL eviction sweep.
 
 ### Span attribute conventions
 
 - Lowercase, dotted keys (e.g., `webhook.delivery_id`, `pass.rows_fetched`). Use OpenTelemetry semantic conventions where they apply (`http.route`, `http.request.method`, `http.response.status_code`).
-- Late-bound fields use `tracing::field::Empty` at span construction and `Span::current().record(...)` once the value is known. The `webhook.handler` span declares `webhook.delivery_id` and `webhook.event_type` as `Empty` and records them inside the handler body once the headers have been parsed.
+- Late-bound fields use `tracing::field::Empty` at span construction and `Span::current().record(...)` once the value is known.
 - Never put webhook bodies, signatures, secrets, or full URLs (with secrets in query strings) on a span. The webhook attributes capture identifiers (`delivery_id`, `event_type`, `action`) and presence flags (`signature.present`), not payloads.
 
 ### Boundary discipline
@@ -73,100 +96,82 @@ Span names are stable identifiers — operators build dashboards and alerts that
 New instrumentation goes at one of these boundaries:
 
 - **API boundaries.** Every public HTTP route handler that performs work worth tracing (today: `webhook_handler`). The `axum-otel-metrics` middleware is the duration / status-code surface for *every* HTTP route automatically; per-route span instrumentation only needs to be added when the handler does enough work that the operator wants to see its internal structure.
-- **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `atc-store-pg/src/store/writes.rs`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
+- **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `atc-store-pg`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
 - **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` do NOT take a task-lifetime root span. Decorate the per-tick handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(...)]` directly, so each iteration emits its own root that exports on completion. A wrapper at the spawn site is an anti-pattern — see [Task-lifetime root spans are an anti-pattern](#task-lifetime-root-spans-are-an-anti-pattern) below.
 
-Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph. If a function is not load-bearing for an operator reading a flame graph, leave it uninstrumented and let it inherit the surrounding span.
+Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are an operator surface; not an internal call graph.
 
 ### Cached instrument convention
 
-Every repeat-emit metric in PG mode MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `backend/crates/atc-store-pg/src/metrics.rs`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access (`metrics.drain_rows.add(N, &[])`) instead of building an instrument inline at every call.
+Every repeat-emit metric in PG mode MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `atc-store-pg`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access instead of building an instrument inline at every call.
 
-For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores **one instrument per metric name** plus pre-built `[KeyValue; N]` attribute slices alongside it (e.g. `attrs_parity: [KeyValue; 1]`). Emit sites read `counter.add(1, &self.attrs_parity)` so neither the instrument lookup nor the `KeyValue` allocation happens on a webhook path. Dedicated helpers (`write_failure_parity()`, `notify_emitted_run()`, etc.) wrap each `(instrument, slice)` pair so call sites never duplicate the `&self.attrs_*` reference.
+For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores one instrument per metric name plus pre-built `[KeyValue; N]` attribute slices alongside it. Emit sites read `counter.add(1, &self.attrs_parity)` so neither the instrument lookup nor the `KeyValue` allocation happens on a webhook path. Dedicated helpers (`write_failure_parity()`, `notify_emitted_run()`, etc.) wrap each `(instrument, slice)` pair so call sites never duplicate the attribute reference.
 
-Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics. The two PG-mode observable gauges (`atc_pg_broadcast_watermark`, `atc_pg_min_pending_seq`) take their atomics as parameters to `PgMetrics::register`; `register_build_info` registers an `atc_build_info` observable gauge whose callback always observes `1.0` with the compile-time label set.
+Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics.
 
-This is **defense-in-depth, not micro-perf**. The hash-contract correctness fix from PR #153 was rooted in `metrics-util` / `metrics-exporter-otel`; with both crates retired in favor of direct OTel meters that bug class is gone at the SDK seam. The cached-instrument pattern still earns its keep by keeping hot-path emits allocation-free and making the metric surface a single grep-able struct.
-
-**TODO(otel-0.32):** once `tracing-opentelemetry` and `axum-otel-metrics` publish releases targeting `opentelemetry 0.32` (upstream PRs `tokio-rs/tracing-opentelemetry#258` and `ttys3/axum-otel-metrics#196`), bump the SDK pin, enable the `experimental_metrics_bound_instruments` feature, and replace each `(instrument, [KeyValue; N])` pair with a real `BoundCounter<u64>` / `BoundHistogram<f64>` obtained via `Counter::bind(&[…])`. Emit-site shape stays identical; the wrapper helpers (`write_failure_parity` etc.) hide the swap.
-
-Mechanical check (run before merging changes that touch backend sources):
-
-```sh
-rg -nU --multiline \
-   'meter[^"]*"\)\s*\.(u64_counter|u64_observable_(?:counter|gauge|up_down_counter)|f64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter))|i64_(?:counter|gauge|histogram|observable_(?:counter|gauge|up_down_counter)))\([^)]+\)' \
-   backend/crates/atc-server/src/ backend/crates/atc-store-pg/src/ \
-   | rg -v 'crates/(atc-server/src/metrics|atc-store-pg/src/metrics)\.rs'
-```
-
-The grep should return no matches: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new hit anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if it represents a genuinely new metric, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
+The mechanical guard: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new instrument built anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if genuinely new, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
 
 ### W3C trace context propagation
 
-The OTel SDK installs `TraceContextPropagator` globally in `init_otel`. The webhook handler extracts the incoming `traceparent` header before constructing the request span:
+`init_otel` installs a `TraceContextPropagator` globally. For inbound webhook requests, the handler extracts the incoming `traceparent` header before constructing the root span and calls `set_parent` to attach the incoming trace context. `set_parent` MUST be called between span construction and the first poll of the instrumented future — calling it from inside an `#[instrument]` body is wrong because the span has already been entered. When the header is absent or malformed, the resulting `webhook.handler` span is a fresh root with a new trace ID.
 
-```rust
-let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
-    prop.extract(&HeaderExtractor(&headers))
-});
-let span = info_span!("webhook.handler", /* ... */);
-let _ = span.set_parent(parent_cx);
-async move { /* handler body */ }.instrument(span).await
-```
+### Cross-trace causal link via outbox `traceparent`
 
-`set_parent` MUST be called between span construction and the first poll of the instrumented future — calling it from inside an `#[instrument]` body is wrong because the span has already been entered. If the header is absent or malformed, `parent_cx` is the empty context and the resulting `webhook.handler` span is a fresh root with a new trace ID. Outbound HTTP is not yet instrumented; if it is added later, the same propagator emits `traceparent` on outgoing requests.
+The outbox table's `traceparent` column captures the W3C trace context of the `webhook.handler` span at INSERT time. When the drain task processes an outbox row, `drain.broadcast` receives an OTel span **link** (not a parent) to that webhook trace. This is the canonical cross-trace causal mechanism that lets operators follow the path from "webhook received" to "event broadcast to WebSocket" without stitching traces manually in Tempo.
+
+The link-not-parent design is intentional: `drain.pass` is a per-tick root (see [Task-lifetime root spans are an anti-pattern](#task-lifetime-root-spans-are-an-anti-pattern) below), so making the drain broadcast a child of the originating webhook span would require a task-lifetime root on the drain side — the pattern that breaks span export. A link preserves the causal reference without collapsing the drain into the webhook trace.
 
 ### Task-lifetime root spans are an anti-pattern
 
-`tracing-opentelemetry` only exports a span to the OTel pipeline when it closes. A span attached to a `tokio::spawn`-ed future via `.instrument(span)` closes when the task ends — for long-lived background tasks (the listener loop, the drain loop, the eviction loop) that means "at process shutdown." Under normal operation the span never exports, and a SIGKILL or OOM kill loses it entirely along with every per-tick child that was waiting on it.
+`tracing-opentelemetry` only exports a span to the OTel pipeline when it closes. A span attached to a `tokio::spawn`-ed future via `.instrument(span)` closes when the task ends — for long-lived background tasks (the listener loop, the drain loop, the eviction loop) that means "at process shutdown." Under normal operation the span never exports, and a SIGKILL or OOM kill loses it entirely.
 
-The fix is per-tick roots: decorate the handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(name = "...", ...)]` directly. Each iteration is then a fresh root that exports as soon as it returns. `drain.broadcast` stays a child of `drain.pass` because it is constructed inside the instrumented `drain_pass` function via `info_span!("drain.broadcast").in_scope(...)`. The reference implementations are `backend/crates/atc-store-pg/src/listener.rs` and `backend/crates/atc-server/src/persist/in_memory.rs`. The rationale was first written down in `docs/design-plans/2026-05-13-eviction-fold-into-in-memory-store.md` (§ "Postscript") and extended to listener/drain in issue #170.
+The fix is per-tick roots: decorate the handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(name = "...", ...)]` directly. Each iteration is then a fresh root that exports as soon as it returns. `drain.broadcast` stays a child of `drain.pass` because it is constructed inside the instrumented `drain_pass` function. The rationale was first written in `docs/design-plans/2026-05-13-eviction-fold-into-in-memory-store.md` (§ "Postscript") and extended to listener/drain in issue #170.
 
 ### Shutdown ordering
 
-OTel SDK tear-down runs after every emitter has joined. The shutdown orchestration enumerates the ordering — see the comment block in `backend/crates/atc-server/src/shutdown.rs` (`run_shutdown_orchestration`, near the end). The principle is "no live emitter when shutdown fires." A new emitter category (a future scheduled job, a periodic task, a long-lived consumer) MUST be joined before the OTel shutdown step and named in that comment so the invariant continues to hold.
+OTel SDK tear-down runs after every emitter has joined. The shutdown orchestration in `atc-server` enumerates the ordering — the principle is "no live emitter when shutdown fires." A new emitter category (a future scheduled job, a periodic task, a long-lived consumer) MUST be joined before the OTel shutdown step. See [backend-server.md](backend-server.md) § "Supervision and shutdown" for the full sequence.
 
 ### Histogram aggregation
 
-The meter provider registers an instrument view that maps every `Histogram` instrument to `Aggregation::Base2ExponentialHistogram { max_size, max_scale }`. The shared `exponential_histogram_view()` function in `backend/crates/atc-server/src/otel.rs` is the canonical hook for changing aggregation choice — both production `init_otel` and the test harness call it, so tests observe the same shape as production.
+The meter provider registers an instrument view that maps every `Histogram` instrument to `Aggregation::Base2ExponentialHistogram { max_size, max_scale }`. The shared `exponential_histogram_view()` function in `atc-server` is the canonical hook for changing aggregation choice — both production `init_otel` and the test harness call it, so tests observe the same shape as production.
 
-This requires the `spec_unstable_metrics_views` feature on `opentelemetry_sdk`. The feature is unstable per OTel's spec stability tracking — the API may shift on a future SDK release. The implementer who bumps `opentelemetry_sdk` owns reviewing the feature gate and, if it has been stabilized, removing the unstable flag.
+This requires the `spec_unstable_metrics_views` feature on `opentelemetry_sdk`. The feature is unstable per OTel's spec stability tracking — the API may shift on a future SDK release. The implementer who bumps `opentelemetry_sdk` owns reviewing the feature gate.
 
-The cross-format implication: native and classic histograms have incompatible query forms. Against a Prometheus native histogram, `histogram_quantile` operates on the metric directly — `histogram_quantile(0.99, sum by (pod) (rate(name[5m])))`, no `_bucket` suffix, no `le` grouping. Against a classic histogram the same intent is `histogram_quantile(0.99, sum by (le, pod) (rate(name_bucket[5m])))`. The OTel SDK's `Base2ExponentialHistogram` aggregation maps to native histograms when the storage supports them (Prometheus 2.40+, Mimir, the grafana/otel-lgtm bundle, etc.); the bundled dashboard at `deploy/helm/atc/dashboards/atc-overview.json` assumes that path and uses the native form. Operators running collectors that emit only classic histograms (older Prometheus, transitional setups) must translate dashboard panel queries to the classic `_bucket` form. Dual-emission (classic AND native from the same source) is supported by some collector configurations and would let either form work; ATC does not test against that configuration.
+The cross-format implication: native and classic histograms have incompatible query forms. Against a Prometheus native histogram, `histogram_quantile` operates on the metric directly — `histogram_quantile(0.99, sum by (pod) (rate(name[5m])))`, no `_bucket` suffix. Against a classic histogram the `_bucket` / `le` grouping is required. The OTel SDK's `Base2ExponentialHistogram` aggregation maps to native histograms when the storage supports them (Prometheus 2.40+, Mimir); the bundled dashboard assumes that path. Operators running collectors that emit only classic histograms must translate dashboard panel queries to the classic `_bucket` form.
 
 ## atc_build_info
 
-`register_build_info()` (called once at startup) sets a gauge always equal to `1.0` with these labels (emitted as OTel attributes; rendered as Prometheus labels by the collector):
+`register_build_info()` (called once at startup) sets a gauge always equal to `1.0` with these labels:
 
 | Label | Source | Example |
 |---|---|---|
-| `version` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0` (mirrors `git_describe` — see below) |
-| `git_describe` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0` (exact tag for release-pipeline builds), `v1.0.0-3-gabc1234` (post-tag offset for local builds) |
+| `version` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0` |
+| `git_describe` | `VERGEN_GIT_DESCRIBE` (via `build.rs`) | `v1.0.0-3-gabc1234` |
 | `git_sha` | `VERGEN_GIT_SHA` (via `build.rs`) | `a1b2c3d...` |
 | `rustc_version` | `VERGEN_RUSTC_SEMVER` (via `build.rs`) | `1.94.0` |
 | `build_timestamp` | `VERGEN_BUILD_TIMESTAMP` (via `build.rs`) | `2026-04-08T...` |
 | `target_triple` | `VERGEN_CARGO_TARGET_TRIPLE` (via `build.rs`) | `x86_64-unknown-linux-gnu` |
 
-`version` deliberately mirrors `git_describe` rather than carrying `CARGO_PKG_VERSION`. The operator-facing identifier should track the git tag the image was built from — which is also what `org.opencontainers.image.version` (the OCI label set by `docker/metadata-action`) and the `service.version` OTel resource attribute carry. Sourcing `version` from `Cargo.toml` instead lets the three identifiers drift apart on rc cycles where a tag is placed on a commit whose `Cargo.toml` was already bumped by release-please for the next stable release. The redundant column is left intact for any dashboards that already filter on `git_describe`.
-
-`build.rs` uses the `vergen-gix` crate (pure-Rust gix backend; no libgit2 dependency) and emits all six vars as `cargo:rustc-env=` instructions. `release.yml`'s `actions/checkout` step uses `fetch-depth: 0` for the `build-binaries` job so vergen-gix's `git describe` walk has full ancestry (a shallow clone fetches the tag ref but not the history `git describe` traverses to find the nearest tag, and `VERGEN_GIT_DESCRIBE` falls back to an idempotent-output sentinel).
+`version` deliberately mirrors `git_describe` rather than carrying `CARGO_PKG_VERSION`. The operator-facing identifier should track the git tag the image was built from — which is also what `org.opencontainers.image.version` and the `service.version` OTel resource attribute carry. Sourcing `version` from `Cargo.toml` instead lets the three identifiers drift apart on rc cycles where a tag is placed on a commit whose `Cargo.toml` was already bumped by release-please for the next stable release. The redundant column is left intact for any dashboards that already filter on `git_describe`.
 
 `main.rs` also emits an `atc-server starting` INFO log line at process startup carrying the same six fields. The log surfaces build metadata when the metrics endpoint isn't available — early startup crashes, OTel pipeline disabled, container logs as the only diagnostic surface.
 
 ## HTTP request duration
 
-`axum-otel-metrics`'s `HttpMetricsLayer` wraps the API router in `routes::api_routes()`. Every request emits a duration histogram with HTTP semantic-convention attributes:
+`axum-otel-metrics`'s `HttpMetricsLayer` wraps the API router. Every request emits a duration histogram with HTTP semantic-convention attributes:
 
 - `http.request.method` — request method (`POST`, `GET`, etc.).
 - `http.response.status_code` — response status (`200`, `401`, `503`, etc.).
 - `http.route` — matched Axum route pattern (`/v1/webhooks/github`, `/v1/state`, etc.).
 - `url.scheme` — request scheme (`http`, `https`).
 
-The middleware records into the global meter installed by `init_otel`. When OTel is disabled, the middleware records into the `opentelemetry` crate's no-op meter and the measurements never reach an exporter.
+The middleware records into the global meter installed by `init_otel`. When OTel is disabled, the middleware records into the no-op meter and the measurements never reach an exporter.
+
+See [frontend-app.md](frontend-app.md) for the WebSocket message-delivery instrumentation on the frontend side.
 
 ## Process collector
 
-`spawn_process_collector(_cancel: CancellationToken) -> ProcessCollectorHandle` spawns the `opentelemetry-system-metrics` observer (`init_process_observer`) under a tokio task and returns a wrapper handle. The observer ticks on the standard `OTEL_METRIC_EXPORT_INTERVAL` interval (default 30 s, configurable via env), reads `sysinfo` snapshots of the current process, and records gauges against the global meter installed by `init_otel`. Emitted instruments (OTel dotted names; the OTLP→Prometheus collector translates dots to underscores so the scrape names are the `process_*` variants shown):
+`spawn_process_collector` spawns the `opentelemetry-system-metrics` observer under a tokio task and returns a wrapper handle. The observer ticks on the standard `OTEL_METRIC_EXPORT_INTERVAL` interval (default 30 s, configurable via env), reads `sysinfo` snapshots of the current process, and records gauges against the global meter installed by `init_otel`. Emitted instruments (OTel dotted names; the OTLP→Prometheus collector translates dots to underscores so the scrape names are the `process_*` variants shown):
 
 | OTel name | Scrape name | Type | Unit | Value | Attributes |
 |---|---|---|---|---|---|
@@ -176,11 +181,11 @@ The middleware records into the global meter installed by `init_otel`. When OTel
 | `process.memory.virtual` | `process_memory_virtual` | i64 gauge | byte | committed virtual memory | same four `process.*` |
 | `process.disk.io` | `process_disk_io` | i64 gauge | byte | cumulative read/write bytes | same four `process.*` plus `direction=read\|write` |
 
-The `process_cpu_usage` / `process_cpu_utilization` row inversion above is correct — `opentelemetry-system-metrics 0.31.0` binds the Rust variables to inverted constants (see crate source `src/lib.rs:131,214`): the Rust binding named `process_cpu_utilization` records `process_cpu_usage` (with attributes), and the binding named `process_cpu_usage` records `process_cpu_utilization` (no attributes).
+The `process_cpu_usage` / `process_cpu_utilization` row inversion above is correct — `opentelemetry-system-metrics 0.31.0` binds the Rust variables to inverted constants: the Rust binding named `process_cpu_utilization` records CPU usage with attributes, and the binding named `process_cpu_usage` records CPU utilization without attributes.
 
 For dashboard migration notes (prior `metrics_process` names, per-process CPU query guidance) see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md) § "Process metrics — dashboard migration note".
 
-The observer's `init_process_observer` loop runs forever — there is no cooperative shutdown surface on the upstream crate. `ProcessCollectorHandle::shutdown()` calls `tokio::task::AbortHandle::abort()` and returns the underlying `JoinHandle<()>` so the orchestration in `shutdown.rs` can await it under `SHUTDOWN_TIMEOUT_METRICS`. The observer does no DB/network work, so an abort between ticks is the common case and an abort mid-tick is safe.
+The observer's loop runs forever — there is no cooperative shutdown surface on the upstream crate. `ProcessCollectorHandle::shutdown()` calls `tokio::task::AbortHandle::abort()` and returns the underlying `JoinHandle<()>` so the orchestration in `shutdown.rs` can await it. The observer does no DB/network work, so an abort between ticks is the common case and an abort mid-tick is safe.
 
 ## Operational metrics
 
@@ -194,7 +199,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 
 - **Name:** `atc_pg_write_failures_total`
 - **Type:** counter
-- **Attributes:** emitted `kind` ∈ `{parity, transient}`; injected `pod`, `instance`. `kind="parity"` fires when the PG UPSERT matches 0 rows (the WHERE predicate rejected the transition under PG's view of state); `kind="transient"` fires on sqlx errors at `pool.begin()`, mid-transaction, or `tx.commit()`. A `WARN` log with `target_status` is emitted alongside every parity rejection to surface which status the rejected transition was targeting (the `from` state is unavailable at the SQL layer — only `rows_affected` is returned).
+- **Attributes:** emitted `kind` ∈ `{parity, transient}`; injected `pod`, `instance`. `kind="parity"` fires when the PG UPSERT matches 0 rows (the WHERE predicate rejected the transition under PG's view of state); `kind="transient"` fires on sqlx errors at `pool.begin()`, mid-transaction, or `tx.commit()`. A `WARN` log with `target_status` is emitted alongside every parity rejection.
 - **Measures:** Webhook writes that failed inside `PgStore::apply_*_event`. Parity rejections return a 200 `{"status":"rejected"}` to GitHub and are NOT retried. Transient failures return 503 and ARE retried by GitHub's webhook delivery.
 
 ### `atc_pg_notify_emitted_total`
@@ -202,7 +207,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_notify_emitted_total`
 - **Type:** counter
 - **Attributes:** emitted `kind` ∈ `{run, job}` matching the event discriminator; injected `pod`, `instance`. Incremented by `PgStore::apply_*_event` after `tx.commit()` succeeds (the in-transaction `pg_notify` call is queued by PG and delivered on commit; aborted transactions silently drop it, so this counter only increments when the NOTIFY actually went out).
-- **Measures:** Successfully committed write transactions broadcast to `LISTEN atc_outbox`. This is the writer-side "what was published" signal; the listener-side counterpart is `atc_pg_notify_received_total`.
+- **Measures:** Successfully committed write transactions broadcast to `LISTEN atc_outbox`. The listener-side counterpart is `atc_pg_notify_received_total`.
 
 ### `atc_pg_notify_received_total`
 
@@ -222,7 +227,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 
 - **Name:** `atc_pg_drain_passes_total`
 - **Type:** counter
-- **Attributes:** none emitted; `pod`, `instance` (injected). Heartbeat-only wakes (the 5-second readiness tick that fires `last_drain_pass_at` updates without doing any draining) do NOT increment — only NOTIFY-driven passes count.
+- **Attributes:** none emitted; `pod`, `instance` (injected). Heartbeat-only wakes (the 5-second readiness tick) do NOT increment — only NOTIFY-driven passes count.
 - **Measures:** NOTIFY-driven drain passes completed by this replica.
 
 ### `atc_pg_drain_rows_total`
@@ -251,7 +256,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_outbox_lag_seconds`
 - **Type:** histogram (base-2 exponential aggregation; see [Histogram aggregation](#histogram-aggregation))
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Event age at broadcast — `clock.now() - row.inserted_at` recorded once per broadcast row, where `clock` is `PgStore.clock: Arc<dyn Clock>`. Routing the now-side through `PgStore.clock` makes the observation deterministic under `TestClock` — see `tests/integration/pg_clock_seam_tests.rs::outbox_lag_is_deterministic_under_test_clock`.
+- **Measures:** Event age at broadcast — `clock.now() - row.inserted_at` recorded once per broadcast row, where `clock` is `PgStore.clock: Arc<dyn Clock>`. Routing the now-side through `PgStore.clock` makes the observation deterministic under `TestClock`.
 
 ### `atc_pg_drain_pass_duration_seconds`
 
@@ -265,7 +270,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_wake_coalesced_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** NOTIFY arrivals observed by the listener while a drain pass was in flight (`drain_in_flight=true`). Counts arrival rate, NOT extra-pass rate (Tokio's `Notify` permit collapses N permits into 1 — the metric is about NOTIFY arrival vs drain-pass scheduling, which is what operators want).
+- **Measures:** NOTIFY arrivals observed by the listener while a drain pass was in flight (`drain_in_flight=true`). Counts arrival rate, NOT extra-pass rate (Tokio's `Notify` permit collapses N permits into 1).
 
 ### `atc_pg_drain_startup_seconds`
 
@@ -286,60 +291,60 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_broadcast_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `broadcast_watermark: Arc<AtomicI64>` on every collection cycle; seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass. The atomic update IS the metric update — no separate `record()` call.
+- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `broadcast_watermark: Arc<AtomicI64>` on every collection cycle; seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass.
 
 ### `atc_pg_min_pending_seq`
 
 - **Name:** `atc_pg_min_pending_seq`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`; non-sentinel values pass through as-is. The atomic update IS the metric update — no separate `record()` call.
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`.
 
 ### `atc_pg_outbox_rows_deleted_total`
 
 - **Name:** `atc_pg_outbox_rows_deleted_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Outbox rows deleted by this replica's retention sweep task on each tick. Counted via the sweep statement's `DELETE ... RETURNING seq` row count, so the value reflects rows the replica actually deleted under `FOR UPDATE SKIP LOCKED` semantics — concurrent sweepers on other replicas account for disjoint candidate subsets, so the per-replica counter is the per-replica share, not a cluster-wide tally.
+- **Measures:** Outbox rows deleted by this replica's retention sweep task on each tick. Counted via the sweep statement's `DELETE ... RETURNING seq` row count under `FOR UPDATE SKIP LOCKED` semantics — concurrent sweepers on other replicas account for disjoint candidate subsets. See [ADR-0009](../architecture-decisions/0009-display-vs-data-retention.md) for the display vs data retention boundary that drives sweep eligibility.
 
 ### `atc_pg_outbox_min_replica_watermark`
 
 - **Name:** `atc_pg_outbox_min_replica_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_replica_watermark_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN`. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence; this is a cluster-state observation, not a per-event measurement.
+- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_replica_watermark_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN`. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence.
 
 ### `atc_config_reload_total`
 
 - **Name:** `atc_config_reload_total`
 - **Type:** counter
 - **Attributes:** `result` (`"success"` | `"failure"`), `reason` (`"applied"` | `"noop"` | `"read"` | `"parse"` | `"validate"`); `pod`, `instance` (injected)
-- **Measures:** Config-watcher reload attempts, labeled by outcome. `result="success",reason="applied"` — reload changed AppState and broadcast `ConfigUpdate`. `result="success",reason="noop"` — reload re-read the file but content matched current AppState (no broadcast). `result="failure",reason="read"` — file I/O failure (deleted file, permissions). `result="failure",reason="parse"` — YAML deserialization failure. `result="failure",reason="validate"` — zero capacity / empty labels / duplicate pool. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 2]` attribute slices per outcome (cached-instrument convention) — call sites incur no allocation on emit.
+- **Measures:** Config-watcher reload attempts, labeled by outcome. `result="success",reason="applied"` — reload changed AppState and broadcast `ConfigUpdate`. `result="success",reason="noop"` — content matched current AppState (no broadcast). `result="failure",reason="read"` — file I/O failure. `result="failure",reason="parse"` — YAML deserialization failure. `result="failure",reason="validate"` — zero capacity / empty labels / duplicate pool.
 
 ### `atc_config_runner_pools`
 
 - **Name:** `atc_config_runner_pools`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Number of operator-declared runner pools currently loaded in `AppState.runner_pool_capacities`. Reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count. Implemented as an OTel `ObservableGauge<f64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention; the atomic update IS the metric update). `Weak<AtomicI64>` registration ensures dropped watchers do not leak callbacks.
+- **Measures:** Number of operator-declared runner pools currently loaded in `AppState.runner_pool_capacities`. Reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count. Implemented as an OTel `ObservableGauge<f64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle.
 
 ### `atc_ws_connections_active`
 
 - **Name:** `atc_ws_connections_active`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Number of WebSocket clients currently connected to `/v1/ws` on this replica — the count of in-flight `handle_socket` tasks. Implemented as an OTel `ObservableGauge<i64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention). The atomic is incremented at the start of each `handle_socket_inner` and decremented via a drop guard on every exit path. `Weak<AtomicI64>` registration ensures the callback no-ops after the owning `WsMetrics` Arc is released.
+- **Measures:** Number of WebSocket clients currently connected to `/v1/ws` on this replica — the count of in-flight `handle_socket` tasks. The atomic is incremented at the start of each `handle_socket_inner` and decremented via a drop guard on every exit path.
 
 ### `atc_ws_lagged_evictions_total`
 
 - **Name:** `atc_ws_lagged_evictions_total`
 - **Type:** counter
 - **Attributes:** `channel` (`"committed"` | `"config"`); `pod`, `instance` (injected)
-- **Measures:** WebSocket clients force-disconnected because their broadcast receiver fell behind and the bounded buffer (capacity 256) overflowed. `channel="committed"` is the `CommittedEvent` fan-out from `PersistentStore::subscribe()`; `channel="config"` is the operator-config reload stream from `config_events_tx`. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 1]` attribute slices per channel (cached-instrument convention) — call sites incur no allocation on emit.
+- **Measures:** WebSocket clients force-disconnected because their broadcast receiver fell behind and the bounded buffer (capacity 256) overflowed. `channel="committed"` is the `CommittedEvent` fan-out from `PersistentStore::subscribe()`; `channel="config"` is the operator-config reload stream from `config_events_tx`.
 
 ### `atc_display_ttl_seconds` — intentionally absent
 
-`ATC_DISPLAY_TTL` (the snapshot/UI visibility gate, see [ADR 0009](../architecture-decisions/0009-display-vs-data-retention.md) and [deployment.md](deployment.md#atc_display_ttl)) deliberately does not emit a metric. Operationally there is no urgency to monitor it: the value is restart-only, the snapshot's `display_ttl_seconds` field already carries it to clients on every reconnect, and the boundary-band edge cases are bounded by clock skew rather than by anything the server can measure. Operators tuning the value rely on the snapshot or `helm get values` to confirm the active setting.
+`ATC_DISPLAY_TTL` (the snapshot/UI visibility gate, see [ADR-0009](../architecture-decisions/0009-display-vs-data-retention.md) and [deployment.md](deployment.md#atc_display_ttl)) deliberately does not emit a metric. Operationally there is no urgency to monitor it: the value is restart-only, the snapshot's `display_ttl_seconds` field already carries it to clients on every reconnect, and the boundary-band edge cases are bounded by clock skew rather than by anything the server can measure.
 
 ### `atc_pg_outbox_oldest_row_age_seconds`
 
@@ -350,74 +355,102 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 
 ## Span inventory
 
-Spans declared by ATC, grouped by the boundary they decorate.
+Span names are stable identifiers — operators build dashboards and alerts that filter on them. Do not rename a span without coordinating with dashboard owners.
+
+```mermaid
+flowchart TD
+    WH["webhook.handler"]
+    WV["webhook.verify"]
+    WP["webhook.parse"]
+    PAR["persist.apply.run_event\npersist.apply.job_event"]
+    POR["persist.outbox.insert.run\npersist.outbox.insert.job"]
+    PUR["persist.upsert.run\npersist.upsert.job"]
+    PNE["persist.notify.emit"]
+    SS["state.snapshot"]
+    PRS["persist.read.snapshot"]
+    LR["listener.recv\n(per-NOTIFY root)"]
+    DP["drain.pass\n(per-pass root)"]
+    DB["drain.broadcast\n(per-row child)"]
+    ES["eviction.sweep\n(per-tick root, in-memory only)"]
+    OH["outbox.heartbeat.tick\n(per-tick root)"]
+    OS["outbox.sweep.tick\n(per-tick root)"]
+    WC["ws.connection\n(connection-lifetime root)"]
+    CR["config.reload\n(per-reload root)"]
+
+    WH --> WV
+    WH --> WP
+    WH --> PAR
+    PAR --> POR
+    PAR --> PUR
+    PAR --> PNE
+    SS --> PRS
+    DP --> DB
+```
 
 ### State snapshot path
 
-| Span | Source | Attributes |
-|---|---|---|
-| `state.snapshot` | `backend/crates/atc-server/src/routes.rs` (`state_handler`) — root request span for `GET /v1/state`. Built manually (not via `#[instrument]`) so span fields can be recorded from the snapshot response before the handler returns. No `traceparent` extraction: `/v1/state` is a client-pull endpoint with no upstream trace context today. | `http.route="/v1/state"`, `snapshot.runs_count` (usize; late-bound, recorded after snapshot is read), `snapshot.jobs_count` (usize; late-bound), `snapshot.last_seq` (u64; late-bound). |
-| `persist.read.snapshot` | `PgStore::read_snapshot` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::read_snapshot` in `persist/in_memory.rs` — via `#[tracing::instrument]`, child of `state.snapshot`. | `last_seq` (u64; late-bound), `runs_count` (usize; late-bound), `jobs_count` (usize; late-bound). |
+| Span | Attributes |
+|---|---|
+| `state.snapshot` — root request span for `GET /v1/state`. Built manually (not via `#[instrument]`) so span fields can be recorded from the snapshot response before the handler returns. No `traceparent` extraction: `/v1/state` is a client-pull endpoint with no upstream trace context today. | `http.route="/v1/state"`, `snapshot.runs_count` (usize; late-bound), `snapshot.jobs_count` (usize; late-bound), `snapshot.last_seq` (u64; late-bound). |
+| `persist.read.snapshot` — child of `state.snapshot`; via `#[tracing::instrument]`. | `last_seq` (u64; late-bound), `runs_count` (usize; late-bound), `jobs_count` (usize; late-bound). |
 
 ### Webhook ingestion path
 
-| Span | Source | Attributes |
-|---|---|---|
-| `webhook.handler` | `backend/crates/atc-server/src/routes.rs` (`webhook_handler`) — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"` (the route is POST-only by axum's router), `http.response.status_code` (u16; late-bound, recorded at the single exit point after a labeled-block funnels all return branches), `webhook.delivery_id` (recorded after parsing `x-github-delivery`), `webhook.event_type` (recorded after parsing `x-github-event`). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
-| `webhook.verify` | `backend/crates/atc-github/src/webhook/verify.rs` (`verify_signature`) | `webhook.signature.present` (bool), `webhook.signature.algorithm="sha256"`. Secret, body bytes, and the signature value are explicitly skipped (`skip(secret, body, signature)`). |
-| `webhook.parse` | `backend/crates/atc-github/src/webhook/mod.rs` (`parse_webhook`) | `webhook.event_type`, `webhook.action` (late-bound; recorded after the action is decoded). Body bytes are skipped. |
+| Span | Attributes |
+|---|---|
+| `webhook.handler` — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"`, `http.response.status_code` (u16; late-bound), `webhook.delivery_id` (late-bound), `webhook.event_type` (late-bound). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
+| `webhook.verify` — atc-github HMAC verification boundary. | `webhook.signature.present` (bool), `webhook.signature.algorithm="sha256"`. Secret, body bytes, and the signature value are explicitly skipped. |
+| `webhook.parse` — atc-github parse boundary. | `webhook.event_type`, `webhook.action` (late-bound). Body bytes are skipped. |
 
 ### Persist path
 
-| Span | Source | Attributes |
-|---|---|---|
-| `persist.apply.run_event` | `PgStore::apply_run_event` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::apply_run_event` in `persist/in_memory.rs` | `run_id` (i64); `seq` (i64; late-bound, recorded after the outbox row's `BIGSERIAL` is allocated). |
-| `persist.apply.job_event` | `PgStore::apply_job_event` in `atc-store-pg/src/store/writes.rs` and `InMemoryStore::apply_job_event` in `persist/in_memory.rs` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
-| `persist.notify.emit` | `notify_outbox_seq_in_txn` in `atc-store-pg/src/store/writes.rs` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
+| Span | Attributes |
+|---|---|
+| `persist.apply.run_event` — `PgStore` / `InMemoryStore` write-path entry. | `run_id` (i64); `seq` (i64; late-bound, recorded after the outbox row's `BIGSERIAL` is allocated). |
+| `persist.apply.job_event` | `run_id`, `job_id` (both i64); `seq` (late-bound for `PgStore`). |
+| `persist.notify.emit` — wraps `SELECT pg_notify('atc_outbox', $1)` inside the `apply_*` transaction. | `notify.kind` (`"run"` / `"job"`), `notify.seq` (i64). |
 
-Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.upsert.run`, `persist.upsert.job`, `persist.outbox.insert.run`, `persist.outbox.insert.job`) and inherit context from the surrounding `persist.apply.*` span. The function-name defaults (`upsert_run_in_txn`, …) leaked crate-internal Rust names into the trace surface; explicit names keep span identifiers in the `persist.*` namespace.
+Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.upsert.run`, `persist.upsert.job`, `persist.outbox.insert.run`, `persist.outbox.insert.job`) and inherit context from the surrounding `persist.apply.*` span. The explicit names keep span identifiers in the `persist.*` namespace rather than leaking crate-internal Rust function names.
 
 ### Listener path
 
-| Span | Source | Attributes |
-|---|---|---|
-| `listener.recv` | `handle_listener_notification` in `listener.rs` — per-NOTIFY root span. The spawn site (`spawn_listener_task`, spawned from `PgStore::start_inner` per ADR-0006) carries no task-lifetime wrapper; each notification's handler invocation emits its own root. | `notify.payload.seq` (i64; the seq carried by the NOTIFY payload). |
+| Span | Attributes |
+|---|---|
+| `listener.recv` — per-NOTIFY root span. The spawn site carries no task-lifetime wrapper; each notification's handler invocation emits its own root. | `notify.payload.seq` (i64; the seq carried by the NOTIFY payload). |
 
 ### Drain path
 
-| Span | Source | Attributes |
-|---|---|---|
-| `drain.pass` | `drain_pass` in `listener.rs` — per-pass root span. The spawn site (`spawn_drain_task`, spawned from `PgStore::start_inner` per ADR-0006) carries no task-lifetime wrapper; each invocation of `drain_pass` emits its own root. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
-| `drain.broadcast` | constructed inside the per-row loop in `drain_pass`, nested under `drain.pass` via `broadcast_span.in_scope(...)`. When the outbox row carries a W3C `traceparent` (captured at INSERT time from the originating `webhook.handler` span), this span gets an OTel span LINK to that trace via `Span::add_link` — Link, not parent, because `drain.pass` is intentionally a per-tick root (see § "Task-lifetime root spans"). Operators trace "webhook in → frame out" by following the link in Tempo. | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
+| Span | Attributes |
+|---|---|
+| `drain.pass` — per-pass root span. The spawn site carries no task-lifetime wrapper; each invocation emits its own root. | `pass.start_floor` (i64), `pass.rows_fetched` (u64; recorded after pagination), `pass.batches` (u64; recorded after pagination). |
+| `drain.broadcast` — per-row child nested under `drain.pass`. When the outbox row carries a W3C `traceparent`, this span gets an OTel span **link** to that trace (not a parent) — see [Cross-trace causal link via outbox `traceparent`](#cross-trace-causal-link-via-outbox-traceparent). | `seq` (i64), `kind` (`"run"` / `"job"`), `outbox_lag_ms` (i64). |
 
 ### Eviction path (in-memory mode only)
 
-| Span | Source | Attributes |
-|---|---|---|
-| `eviction.sweep` | `InMemoryStore::evict_expired` in `persist/in_memory.rs` — per-tick root span. Spawned from `InMemoryStore::spawn_eviction`, which deliberately omits a task-lifetime parent (`.instrument(...)`): a long-lived root would never end until process shutdown, so each tick would attach to a span the SDK couldn't export until then. Per-tick roots mean every sweep exports as one tidy trace on tick. | `jobs.evicted` (u64; recorded after the sweep), `runs.evicted` (u64), `elapsed.micros` (u64). Recorded on both the eviction and the no-op-sweep code paths. |
+| Span | Attributes |
+|---|---|
+| `eviction.sweep` — per-tick root span for `InMemoryStore::evict_expired`. Per-tick roots mean every sweep exports as one tidy trace on tick. | `jobs.evicted` (u64; recorded after the sweep), `runs.evicted` (u64), `elapsed.micros` (u64). Recorded on both the eviction and the no-op-sweep code paths. |
 
 ### Outbox retention path (PG mode only)
 
-| Span | Source | Attributes |
-|---|---|---|
-| `outbox.heartbeat.tick` | `outbox_heartbeat_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_heartbeat` (called from `PgStore::start_inner`), which deliberately omits a task-lifetime parent: a long-lived root would never end until process shutdown. Per-tick root means every heartbeat exports as one tidy trace. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound, the value upserted into `outbox_watermarks` this tick), `min_replica_watermark` (i64; late-bound, cluster-wide floor observed this tick — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
-| `outbox.sweep.tick` | `outbox_sweep_tick` in `atc-store-pg/src/store/retention.rs` — per-tick root span. Spawned from `spawn_outbox_sweep` (called from `PgStore::start_inner`), same no-task-lifetime-parent pattern. | `retention_seconds` (u64; the configured retention age), `rows_deleted` (u64; late-bound, count of outbox rows this sweep tick deleted under `FOR UPDATE SKIP LOCKED`), `watermarks_cleaned` (u64; late-bound, count of dead `outbox_watermarks` rows piggyback-cleaned in this tick). |
+| Span | Attributes |
+|---|---|
+| `outbox.heartbeat.tick` — per-tick root span. The spawn site deliberately omits a task-lifetime parent. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound), `min_replica_watermark` (i64; late-bound — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
+| `outbox.sweep.tick` — per-tick root span. Same no-task-lifetime-parent pattern. | `retention_seconds` (u64), `rows_deleted` (u64; late-bound), `watermarks_cleaned` (u64; late-bound). |
 
-### sqlx-tracing per-query spans (PG mode)
+### sqlx per-query spans (PG mode)
 
-| Span | Source | Attributes |
-|---|---|---|
-| `sqlx.execute`, `sqlx.fetch_one`, `sqlx.fetch_optional`, `sqlx.fetch_all`, `sqlx.execute_many`, `sqlx.fetch_many`, `sqlx.describe` | Emitted by the `sqlx-tracing` crate when the wrapped `crate::TracedPool` or a transaction's `.executor()` is the `sqlx::Executor` for a query. Each span is a child of whatever `#[tracing::instrument]` boundary it runs inside (e.g., `persist.upsert.run` → `sqlx.execute`). | `db.system.name="postgresql"` (constant), `db.query.text` (template SQL with bind placeholders `$1`/`$2`/…; bind values are physically inaccessible via sqlx's `Execute` trait so they cannot leak — verified against `sqlx-tracing v0.2.1`), `db.name` (the database name extracted from the pool URL), `net.peer.name` / `net.peer.port` (host/port from pool URL), `otel.kind="client"`. On error: `error.type` (`"client"` / `"server"`), `error.message`, `error.stacktrace`, `otel.status_code="error"`, `otel.status_description`. On fetch_one / fetch_optional / fetch_all: `db.response.returned_rows`. |
+Per-query spans for every sqlx call land under the `sqlx-tracing` target — see the sqlx-tracing crate for the full surface. Each span is a child of whatever `#[tracing::instrument]` boundary it runs inside (e.g., `persist.upsert.run` → the sqlx span for its query).
 
 ### WebSocket connection lifetime
 
-| Span | Source | Attributes |
-|---|---|---|
-| `ws.connection` | `ws::handle_socket` in `atc-server/src/ws.rs` — root span wrapping the entire connection lifetime from upgrade to disconnect. Built via `info_span!` and applied through `Instrument`-ed inner function so late-bound fields are recorded before the span exits. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). | `ws.close_reason` (`&'static str`; late-bound, the loop's `break` reason — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded when the loop exits via a lagged-eviction branch — paired with `atc_ws_lagged_evictions_total`). |
+| Span | Attributes |
+|---|---|
+| `ws.connection` — root span wrapping the entire connection lifetime from upgrade to disconnect. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). See [frontend-app.md](frontend-app.md) for the client-side instrumentation context. | `ws.close_reason` (`&'static str`; late-bound — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded on a lagged-eviction exit — paired with `atc_ws_lagged_evictions_total`). |
 
 ### Liveness + config-reload internals
 
-| Span | Source | Attributes |
-|---|---|---|
-| `persist.liveness` | `PgStore::liveness_check` in `atc-store-pg/src/store/writes.rs` — child of the inbound `/readyz` request frame (Axum auto-instruments the route). Wraps the `SELECT 1` round-trip AND the drain-heartbeat staleness check so an operator looking at a 503 trace can see which side broke. | `liveness.outcome` (`"ok"` / `"db_unreachable"` / `"drain_stale"`; late-bound, recorded once at the function exit). `liveness.heartbeat_age_ms` (i64; late-bound, recorded after the DB ping succeeds — absent when the DB ping itself failed). |
-| `config.reload` | `config::reload_runner_pools` in `atc-server/src/config.rs` — root span on each watcher-driven reload attempt. Decorates the file read, YAML parse, and validation pipeline so an operator can see exactly which stage of a failed reload took how long. | `config.path` (string; the watched file path), `config.outcome` (`"ok"` / `"read_error"` / `"parse_error"` / `"validate_error"`; late-bound), `config.pools` (usize; late-bound, only recorded on the `ok` path — the loaded pool count). Pairs with `atc_config_reload_total{result,reason}`. |
+| Span | Attributes |
+|---|---|
+| `persist.liveness` — child of the inbound `/readyz` request frame (Axum auto-instruments the route). Wraps the `SELECT 1` round-trip AND the drain-heartbeat staleness check so an operator looking at a 503 trace can see which side broke. | `liveness.outcome` (`"ok"` / `"db_unreachable"` / `"drain_stale"`; late-bound). `liveness.heartbeat_age_ms` (i64; late-bound, absent when the DB ping itself failed). |
+| `config.reload` — root span on each watcher-driven reload attempt. Decorates the file read, YAML parse, and validation pipeline. Pairs with `atc_config_reload_total{result,reason}`. | `config.path` (string), `config.outcome` (`"ok"` / `"read_error"` / `"parse_error"` / `"validate_error"`; late-bound), `config.pools` (usize; late-bound, only recorded on the `ok` path). |
