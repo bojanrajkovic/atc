@@ -11,8 +11,31 @@
 # the gate dedupes the union across changed files and demands every listed
 # doc was also touched.
 #
-# Glob patterns follow shell `case` semantics: `*` matches any character span
-# within a path segment, paths use forward slashes, no implicit anchoring.
+# Glob patterns follow shell `case` semantics under bash: `*` matches any
+# character span (including `/`), paths use forward slashes, no implicit
+# anchoring.
+#
+# No-mapping-required allow-list. The following files legitimately have no
+# mapping — they're governance, planning, or documentation-of-the-doc-system
+# content that the gate intentionally leaves alone:
+#
+#   - docs/architecture-decisions/*    — ADRs (historical record)
+#   - docs/architecture/*              — the canonical arch docs themselves
+#   - docs/planning-workflow.md        — plan-mode behavior
+#   - docs/implementation-guidance.md  — execution-mode rules
+#   - docs/design-plans/*              — committed design plans
+#   - docs/ideation/*                  — pre-code design artifacts
+#   - CONTRIBUTING.md                  — human workflows + conventions
+#   - CLAUDE.md (root)                 — agent index
+#   - scripts/doc-mapping.yaml         — this file
+#   - scripts/check-docs.sh            — the gate's driver
+#   - directory-level CLAUDE.md / AGENTS.md files under backend/crates/*/,
+#     frontend/, deploy/helm/atc/, .github/ — they're derived from the
+#     architecture docs they point at
+#
+# Changes to anything in the list above pass the gate silently. If a file
+# here later needs gated coupling, add a mapping entry rather than rewording
+# this comment.
 
 mappings:
   # atc-core: pure domain types, state-machine transitions
