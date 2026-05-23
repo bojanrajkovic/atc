@@ -119,4 +119,3 @@ output tree.
 - `backend/crates/atc-server/Cargo.toml` — `rust-embed` dependency
 - `Dockerfile` — multi-stage build ordering (frontend → planner → deps → builder → distroless runtime)
 - `docs/ideation/architecture-research.md` — original "single binary serves everything" framing
-- [ATC project doc in Outline](https://outline.gaur-kardashev.ts.net/doc/atc-actions-traffic-control-l2q9oLkftG) — ideation-phase design notes
