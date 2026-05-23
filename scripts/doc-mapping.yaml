@@ -140,6 +140,16 @@ mappings:
     docs:
       - docs/architecture/deployment.md
 
+  # Operator runbooks: how-to content for the deployment surface. Touching
+  # an operator runbook tugs on deployment.md's cross-link surface, so the
+  # gate keeps them coupled. Future granular runbooks (e.g. an OTel
+  # interpretation guide whose parent is metrics.md) can override this
+  # catch-all by listing a more specific pattern above it.
+  - patterns:
+      - docs/operator/*
+    docs:
+      - docs/architecture/deployment.md
+
   # CI workflows (catch-all after the release-pipeline workflow names above).
   - patterns:
       - .github/workflows/*
