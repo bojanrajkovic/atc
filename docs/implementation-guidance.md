@@ -22,9 +22,9 @@ For refactors that preserve behavior, the regression net must stay green through
 
 Always use `pnpm add <pkg>` or `cargo add <crate>` to pull the latest stable at execution time. Do not hardcode versions. For version research during planning, use local tools: `mise ls-remote <tool>`, `cargo search <crate>`, `npm view <pkg> version`.
 
-### 4. Update doc-mapping.sh when adding architecture docs
+### 4. Update doc-mapping.yaml when adding architecture docs
 
-Every new architecture doc needs a corresponding entry in `scripts/doc-mapping.sh` mapping source paths to the doc. The doc-staleness enforcement chain depends on this mapping.
+Every new architecture doc needs a corresponding entry in `scripts/doc-mapping.yaml` mapping source paths to the doc. The doc-staleness enforcement chain depends on this mapping.
 
 ### 5. GitHub Actions use SHA-pinned references
 
