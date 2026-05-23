@@ -22,8 +22,12 @@ if [ ! -f "$MAPPING" ]; then
 fi
 
 # Resolve yq through mise so contributors don't need a separate yq install.
+# Scope `mise exec` to yq only — a bare `mise exec --` activates the full
+# .mise.toml toolset, which would block this gate whenever any unrelated tool
+# (cargo-binstall, kubectl, helm-ct, ...) is missing from the contributor's
+# environment.
 YQ() {
-    mise exec -- yq "$@"
+    mise exec yq -- yq "$@"
 }
 
 # Get files changed in this branch compared to origin/main
