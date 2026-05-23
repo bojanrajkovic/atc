@@ -182,7 +182,6 @@ mappings:
   # CI-adjacent scripts.
   - patterns:
       - scripts/helm-kubeconform*.sh
-      - scripts/check-docs-lefthook.sh
       - scripts/verify-workflow-security.sh
     docs:
       - docs/architecture/ci-pipeline.md
