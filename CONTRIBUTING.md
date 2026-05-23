@@ -265,4 +265,4 @@ gh attestation verify oci://ghcr.io/bojanrajkovic/atc:latest -R bojanrajkovic/at
 
 ## Documentation Conventions
 
-The doc-system spec — six-layer model, architecture-doc template, ADR convention, planning-artifact label rules, terminology, observability authoring contract — lives in [`docs/documentation-system.md`](docs/documentation-system.md). CONTRIBUTING.md focuses on human workflows and conventions; the canonical home for documentation rules is that file.
+The doc-system spec — six-layer model, architecture-doc guidance, ADR convention, terminology, committed design plans, directory-level CLAUDE.md discipline, observability authoring contract — lives in [`docs/documentation-system.md`](docs/documentation-system.md). CONTRIBUTING.md focuses on human workflows and conventions; the canonical home for documentation rules is that file.
