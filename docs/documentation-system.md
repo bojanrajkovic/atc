@@ -217,6 +217,30 @@ Three current CLAUDE.md files demonstrate the pattern at different sizes:
 
 When in doubt, copy `atc-wire/CLAUDE.md` as the starting shape and expand only when friction shows up.
 
+## Drift-Resistance Principles
+
+The doc-system rules above are the *what*. These five principles are the *why* — the failure modes that motivate each rule, surfaced by the 2026-05-22 audit of the ATC doc system.
+
+### Non-duplication applies to itself
+
+The non-duplication rule binds every doc, including the docs about docs. CLAUDE.md does not paraphrase CONTRIBUTING.md; CONTRIBUTING.md does not restate `docs/documentation-system.md`; ADRs do not narrate the architecture docs they decide. Two copies of any rule means one of them is wrong — the audit catches that, but only at audit cadence, and the wrong copy in the meantime is the one a contributor reads first.
+
+### Source-can-answer-it dies
+
+If the source code (or `rustdoc` / JSDoc, or LSP, or `ls -la`) answers the question, the doc doesn't get to. Struct-field dumps in arch docs, component-prop tables in CLAUDE.md, Files-section directory listings, animation timing catalogs — these all rot the moment the source moves, and the source moves faster than the doc gets re-read. Prefer a Mermaid diagram of the *shape*, a one-paragraph summary of the *roles*, or a pointer to the canonical type.
+
+### Size is diagnostic
+
+A 20 KB CLAUDE.md is a symptom of duplication or inventory growth, not a goal in itself. Don't budget size; budget *what's in the file*. When a slim CLAUDE.md outgrows two pages, the right move is usually "extract the catalog content to its dedicated home" rather than "split the CLAUDE.md by section." Size targets miss the actual concern; size measurements expose it.
+
+### Audit sharp edges
+
+Every time a CLAUDE.md sharp-edges section gets rewritten, re-evaluate every entry: is the foot-gun still load-bearing, or did the problem ship a fix? Sharp edges accumulated reactively are good; sharp edges that outlive the bug they warned about are noise. The rewrite is the audit opportunity — take it.
+
+### Atomic commits
+
+Each logical change is one commit, even when a sub-phase contains many of them. A reviewer should be able to scan a commit's diff in seconds and understand what landed. PR-tab summaries describe what shipped *overall*; the commit history is what someone running `git blame` will read months later.
+
 ## Observability
 
 ATC exports metrics and spans through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes and pushes OTLP/HTTP to the configured collector; with the env var unset, no provider, exporter, or background task is initialized. Two contributor-facing rules apply when adding or modifying observability surfaces.
