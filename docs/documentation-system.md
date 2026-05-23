@@ -87,37 +87,6 @@ Architecture Decision Records live in `docs/architecture-decisions/`. When a sig
 
 This keeps historical documents readable while marking what changed.
 
-## Updating SQL Queries
-
-All SQL queries in `atc-server` use the `sqlx::query!` / `sqlx::query_as!` macros for compile-time type checking. The Cargo workspace root is `backend/`, and the offline query cache lives at `backend/.sqlx/` — committed to the repository so CI can build without a live database.
-
-**When to regenerate the cache:** any time you add, remove, or change a `query!` / `query_as!` macro call, or modify a migration in `backend/crates/atc-server/migrations/`.
-
-**How to regenerate:**
-
-1. Start a local Postgres with migrations applied:
-   ```bash
-   docker run -d --rm --name atc-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17-alpine
-   DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/postgres" \
-     cargo sqlx migrate run --source backend/crates/atc-server/migrations
-   ```
-
-2. Regenerate the cache from the **`backend/` directory** (the Cargo workspace root):
-   ```bash
-   cd backend
-   DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/postgres" \
-     cargo sqlx prepare --workspace -- --tests
-   ```
-   The `--tests` flag includes queries in `#[cfg(test)]` code. `--workspace` writes the cache to `backend/.sqlx/`.
-
-3. Commit the updated `backend/.sqlx/` files in the **same commit** as the SQL change:
-   ```bash
-   git add backend/.sqlx/
-   git commit -m "feat(server): <description of SQL change>"
-   ```
-
-**Why CI doesn't need `DATABASE_URL`:** sqlx 0.8 automatically uses the committed `backend/.sqlx/` offline cache when no `DATABASE_URL` is set in the build environment. The existing `.github/workflows/ci.yml` requires no changes.
-
 ## Planning-Artifact Labels
 
 Design plans, ADRs, and implementation tickets use numbering schemes to coordinate work — phases (`Phase 2c`, `Sub-Phase 4`), acceptance criteria (`AC2.1`, `AC10.3`), test sequences (`T1`, `T6b`, `T11`), and bare ADR refs (`per ADR-0005`). These belong in the **historical record only**: ADRs, design plans, ideation, commit messages, CHANGELOG, and the `Last verified:` line at the top of CLAUDE.md / AGENTS.md files. They must NOT survive into current-state artifacts.
