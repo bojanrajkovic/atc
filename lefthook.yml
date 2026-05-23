@@ -42,3 +42,5 @@ pre-push:
       run: mise exec -- pnpm exec vitest run
     doc-staleness:
       run: scripts/check-docs.sh
+    staleness-grep:
+      run: scripts/check-staleness.sh
