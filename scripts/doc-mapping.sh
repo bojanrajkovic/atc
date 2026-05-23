@@ -48,17 +48,6 @@ get_docs_for_file() {
             echo "docs/architecture/metrics.md"
             return
             ;;
-        backend/crates/atc-server/src/persist/pg.rs|backend/crates/atc-server/src/listener.rs)
-            # Straddlers: PersistentStore trait / drain pipeline contracts live
-            # in backend-server.md; metric emissions (atc_pg_write_failures_total,
-            # atc_pg_notify_emitted_total) documented in metrics.md.
-            # Both docs must be updated when either file changes.
-            # Until issue #169 phase 2 ships, these files live under atc-server;
-            # afterwards they move to atc-store-pg (entries below).
-            echo "docs/architecture/backend-server.md"
-            echo "docs/architecture/metrics.md"
-            return
-            ;;
         backend/crates/atc-store-pg/src/metrics.rs|backend/crates/atc-store-pg/src/listener.rs)
             # Straddlers (post-#169 phase 2 location): PgMetrics + listener carry
             # both the PersistentStore drain-pipeline contract and the metric
