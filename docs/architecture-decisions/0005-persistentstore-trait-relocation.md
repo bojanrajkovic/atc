@@ -25,9 +25,11 @@ The trait's location also needed to change. `atc-core` is the pure domain layer 
 
 The trait moves from `atc-core::persist` to `atc-server::persist` and is removed from `atc-core`'s public API. The move co-locates the trait with both its impls and the private helpers they call.
 
-Trait signature lives at [`backend/crates/atc-persist/src/lib.rs:80`](../../backend/crates/atc-persist/src/lib.rs) — two async methods (`apply_run_event` / `apply_job_event`) plus the lifecycle additions ADR-0006 brought in (`subscribe`, `shutdown`, `read_snapshot`, `liveness_check`). The `#[async_trait]` attribute is required for `Arc<dyn PersistentStore>` dyn dispatch; native async-fn-in-traits does not yet support object safety in stable Rust.
+The trait surface names two async methods — one per webhook event variant — each applying the event envelope to the store and returning the assigned monotonic seq on success, or a `PersistError` otherwise. Subsequent ADRs extended this surface (ADR-0006 added lifecycle methods; later work added read-path methods); the foundational two-method shape this ADR records is preserved.
 
-`PersistError` stays in `atc-core` as a domain error type shared by both backends.
+The trait carries the `#[async_trait]` attribute so `Arc<dyn PersistentStore>` dispatch works — native async-fn-in-traits does not yet support object safety in stable Rust.
+
+`PersistError` stays in `atc-core` as a domain error shared by both backends.
 
 ### 2. Two impls, each owning its own transaction lifecycle
 
@@ -43,11 +45,11 @@ Both impls emit `PersistError::InvalidTransition` on rejected transitions and `P
 
 > **Revised by ADR-0006:** Each store now owns the background tasks that read its state and emit broadcast events (listener + drain for `PgStore`; eviction for `InMemoryStore`). The trait gains `subscribe()` and `shutdown()`, `AppState` drops `webhook_tx`, and WS handlers obtain their receiver via `state.persist.subscribe()`. `main.rs` no longer plumbs Arcs or spawns the per-store tasks; it constructs the store via `PgStore::start` / `InMemoryStore::start` and hands the resulting `Arc<dyn PersistentStore>` to the shutdown orchestrator, which calls `persist.shutdown()` once.
 
-`main.rs` selects the impl at startup based on whether `ATC_DATABASE_URL` is configured: PG mode constructs `PgStore` ([`backend/crates/atc-server/src/main.rs:191`](../../backend/crates/atc-server/src/main.rs)); in-memory mode constructs `InMemoryStore` (`:205`). Both return `Arc<dyn PersistentStore>`. The `start(...)` constructors that own the per-store background-task lifecycle are an ADR-0006 refinement of this ADR's original `new(...)` shape.
+`main.rs` selects the impl at startup based on whether `ATC_DATABASE_URL` is configured. Both branches build an `Arc<dyn PersistentStore>` that `AppState` then dispatches against; the executable crate never names a concrete backend in the request path. ADR-0006 later refined this ADR's original `new(...)` construction into a `start(...)` shape that owns the per-store background-task lifecycle.
 
 ### 4. Route handler dispatches uniformly through the trait
 
-The webhook handler's two-branch body collapses to a single trait dispatch matched on `WebhookEvent::{Run, Job}` — see [`backend/crates/atc-server/src/routes.rs:279`](../../backend/crates/atc-server/src/routes.rs). Response mapping: `Ok(seq)` → 200 `{"status":"accepted","seq":<u64>}`; `Err(PersistError::InvalidTransition)` → 200 `{"status":"rejected"}` (parity rejections preserve the 200 OK contract — not propagated through `?` to a 4xx); `Err(PersistError::Backend(_))` → 503.
+The webhook handler's two-branch body collapses to a single match on the webhook event variant, calling through the trait in both arms. Response mapping is uniform across modes: successful application returns 200 with the assigned seq; `PersistError::InvalidTransition` returns 200 with a rejection body (parity rejections preserve the 200 OK contract — they are not propagated through `?` to a 4xx); `PersistError::Backend(_)` returns 503.
 
 ### 5. Response body unifies on `"accepted"` for success
 
