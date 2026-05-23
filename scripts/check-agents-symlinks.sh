@@ -37,17 +37,9 @@ while IFS= read -r claude; do
         has_violations=true
     fi
 done < <(
-    find . \
-        \( -path ./.git \
-        -o -path ./.claude/worktrees \
-        -o -path ./backend/target \
-        -o -path ./frontend/node_modules \
-        -o -path ./node_modules \
-        -o -path ./target \
-        \) -prune \
-        -o -type f -name 'CLAUDE.md' \
-        -print \
-        2>/dev/null
+    # Enumerate tracked CLAUDE.md files only — find . would walk untracked
+    # scratch directories (e.g. tmp/CLAUDE.md) and block legitimate pushes.
+    git ls-files -- '*CLAUDE.md' 2>/dev/null
 )
 
 if [ "$has_violations" = true ]; then
