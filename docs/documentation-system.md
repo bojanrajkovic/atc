@@ -122,7 +122,7 @@ Every subdirectory that represents a distinct domain (crates, frontend, helm cha
   <!-- Derived from docs/architecture/<topic>.md -->
   ```
 
-**Tier 2 — Sharp-edges sections.** Added **reactively** when agents encounter friction in that directory — costly mistakes, non-obvious testing gotchas, foot-guns, file-specific guidance. Do not pre-author sharp edges speculatively; let them accrete from observed agent failures. The root `CLAUDE.md` invariant "Slim CLAUDE.md in every domain directory (two-tier)" is the authoritative version of this rule.
+**Tier 2 — Sharp-edges sections.** Added **reactively** when agents encounter friction in that directory — costly mistakes, non-obvious testing gotchas, foot-guns, file-specific guidance. Do not pre-author sharp edges speculatively; let them accrete from observed agent failures. When a CLAUDE.md gets rewritten, re-evaluate every existing Sharp-edges entry: foot-guns whose underlying bug shipped a fix have become noise, and the rewrite is the natural opportunity to drop them. The root `CLAUDE.md` invariant "Slim CLAUDE.md in every domain directory (two-tier)" is the authoritative version of this rule.
 
 ### Template
 
@@ -158,26 +158,6 @@ Three current CLAUDE.md files demonstrate the pattern at different sizes:
 - [`.github/CLAUDE.md`](../.github/CLAUDE.md) — domain-specific shape: a workflow table, then a Contracts list (path filtering, helm sweep, linked versions). Shows that Tier 1 / Tier 2 are content categories, not rigid section names — non-crate directories can structure differently while keeping the same slim discipline.
 
 When in doubt, copy `atc-wire/CLAUDE.md` as the starting shape and expand only when friction shows up.
-
-## Drift-Resistance Principles
-
-The doc-system rules above are the *what*. These five principles are the *why* — the failure modes that motivate each rule, surfaced by the 2026-05-22 audit of the ATC doc system.
-
-### Non-duplication applies to itself
-
-The non-duplication rule binds every doc, including the docs about docs. CLAUDE.md does not paraphrase CONTRIBUTING.md; CONTRIBUTING.md does not restate `docs/documentation-system.md`; ADRs do not narrate the architecture docs they decide. Two copies of any rule means one of them is wrong — the audit catches that, but only at audit cadence, and the wrong copy in the meantime is the one a contributor reads first.
-
-### Source-can-answer-it dies
-
-If the source code (or `rustdoc` / JSDoc, or LSP, or `ls -la`) answers the question, the doc doesn't get to. Struct-field dumps in arch docs, component-prop tables in CLAUDE.md, Files-section directory listings, animation timing catalogs — these all rot the moment the source moves, and the source moves faster than the doc gets re-read. Prefer a Mermaid diagram of the *shape*, a one-paragraph summary of the *roles*, or a pointer to the canonical type.
-
-### Size is diagnostic
-
-A 20 KB CLAUDE.md is a symptom of duplication or inventory growth, not a goal in itself. Don't budget size; budget *what's in the file*. When a slim CLAUDE.md outgrows two pages, the right move is usually "extract the catalog content to its dedicated home" rather than "split the CLAUDE.md by section." Size targets miss the actual concern; size measurements expose it.
-
-### Audit sharp edges
-
-Every time a CLAUDE.md sharp-edges section gets rewritten, re-evaluate every entry: is the foot-gun still load-bearing, or did the problem ship a fix? Sharp edges accumulated reactively are good; sharp edges that outlive the bug they warned about are noise. The rewrite is the audit opportunity — take it.
 
 ## Observability — where the catalog lives
 
