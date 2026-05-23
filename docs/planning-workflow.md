@@ -115,6 +115,6 @@ When creating an ADR, sweep **all** existing documents, tests, and code comments
 ## Cross-References
 
 These conventions are defined in `CONTRIBUTING.md > Documentation Conventions` and apply to design work without exception:
-- **Non-duplication rule** — each piece of information has exactly one home across the five documentation layers
+- **Non-duplication rule** — each piece of information has exactly one home across the six documentation layers
 - **Architecture doc template** — required anchor sections (Purpose, Key Decisions, Boundaries, Files) with timestamps
 - **Directory-level CLAUDE.md files** — created only for high-risk directories; always reference canonical architecture docs
