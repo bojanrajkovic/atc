@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-store-mem
 
-Last verified: 2026-05-15
+Last verified: 2026-05-23
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence / Storage modes section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -21,6 +21,7 @@ Used in **dev/test mode only** (single replica, lossy on restart). Production de
 ## Key References
 
 - Architecture: `docs/architecture/backend-server.md` § "InMemoryStore Architecture" and § "Storage modes — operator guidance"
+- Metrics + spans: `docs/architecture/metrics.md` § "Span inventory" (`eviction.sweep` semantics — per-tick root span, attrs scanned/evicted)
 - Trait surface: `atc-persist` crate (`PersistentStore`, `LivenessError`, `join_with_timeout`)
 - Pure transitions: `atc-core::state_machine`
 - ADR-0005, ADR-0006, ADR-0008
