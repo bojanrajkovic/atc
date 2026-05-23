@@ -86,8 +86,8 @@ Write the full design plan to the file created in Phase 3. Required sections, in
 5. **Implementation Phases** — TDD-ordered (≤8; phases are checkpoints, not padding targets — do not add phases to reach 8). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
 6. **Acceptance Criteria** — success AND failure cases for each DoD item, numbered (AC1, AC2, …) so the implementation context can check them off.
 7. **Documents to Update** — every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.sh` entry that must change alongside the implementation, with the specific change.
-9. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
-10. **Glossary** — if the plan introduces or relies on non-obvious terminology.
+8. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
+9. **Glossary** — if the plan introduces or relies on non-obvious terminology.
 
 A "Summary" section is optional; Context usually carries it. If included, keep it to a paragraph.
 
