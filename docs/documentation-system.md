@@ -183,13 +183,6 @@ Every time a CLAUDE.md sharp-edges section gets rewritten, re-evaluate every ent
 
 Each logical change is one commit, even when a sub-phase contains many of them. A reviewer should be able to scan a commit's diff in seconds and understand what landed. PR-tab summaries describe what shipped *overall*; the commit history is what someone running `git blame` will read months later.
 
-## Observability
+## Observability — where the catalog lives
 
-ATC exports metrics and spans through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes and pushes OTLP/HTTP to the configured collector; with the env var unset, no provider, exporter, or background task is initialized. Two contributor-facing rules apply when adding or modifying observability surfaces.
-
-**Naming and attribute conventions** (metrics and spans):
-- `atc_` project prefix on every metric; snake_case names; `_total` for counters; `_seconds` for time-valued; `_bytes` for byte-valued.
-- Lowercase keys for metric attributes; no high-cardinality values; no PII; no replica/pod labels (target attributes are injected at the collector).
-- Span names use a dotted hierarchy that names the boundary (`webhook.handler`, `persist.apply.run_event`, `drain.broadcast`). Late-bound span attributes use `tracing::field::Empty` at construction and `Span::current().record(...)` once the value is known.
-
-**Authoring contract:** every new metric ships with the seven-element interpretation block (name, type, attributes with source, semantics, per-replica scope, aggregation guidance, example PromQL); every new span boundary lands in the span inventory. Both surfaces are canonically documented in [`docs/architecture/metrics.md`](architecture/metrics.md) § "Metric and span authoring contract" — this section codifies the rule that contributors who add either MUST extend that doc before merge. The doc-staleness gate (`scripts/check-docs.sh`) blocks the push if backend telemetry changes land without the matching `metrics.md` update.
+Metrics naming + attribute conventions, span naming + late-bound-field patterns, and the per-metric / per-span catalog itself live in [`docs/architecture/metrics.md`](architecture/metrics.md). The doc-system rule the audit cares about is the authoring contract: **every new metric ships with the seven-element interpretation block; every new span boundary lands in the span inventory; both extensions go in the same commit cluster as the source change.** The doc-staleness gate (`scripts/check-docs.sh`) blocks the push if backend telemetry changes land without the matching `metrics.md` update, so the rule is mechanically enforced rather than convention-only.
