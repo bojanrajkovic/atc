@@ -30,6 +30,7 @@
 #   - scripts/doc-mapping.yaml         — this file
 #   - scripts/check-docs.sh            — the gate's driver
 #   - scripts/check-staleness.sh       — heuristic stale-fact scanner
+#   - scripts/check-agents-symlinks.sh — CLAUDE.md ⇄ AGENTS.md symlink gate
 #   - directory-level CLAUDE.md / AGENTS.md files under backend/crates/*/,
 #     frontend/, deploy/helm/atc/, .github/ — they're derived from the
 #     architecture docs they point at

@@ -44,3 +44,5 @@ pre-push:
       run: scripts/check-docs.sh
     staleness-grep:
       run: scripts/check-staleness.sh
+    agents-symlinks:
+      run: scripts/check-agents-symlinks.sh
