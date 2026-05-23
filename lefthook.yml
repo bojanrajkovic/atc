@@ -35,9 +35,11 @@ commit-msg:
 pre-push:
   commands:
     cargo-test:
+      glob: "*.rs"
       root: "backend/"
       run: mise exec -- cargo nextest run --workspace
     vitest:
+      glob: "*.{ts,svelte}"
       root: "frontend/"
       run: mise exec -- pnpm exec vitest run
     doc-staleness:
