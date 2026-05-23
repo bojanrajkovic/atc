@@ -22,13 +22,20 @@ cd "$REPO_ROOT"
 PATTERN='(until [^[:space:]]+ lands|until issue #[0-9]+|in-tree until|for now)'
 
 # Collect candidate files: every CLAUDE.md / AGENTS.md in the tree (skipping
-# vendor + target directories), plus every committed ADR.
+# vendor + build-artifact + worktree directories with -prune so find doesn't
+# descend into the 110 GB cargo target/ tree), plus every committed ADR.
 files=$(
-    find . -type f \
+    find . \
+        \( -path ./.git \
+        -o -path ./.claude/worktrees \
+        -o -path ./backend/target \
+        -o -path ./frontend/node_modules \
+        -o -path ./node_modules \
+        -o -path ./target \
+        \) -prune \
+        -o -type f \
         \( -name 'CLAUDE.md' -o -name 'AGENTS.md' \) \
-        -not -path './node_modules/*' \
-        -not -path './target/*' \
-        -not -path './.git/*' \
+        -print \
         2>/dev/null
     ls docs/architecture-decisions/*.md 2>/dev/null || true
 )

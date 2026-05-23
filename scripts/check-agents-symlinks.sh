@@ -37,11 +37,16 @@ while IFS= read -r claude; do
         has_violations=true
     fi
 done < <(
-    find . -type f -name 'CLAUDE.md' \
-        -not -path './node_modules/*' \
-        -not -path './target/*' \
-        -not -path './.git/*' \
-        -not -path './.claude/worktrees/*' \
+    find . \
+        \( -path ./.git \
+        -o -path ./.claude/worktrees \
+        -o -path ./backend/target \
+        -o -path ./frontend/node_modules \
+        -o -path ./node_modules \
+        -o -path ./target \
+        \) -prune \
+        -o -type f -name 'CLAUDE.md' \
+        -print \
         2>/dev/null
 )
 
