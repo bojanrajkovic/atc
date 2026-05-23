@@ -6,7 +6,7 @@ Last verified: 2026-05-22
 
 ## Purpose
 
-Pure domain types, state machine transition rules, and business logic for ATC. Source-agnostic — no GitHub-specific dependencies, no tokio, no interior mutability. The `atc-github` crate maps webhook payloads into these domain types. `predecessors_of()` methods enable predicated UPSERTs in `atc-server::persist::PgStore`. All stateful persistence concerns (HashMap state, RwLock, seq counter, TTL eviction task) live in `atc-server::persist` (issue #69 resolved this layering).
+Pure domain types, state machine transition rules, and business logic for ATC. Source-agnostic — no GitHub-specific dependencies, no tokio, no interior mutability. The `atc-github` crate maps webhook payloads into these domain types. `predecessors_of()` methods enable predicated UPSERTs in `atc-store-pg::PgStore`. All stateful persistence concerns (HashMap state, RwLock, seq counter, TTL eviction task) live in the store crates `atc-store-mem` and `atc-store-pg` (ADR 0008).
 
 ## Modules
 
@@ -17,7 +17,7 @@ Pure domain types, state machine transition rules, and business logic for ATC. S
 | `job` | `Job`, `JobStatus`, `JobConclusion`, `Step`, `StepStatus`, `RunnerInfo`; `JobStatus::predecessors_of(target)` |
 | `event` | `RunEvent`, `JobEvent` and their envelope structs. `RunEventEnvelope.completed_at: Option<DateTime<Utc>>` is the channel by which `atc-github` carries the GitHub-side completion timestamp into `apply_run_event` — `#[ts(optional)]` for the same reason as `WorkflowRun.completed_at` |
 | `state_machine` | Pure free functions: `apply_run_event(Option<WorkflowRun>, RunEventEnvelope) -> Result<WorkflowRun, StateMachineError>`, `apply_job_event(Option<Job>, JobEventEnvelope) -> Result<Job, StateMachineError>`, and `is_evictable(&Job, DateTime<Utc>, Duration) -> bool`. No locks, no async, no shared state — `atc_store_mem::InMemoryStore` wraps these with its HashMap + RwLock. |
-| `persist` | `PersistError` with `InvalidTransition` and `Backend(Box<dyn Error>)` variants. The `PersistentStore` trait lives in `atc-server::persist` (ADR 0005). |
+| `persist` | `PersistError` with `InvalidTransition` and `Backend(Box<dyn Error>)` variants. The `PersistentStore` trait lives in `atc-persist` (ADR 0005, ADR 0008). |
 | `clock` | `Clock` trait (wall-clock only — monotonic latency stays direct, see the trait doc-comment), `SystemClock`, `TestClock` and `fixed_test_timestamp` (both behind `test-support` feature) |
 
 ## TypeScript Generation
