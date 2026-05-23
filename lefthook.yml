@@ -41,4 +41,4 @@ pre-push:
       root: "frontend/"
       run: mise exec -- pnpm exec vitest run
     doc-staleness:
-      run: scripts/check-docs-lefthook.sh
+      run: scripts/check-docs.sh
