@@ -60,8 +60,8 @@ just build    # Production build
 - `.dockerignore` — Docker build context filter
 - `release-please-config.json` — release-please manifest config (version sync, changelog)
 - `.release-please-manifest.json` — Version tracker for release-please
-- `scripts/doc-mapping.sh` — Source-to-architecture-doc mappings
-- `scripts/check-docs-lefthook.sh` — Pre-push doc-staleness gate
+- `scripts/doc-mapping.yaml` — Source-to-architecture-doc mappings (data)
+- `scripts/check-docs.sh` — Pre-push doc-staleness gate (driver)
 - `docs/architecture/` — Architecture docs (created as features ship)
 - `docs/architecture-decisions/` — ADRs
 - `docs/design-plans/` — Feature design plans
@@ -82,20 +82,20 @@ just build    # Production build
 | Planning & design workflow | `docs/planning-workflow.md` |
 | Implementation guidance | `docs/implementation-guidance.md` |
 | Human workflows & conventions | `CONTRIBUTING.md` |
-| Doc enforcement mappings | `scripts/doc-mapping.sh` |
+| Doc enforcement mappings | `scripts/doc-mapping.yaml` |
 
 ## Documentation Framework
 
 This project uses a six-layer documentation model with a strict non-duplication rule. See `CONTRIBUTING.md` section "Documentation Conventions" for the full specification.
 
-**Key rule for AI agents:** When you modify source files, check `scripts/doc-mapping.sh` to see if an architecture doc needs updating. Update the architecture doc alongside your code changes.
+**Key rule for AI agents:** When you modify source files, check `scripts/doc-mapping.yaml` to see if an architecture doc needs updating. Update the architecture doc alongside your code changes.
 
 ## Invariants
 
 - **Conventional Commits enforced:** Every commit must pass commitlint via lefthook commit-msg hook. Free-form scopes allowed.
 - **Three-tier hooks:** Pre-commit (linters, parallel, glob-filtered) -> commit-msg (commitlint) -> pre-push (tests + doc-staleness). Do not bypass.
 - **Worktree hook installation:** Git worktrees do not inherit hooks from the parent repo. Run `just setup` or `lefthook install` in each new worktree, or hooks will not fire and lint/format issues will only surface in CI.
-- **Doc-staleness gate:** `scripts/check-docs-lefthook.sh` blocks push if source files changed without updating their mapped architecture doc. Mappings live in `scripts/doc-mapping.sh`.
+- **Doc-staleness gate:** `scripts/check-docs.sh` blocks push if source files changed without updating their mapped architecture doc. Mappings live in `scripts/doc-mapping.yaml`.
 - **CI gates PRs:** All PRs must pass CI checks (lint, type-check, test, build) before merge. Path-filtered on PRs; full matrix on pushes to main. See `docs/architecture/ci-pipeline.md`.
 - **Non-duplication rule:** Each piece of documentation has exactly one canonical home. CLAUDE.md points to docs; it does not duplicate them.
 - **Slim CLAUDE.md in every domain directory (two-tier):** Every subdirectory that represents a distinct domain (crates, frontend, helm chart, .github, etc.) must have a slim `CLAUDE.md` providing the **mandatory skeleton** — purpose, pointer to the canonical architecture doc, AGENTS.md symlink. **Sharp-edges sections** (testing gotchas, common foot-guns, file-specific guidance) are added **reactively** when agents encounter friction in that directory; do not pre-author sharp edges speculatively. Do not duplicate architecture-doc content — reference it. Follow the pattern established in `backend/crates/atc-core/CLAUDE.md`. See `CONTRIBUTING.md` § "Directory-Level CLAUDE.md Files" for the matching human-facing description.
