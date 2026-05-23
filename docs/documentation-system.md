@@ -145,7 +145,7 @@ Three current CLAUDE.md files demonstrate the pattern at different sizes:
 
 - [`backend/crates/atc-wire/CLAUDE.md`](../backend/crates/atc-wire/CLAUDE.md) — minimal Tier-1-only file. Header pointer, Purpose, Key References. ~15 lines. Good template for a stable crate with no friction yet.
 - [`backend/crates/atc-persist/CLAUDE.md`](../backend/crates/atc-persist/CLAUDE.md) — Tier 1 + Tier 2 (Sharp edges). Three foot-guns: dependency hygiene of the trait crate, tokio-feature constraints, why tracing is a hard dep. Each entry one short paragraph with the *why*. ~25 lines.
-- [`.github/CLAUDE.md`](../.github/CLAUDE.md) — domain-specific shape: a workflow table, then a Contracts list (path filtering, helm sweep, linked versions). Shows that Tier 1 / Tier 2 are content categories, not rigid section names — non-crate directories can structure differently while keeping the same slim discipline.
+- [`.github/CLAUDE.md`](../.github/CLAUDE.md) — Tier 1 only after the latest trim. Purpose paragraph naming the directory's role + Key References pointing at the arch docs. Shows that non-crate directories don't automatically need Workflow tables or Contracts sections — when `ci-pipeline.md` and `release-pipeline.md` already cover the contracts, the CLAUDE.md is just a pointer.
 
 When in doubt, copy `atc-wire/CLAUDE.md` as the starting shape and expand only when friction shows up.
 
