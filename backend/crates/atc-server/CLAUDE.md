@@ -7,7 +7,7 @@ Last verified: 2026-05-22 (post display-TTL landing)
 
 ## Purpose
 
-Axum HTTP server wiring `atc-core` (pure transition functions) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. **State persistence concerns are split across crates**: the in-memory backend lives in `atc-store-mem` (`InMemoryStore`); the PG backend (`PgStore` — outbox/drain/eviction/snapshot reads) is hosted in-tree at `atc-server::persist` until its dedicated `atc-store-pg` crate lands. Both the webhook write path AND the `/v1/state` read path AND `/readyz` dispatch through `AppState.persist: Arc<dyn PersistentStore>`. See ADR 0005 (write-path trait relocation), ADR 0008 (persistence crate split), and issue #69 (read-path unify + atc-core purification).
+Axum HTTP server wiring `atc-core` (pure transition functions) and `atc-github` (webhook parsing) together. Provides HTTP endpoints for webhook ingestion, REST state snapshots, and WebSocket event streaming. The only executable crate in the backend workspace. **State persistence concerns are split across crates**: the in-memory backend lives in `atc-store-mem` (`InMemoryStore`); the PG backend lives in `atc-store-pg` (`PgStore` — outbox/drain/snapshot reads/retention). Both the webhook write path AND the `/v1/state` read path AND `/readyz` dispatch through `AppState.persist: Arc<dyn PersistentStore>`. See ADR 0005 (write-path trait relocation) and ADR 0008 (persistence crate split).
 
 ## Storage modes
 
