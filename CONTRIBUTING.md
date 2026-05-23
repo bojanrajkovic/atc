@@ -72,22 +72,22 @@ ATC exports traces and metrics over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT`
 
 ## Updating SQL Queries
 
-All SQL queries in `atc-server` use the `sqlx::query!` / `sqlx::query_as!` macros for compile-time type checking. The Cargo workspace root is `backend/`, and the offline query cache lives at `backend/.sqlx/` — committed to the repository so CI can build without a live database.
+SQL queries in `atc-store-pg` (and any other workspace crate that uses sqlx macros) use the `sqlx::query!` / `sqlx::query_as!` macros for compile-time type checking. The Cargo workspace root is `backend/`, and the offline query cache lives at `backend/.sqlx/` — committed to the repository so CI can build without a live database.
 
-**When to regenerate the cache:** any time you add, remove, or change a `query!` / `query_as!` macro call, or modify a migration in `backend/crates/atc-server/migrations/`.
+**When to regenerate the cache:** any time you add, remove, or change a `query!` / `query_as!` macro call, or modify a migration in `backend/crates/atc-store-pg/migrations/`.
 
 **How to regenerate:**
 
-1. Start a local Postgres with migrations applied:
+1. Start a local Postgres and apply migrations from `backend/`:
    ```bash
    docker run -d --rm --name atc-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17-alpine
+   cd backend
    DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/postgres" \
-     cargo sqlx migrate run --source backend/crates/atc-server/migrations
+     cargo sqlx migrate run --source crates/atc-store-pg/migrations
    ```
 
-2. Regenerate the cache from the **`backend/` directory** (the Cargo workspace root):
+2. Regenerate the cache from the same `backend/` directory (the Cargo workspace root):
    ```bash
-   cd backend
    DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/postgres" \
      cargo sqlx prepare --workspace -- --tests
    ```
