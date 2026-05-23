@@ -182,6 +182,41 @@ Every subdirectory that represents a distinct domain (crates, frontend, helm cha
 
 **Tier 2 — Sharp-edges sections.** Added **reactively** when agents encounter friction in that directory — costly mistakes, non-obvious testing gotchas, foot-guns, file-specific guidance. Do not pre-author sharp edges speculatively; let them accrete from observed agent failures. The root `CLAUDE.md` invariant "Slim CLAUDE.md in every domain directory (two-tier)" is the authoritative version of this rule.
 
+### Template
+
+A new directory-level CLAUDE.md starts at Tier 1 only:
+
+```markdown
+# CLAUDE.md — <domain-name>
+
+Last verified: YYYY-MM-DD
+
+> Canonical documentation lives in `docs/architecture/<topic>.md`. This file provides domain-specific guidance for agents working here. Do not duplicate content from the architecture doc.
+
+## Purpose
+
+<One or two sentences naming what this domain owns. Identify the canonical
+architecture doc by file path; downstream readers follow the link rather
+than reading a duplicated summary.>
+
+## Key References
+
+- Architecture: `docs/architecture/<topic>.md`
+- Related ADRs (if any): `docs/architecture-decisions/NNNN-<title>.md`
+```
+
+Tier 2 appends a `## Sharp edges` (or `## Testing` / `## Contracts` / domain-fit heading) section the first time an agent hits friction in that directory. Each entry names one foot-gun in one sentence, then optionally explains the *why* — agents that read the rule but skip the rationale need to know the rationale is there if they want to deviate.
+
+### Exemplars
+
+Three current CLAUDE.md files demonstrate the pattern at different sizes:
+
+- [`backend/crates/atc-wire/CLAUDE.md`](../backend/crates/atc-wire/CLAUDE.md) — minimal Tier-1-only file. Header pointer, Purpose, Key References. ~15 lines. Good template for a stable crate with no friction yet.
+- [`backend/crates/atc-persist/CLAUDE.md`](../backend/crates/atc-persist/CLAUDE.md) — Tier 1 + Tier 2 (Sharp edges). Three foot-guns: dependency hygiene of the trait crate, tokio-feature constraints, why tracing is a hard dep. Each entry one short paragraph with the *why*. ~25 lines.
+- [`.github/CLAUDE.md`](../.github/CLAUDE.md) — domain-specific shape: a workflow table, then a Contracts list (path filtering, helm sweep, linked versions). Shows that Tier 1 / Tier 2 are content categories, not rigid section names — non-crate directories can structure differently while keeping the same slim discipline.
+
+When in doubt, copy `atc-wire/CLAUDE.md` as the starting shape and expand only when friction shows up.
+
 ## Observability
 
 ATC exports metrics and spans through one OpenTelemetry pipeline. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the SDK initializes and pushes OTLP/HTTP to the configured collector; with the env var unset, no provider, exporter, or background task is initialized. Two contributor-facing rules apply when adding or modifying observability surfaces.
