@@ -179,10 +179,6 @@ A 20 KB CLAUDE.md is a symptom of duplication or inventory growth, not a goal in
 
 Every time a CLAUDE.md sharp-edges section gets rewritten, re-evaluate every entry: is the foot-gun still load-bearing, or did the problem ship a fix? Sharp edges accumulated reactively are good; sharp edges that outlive the bug they warned about are noise. The rewrite is the audit opportunity — take it.
 
-### Atomic commits
-
-Each logical change is one commit, even when a sub-phase contains many of them. A reviewer should be able to scan a commit's diff in seconds and understand what landed. PR-tab summaries describe what shipped *overall*; the commit history is what someone running `git blame` will read months later.
-
 ## Observability — where the catalog lives
 
 Metrics naming + attribute conventions, span naming + late-bound-field patterns, and the per-metric / per-span catalog itself live in [`docs/architecture/metrics.md`](architecture/metrics.md). The doc-system rule the audit cares about is the authoring contract: **every new metric ships with the seven-element interpretation block; every new span boundary lands in the span inventory; both extensions go in the same commit cluster as the source change.** The doc-staleness gate (`scripts/check-docs.sh`) blocks the push if backend telemetry changes land without the matching `metrics.md` update, so the rule is mechanically enforced rather than convention-only.

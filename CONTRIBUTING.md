@@ -154,6 +154,10 @@ chore: bump rust to 1.94.0
 
 Commits are validated by commitlint via lefthook's commit-msg hook. Non-conventional commits are rejected automatically.
 
+### Atomic commits
+
+Each logical change is one commit, even when a sub-phase contains many of them. A reviewer should be able to scan a commit's diff in seconds and understand what landed. PR-tab summaries describe what shipped *overall*; the commit history is what someone running `git blame` will read months later.
+
 ### Dependency updates
 
 Renovate manages dependency updates with conventional-commit prefixes that cooperate with release-please:
