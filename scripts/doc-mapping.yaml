@@ -1,0 +1,160 @@
+# doc-mapping.yaml — Maps source-file glob patterns to the architecture docs
+# that must be updated when files matching those patterns change.
+#
+# Consumed by scripts/check-docs.sh as the data layer of the doc-staleness gate
+# (pre-push lefthook hook).
+#
+# Each entry in `mappings` is a list of glob patterns + the architecture docs
+# that must be updated alongside them. Mappings are evaluated top-to-bottom;
+# the first matching entry wins (mimicking the bash `case` semantics this file
+# replaced). Files that legitimately span two architecture docs list both —
+# the gate dedupes the union across changed files and demands every listed
+# doc was also touched.
+#
+# Glob patterns follow shell `case` semantics: `*` matches any character span
+# within a path segment, paths use forward slashes, no implicit anchoring.
+
+mappings:
+  # atc-core: pure domain types, state-machine transitions
+  - patterns:
+      - backend/crates/atc-core/src/*
+    docs:
+      - docs/architecture/backend-server.md
+
+  # atc-github: webhook parsing + verification
+  - patterns:
+      - backend/crates/atc-github/src/*
+    docs:
+      - docs/architecture/backend-server.md
+
+  # atc-server/metrics.rs: registration helpers + process collector only.
+  - patterns:
+      - backend/crates/atc-server/src/metrics.rs
+    docs:
+      - docs/architecture/metrics.md
+
+  # build.rs feeds VERGEN_* env vars consumed only by atc_build_info.
+  - patterns:
+      - backend/crates/atc-server/build.rs
+    docs:
+      - docs/architecture/metrics.md
+
+  # config_watcher: file detection, debounce, K8s ConfigMap atomic swap,
+  # narrow-schema reload, scalar drift warn-log, shutdown integration
+  # (backend-server.md) + watcher metrics atc_config_reload_total /
+  # atc_config_runner_pools (metrics.md). Both must update.
+  # Listed BEFORE the atc-server/src/* catch-all because first-match wins.
+  - patterns:
+      - backend/crates/atc-server/src/config_watcher.rs
+    docs:
+      - docs/architecture/backend-server.md
+      - docs/architecture/metrics.md
+
+  # atc-store-pg straddlers: PgMetrics + listener carry both the
+  # PersistentStore drain-pipeline contract and the metric emission surface.
+  # Both docs must update. Listed BEFORE the atc-store-pg/src/* catch-all.
+  - patterns:
+      - backend/crates/atc-store-pg/src/metrics.rs
+      - backend/crates/atc-store-pg/src/listener.rs
+    docs:
+      - docs/architecture/backend-server.md
+      - docs/architecture/metrics.md
+
+  # atc-store-pg catch-all: listener.rs and metrics.rs are straddlers above;
+  # everything else (store/, db.rs, reads.rs, invariants.rs, plus migrations/)
+  # is owned solely by backend-server.md.
+  - patterns:
+      - backend/crates/atc-store-pg/src/*
+      - backend/crates/atc-store-pg/migrations/*
+    docs:
+      - docs/architecture/backend-server.md
+
+  # In-memory store, wire-types crate, trait crate — only backend-server
+  # contracts; no direct metric emissions.
+  - patterns:
+      - backend/crates/atc-store-mem/src/*
+      - backend/crates/atc-wire/src/*
+      - backend/crates/atc-persist/src/*
+    docs:
+      - docs/architecture/backend-server.md
+
+  # OTel SDK init: tracer/meter providers, sampler, propagator,
+  # exponential-histogram view. Trace authoring contract + sampler surface
+  # live in backend-server.md (§ Tracing); metric authoring contract +
+  # histogram aggregation choice live in metrics.md. Both must update.
+  - patterns:
+      - backend/crates/atc-server/src/otel.rs
+    docs:
+      - docs/architecture/backend-server.md
+      - docs/architecture/metrics.md
+
+  # atc-server catch-all (after all specific atc-server entries above).
+  - patterns:
+      - backend/crates/atc-server/src/*
+    docs:
+      - docs/architecture/backend-server.md
+
+  # Frontend source + frontend-only config files.
+  - patterns:
+      - frontend/src/*
+    docs:
+      - docs/architecture/frontend-app.md
+
+  - patterns:
+      - frontend/vite.config.ts
+      - frontend/svelte.config.js
+      - frontend/biome.json
+      - frontend/eslint.config.mjs
+      - frontend/.prettierrc
+      - frontend/vitest.config.ts
+      - frontend/playwright.config.ts
+    docs:
+      - docs/architecture/frontend-app.md
+
+  # Release pipeline: release-please workflows, container build, manifest.
+  - patterns:
+      - .github/workflows/release-please.yml
+      - .github/workflows/release.yml
+    docs:
+      - docs/architecture/release-pipeline.md
+
+  - patterns:
+      - Dockerfile
+      - .dockerignore
+    docs:
+      - docs/architecture/release-pipeline.md
+
+  - patterns:
+      - release-please-config.json
+      - .release-please-manifest.json
+      - deploy/helm/cr.yaml
+    docs:
+      - docs/architecture/release-pipeline.md
+
+  # Helm chart: templates, values, schema, test charts.
+  - patterns:
+      - deploy/helm/atc/*
+      - deploy/helm/atc/templates/*
+      - deploy/helm/atc/templates/tests/*
+      - deploy/helm/atc/tests/*
+    docs:
+      - docs/architecture/deployment.md
+
+  # CI workflows (catch-all after the release-pipeline workflow names above).
+  - patterns:
+      - .github/workflows/*
+    docs:
+      - docs/architecture/ci-pipeline.md
+
+  # CI-adjacent scripts.
+  - patterns:
+      - scripts/helm-kubeconform*.sh
+      - scripts/check-docs-lefthook.sh
+      - scripts/verify-workflow-security.sh
+    docs:
+      - docs/architecture/ci-pipeline.md
+
+  - patterns:
+      - renovate.json
+    docs:
+      - docs/architecture/ci-pipeline.md
