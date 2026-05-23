@@ -19,6 +19,6 @@ The only executable crate in the backend workspace. Wires the six library crates
 ## Key References
 
 - Architecture: `docs/architecture/backend-server.md`
-- ADR-0005: `docs/architecture-decisions/0005-write-path-trait-relocation.md`
+- ADR-0005: `docs/architecture-decisions/0005-persistentstore-trait-relocation.md`
 - ADR-0006: `docs/architecture-decisions/0006-stores-own-background-task-lifecycle.md`
 - ADR-0008: `docs/architecture-decisions/0008-persistence-crate-split.md`
