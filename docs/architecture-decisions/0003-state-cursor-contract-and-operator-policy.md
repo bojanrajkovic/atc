@@ -179,4 +179,4 @@ independent run-row TTL) is a Phase 2 schema decision.
 - Frontend cursor handling: `frontend/src/lib/connection.ts:14` (private field), `:116` (comparator)
 - Helm multi-replica guard (Phase 4): `deploy/helm/atc/templates/deployment.yaml` (top of file)
 - Chart storage-mode docs (Phase 4): `deploy/helm/atc/values.yaml` (the two-mode block under `config.databaseUrl`)
-- Storage-mode-evolution history: `docs/architecture/deployment.md` § "Storage-mode evolution"
+- Storage-mode context: `docs/architecture/deployment.md` § "Storage modes and multi-replica constraints"
