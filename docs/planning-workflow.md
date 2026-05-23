@@ -91,6 +91,10 @@ Write the full design plan to the file created in Phase 3. Required sections, in
 
 A "Summary" section is optional; Context usually carries it. If included, keep it to a paragraph.
 
+When a design plan calls for extracting content from one document to another (e.g., moving Documentation Conventions from `CONTRIBUTING.md` into `docs/documentation-system.md`), the plan must include an audit step *after* the extraction: re-read the destination document with fresh eyes, ask whether every section there now actually belongs there, and update or remove sections whose category no longer fits. Without this step, content drifts into wrong homes during the move.
+
+When the Brainstorming phase reasons through technology choices, framework picks, or other decisions with weighed alternatives, Phase 5 should explicitly ask: is each decision ADR-worthy? If yes, call for a same-commit-cluster ADR draft alongside the design plan. Decisions made during ideation are zero-cost ADRs at decision time — they become backfill work if left implicit and caught by a later audit.
+
 ### 6. Plan Review
 
 Before exiting plan mode and handing off to the user, **the planning Claude** runs two gates against the plan file:
@@ -102,6 +106,8 @@ Before exiting plan mode and handing off to the user, **the planning Claude** ru
 ### 7. Finalize and Hand Off
 
 The first step of your plan should include creating a feature branch, copying the plan from its location into the project at `docs/design-plans/YYYY-MM-DD-{slug}.md`, then committing it to the feature branch. This is the artifact the rest of the context reads from and the commit that makes the branch concrete.
+
+When the design plan lists planned commits with specific `<type>(scope): subject` prefixes, verify the type tokens against this repo's commitlint allow-list before handing off: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`. Shorthand like `adr(0012): subject` is not valid — transcribe to `docs(adr-0012): subject` (scopes are free-form; only the leading type token is constrained). Surfacing this in the plan prevents a commit-msg hook rejection mid-execution.
 
 ## Design Conventions
 
