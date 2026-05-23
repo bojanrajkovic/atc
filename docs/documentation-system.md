@@ -21,57 +21,47 @@ Each piece of information has exactly one home (**non-duplication rule**). The s
 
 **When a feature ships:** The ideation doc archives (add "Shipped — see `docs/architecture/<topic>.md`" header) and the architecture doc becomes the source of truth.
 
-## Architecture Doc Template
+## Architecture Doc Guidance
 
-Every architecture doc in `docs/architecture/` must include these four required anchor sections:
+An architecture doc's job is to give a reader a mental model of how a system is structured, how it does what it does, and how the pieces fit together. The reader gets oriented; they can then navigate the source with that context in hand.
 
-### Purpose
-What this component does and why it exists.
+Architecture docs are **not** a fill-in form. Different components have different shapes. A library crate's doc may have different sections than an executable's. Write what serves comprehension for this particular component.
 
-### Key Decisions
-Architectural choices with rejected alternatives and rationale. Format:
+### What belongs in an architecture doc
 
-```markdown
-### Key Decisions
+**Topology and data-flow prose.** An opening paragraph that explains how the pieces are wired and what passes between them. Keep it tight — the diagram carries the structure.
 
-**Decision:** Use WebSockets for real-time updates
-**Alternatives considered:** SSE (Server-Sent Events), long polling
-**Rationale:** Bidirectional communication needed for future interactive features. SSE is receive-only.
-```
+**Mermaid diagrams.** Reach for a diagram whenever prose would have to hand-wave: crate dependency graphs, webhook-to-WebSocket pipeline flowcharts, schema ER diagrams, state machines, and supervision/shutdown sequences all compress cleanly into Mermaid. One diagram often does what three paragraphs struggle to, without the rot.
 
-### Boundaries
-What this component owns, what it does NOT own, and explicit prohibitions.
+**Contract sections.** Any guarantee the source cannot express on its own earns a section: snapshot/stream reconciliation rules, storage-mode invariants, durable-cursor monotonicity, placeholder semantics for out-of-order events. Pair a prose explanation with a Mermaid sequence or table where the protocol or failure behavior matters.
 
-```markdown
-### Boundaries
+**Schema descriptions.** When a component owns a schema, describe the key columns, relationships, and non-obvious constraints. Pair with an `erDiagram`. Migration mechanics or column-level trivia live in the migration files; the arch doc captures the shape and why it was designed that way.
 
-**Owns:** WebSocket connection lifecycle, message serialization, reconnection logic
-**Does not own:** Authentication (handled by auth middleware), business logic (handled by domain services)
-**Prohibitions:** Never store session state in the WebSocket handler. Never bypass auth middleware.
-```
+**Inline ADR links.** When a decision shaped the architecture, link to the ADR inline — at the point in the doc where the reader would want context — rather than collecting decisions into a standalone `## Key Decisions` section. Decisions belong in ADRs; the arch doc describes the result.
 
-### Files
-Which source files this doc covers.
+**Boundaries (library crates only).** For library crates, a brief Boundaries section can be useful: it declares what the public API owns and explicitly doesn't own, which is information the crate name alone doesn't convey. For executable crates this is usually not useful — the executable owns its routes and nothing else, and what it delegates to is already visible from the crate dependency graph.
 
-```markdown
-### Files
+### What does not belong in an architecture doc
 
-- `backend/src/ws/mod.rs` — WebSocket handler and connection manager
-- `backend/src/ws/messages.rs` — Message types and serialization
-- `frontend/src/lib/ws.ts` — Client-side WebSocket wrapper
-```
+**Purpose statements and project framing.** The H1 title and the codebase's existence already state what the component is. An introductory paragraph should orient the reader to structure, not restate the obvious.
 
-### Additional Sections
-Module-specific middle sections as needed: Architecture, Data Model, Schema, Contracts, Invariants.
+**Key Decisions sections.** ADRs are the canonical home for decisions with alternatives and full rationale. An arch doc that collects decisions into its own section is a second home for content that already has one.
+
+**Files inventories.** Never enumerate source files. `rustdoc`, IDE outlines, and `ls -la` answer "what files are here" without rot risk. An arch doc that lists files is one refactor away from being wrong.
+
+**Operator Surface sections.** How operators configure or run the component belongs in `docs/architecture/deployment.md` or `docs/operator/`. Architecture docs describe how the system is built; deployment and runbook docs describe how it is run.
+
+**Struct definitions and code dumps.** LSP and `rustdoc` surface these without maintenance burden. Replace a struct dump with a Mermaid data-shape diagram or a one-paragraph description of field roles.
+
+**Metric and span catalogs.** The full catalog lives in `docs/architecture/metrics.md`. The arch doc describes the observability shape and links; it does not enumerate every metric name.
 
 ### Timestamp
+
 All docs carry a `Last verified: YYYY-MM-DD` timestamp at the top, updated whenever the doc is reviewed or modified.
 
-### Fillable template
+### Worked example
 
-A copy-and-fill template at [`docs/architecture/_template.md`](architecture/_template.md) embeds the required structure with anti-rationalization placeholders at the temptation points where authors tend to drift — pasting struct definitions, enumerating every metric name, embedding integration recipes, or growing the Files section into a directory listing. Each section's author-guidance blockquote names the canonical home for the content that doesn't belong, and instructs the author to delete the guidance after filling in real content.
-
-When creating a new arch doc, copy the template (not modify it in place) into `docs/architecture/<topic>.md`, fill in the placeholders, then delete the `> _Author guidance — delete after filling in._` blockquotes so the published doc carries only the real content.
+`docs/architecture/backend-server.md` demonstrates the shape in practice. It opens with a topology paragraph and a crate dependency graph, then sections for the webhook-to-WebSocket pipeline, config hot-reload, Postgres schema (with an `erDiagram`), snapshot/stream reconciliation protocol (with a sequence diagram), storage-mode invariants (with a startup-behavior table), and supervision/shutdown ordering (with a sequence diagram). It has no Purpose section, no Key Decisions section, no Files inventory, and no Operator Surface section — those jobs are handled elsewhere. Read it before writing a new arch doc.
 
 ## ADR Convention
 
