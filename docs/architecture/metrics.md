@@ -73,17 +73,7 @@ The seven elements:
 
 ### Span naming
 
-ATC spans use a dotted hierarchy that names the boundary, not the implementation:
-
-- `state.snapshot` — root request span for `GET /v1/state` reads.
-- `persist.read.snapshot` — `PgStore` / `InMemoryStore` read-path entry; child of `state.snapshot`.
-- `webhook.handler` — root request span for `/v1/webhooks/github` POSTs.
-- `webhook.verify`, `webhook.parse` — atc-github boundary spans nested under `webhook.handler`.
-- `persist.apply.run_event`, `persist.apply.job_event` — `PgStore` / `InMemoryStore` write-path entries.
-- `persist.notify.emit` — the in-transaction `pg_notify` after the outbox INSERT.
-- `listener.recv` — per-NOTIFY root span for the PG listener. Each notification exports as its own root trace.
-- `drain.pass`, `drain.broadcast` — per-pass root and per-row child for the outbox drain.
-- `eviction.sweep` — per-tick root span for the in-memory-mode TTL eviction sweep.
+ATC spans use a dotted hierarchy that names the boundary, not the implementation. The full span inventory with per-span attributes is in [Span inventory](#span-inventory).
 
 ### Span attribute conventions
 
@@ -105,7 +95,7 @@ Do NOT decorate every internal function with `#[tracing::instrument]`. Spans are
 
 Every repeat-emit metric in PG mode MUST go through a cached OTel `Counter` / `Histogram` instrument held on the `PgMetrics` struct in `atc-store-pg`. `PgStore::start` calls `PgMetrics::register(...)` once after the global meter provider is installed; the resulting `Arc<PgMetrics>` is cloned into the listener and drain task closures, and every emit on a hot path is a field access instead of building an instrument inline at every call.
 
-For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores one instrument per metric name plus pre-built `[KeyValue; N]` attribute slices alongside it. Emit sites read `counter.add(1, &self.attrs_parity)` so neither the instrument lookup nor the `KeyValue` allocation happens on a webhook path. Dedicated helpers (`write_failure_parity()`, `notify_emitted_run()`, etc.) wrap each `(instrument, slice)` pair so call sites never duplicate the attribute reference.
+For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc_pg_notify_emitted_total{kind=…}`), `PgMetrics` stores one instrument per metric name plus pre-built `[KeyValue; N]` attribute slices alongside it, so neither the instrument lookup nor the attribute allocation happens on a webhook path. Dedicated per-emit helpers wrap each instrument-and-slice pair so call sites never duplicate the attribute reference.
 
 Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics.
 
@@ -291,14 +281,14 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_broadcast_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `broadcast_watermark: Arc<AtomicI64>` on every collection cycle; seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass.
+- **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass.
 
 ### `atc_pg_min_pending_seq`
 
 - **Name:** `atc_pg_min_pending_seq`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`.
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`.
 
 ### `atc_pg_outbox_rows_deleted_total`
 
@@ -312,7 +302,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_outbox_min_replica_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_replica_watermark_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN`. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence.
+- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Maps `-1` to `f64::NAN`. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence.
 
 ### `atc_config_reload_total`
 
@@ -326,7 +316,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_config_runner_pools`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Number of operator-declared runner pools currently loaded in `AppState.runner_pool_capacities`. Reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count. Implemented as an OTel `ObservableGauge<f64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle.
+- **Measures:** Number of operator-declared runner pools currently loaded in `AppState.runner_pool_capacities`. Reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count.
 
 ### `atc_ws_connections_active`
 
@@ -351,7 +341,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `oldest_row_age_seconds_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained.
+- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained.
 
 ## Span inventory
 
