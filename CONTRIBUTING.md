@@ -41,36 +41,7 @@ All commands go through the `just` task runner:
 just test    # Runs all tests (requires Docker or OrbStack)
 ```
 
-**macOS / OrbStack users:** testcontainers-rs needs `DOCKER_HOST` pointed at OrbStack's socket. Export this in any shell that runs `just test`:
-
-```bash
-export DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock
-```
-
-### Test Runners
-
-Use `just test` for the full suite (what CI and the pre-push hook run) or `cargo nextest run -p <crate> <filter>` for focused dev loops. Do not use bare `cargo test` — it runs sequentially and is meaningfully slower than nextest on this codebase. Examples:
-
-- `cargo nextest run -p atc-server shutdown::` — every test in the shutdown module
-- `cargo nextest run -p atc-core eviction` — every test with "eviction" in the name
-- `cargo nextest run -p atc-server --test graceful_shutdown` — a single integration test file
-
-### Test Conventions
-
-Do not write source-level grep assertions — tests that `readFileSync` a source file and regex-match its content to enforce invariants like "this file only reads `storeX.fieldY`." They fire on innocuous refactors, miss semantically-identical variants (e.g., `const { x } = obj` vs `obj.x`), and replicate what code review and lint rules already do. Prefer: behavioral test > lint rule > reviewer guidance > source grep. Reserve source-level checks for ESLint/Biome custom AST rules where they belong.
-
-Deeper backend-test patterns (testcontainers shared-container behavior, the `#[serial_test::serial]` requirement for OTel-touching tests, the `OnceLock`-guarded exporter harness) live in [`docs/testing.md`](docs/testing.md).
-
-### E2E Tests
-
-`just test` runs Vitest (unit + browser) + cargo nextest, but does NOT include Playwright E2E. Run `just test-e2e` separately (`pnpm exec playwright test` under the hood) when touching:
-
-- `frontend/src/lib/connection.ts` (snapshot shape, reviver, buffer filter)
-- Any store that affects what E2E tests drive via the `window.__stores` bridge
-- `frontend/e2e/lib/ws-mock.ts` or snapshot mock helpers
-- Any wire-contract field that E2E fixtures embed inline
-
-The pre-push hook does not run E2E either — if you skip `just test-e2e` locally, regressions in these layers ship to CI before being caught.
+Test runner choice (nextest vs cargo test), the OrbStack `DOCKER_HOST` setup, what `just test` does and does not cover (Playwright E2E is separate via `just test-e2e`), and the backend-test foot-guns (`#[serial_test::serial]` for OTel, `OnceLock`-guarded exporter harness, no-source-grep-assertion rule) all live in [`docs/testing.md`](docs/testing.md).
 
 ## Inspecting OpenTelemetry Output Locally
 
