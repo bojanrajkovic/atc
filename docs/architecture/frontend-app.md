@@ -22,7 +22,31 @@ flowchart LR
     DERIVED -->|fine-grained invalidation| DOM
 ```
 
-The component tree hangs off App.svelte: a ConnectionManager service component mounts and destroys the WebSocket client; a RovingFocusProvider context wrapper carries keyboard navigation state; AppShell provides the 100dvh flex layout; KanbanBoard, CommandPalette, and RunDetailPanel are the three principal UI surfaces; AriaLiveRegion sits as a sibling to AppShell for screen reader announcements.
+## Component hierarchy
+
+ConnectionManager is a service component (no rendered DOM) that mounts and destroys the WebSocket client. RovingFocusProvider is a context-only wrapper that carries 2D arrow-key navigation state. CommandPalette and RunDetailPanel portal their overlay content to `document.body` — in the Svelte component tree they are siblings of AppShell under RovingFocusProvider, not children of it.
+
+```mermaid
+flowchart TD
+    App --> ConnectionManager
+    App --> AriaLiveRegion
+    App --> RovingFocusProvider
+    RovingFocusProvider --> AppShell
+    RovingFocusProvider --> CommandPalette["CommandPalette<br/>(portals to body)"]
+    RovingFocusProvider --> RunDetailPanel["RunDetailPanel<br/>(portals to body)"]
+    AppShell --> TopBar
+    AppShell --> ConfigReloadErrorBanner
+    AppShell --> VersionMismatchBanner
+    AppShell --> KanbanBoard
+    TopBar --> Logo
+    TopBar --> RunnerBar
+    TopBar --> ConnectionIndicator
+    TopBar --> SettingsPopover
+    KanbanBoard --> PoolFilterPill
+    KanbanBoard --> KanbanColumn
+    KanbanColumn --> ColumnHeader
+    KanbanColumn --> RunCard["RunCard<br/>(status header, badge stack, job list)"]
+```
 
 ## Connection Protocol
 
