@@ -16,7 +16,7 @@ Invariants enforced by the pure transition functions and verified by unit + prop
 
 **Predecessor predicate includes self:** `predecessors_of(target)` returns `&'static [Self]` containing every valid predecessor status *and the target status itself*. The self-inclusion is intentional — it enables the Postgres store to issue a predicated UPSERT (`WHERE status = ANY(predecessors)`) that acts as both a forward-only guard and an idempotent no-op when the row is already at the target state. Removing self from the slice would break idempotent replay in `atc-store-pg`.
 
-**`test-support` feature gate:** `TestClock` and `fixed_test_timestamp()` are compiled only under the `test-support` feature. A workspace-level `disallowed-methods` clippy lint (see `backend/clippy.toml`) blocks direct `Utc::now` / `SystemTime::now` calls in both production and fixture code, keeping time sources deterministic across the workspace.
+**`test-support` feature gate:** `TestClock` and `fixed_test_timestamp()` are compiled only under the `test-support` feature, so cross-crate dev-deps (`atc-core = { path = "...", features = ["test-support"] }`) opt in explicitly. The workspace-wide `disallowed-methods` lint that pairs with this gate is documented in `backend-server.md` § Wall-clock seam — don't restate it here.
 
 ## Key References
 
