@@ -176,15 +176,17 @@ The middleware records into the global meter installed by `init_otel`. When OTel
 | `process.memory.virtual` | `process_memory_virtual` | i64 gauge | byte | committed virtual memory | same four `process.*` |
 | `process.disk.io` | `process_disk_io` | i64 gauge | byte | cumulative read/write bytes | same four `process.*` plus `direction=read\|write` |
 
-The `process_cpu_usage` / `process_cpu_utilization` row inversion above is correct — `opentelemetry-system-metrics 0.31.0` binds the Rust variables to inverted constants (see crate source `src/lib.rs:131,214`): the Rust binding named `process_cpu_utilization` records `process_cpu_usage` (with attributes), and the binding named `process_cpu_usage` records `process_cpu_utilization` (no attributes). Dashboard queries that want per-process CPU (with pod attribution from the collector) should use `process_cpu_usage`, not `process_cpu_utilization`.
+The `process_cpu_usage` / `process_cpu_utilization` row inversion above is correct — `opentelemetry-system-metrics 0.31.0` binds the Rust variables to inverted constants (see crate source `src/lib.rs:131,214`): the Rust binding named `process_cpu_utilization` records `process_cpu_usage` (with attributes), and the binding named `process_cpu_usage` records `process_cpu_utilization` (no attributes).
 
-This surface differs from the `metrics_process` exposition the prior recorder emitted (no `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds`, or `process_threads`). Dashboards that filtered on those names need to be updated; ATC's bundled Grafana dashboard (`deploy/helm/atc/dashboards/atc-overview.json`) covers the full `process_*`, `http_*`, `atc_pg_*`, `atc_config_*`, and `atc_build_info` surface. Operators relying on host- or container-level fd / start-time metrics should source them from the node exporter or container runtime sidecar instead.
+For dashboard migration notes (prior `metrics_process` names, per-process CPU query guidance) see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md) § "Process metrics — dashboard migration note".
 
 The observer's `init_process_observer` loop runs forever — there is no cooperative shutdown surface on the upstream crate. `ProcessCollectorHandle::shutdown()` calls `tokio::task::AbortHandle::abort()` and returns the underlying `JoinHandle<()>` so the orchestration in `shutdown.rs` can await it under `SHUTDOWN_TIMEOUT_METRICS`. The observer does no DB/network work, so an abort between ticks is the common case and an abort mid-tick is safe.
 
 ## Operational metrics
 
-All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added at ingest as standard target attributes (`pod`, `instance`) — the exact attachment mechanism depends on the collector configuration; the metrics themselves are agnostic. Cross-replica aggregation in alerts and dashboards uses `avg by (pod)`, `max by (pod)`, etc.
+All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added at ingest as standard target attributes (`pod`, `instance`) — the exact attachment mechanism depends on the collector configuration; the metrics themselves are agnostic.
+
+For operator interpretation — NaN-sentinel meanings, what sustained rates suggest, per-channel eviction severity, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
 
 The blocks below are listed in roughly the order an event traverses the pipeline: webhook write → outbox row → NOTIFY emission → listener receipt → drain pass → broadcast → snapshot cursor → drain shutdown.
 
@@ -193,10 +195,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_write_failures_total`
 - **Type:** counter
 - **Attributes:** emitted `kind` ∈ `{parity, transient}`; injected `pod`, `instance`. `kind="parity"` fires when the PG UPSERT matches 0 rows (the WHERE predicate rejected the transition under PG's view of state); `kind="transient"` fires on sqlx errors at `pool.begin()`, mid-transaction, or `tx.commit()`. A `WARN` log with `target_status` is emitted alongside every parity rejection to surface which status the rejected transition was targeting (the `from` state is unavailable at the SQL layer — only `rows_affected` is returned).
-- **Measures:** Webhook writes that failed inside `PgStore::apply_*_event`. Parity rejections return a 200 `{"status":"rejected"}` to GitHub and are NOT retried. Transient failures return 503 and ARE retried by GitHub's webhook delivery. Sustained nonzero rates of either kind indicate a real problem: parity means state-machine drift between PG and the in-memory model (page-worthy); transient means the database path is unhealthy.
-- **Per-replica vs cluster:** Per-replica — only the writer replica increments. In multi-replica deployments any single replica can be the writer for a given webhook (GitHub picks one ingress).
-- **Aggregation:** `sum by (kind)` cluster-wide for severity routing (parity → page; transient → alert on sustained rate). `max by (pod)` to localize a misbehaving replica.
-- **Example PromQL:** `sum by (kind) (rate(atc_pg_write_failures_total[5m]))`
+- **Measures:** Webhook writes that failed inside `PgStore::apply_*_event`. Parity rejections return a 200 `{"status":"rejected"}` to GitHub and are NOT retried. Transient failures return 503 and ARE retried by GitHub's webhook delivery.
 
 ### `atc_pg_notify_emitted_total`
 
@@ -204,79 +203,55 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** counter
 - **Attributes:** emitted `kind` ∈ `{run, job}` matching the event discriminator; injected `pod`, `instance`. Incremented by `PgStore::apply_*_event` after `tx.commit()` succeeds (the in-transaction `pg_notify` call is queued by PG and delivered on commit; aborted transactions silently drop it, so this counter only increments when the NOTIFY actually went out).
 - **Measures:** Successfully committed write transactions broadcast to `LISTEN atc_outbox`. This is the writer-side "what was published" signal; the listener-side counterpart is `atc_pg_notify_received_total`.
-- **Per-replica vs cluster:** Per-replica (only the writer replica increments for a given seq). Cluster-wide ingestion volume is the useful aggregation; per-replica view is rarely meaningful.
-- **Aggregation:** `sum by (kind) (rate(...))` for cluster ingestion rate split by event kind. Use `sum without (pod, instance)` if you do not care about kind.
-- **Example PromQL:** `sum by (kind) (rate(atc_pg_notify_emitted_total[5m]))`
 
 ### `atc_pg_notify_received_total`
 
 - **Name:** `atc_pg_notify_received_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** NOTIFY payloads received by this replica's listener task on the `atc_outbox` channel. Every replica's listener receives every NOTIFY (PG fans out to all sessions holding `LISTEN atc_outbox`), so the per-replica rate should track parity across replicas. A replica whose rate falls behind the others has a stuck or stalled listener.
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `avg by (pod) (rate(...))` to verify parity across replicas; `min by (pod) (rate(...))` to flag a replica whose listener is stuck. Sqlx hides successful reconnects, so a counter that briefly plateaus and then catches up is a normal reconnect; a counter that stops without resuming is a stuck listener.
-- **Example PromQL:** `rate(atc_pg_notify_received_total[5m])`
+- **Measures:** NOTIFY payloads received by this replica's listener task on the `atc_outbox` channel. Every replica's listener receives every NOTIFY (PG fans out to all sessions holding `LISTEN atc_outbox`), so the per-replica rate should track parity across replicas.
 
 ### `atc_pg_listener_recv_errors_total`
 
 - **Name:** `atc_pg_listener_recv_errors_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** Receive errors surfaced by the listener task (e.g., connection drops that sqlx could not silently reconnect through). Sqlx attempts to reconnect transparently on most listener errors; this counter only fires when the error escapes that retry loop. A nonzero rate over more than a single scrape window means the listener is repeatedly failing to recover.
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `max by (pod) (rate(...))` — a single misbehaving replica is the actionable signal; sustained nonzero rate on any pod warrants investigation (likely DSN / session-mode misconfiguration; see `backend-server.md` § "DSN session-mode contract").
-- **Example PromQL:** `rate(atc_pg_listener_recv_errors_total[5m])`
+- **Measures:** Receive errors surfaced by the listener task (e.g., connection drops that sqlx could not silently reconnect through). Sqlx attempts to reconnect transparently on most listener errors; this counter only fires when the error escapes that retry loop.
 
 ### `atc_pg_drain_passes_total`
 
 - **Name:** `atc_pg_drain_passes_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected). Heartbeat-only wakes (the 5-second readiness tick that fires `last_drain_pass_at` updates without doing any draining) do NOT increment — only NOTIFY-driven passes count.
-- **Measures:** NOTIFY-driven drain passes completed by this replica. A flat-zero rate during a period of nonzero `atc_pg_notify_received_total` indicates the drain task is wedged.
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `rate(... [5m]) by (pod)` — verify that drain passes are running on every replica that is receiving NOTIFYs. Pair with `atc_pg_notify_received_total` for a "wake → drain" sanity check.
-- **Example PromQL:** `rate(atc_pg_drain_passes_total[5m])`
+- **Measures:** NOTIFY-driven drain passes completed by this replica.
 
 ### `atc_pg_drain_rows_total`
 
 - **Name:** `atc_pg_drain_rows_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** Outbox rows fetched and processed by the drain task across all paginated batches. Useful as a writer-vs-drain throughput sanity check: cluster-wide `rate(atc_pg_drain_rows_total)` summed across replicas should approximately equal `rate(atc_pg_notify_emitted_total)` × replica count over the same window (each replica's drain reads every committed row).
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `sum by (pod)` per-replica; `sum without (pod, instance)` for cluster total.
-- **Example PromQL:** `rate(atc_pg_drain_rows_total[5m])`
+- **Measures:** Outbox rows fetched and processed by the drain task across all paginated batches.
 
 ### `atc_pg_drain_duplicate_skipped_total`
 
 - **Name:** `atc_pg_drain_duplicate_skipped_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** Outbox rows fetched during a drain pass but suppressed by the ring-buffer dedup because they had already been broadcast in a previous pass. Nonzero rate is the gap-healing rescan signal: the drain re-fetched a range of seqs because a NOTIFY arrived for a seq below the local watermark, and dedup correctly suppressed re-broadcast. Brief nonzero values during reorder windows are normal; a sustained high rate means the drain is repeatedly rescanning the same range and indicates either backstop math drift or an upstream NOTIFY storm.
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `max by (pod) (rate(...))` — sustained nonzero rate on any single replica is the actionable signal.
-- **Example PromQL:** `rate(atc_pg_drain_duplicate_skipped_total[5m])`
+- **Measures:** Outbox rows fetched during a drain pass but suppressed by the ring-buffer dedup because they had already been broadcast in a previous pass.
 
 ### `atc_pg_drain_unknown_kind_total`
 
 - **Name:** `atc_pg_drain_unknown_kind_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected).
-- **Measures:** Outbox rows whose `kind` discriminator was neither `run` nor `job`. The set of legal kinds is fixed by a CHECK constraint on the outbox table, so this counter should be flat zero in any healthy deployment. A nonzero value is either a deploy-skew signal (an older replica writing a kind a newer replica does not understand, or vice versa) or a schema invariant violation; alert on first observation.
-- **Per-replica vs cluster:** Per-replica observation; cluster-relevant signal.
-- **Aggregation:** `sum without (pod, instance) (increase(...))` over a multi-hour window for the alert rule.
-- **Example PromQL:** `increase(atc_pg_drain_unknown_kind_total[1h])`
+- **Measures:** Outbox rows whose `kind` discriminator was neither `run` nor `job`. The set of legal kinds is fixed by a CHECK constraint on the outbox table, so this counter should be flat zero in any healthy deployment.
 
 ### `atc_pg_outbox_lag_seconds`
 
 - **Name:** `atc_pg_outbox_lag_seconds`
 - **Type:** histogram (base-2 exponential aggregation; see [Histogram aggregation](#histogram-aggregation))
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Event age at broadcast — `clock.now() - row.inserted_at` recorded once per broadcast row, where `clock` is `PgStore.clock: Arc<dyn Clock>`. The metric is more accurately "event age at broadcast" than "drain lag": `inserted_at DEFAULT now()` evaluates `transaction_timestamp()` (transaction start, not commit), so the metric includes writer-side transaction latency in addition to drain queueing. Operators reading p99/p95 should interpret it as "how stale is a typical row at broadcast time," not "how far behind is my drain task." Routing the now-side through `PgStore.clock` makes the observation deterministic under `TestClock` — see `tests/integration/pg_clock_seam_tests.rs::outbox_lag_is_deterministic_under_test_clock`.
-- **Per-replica vs cluster:** Per-replica — each replica's drain task records its own observations from its own broadcasts.
-- **Aggregation:** `histogram_quantile(0.99, sum(rate(...)) by (le, pod))` then `max by (pod)` for alerting — the slowest replica is the operationally relevant signal because all replicas serve traffic.
-- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_outbox_lag_seconds_bucket[5m])) by (le, pod))`
+- **Measures:** Event age at broadcast — `clock.now() - row.inserted_at` recorded once per broadcast row, where `clock` is `PgStore.clock: Arc<dyn Clock>`. Routing the now-side through `PgStore.clock` makes the observation deterministic under `TestClock` — see `tests/integration/pg_clock_seam_tests.rs::outbox_lag_is_deterministic_under_test_clock`.
 
 ### `atc_pg_drain_pass_duration_seconds`
 
@@ -284,9 +259,6 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** histogram (base-2 exponential aggregation)
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** Wall time from drain-pass start to drain-pass exit, including all paginated batches in the pass. NOT recorded for heartbeat-only wakes.
-- **Per-replica vs cluster:** Per-replica — drain runs independently on each replica.
-- **Aggregation:** `histogram_quantile(0.99, ...)` `by (pod)` for per-replica latency; `avg by (pod)` for trend tracking.
-- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_pass_duration_seconds_bucket[5m])) by (le, pod))`
 
 ### `atc_pg_wake_coalesced_total`
 
@@ -294,9 +266,6 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** NOTIFY arrivals observed by the listener while a drain pass was in flight (`drain_in_flight=true`). Counts arrival rate, NOT extra-pass rate (Tokio's `Notify` permit collapses N permits into 1 — the metric is about NOTIFY arrival vs drain-pass scheduling, which is what operators want).
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `rate(... [5m]) by (pod)` then `max by (pod)` — sustained high values on any replica indicate a NOTIFY storm or slow drain.
-- **Example PromQL:** `rate(atc_pg_wake_coalesced_total[5m])`
 
 ### `atc_pg_drain_startup_seconds`
 
@@ -304,19 +273,13 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** histogram (base-2 exponential aggregation)
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** Startup readiness latency — wall time from `COALESCE(MAX(seq),0)` watermark init through first drain pass exit. One observation per process lifetime. Per the restart-recovery contract there is no historical replay; this measures startup readiness, NOT catch-up backlog.
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** `max by (pod)` over a window covering recent deploys (1h) — the slowest replica's startup is the operational signal.
-- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_startup_seconds_bucket[1h])) by (le, pod))`
 
 ### `atc_pg_drain_shutdown_remaining_rows`
 
 - **Name:** `atc_pg_drain_shutdown_remaining_rows`
 - **Type:** histogram (base-2 exponential aggregation)
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Outbox rows whose `seq` is greater than this replica's drain watermark at drain task exit time. One observation per process lifetime, recorded after the drain loop exits on `cancel.cancelled()` and before the spawned task returns. Validates the cooperative-shutdown design: the drain task does NOT attempt to flush the outbox before exit — it completes the in-flight pass (if any) and stops, on the assumption that the unscanned tail rarely exceeds one drain pass (`DRAIN_BATCH_SIZE = 500`). Sustained observations above 500 should prompt either a drain-pass tuning review or a longer `terminationGracePeriodSeconds`. **Observation timing nuance:** the count is taken at drain task exit, not at signal arrival; the webhook handler keeps writing outbox rows until axum's graceful shutdown drains in-flight requests, so rows committed during that window are included. Operators reading this metric are seeing "what was unscanned when the drain task gave up," not "how far behind the drain was when SIGTERM arrived." When the post-shutdown count query fails or exceeds its 1-second timeout, the observation is skipped (logged as a warning) rather than recorded as zero, so `_count` only advances on successful observations.
-- **Per-replica vs cluster:** Per-replica — each replica's drain task records its own observation against its own watermark.
-- **Aggregation:** `histogram_quantile(0.99, ...)` `by (pod)` over a multi-deploy window (e.g. 24h) — the slowest replica's tail at shutdown is the actionable signal. `max by (pod) (rate(atc_pg_drain_shutdown_remaining_rows_count[24h]))` confirms each replica is recording observations across rollouts (a flat zero on a pod that recently restarted indicates the count query failed at shutdown — see warnings in the application log).
-- **Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_shutdown_remaining_rows_bucket[24h])) by (le, pod))`
+- **Measures:** Outbox rows whose `seq` is greater than this replica's drain watermark at drain task exit time. One observation per process lifetime, recorded after the drain loop exits on `cancel.cancelled()` and before the spawned task returns. When the post-shutdown count query fails or exceeds its 1-second timeout, the observation is skipped (logged as a warning) rather than recorded as zero, so `_count` only advances on successful observations.
 
 ### `atc_pg_broadcast_watermark`
 
@@ -324,39 +287,27 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** Highest outbox seq broadcast by this replica's drain task — the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `broadcast_watermark: Arc<AtomicI64>` on every collection cycle; seeded at startup from `COALESCE(MAX(seq),0)` and advanced by the drain task after each successful pass. The atomic update IS the metric update — no separate `record()` call.
-- **Per-replica vs cluster:** Per-replica — each replica advances its watermark independently.
-- **Aggregation:** Display per-pod (`atc_pg_broadcast_watermark`); for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)` (or equivalently `min without (pod, instance)`). Note: `min by (pod) (atc_pg_broadcast_watermark)` would just preserve one series per pod — same as the per-pod display.
-- **Example PromQL:** `atc_pg_broadcast_watermark`
 
 ### `atc_pg_min_pending_seq`
 
 - **Name:** `atc_pg_min_pending_seq`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`; non-sentinel values pass through as-is. NaN is preferred over `i64::MAX as f64` (≈ 9.22e18) because the float64 representation would push the y-axis of dashboards displaying watermark and min_pending_seq together to ~9e18, hiding the actual divergence signal at the watermark level. The atomic update IS the metric update — no separate `record()` call.
-- **Per-replica vs cluster:** Per-replica.
-- **Aggregation:** Display per-pod alongside `atc_pg_broadcast_watermark`. Filter NaN with `... unless on() (atc_pg_min_pending_seq != atc_pg_min_pending_seq)` if needed.
-- **Example PromQL:** `atc_pg_min_pending_seq` (Grafana renders NaN as gaps)
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_pending_seq: Arc<AtomicI64>` and maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`; non-sentinel values pass through as-is. The atomic update IS the metric update — no separate `record()` call.
 
 ### `atc_pg_outbox_rows_deleted_total`
 
 - **Name:** `atc_pg_outbox_rows_deleted_total`
 - **Type:** counter
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Outbox rows deleted by this replica's retention sweep task on each tick. Counted via the sweep statement's `DELETE ... RETURNING seq` row count, so the value reflects rows the replica actually deleted under `FOR UPDATE SKIP LOCKED` semantics — concurrent sweepers on other replicas account for disjoint candidate subsets, so the per-replica counter is the per-replica share, not a cluster-wide tally. Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica count. Sustained-zero rate after at least one full retention window indicates either the sweep predicate is rejecting everything (sub-floor retention misconfigured, no fresh heartbeats — see `atc_pg_outbox_min_replica_watermark`) or the outbox is not growing (no incoming webhooks).
-- **Per-replica vs cluster:** Per-replica. Sum across replicas (`sum without (pod, instance)`) for total cluster-wide deletion rate.
-- **Aggregation:** `sum without (pod, instance) (rate(atc_pg_outbox_rows_deleted_total[5m]))` for cluster-wide rate; `rate(atc_pg_outbox_rows_deleted_total[5m])` per pod to compare contention shares.
-- **Example PromQL:** `sum without (pod, instance) (rate(atc_pg_outbox_rows_deleted_total[5m]))`
+- **Measures:** Outbox rows deleted by this replica's retention sweep task on each tick. Counted via the sweep statement's `DELETE ... RETURNING seq` row count, so the value reflects rows the replica actually deleted under `FOR UPDATE SKIP LOCKED` semantics — concurrent sweepers on other replicas account for disjoint candidate subsets, so the per-replica counter is the per-replica share, not a cluster-wide tally.
 
 ### `atc_pg_outbox_min_replica_watermark`
 
 - **Name:** `atc_pg_outbox_min_replica_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_replica_watermark_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN`. `-1` is the NaN sentinel for two states: (a) the heartbeat task hasn't run yet (just-started replica), (b) no live replicas have heartbeated recently (cluster partition / shutdown). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence; this is a cluster-state observation, not a per-event measurement.
-- **Per-replica vs cluster:** Per-replica observation of a cluster-wide quantity. All replicas should observe the same value (within the 30 s heartbeat skew); divergence indicates one replica's heartbeat task is stalled.
-- **Aggregation:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` for the cluster-wide signal; per-pod comparison surfaces stalled replicas.
-- **Example PromQL:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` (Grafana renders NaN as gaps)
+- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `min_replica_watermark_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN`. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence; this is a cluster-state observation, not a per-event measurement.
 
 ### `atc_config_reload_total`
 
@@ -364,9 +315,6 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** counter
 - **Attributes:** `result` (`"success"` | `"failure"`), `reason` (`"applied"` | `"noop"` | `"read"` | `"parse"` | `"validate"`); `pod`, `instance` (injected)
 - **Measures:** Config-watcher reload attempts, labeled by outcome. `result="success",reason="applied"` — reload changed AppState and broadcast `ConfigUpdate`. `result="success",reason="noop"` — reload re-read the file but content matched current AppState (no broadcast). `result="failure",reason="read"` — file I/O failure (deleted file, permissions). `result="failure",reason="parse"` — YAML deserialization failure. `result="failure",reason="validate"` — zero capacity / empty labels / duplicate pool. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 2]` attribute slices per outcome (cached-instrument convention) — call sites incur no allocation on emit.
-- **Per-replica vs cluster:** Per-replica — each replica's watcher reloads independently from its local view of the ConfigMap mount.
-- **Aggregation:** `sum without (pod, instance) (rate(atc_config_reload_total[5m]))` for cluster-wide reload rate; per-reason breakdown surfaces failure spikes. A sustained non-zero `reason="failure"` rate indicates the operator's most-recent YAML edit is invalid and the cluster is running on the previous good config.
-- **Example PromQL:** `sum by (reason) (rate(atc_config_reload_total[5m]))`
 
 ### `atc_config_runner_pools`
 
@@ -374,9 +322,6 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** Number of operator-declared runner pools currently loaded in `AppState.runner_pool_capacities`. Reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count. Implemented as an OTel `ObservableGauge<f64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention; the atomic update IS the metric update). `Weak<AtomicI64>` registration ensures dropped watchers do not leak callbacks.
-- **Per-replica vs cluster:** Per-replica observation of a cluster-wide quantity. All replicas mount the same ConfigMap so values should match within the kubelet sync window; divergence (~60 s skew) is normal during a rolling ConfigMap update.
-- **Aggregation:** `max without (pod, instance) (atc_config_runner_pools)` for the cluster-wide pool count; per-pod divergence during a rolling reload is expected.
-- **Example PromQL:** `max without (pod, instance) (atc_config_runner_pools)`
 
 ### `atc_ws_connections_active`
 
@@ -384,19 +329,13 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** Number of WebSocket clients currently connected to `/v1/ws` on this replica — the count of in-flight `handle_socket` tasks. Implemented as an OTel `ObservableGauge<i64>` whose callback reads from `Arc<AtomicI64>` on every collection cycle (cached-instrument convention). The atomic is incremented at the start of each `handle_socket_inner` and decremented via a drop guard on every exit path. `Weak<AtomicI64>` registration ensures the callback no-ops after the owning `WsMetrics` Arc is released.
-- **Per-replica vs cluster:** Per-replica — each replica counts its own connected clients. Cluster-wide value is the sum across pods.
-- **Aggregation:** `sum without (pod, instance) (atc_ws_connections_active)` for the cluster-wide connection count.
-- **Example PromQL:** `sum without (pod, instance) (atc_ws_connections_active)`
 
 ### `atc_ws_lagged_evictions_total`
 
 - **Name:** `atc_ws_lagged_evictions_total`
 - **Type:** counter
 - **Attributes:** `channel` (`"committed"` | `"config"`); `pod`, `instance` (injected)
-- **Measures:** WebSocket clients force-disconnected because their broadcast receiver fell behind and the bounded buffer (capacity 256) overflowed. `channel="committed"` is the `CommittedEvent` fan-out from `PersistentStore::subscribe()`; `channel="config"` is the operator-config reload stream from `config_events_tx`. A sustained nonzero rate means the broadcast buffer is undersized for current traffic OR a specific client is stalled. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 1]` attribute slices per channel (cached-instrument convention) — call sites incur no allocation on emit.
-- **Per-replica vs cluster:** Per-replica — each replica counts its own lagged-eviction events.
-- **Aggregation:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))` for per-channel eviction rate; `sum (rate(atc_ws_lagged_evictions_total[5m]))` for the total. A steady stream on `channel="config"` is suspicious because operator-config reloads are low-volume; on `channel="committed"` it indicates a slow client under high webhook traffic.
-- **Example PromQL:** `sum by (channel) (rate(atc_ws_lagged_evictions_total[5m]))`
+- **Measures:** WebSocket clients force-disconnected because their broadcast receiver fell behind and the bounded buffer (capacity 256) overflowed. `channel="committed"` is the `CommittedEvent` fan-out from `PersistentStore::subscribe()`; `channel="config"` is the operator-config reload stream from `config_events_tx`. Implemented as a sync `Counter<u64>` with pre-built `[KeyValue; 1]` attribute slices per channel (cached-instrument convention) — call sites incur no allocation on emit.
 
 ### `atc_display_ttl_seconds` — intentionally absent
 
@@ -407,10 +346,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `oldest_row_age_seconds_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained. Useful as the retention-headroom signal: under healthy steady state the value oscillates near `outbox_retention` and rate-of-change matches the sweep rate. A monotonically rising value past `outbox_retention` indicates the sweep is not deleting (verify `atc_pg_outbox_rows_deleted_total` rate; check for sub-floor retention or absent heartbeats).
-- **Per-replica vs cluster:** Per-replica observation of a cluster-wide quantity (the outbox is shared). All replicas observe the same value within the heartbeat skew.
-- **Aggregation:** `max without (pod, instance) (atc_pg_outbox_oldest_row_age_seconds)` for the cluster-wide signal.
-- **Example PromQL:** `max without (pod, instance) (atc_pg_outbox_oldest_row_age_seconds)` (Grafana renders NaN as gaps)
+- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Implemented as an OTel `ObservableGauge<f64>` whose callback reads the per-replica `oldest_row_age_seconds_atomic: Arc<AtomicI64>` and maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained.
 
 ## Span inventory
 
