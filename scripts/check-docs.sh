@@ -57,9 +57,20 @@ FLAT=$(YQ -r '
 # For each changed file, find the first matching group (first-match-wins) and
 # emit every doc that group lists. Files matching no pattern contribute
 # nothing.
+#
+# Directory-level CLAUDE.md and AGENTS.md files bypass the gate unconditionally:
+# they're agent-facing pointers derived from the canonical architecture doc,
+# not source artifacts whose changes propagate into the architecture doc. The
+# no-mapping-required allow-list comment in doc-mapping.yaml documents this.
 get_docs_for_file() {
     local file="$1"
     local matched_group=""
+
+    case "$(basename "$file")" in
+        CLAUDE.md|AGENTS.md)
+            return
+            ;;
+    esac
 
     while IFS=$'\t' read -r g pat _doc; do
         # shellcheck disable=SC2053
