@@ -61,25 +61,25 @@ Rejected: SSR is unnecessary for a real-time dashboard, and the deployment shape
 
 React is the dominant frontend framework by ecosystem size and familiarity. Its ecosystem (React Query, Zustand, React Spring, Framer Motion) is mature. The tooling investment is low for most teams.
 
-Two factors weighed against it here. First, Svelte 5's rune system offers finer-grained reactivity without a virtual DOM: `$derived` columns react only to their specific state slice, while React's component re-render model requires `useMemo`/`useCallback` to achieve comparable isolation — adding boilerplate for the same outcome. Second, the dashboard was being built during the Svelte 5 runes release cycle, and targeting the new primitive was a deliberate capability bet on compile-time reactivity without a runtime. ATC's use case — high-frequency WebSocket updates, minimal branching UI logic — is well-suited to Svelte's fine-grained model.
+Svelte 5's rune system offers finer-grained reactivity without a virtual DOM: `$derived` columns react only to their specific state slice, while React's component re-render model requires `useMemo`/`useCallback` to achieve comparable isolation — adding boilerplate for the same outcome. ATC's use case — high-frequency WebSocket updates, minimal branching UI logic — is well-suited to Svelte's fine-grained model.
 
-Rejected: higher per-component boilerplate, larger runtime, and no advantage for this specific use case over Svelte 5 runes.
+Rejected: higher per-component boilerplate, larger runtime, and no advantage for this specific use case over Svelte 5's compile-time reactivity model.
 
 ### Vue 3
 
 Vue 3 (Composition API) is comparable in scope and performance to Svelte 5. Its reactivity model, `<script setup>`, and single-file components are mature. Nuxt 3 would have provided a SvelteKit-equivalent path.
 
-The deciding factor was timing: Svelte 5's runes were newly released and represented a compile-time-no-runtime reactivity model that Vue's runtime-based `ref`/`reactive` does not match. For a high-frequency dashboard, the performance ceiling difference mattered. The choice was partially subjective — Vue is viable — but Svelte's compile-time approach was the target capability for this project.
+The deciding factor was the reactivity model: Svelte's compile-time-no-runtime approach (runes compile to direct DOM updates) versus Vue's runtime-based `ref`/`reactive` (reactivity proxies tracked at runtime). For a high-frequency dashboard, the performance ceiling difference mattered. The choice was partially subjective — Vue is viable — but Svelte's compile-time approach was the preferred target.
 
-Rejected: functionally viable, but Svelte 5's compile-time model and runes were the preferred target capability.
+Rejected: functionally viable, but Svelte's compile-time reactivity model was the preferred target.
 
 ### Tailwind v3
 
-Tailwind v3 was the stable, widely deployed version at decision time. Tailwind v4 was newer (early release / beta) and its Vite plugin integration was not yet as widely adopted.
+Tailwind v3 is the prior major version, still widely deployed. It runs as a PostCSS plugin and configures design tokens in a JavaScript config file.
 
-The deciding trade-off was the Vite plugin. Tailwind v4's first-party `@tailwindcss/vite` plugin removes PostCSS from the pipeline entirely: no `postcss.config.js`, no PostCSS transform step, just a Vite plugin. For a project with a custom CSS-variable-based design system (OKLCH tokens in an `@theme` block), having the CSS processed directly by Vite — rather than through PostCSS as a separate tool — reduces the number of moving parts. The v4 `@theme` directive also lets design tokens live in CSS natively, which is where the OKLCH `oklch()` function calls belong.
+The deciding trade-off was the Vite plugin and the config model. Tailwind v4's first-party `@tailwindcss/vite` plugin removes PostCSS from the pipeline entirely: no `postcss.config.js`, no PostCSS transform step, just a Vite plugin. For a project with a custom CSS-variable-based design system (OKLCH tokens in an `@theme` block), having the CSS processed directly by Vite — rather than through PostCSS as a separate tool — reduces the number of moving parts. The v4 `@theme` directive also lets design tokens live in CSS natively, which is where the OKLCH `oklch()` function calls belong.
 
-Rejected: v3 is stable but requires a PostCSS pipeline and a JS config file for tokens; v4's Vite plugin and native CSS config were cleaner for this design system.
+Rejected: v3 requires a PostCSS pipeline and a JS config file for tokens; v4's Vite plugin and native CSS config were cleaner for this design system.
 
 ### HSL / RGB / sRGB color models
 
@@ -96,7 +96,7 @@ Rejected: HSL/RGB lack perceptual uniformity across hues, making consistent visu
 - **Deployment simplicity:** The frontend builds to a static `dist/` that the Rust binary embeds at compile time. Production deployments are a single binary with no Node.js runtime.
 - **OKLCH everywhere:** Adding new semantic color tokens, new themes, or new status states requires only a `--hue`-compatible `oklch()` value. The contrast gate test at build time enforces WCAG AA compliance automatically; failures are caught before merge.
 - **Biome/ESLint split is durable until Biome adds Svelte support:** When Biome ships Svelte support, ESLint and prettier-plugin-svelte can be retired, reducing the toolchain to one linter and one formatter.
-- **Tailwind v4 Vite plugin immaturity:** At adoption time, the `@tailwindcss/vite` plugin had some rough edges in dev mode (a known interaction with Playwright coverage source-map requests). These were documented and worked around; the core build path was stable.
+- **Tailwind v4 Vite plugin edges:** The `@tailwindcss/vite` plugin has a known interaction with Playwright coverage source-map requests in dev mode. Documented and worked around; the core build path is stable.
 - **Svelte 5 runes are the reactivity primitive:** All new stores should use the rune-class pattern (`class Foo { value = $state(...); derived = $derived(...) }`), not the Svelte 4 `writable`/`derived` store API.
 
 ## References
