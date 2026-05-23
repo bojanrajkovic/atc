@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-13
+Last verified: 2026-05-23
 
 ## Purpose
 
@@ -10,7 +10,22 @@ For execution-time rules (after the plan is approved and context is cleared), se
 
 ## Workflow Phases
 
-Feature design follows six phases in order. Each has an explicit gate before the next.
+```mermaid
+flowchart TD
+    P1[1. Context Gathering] --> P2[2. Clarification]
+    P2 --> P3[3. Definition of Done]
+    P3 -->|DoD not confirmed| P2
+    P3 -->|DoD confirmed| P4[4. Brainstorming]
+    P4 --> P5[5. Design Documentation]
+    P5 --> P6[6. Plan Review]
+    P6 --> SC{Self-consistency check}
+    SC -->|passes| CR{Codex review\nnon-trivial plans}
+    CR -->|review finds issues| P5
+    CR -->|approved| P7[7. Finalize and Hand Off]
+    SC -->|trivial plan, skip codex| P7
+```
+
+Feature design follows seven phases in order. Each has an explicit gate before the next.
 
 ### 1. Context Gathering
 
