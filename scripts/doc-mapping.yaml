@@ -168,11 +168,20 @@ mappings:
     docs:
       - docs/architecture/deployment.md
 
+  # Operator metric-interpretation guide pairs with metrics.md, not
+  # deployment.md. Listed BEFORE the docs/operator/* catch-all so first-match
+  # wins. When operator interpretation content moves, the matching arch-doc
+  # metric reference / span surface lives in metrics.md.
+  - patterns:
+      - docs/operator/metric-interpretation-guide.md
+    docs:
+      - docs/architecture/metrics.md
+
   # Operator runbooks: how-to content for the deployment surface. Touching
-  # an operator runbook tugs on deployment.md's cross-link surface, so the
-  # gate keeps them coupled. Future granular runbooks (e.g. an OTel
-  # interpretation guide whose parent is metrics.md) can override this
-  # catch-all by listing a more specific pattern above it.
+  # a runbook tugs on deployment.md's cross-link surface, so the gate keeps
+  # them coupled. Future granular runbooks whose parent isn't deployment.md
+  # (like the metric-interpretation-guide above) override this catch-all by
+  # listing a more specific pattern above it.
   - patterns:
       - docs/operator/*
     docs:
