@@ -59,6 +59,8 @@ Use `just test` for the full suite (what CI and the pre-push hook run) or `cargo
 
 Do not write source-level grep assertions — tests that `readFileSync` a source file and regex-match its content to enforce invariants like "this file only reads `storeX.fieldY`." They fire on innocuous refactors, miss semantically-identical variants (e.g., `const { x } = obj` vs `obj.x`), and replicate what code review and lint rules already do. Prefer: behavioral test > lint rule > reviewer guidance > source grep. Reserve source-level checks for ESLint/Biome custom AST rules where they belong.
 
+Deeper backend-test patterns (testcontainers shared-container behavior, the `#[serial_test::serial]` requirement for OTel-touching tests, the `OnceLock`-guarded exporter harness) live in [`docs/testing.md`](docs/testing.md).
+
 ### E2E Tests
 
 `just test` runs Vitest (unit + browser) + cargo nextest, but does NOT include Playwright E2E. Run `just test-e2e` separately (`pnpm exec playwright test` under the hood) when touching:
