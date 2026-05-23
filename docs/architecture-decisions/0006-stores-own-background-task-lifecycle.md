@@ -6,12 +6,12 @@ Last verified: 2026-05-23
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Starting: PgStore::start(...) / InMemoryStore::start(...)
-    Starting --> Running: spawn listener+drain+heartbeat+sweep (PG)\nor eviction (in-memory); store JoinHandles in Mutex
-    Running --> Running: subscribe() returns broadcast::Receiver\napply_*_event writes\nread_snapshot / liveness_check read
-    Running --> ShuttingDown: orchestrator calls persist.shutdown()
-    ShuttingDown --> Stopped: take handles from Mutex;\njoin_with_timeout each
-    Stopped --> Stopped: second shutdown() is no-op\n(handles already taken)
+    [*] --> Starting
+    Starting --> Running: background tasks spawned, handles registered
+    Running --> Running: subscribers attach, writes apply, reads return
+    Running --> ShuttingDown: orchestrator triggers coordinated shutdown
+    ShuttingDown --> Stopped: handles joined with per-task timeout
+    Stopped --> Stopped: re-entry is no-op
 ```
 
 > **Revised by ADR-0008:** Geographic claims in this ADR (the trait lives in `atc-server::persist`; `PgStore::start` spawns listener and drain from inside `atc-server`; the per-task `SHUTDOWN_TIMEOUT_*` constants are atc-server-internal) are superseded by the four-crate split. The lifecycle ownership reasoning (each store owns its background tasks and exposes one `shutdown()` join point) is preserved — only the source locations move: `PersistentStore` to `atc-persist`, `PgStore` machinery to `atc-store-pg`, `InMemoryStore` machinery to `atc-store-mem`, and the per-store shutdown timeouts move into the store crates that consume them. See `docs/architecture-decisions/0008-persistence-crate-split.md` (introduced in issue #169 phase 1).
