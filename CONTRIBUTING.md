@@ -167,6 +167,33 @@ Minor/patch updates auto-merge after a 3-day release-age delay; major updates re
 
 Prefer best-in-class, batteries-included libraries over hand-rolled minimalism. "Fewer dependencies" is a neutral fact, not a virtue — rank options by ergonomics, maintenance health, and fit, not by dep count. Adding a well-maintained crate or package to get good out-of-box behavior is a fair trade. When proposing architectural alternatives, do not write "(Recommended)" next to an option whose main advantage is minimalism.
 
+## Planning-Artifact Labels
+
+Design plans, ADRs, and implementation tickets use numbering schemes to coordinate work — phases (`Phase 2c`, `Sub-Phase 4`), acceptance criteria (`AC2.1`, `AC10.3`), test sequences (`T1`, `T6b`, `T11`), and bare ADR refs (`per ADR-0005`). These belong in the **historical record only**: ADRs, design plans, ideation, commit messages, CHANGELOG, and the `Last verified:` line at the top of CLAUDE.md / AGENTS.md files. They must NOT survive into current-state artifacts.
+
+**Why:** a future maintainer reading a test failure or scanning a comment will not have the design plan in their head. A test name like `t11_concurrent_same_entity_commits_in_seq_order` or a comment `// AC6.7: reconnect silence during buffered drain` couples the code to a planning document and adds nothing the behavioral text alone does not already say.
+
+**Strip from:**
+
+- **Test function and file names** — `phase_NX_*`, `ac<N>_<M>_*`, and `t<N>[a-z]?_*` prefixes. Rename to describe the invariant being verified.
+- **Code comments** — module docs, doc comments on items, inline comments, section banners (e.g., `// ===== ... (AC5.1–AC5.4) =====`). Describe what the code does, not which planning artifact it satisfies.
+- **Test report labels** — `describe(...)` / `test.describe(...)` strings. Behavioral text after the prefix usually already exists; preserve it and drop the tag.
+- **Module-level docstrings that enumerate test cases** (e.g., `T1 — does X / T2 — does Y`) — rewrite as a description of what the file covers as a whole, not a numbered list.
+- **User-visible strings** — chart-time `{{ fail }}`, `tracing::error!`, `NOTES.txt`, README, Prometheus metric description strings.
+- **Architecture docs and CLAUDE.md / AGENTS.md** — these describe what IS, not what HAS BEEN. Planning-artifact references almost always live inside changelog-flavored content that itself doesn't belong; trim the content, not just the labels.
+
+**Keep in:**
+
+- ADRs (`docs/architecture-decisions/`), design plans (`docs/design-plans/`), ideation (`docs/ideation/`) — these documents *are* the historical record. Acceptance criteria belong in design plans by design; the numbers are useful inside the plan, they just shouldn't escape into the code.
+- Commit messages and CHANGELOG.
+- The `Last verified: YYYY-MM-DD (#N closed: …)` line at the top of CLAUDE.md / AGENTS.md (authorship metadata).
+- Captured external history — e.g., webhook fixture commit messages from real GitHub Actions output (data, not authored content).
+- Definitional references that explain what the term means rather than using it (e.g., the `(AC1, AC2, …)` parenthetical in `docs/planning-workflow.md`).
+
+**Audit hint:** when stripping one class, sweep the others at the same time. The starter regex `rg 'Phase \d|AC[0-9]|\bT[0-9]+[a-z]?\b|fn (phase|ac|t)[0-9]'` catches all four common patterns; tune as new schemes appear.
+
+**The pattern:** ask "is this artifact part of the current contract / current state, or part of the historical record?" If current, strip the planning-artifact reference (and probably the surrounding sentence — these refs usually accompany changelog narration that doesn't belong in a current-state doc). If historical, keep.
+
 ## Git Hooks
 
 Three tiers of git hooks are enforced via lefthook:
