@@ -67,6 +67,12 @@ Module-specific middle sections as needed: Architecture, Data Model, Schema, Con
 ### Timestamp
 All docs carry a `Last verified: YYYY-MM-DD` timestamp at the top, updated whenever the doc is reviewed or modified.
 
+### Fillable template
+
+A copy-and-fill template at [`docs/architecture/_template.md`](architecture/_template.md) embeds the required structure with anti-rationalization placeholders at the temptation points where authors tend to drift — pasting struct definitions, enumerating every metric name, embedding integration recipes, or growing the Files section into a directory listing. Each section's author-guidance blockquote names the canonical home for the content that doesn't belong, and instructs the author to delete the guidance after filling in real content.
+
+When creating a new arch doc, copy the template (not modify it in place) into `docs/architecture/<topic>.md`, fill in the placeholders, then delete the `> _Author guidance — delete after filling in._` blockquotes so the published doc carries only the real content.
+
 ## ADR Convention
 
 Architecture Decision Records live in `docs/architecture-decisions/`. When a significant architectural decision is made or changed:
