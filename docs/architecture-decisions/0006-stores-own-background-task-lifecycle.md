@@ -80,7 +80,7 @@ production subscribers come from `subscribe()`.
 
 ### 3. The `PersistentStore` trait gains `subscribe()` and `shutdown()`
 
-Trait additions live alongside the existing methods in [`backend/crates/atc-persist/src/lib.rs:80`](../../backend/crates/atc-persist/src/lib.rs): `fn subscribe(&self) -> broadcast::Receiver<CommittedEvent>` (was `SeqEvent` at the time of this ADR; renamed in ADR-0008) and `async fn shutdown(&self)`.
+The trait gains two methods: a synchronous one that registers a broadcast subscriber for committed events (returns a `broadcast::Receiver`), and an async one that drives coordinated shutdown of the store's background tasks. The broadcast event type was named `SeqEvent` when this ADR was written; ADR-0008 renamed it to `CommittedEvent`.
 
 `subscribe()` delegates to the store's internal `broadcast_tx`. `shutdown()`
 takes the handles out of the mutex via `take()` and joins them with
@@ -127,7 +127,7 @@ events via `persist.apply_run_event(...)` with distinct run IDs.
 
 ### 6. `AppState` drops `webhook_tx`; WS handlers subscribe via `persist`
 
-`AppState` ([`backend/crates/atc-server/src/state.rs:14`](../../backend/crates/atc-server/src/state.rs)) loses its `webhook_tx: broadcast::Sender<SeqEvent>` field — the broadcast sender now lives inside whichever store `AppState.persist` points at, and `subscribe()` is the public seam. (The field set has grown since this ADR for unrelated reasons — config watcher, display TTL, etc. — see the current source for the canonical shape.)
+`AppState` loses its `webhook_tx` field — the broadcast sender now lives inside whichever store `AppState.persist` points at, and `subscribe()` is the public seam. (`AppState` has grown additional fields since this ADR for unrelated reasons — config watcher, display TTL, etc. — see the current source for the canonical shape.)
 
 `ws_handler` calls `state.persist.subscribe()` to obtain its
 `broadcast::Receiver<SeqEvent>`. The store keeps the broadcast sender alive
@@ -138,7 +138,7 @@ racing against `RecvError::Closed`.
 
 ### 7. `run_shutdown_orchestration` takes `Arc<dyn PersistentStore>`
 
-Signature lives at [`backend/crates/atc-server/src/shutdown.rs:134`](../../backend/crates/atc-server/src/shutdown.rs). The relevant change versus the pre-ADR shape: a single `persist: Arc<dyn PersistentStore>` parameter replaces the three per-mode `Option<JoinHandle<()>>` params (`drain_handle`, `listener_handle`, `eviction_handle`).
+The orchestrator's signature changes shape: a single `persist: Arc<dyn PersistentStore>` parameter replaces the three per-mode `Option<JoinHandle<()>>` parameters that previously carried per-mode shutdown handles (drain + listener for PG mode; eviction for in-memory mode).
 
 The three per-mode handle params (`drain_handle`, `listener_handle`,
 `eviction_handle`, each `Option<JoinHandle<()>>`) collapse to a single
