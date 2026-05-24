@@ -18,7 +18,7 @@ figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }
 reqwest = { version = "=0.13.3", default-features = false, features = ["rustls"] }
 rust-embed = "=8.11.0"
 serde = { version = "=1.0.228", features = ["derive"] }
-serde_json = "=1.0.149"
+serde_json = "=1.0.150"
 tokio = { version = "=1.52.3", features = ["full"] }
 tokio-util = { version = "=0.7.18", features = ["rt"] }
 tower-http = { version = "=0.6.11", features = ["cors", "trace"] }
