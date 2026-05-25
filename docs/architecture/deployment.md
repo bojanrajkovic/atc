@@ -179,6 +179,8 @@ Key knobs: `grafanaDashboard.namespace` (override ConfigMap namespace; empty ren
 
 Every panel's datasource reference uses a `${datasource}` template variable of type `datasource` with `query: prometheus`, so Grafana resolves it against whichever Prometheus datasource(s) the operator has configured — no chart-side string substitution. Panel queries use the native histogram form (`Base2ExponentialHistogram`); operators running collectors that emit only classic histograms must translate to the classic `_bucket`-based form. See `docs/architecture/metrics.md` § Histogram aggregation.
 
+**Collector label shape matters.** Dashboard panel selectors and the `pod` template variable use `k8s_pod_name` — the label that Grafana Alloy's `otelcol.exporter.prometheus` with `resource_to_telemetry_conversion = true` promotes from the `k8s.pod.name` OTLP resource attribute. Operators using Prometheus scrape discovery (kube-prometheus-stack sidecar) will see `pod` instead; those operators must adjust the `pod` template variable query (`label_values(atc_build_info, pod)`) and the `k8s_pod_name=~"$pod"` selectors throughout. Health-check routes (`/healthz`, `/readyz`) are excluded from all HTTP panels via `http_route!~"/healthz|/readyz"` to avoid inflating request-rate and latency panels with liveness-probe traffic.
+
 ## Helm chart testing
 
 `helm-unittest` suites live in `deploy/helm/atc/tests/unit/*.yaml` and are run via `helm unittest deploy/helm/atc`. The CI helm-validate sweep and the `helm install` kind + chart-testing job are described in `docs/architecture/ci-pipeline.md`.

@@ -56,7 +56,7 @@ Every metric ATC emits MUST ship with documentation in this section covering its
 ### Metric attribute conventions
 
 - Lowercase keys; no high-cardinality values; no PII.
-- No replica or pod label is baked into any application metric — replica identity is added by the collector at ingest time as standard target labels (`pod`, `instance`).
+- No replica or pod label is baked into any application metric — replica identity is added by the collector at ingest time. The exact label name depends on the collector path: Prometheus scrape discovery injects `pod` and `instance`; OTLP collectors with `resource_to_telemetry_conversion` (e.g., Grafana Alloy) promote resource attributes, so `k8s.pod.name` arrives as `k8s_pod_name`. Dashboard queries and PromQL examples in this doc use `k8s_pod_name` (the OTLP path).
 - Use HTTP semantic conventions for HTTP-shaped metrics: `http.request.method`, `http.response.status_code`, `http.route`, `url.scheme`. The `axum-otel-metrics` middleware emits these on the request-duration histogram.
 
 Every new metric MUST extend [Operational metrics](#operational-metrics) with the seven-element block before merge. The doc-staleness gate (`scripts/check-docs-lefthook.sh`) blocks the push if backend metric changes land without a matching update here.
@@ -67,7 +67,7 @@ The seven elements:
 2. **Type** — counter / gauge / histogram.
 3. **Attributes** — every emitted attribute name AND its source. Distinguish *emitted* attributes (added by the application) from *injected* attributes (e.g., `pod`, `instance`, added by the collector at ingest).
 4. **Measures** — one sentence stating what the metric value means in operational terms (not implementation terms).
-5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (pod)` or `without (pod)`.
+5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (k8s_pod_name)` or `without (k8s_pod_name)` (OTLP path; substitute `pod` for scrape-discovery stacks).
 6. **Aggregation guidance** — recommended cross-replica aggregator (`avg`/`max`/`sum`/`p99`) with one-sentence rationale.
 7. **Example PromQL** — one canonical query an operator can paste into Grafana to see meaningful data. Queries assume the OTLP→Prometheus path (the collector translates OTel exponential histograms into Prometheus native histograms; see [Histogram aggregation](#histogram-aggregation) for the cross-format note on `*_bucket` series). Keep this element only when the query shape is non-obvious; standard forms (`rate(...)`, `sum by (...) (rate(...))`) are described in the operator guide and not repeated here.
 
@@ -127,7 +127,7 @@ The meter provider registers an instrument view that maps every `Histogram` inst
 
 This requires the `spec_unstable_metrics_views` feature on `opentelemetry_sdk`. The feature is unstable per OTel's spec stability tracking — the API may shift on a future SDK release. The implementer who bumps `opentelemetry_sdk` owns reviewing the feature gate.
 
-The cross-format implication: native and classic histograms have incompatible query forms. Against a Prometheus native histogram, `histogram_quantile` operates on the metric directly — `histogram_quantile(0.99, sum by (pod) (rate(name[5m])))`, no `_bucket` suffix. Against a classic histogram the `_bucket` / `le` grouping is required. The OTel SDK's `Base2ExponentialHistogram` aggregation maps to native histograms when the storage supports them (Prometheus 2.40+, Mimir); the bundled dashboard assumes that path. Operators running collectors that emit only classic histograms must translate dashboard panel queries to the classic `_bucket` form.
+The cross-format implication: native and classic histograms have incompatible query forms. Against a Prometheus native histogram, `histogram_quantile` operates on the metric directly — `histogram_quantile(0.99, sum by (k8s_pod_name) (rate(name[5m])))`, no `_bucket` suffix. Against a classic histogram the `_bucket` / `le` grouping is required. The OTel SDK's `Base2ExponentialHistogram` aggregation maps to native histograms when the storage supports them (Prometheus 2.40+, Mimir); the bundled dashboard assumes that path. Operators running collectors that emit only classic histograms must translate dashboard panel queries to the classic `_bucket` form.
 
 ## atc_build_info
 
@@ -163,13 +163,15 @@ See [frontend-app.md](frontend-app.md) for the WebSocket message-delivery instru
 
 `spawn_process_collector` spawns the `opentelemetry-system-metrics` observer under a tokio task and returns a wrapper handle. The observer ticks on the standard `OTEL_METRIC_EXPORT_INTERVAL` interval (default 30 s, configurable via env), reads `sysinfo` snapshots of the current process, and records gauges against the global meter installed by `init_otel`. Emitted instruments (OTel dotted names; the OTLP→Prometheus collector translates dots to underscores so the scrape names are the `process_*` variants shown):
 
-| OTel name | Scrape name | Type | Unit | Value | Attributes |
+| OTel name | Prometheus name | Type | Unit | Value | Attributes |
 |---|---|---|---|---|---|
-| `process.cpu.usage` | `process_cpu_usage` | f64 gauge | percent | `raw_cpu_percent / core_count` (0..100% of host capacity) | `process.pid`, `process.executable.name`, `process.executable.path`, `process.command` |
-| `process.cpu.utilization` | `process_cpu_utilization` | f64 gauge | percent | raw sysinfo `cpu_usage` summed across cores (0..N*100%) | none |
-| `process.memory.usage` | `process_memory_usage` | i64 gauge | byte | resident memory | same four `process.*` |
-| `process.memory.virtual` | `process_memory_virtual` | i64 gauge | byte | committed virtual memory | same four `process.*` |
-| `process.disk.io` | `process_disk_io` | i64 gauge | byte | cumulative read/write bytes | same four `process.*` plus `direction=read\|write` |
+| `process.cpu.usage` | `process_cpu_usage_percent` | f64 gauge | percent | `raw_cpu_percent / core_count` (0..100% of host capacity) | `process.pid`, `process.executable.name`, `process.executable.path`, `process.command` |
+| `process.cpu.utilization` | `process_cpu_utilization_percent` | f64 gauge | percent | raw sysinfo `cpu_usage` summed across cores (0..N*100%) | none |
+| `process.memory.usage` | `process_memory_usage_byte` | i64 gauge | byte | resident memory | same four `process.*` |
+| `process.memory.virtual` | `process_memory_virtual_byte` | i64 gauge | byte | committed virtual memory | same four `process.*` |
+| `process.disk.io` | `process_disk_io_byte` | i64 gauge | byte | cumulative read/write bytes | same four `process.*` plus `direction=read\|write` |
+
+The OTLP→Prometheus conversion appends the unit suffix when converting OTel metric names (dots → underscores, unit appended if not already present in the name). The column above reflects the actual Prometheus metric names produced by this conversion.
 
 The `process_cpu_usage` / `process_cpu_utilization` row inversion above is correct — `opentelemetry-system-metrics 0.31.0` binds the Rust variables to inverted constants: the Rust binding named `process_cpu_utilization` records CPU usage with attributes, and the binding named `process_cpu_usage` records CPU utilization without attributes.
 
@@ -179,7 +181,7 @@ The observer's loop runs forever — there is no cooperative shutdown surface on
 
 ## Operational metrics
 
-All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added at ingest as standard target attributes (`pod`, `instance`) — the exact attachment mechanism depends on the collector configuration; the metrics themselves are agnostic.
+All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added at ingest — the exact label name depends on the collector path (see [Metric attribute conventions](#metric-attribute-conventions)). Dashboard queries use `k8s_pod_name` (OTLP path via Grafana Alloy with `resource_to_telemetry_conversion`); substitute `pod` for scrape-discovery stacks.
 
 For operator interpretation — NaN-sentinel meanings, what sustained rates suggest, per-channel eviction severity, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
 
