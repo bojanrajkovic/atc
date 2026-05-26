@@ -47,7 +47,7 @@ atc-store-mem = { path = "../atc-store-mem", features = ["test-support"] }
 # tick / accessor methods on PgStore).
 atc-store-pg = { path = "../atc-store-pg", features = ["test-support"] }
 chrono = { version = "=0.4.44", features = ["serde"] }
-const-hex = "=1.19.0"
+const-hex = "=1.19.1"
 futures-util = "=0.3.32"
 hmac = "=0.13.0"
 opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
