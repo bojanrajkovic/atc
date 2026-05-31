@@ -25,6 +25,7 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     createdAt: new Date().toISOString(),
     runStartedAt: null,
     updatedAt: new Date().toISOString(),
+    runAttempt: 1,
     ...overrides,
   }
 }

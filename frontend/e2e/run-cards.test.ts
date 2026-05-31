@@ -110,6 +110,7 @@ function makeWorkflowRun(f: (typeof STATUS_FIXTURE)[number]): StateSnapshot['run
     createdAt: '2026-04-17T09:59:00Z',
     runStartedAt: f.status === 'Queued' ? null : '2026-04-17T09:59:30Z',
     updatedAt: '2026-04-17T10:00:00Z',
+    runAttempt: 1,
   }
 }
 
@@ -177,6 +178,7 @@ test.describe('run-cards', () => {
               createdAt: '2026-04-17T09:59:00Z',
               runStartedAt: null,
               updatedAt: '2026-04-17T09:59:00Z',
+              runAttempt: 1,
             },
           ],
           jobs: [],
@@ -241,6 +243,7 @@ test.describe('run-cards', () => {
               createdAt: '2026-04-17T09:59:00Z',
               runStartedAt: '2026-04-17T09:59:30Z',
               updatedAt: '2026-04-17T10:00:00Z',
+              runAttempt: 1,
             },
           ],
           jobs: [
@@ -323,6 +326,7 @@ test.describe('run-cards', () => {
               createdAt: '2026-04-17T09:59:00Z',
               runStartedAt: '2026-04-17T09:59:55Z',
               updatedAt: '2026-04-17T10:00:00Z',
+              runAttempt: 1,
             },
           ],
           jobs: [],

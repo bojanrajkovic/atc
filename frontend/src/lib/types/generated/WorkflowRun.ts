@@ -88,4 +88,10 @@ updatedAt: string,
  * `default` attr keeps inbound deserialization permissive when the
  * field is missing.
  */
-completedAt?: string, };
+completedAt?: string, 
+/**
+ * Attempt number (1-based). GitHub increments this on every re-run while
+ * reusing the same `run_id`. The dashboard can display "attempt N" badges
+ * for runs with `run_attempt > 1`.
+ */
+runAttempt: number, };

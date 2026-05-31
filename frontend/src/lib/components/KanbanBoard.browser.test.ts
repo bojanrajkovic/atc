@@ -329,6 +329,7 @@ describe('KanbanBoard (browser mode)', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: {
           type: 'Requested',
         },
@@ -351,6 +352,7 @@ describe('KanbanBoard (browser mode)', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: {
           type: 'InProgress',
         },
@@ -373,6 +375,7 @@ describe('KanbanBoard (browser mode)', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: {
           type: 'Completed',
           data: {

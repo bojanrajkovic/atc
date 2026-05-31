@@ -187,6 +187,7 @@ function makeRun(
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     runStartedAt: overrides.runStartedAt ?? null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
+    runAttempt: overrides.runAttempt ?? 1,
   }
 }
 

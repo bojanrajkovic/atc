@@ -80,6 +80,12 @@ updatedAt: string,
  */
 completedAt?: string, 
 /**
+ * Attempt number for this run (1 for the initial run, 2+ for re-runs).
+ * Used by the persistence layer to detect when a new attempt supersedes a
+ * completed/cancelled run and should reset its state.
+ */
+runAttempt: number, 
+/**
  * The action that occurred.
  */
 action: RunEvent, };

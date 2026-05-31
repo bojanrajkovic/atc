@@ -219,26 +219,35 @@ class RunStore {
     // would not invalidate per-key subscribers. Mirrors applyJobEvent's
     // immutable-update pattern and the backend atc-core CoW semantics.
     const existing = this.runs.get(runId)
+    // GitHub re-runs reuse the same run_id with a higher run_attempt. When a
+    // newer attempt arrives we must NOT carry the prior attempt's terminal
+    // fields forward — otherwise a reopened run would keep showing its old
+    // conclusion / completedAt. Mirrors the backend reset (atc-store-pg's
+    // CASE-on-attempt UPSERT and atc-store-mem's fresh-start bypass).
+    const isNewAttempt = existing !== undefined && envelope.runAttempt > existing.runAttempt
+    const carryExisting = isNewAttempt ? undefined : existing
+
     // Mirror the backend's `envelope.completed_at.or(existing.completed_at)`:
     // envelope wins when defined, existing carries through otherwise. The
     // field is `completedAt?: string` (TS optional), so we only include it
     // when defined — `exactOptionalPropertyTypes: true` rejects explicit
     // `completedAt: undefined`. Without this carry, a WS Completed event
     // would leave `completedAt` undefined and the display-TTL filter would
-    // never expire the row until the next snapshot fetch.
-    const completedAt = envelope.completedAt ?? existing?.completedAt
+    // never expire the row until the next snapshot fetch. On a new attempt
+    // `carryExisting` is undefined, so the stale completedAt is dropped.
+    const completedAt = envelope.completedAt ?? carryExisting?.completedAt
     const completedAtPatch = completedAt === undefined ? {} : { completedAt }
 
-    const run: WorkflowRun = existing
+    const run: WorkflowRun = carryExisting
       ? {
-          ...existing,
+          ...carryExisting,
           ...completedAtPatch,
           status,
-          conclusion: conclusion ?? existing.conclusion,
+          conclusion: conclusion ?? carryExisting.conclusion,
           // Preserve optional fields that may be absent in some events
-          workflowName: envelope.workflowName ?? existing.workflowName,
-          workflowPath: envelope.workflowPath ?? existing.workflowPath,
-          runStartedAt: envelope.runStartedAt ?? existing.runStartedAt,
+          workflowName: envelope.workflowName ?? carryExisting.workflowName,
+          workflowPath: envelope.workflowPath ?? carryExisting.workflowPath,
+          runStartedAt: envelope.runStartedAt ?? carryExisting.runStartedAt,
           // Overwrite fields that the backend always replaces
           branch: envelope.branch,
           headSha: envelope.headSha,
@@ -246,6 +255,7 @@ class RunStore {
           displayTitle: envelope.displayTitle,
           htmlUrl: envelope.htmlUrl,
           updatedAt: envelope.updatedAt,
+          runAttempt: envelope.runAttempt,
         }
       : {
           id: runId,
@@ -264,6 +274,7 @@ class RunStore {
           createdAt: envelope.createdAt,
           runStartedAt: envelope.runStartedAt,
           updatedAt: envelope.updatedAt,
+          runAttempt: envelope.runAttempt,
           ...completedAtPatch,
         }
 

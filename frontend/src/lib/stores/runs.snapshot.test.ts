@@ -30,6 +30,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       })
 

@@ -80,6 +80,7 @@ describe('ConnectionManager', () => {
             updatedAt: new Date().toISOString(),
             status: 'Queued',
             conclusion: null,
+            runAttempt: 1,
           },
         ],
         jobs: [],

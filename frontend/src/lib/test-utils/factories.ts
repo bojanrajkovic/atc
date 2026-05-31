@@ -26,6 +26,7 @@ export function createMockRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun
     createdAt: '2026-04-16T10:00:00Z',
     runStartedAt: null,
     updatedAt: '2026-04-16T10:00:00Z',
+    runAttempt: 1,
     ...overrides,
   }
 }
@@ -71,6 +72,7 @@ export function createMockRunEvent(overrides: Partial<RunEventEnvelope> = {}): R
     createdAt: '2026-04-16T10:00:00Z',
     runStartedAt: null,
     updatedAt: '2026-04-16T10:00:00Z',
+    runAttempt: 1,
     action: { type: 'Requested' },
     ...overrides,
   }

@@ -40,6 +40,7 @@ function makeRunCommittedEvent(action: { type: string; data?: unknown }): Commit
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         // biome-ignore lint/suspicious/noExplicitAny: test fixture constructs off-shape values
         action: action as any,
       },

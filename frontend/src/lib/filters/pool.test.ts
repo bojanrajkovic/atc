@@ -94,6 +94,7 @@ describe('pool filter', () => {
       createdAt: '2025-01-01T00:00:00Z',
       runStartedAt: null,
       updatedAt: '2025-01-01T00:00:00Z',
+      runAttempt: 1,
     }
 
     const mockRun2: WorkflowRun = {
@@ -113,6 +114,7 @@ describe('pool filter', () => {
       createdAt: '2025-01-02T00:00:00Z',
       runStartedAt: '2025-01-02T00:01:00Z',
       updatedAt: '2025-01-02T00:01:00Z',
+      runAttempt: 1,
     }
 
     const mockJob1: Job = {
