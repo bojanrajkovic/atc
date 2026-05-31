@@ -1,6 +1,11 @@
 import type { Page } from '@playwright/test'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
 import type { RunEvent } from '$lib/types/generated/RunEvent'
+// Relative path, not `$lib`: Playwright resolves relative imports but not the
+// tsconfig `$lib` alias for value imports. `factories.ts` is value-import-free
+// (all `import type`), so importing it by relative path is safe — see
+// frontend/CLAUDE.md "factories.ts must stay value-import-free".
+import { createMockRunEvent } from '../../src/lib/test-utils/factories'
 
 /**
  * JS-level WebSocket mock for E2E tests.
@@ -78,7 +83,21 @@ export const WS_MOCK_INIT_SCRIPT = `
 })();
 `
 
-/** Helper: build a CommittedEvent JSON payload for a Run event (wire format). */
+/**
+ * Helper: build a CommittedEvent JSON payload for a Run event (wire format).
+ *
+ * The envelope is built via `createMockRunEvent`, so the run-side defaults
+ * (`org`, `repo`, `workflowName`, `headSha`, …) have a single source of truth
+ * in `factories.ts`, and a new required field on `RunEventEnvelope` fails at
+ * compile time inside the factory rather than being silently dropped here.
+ *
+ * `runId` stays `number` in the caller-facing shape (so the ~60 call sites are
+ * untouched) and is widened to `bigint` internally; `bigintReplacer` then
+ * encodes ids as strings on the wire. The dual-mode reviver in `connection.ts`
+ * (and the inline revivers below) accept both number and string, so the
+ * round-trip is preserved — this matches what `makeJobCommittedEvent` already
+ * does on the job side.
+ */
 export function makeRunEvent(
   seq: number,
   fields: {
@@ -94,30 +113,18 @@ export function makeRunEvent(
     action: RunEvent
   },
 ): string {
-  return JSON.stringify({
-    seq,
-    event: {
-      type: 'Run',
-      data: {
-        runId: fields.runId,
-        org: 'test-org',
-        repo: 'test-repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test commit',
-        triggerEvent: 'push',
-        displayTitle: fields.displayTitle,
-        htmlUrl: `https://github.com/test-org/test-repo/actions/runs/${fields.runId}`,
-        createdAt: fields.createdAt,
-        runStartedAt: fields.runStartedAt,
-        updatedAt: fields.updatedAt,
-        runAttempt: 1,
-        action: fields.action,
-      },
-    },
+  const data = createMockRunEvent({
+    runId: BigInt(fields.runId),
+    // Keep the runId-parametrized URL the inline literal used to emit — some
+    // specs (run-detail-panel) assert the external link href against it.
+    htmlUrl: `https://github.com/test-org/test-repo/actions/runs/${fields.runId}`,
+    displayTitle: fields.displayTitle,
+    createdAt: fields.createdAt,
+    runStartedAt: fields.runStartedAt,
+    updatedAt: fields.updatedAt,
+    action: fields.action,
   })
+  return JSON.stringify({ seq, event: { type: 'Run', data } }, bigintReplacer)
 }
 
 /** Helper: build a CommittedEvent JSON payload for a Job event. */
