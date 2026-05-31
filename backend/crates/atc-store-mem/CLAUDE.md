@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-store-mem
 
-Last verified: 2026-05-23
+Last verified: 2026-05-30
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence / Storage modes section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -13,6 +13,8 @@ Used in **dev/test mode only** (single replica, lossy on restart). Production de
 ## Sharp edges
 
 **No `sqlx`, no DB I/O.** This crate must not pull in any storage-library dependency — that is the architectural separation between `atc-store-mem` and `atc-store-pg`. `atc-github` is required because `apply_*_event` constructs `WebhookEvent::Run(env)` / `WebhookEvent::Job(env)` to populate the `CommittedEvent.event` field before broadcasting.
+
+**Re-run detection lives here, not in the FSM.** When an incoming `RunEventEnvelope` has a higher `run_attempt` than the stored run, `apply_run_event` is called with `None` as the existing run so the state machine constructs a fresh run rather than rejecting the transition out of the prior attempt's terminal state. The comparison (`env.run_attempt > existing.run_attempt`) is made in this crate before the pure call — atc-core never sees it. `atc-store-pg` implements the equivalent semantics in its UPSERT predicate; the two stores must stay behaviorally aligned on re-runs.
 
 **Eviction handle ownership.** `InMemoryStore::start` spawns the eviction task and stores its `JoinHandle` inside the returned `Arc<Self>`. Callers MUST cancel the same `CancellationToken` they passed to `start()` before invoking `shutdown()`; otherwise the eviction task never observes cancellation and `shutdown()` waits the full `EVICTION_SHUTDOWN_TIMEOUT` (1 second) before aborting. Stores constructed via `new_for_test` skip the spawn and `shutdown()` returns immediately.
 

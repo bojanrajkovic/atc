@@ -441,7 +441,18 @@ impl PersistentStore for InMemoryStore {
         let mut state = self.state.write().await;
 
         let existing = state.runs.get(&env.run_id).cloned();
-        let run = atc_core::state_machine::apply_run_event(existing, env.clone()).map_err(|e| {
+        // When a new attempt arrives (higher run_attempt), pass None so the
+        // state machine constructs a fresh run rather than trying to transition
+        // out of the prior attempt's terminal state.
+        let is_new_attempt = existing
+            .as_ref()
+            .map(|r| env.run_attempt > r.run_attempt)
+            .unwrap_or(false);
+        let run = atc_core::state_machine::apply_run_event(
+            if is_new_attempt { None } else { existing },
+            env.clone(),
+        )
+        .map_err(|e| {
             tracing::warn!(error = %e, "state machine rejected run transition");
             atc_core::PersistError::from(e)
         })?;
