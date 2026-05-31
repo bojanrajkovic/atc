@@ -345,5 +345,28 @@ describe('RunStore', () => {
       expect(run.conclusion).toBeNull()
       expect(runStore.runs.size).toBe(1)
     })
+
+    it('ignores a stale lower-attempt run event (no regression)', () => {
+      const runId = 51n
+      // Client already holds attempt 2, in progress.
+      runStore.applyRunEvent(
+        createMockRunEvent({ runId, runAttempt: 2, action: { type: 'InProgress' } }),
+      )
+
+      // A delayed attempt-1 Completed frame arrives (e.g. older replica during
+      // a rolling deploy). It must not overwrite or regress the live attempt.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 1,
+          action: { type: 'Completed', data: { conclusion: 'Cancelled' } },
+        }),
+      )
+
+      const run = runStore.runs.get(runId)!
+      expect(run.status).toBe('InProgress')
+      expect(run.runAttempt).toBe(2)
+      expect(run.conclusion).toBeNull()
+    })
   })
 })

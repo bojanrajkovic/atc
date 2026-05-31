@@ -235,6 +235,12 @@ class RunStore {
     // (rolling deploy) can emit run events without the field, so the runtime
     // value is undefined despite the type. Default to 1.
     const runAttempt = envelope.runAttempt ?? 1
+    // Ignore a stale lower-attempt run event — mirrors the backend stores'
+    // rejection (atc-store-pg's same-attempt UPSERT gate, atc-store-mem's hard
+    // reject). A delayed attempt-1 frame (from an older replica during a
+    // rolling deploy / backlog drain, or a stale buffered frame) must not
+    // overwrite or regress a newer attempt the client already holds.
+    if (existing !== undefined && runAttempt < existing.runAttempt) return
     // GitHub re-runs reuse the same run_id with a higher run_attempt. When a
     // newer attempt arrives we must NOT carry the prior attempt's terminal
     // fields forward — otherwise a reopened run would keep showing its old
