@@ -7,9 +7,18 @@ use crate::webhook::types::{
 
 // ===== Test helpers =====
 
-/// Create a minimal `WorkflowRunWebhook` with sensible defaults.
-fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> WorkflowRunWebhook {
-    let workflow_run = WorkflowRunData {
+/// Baseline `WorkflowRunData` with sensible defaults.
+///
+/// Override specific fields with struct-update syntax:
+///
+/// ```rust
+/// let run = WorkflowRunData {
+///     run_attempt: 2,
+///     ..default_run_data(Some("cancelled"))
+/// };
+/// ```
+fn default_run_data(conclusion: Option<&str>) -> WorkflowRunData {
+    WorkflowRunData {
         id: 123_456,
         status: "completed".to_string(),
         conclusion: conclusion.map(std::string::ToString::to_string),
@@ -24,7 +33,13 @@ fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> Workflow
         created_at: fixed_test_timestamp(),
         run_started_at: Some(fixed_test_timestamp()),
         updated_at: fixed_test_timestamp(),
-    };
+        run_attempt: 1,
+    }
+}
+
+/// Create a minimal `WorkflowRunWebhook` with sensible defaults.
+fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> WorkflowRunWebhook {
+    let workflow_run = default_run_data(conclusion);
 
     WorkflowRunWebhook {
         action: action.to_string(),

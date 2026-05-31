@@ -61,6 +61,19 @@ pub(crate) struct WorkflowRunData {
     pub run_started_at: Option<DateTime<Utc>>,
     /// When the run was last updated.
     pub updated_at: DateTime<Utc>,
+    /// Attempt number for this run (1 for the initial run, 2+ for re-runs).
+    ///
+    /// GitHub always sends this on `workflow_run` payloads, but we default it
+    /// to 1 rather than requiring it — consistent with this crate's permissive
+    /// posture toward webhook-payload shape (see the `deny_unknown_fields`
+    /// sharp edge). A payload missing it is treated as the first attempt.
+    #[serde(default = "default_run_attempt")]
+    pub run_attempt: i32,
+}
+
+/// Default `run_attempt` when GitHub's payload omits it: the first attempt.
+fn default_run_attempt() -> i32 {
+    1
 }
 
 /// Fields from the `workflow` top-level object.

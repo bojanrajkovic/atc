@@ -58,6 +58,7 @@ pub(crate) fn translate_run(webhook: WorkflowRunWebhook) -> Result<RunEventEnvel
         run_started_at: webhook.workflow_run.run_started_at,
         updated_at: webhook.workflow_run.updated_at,
         completed_at,
+        run_attempt: webhook.workflow_run.run_attempt,
         action,
     })
 }
