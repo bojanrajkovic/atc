@@ -278,6 +278,7 @@ describe('roving-tabindex single-active invariant', () => {
       createdAt: '2026-05-01T10:00:01Z',
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
       action: { type: 'Queued', data: { labels: ['A'], steps: [] } },
     })
     runStore.applyJobEvent({
@@ -289,6 +290,7 @@ describe('roving-tabindex single-active invariant', () => {
       createdAt: '2026-05-01T10:00:02Z',
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
       action: { type: 'Queued', data: { labels: ['B'], steps: [] } },
     })
     await tick()

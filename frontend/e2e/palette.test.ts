@@ -117,6 +117,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: new Date().toISOString(),
+          runAttempt: 1,
         },
       ])
     })
@@ -136,6 +137,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: null,
+          runAttempt: 1,
         },
       ])
     })
@@ -300,6 +302,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: new Date().toISOString(),
+          runAttempt: 1,
         },
       ])
     })
@@ -359,6 +362,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: null,
+          runAttempt: 1,
         },
       ])
     })
@@ -577,6 +581,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: null,
+          runAttempt: 1,
         },
         // Pool 2: linux/self-hosted/x86/big-runners with groupName 'foo'
         {
@@ -591,6 +596,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: null,
+          runAttempt: 1,
         },
         {
           id: 9012n,
@@ -604,6 +610,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: null,
+          runAttempt: 1,
         },
         {
           id: 9013n,
@@ -617,6 +624,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: null,
           completedAt: null,
+          runAttempt: 1,
         },
         // Pool 3: macos/arm64 with groupName 'macos'
         {
@@ -631,6 +639,7 @@ test.describe('Command palette', () => {
           createdAt: new Date().toISOString(),
           startedAt: new Date().toISOString(),
           completedAt: null,
+          runAttempt: 1,
         },
       ])
     })

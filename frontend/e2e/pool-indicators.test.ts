@@ -26,6 +26,7 @@ test.describe('Pool indicators update live', () => {
       createdAt: new Date().toISOString(),
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
       action: {
         type: 'Queued',
         data: {
@@ -53,6 +54,7 @@ test.describe('Pool indicators update live', () => {
       createdAt: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       completedAt: null,
+      runAttempt: 1,
       action: {
         type: 'InProgress',
         data: {
@@ -87,6 +89,7 @@ test.describe('Pool indicators update live', () => {
       createdAt: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
+      runAttempt: 1,
       action: {
         type: 'Completed',
         data: {

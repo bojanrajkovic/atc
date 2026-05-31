@@ -19,6 +19,7 @@ function queuedJob(jobId: bigint, runId: bigint, name: string): JobEventEnvelope
     createdAt: '2026-04-17T09:58:00Z',
     startedAt: null,
     completedAt: null,
+    runAttempt: 1,
     action: { type: 'Queued', data: { labels: [], steps: [] } },
   }
 }
@@ -38,6 +39,7 @@ function completedJob(
     createdAt: '2026-04-17T09:58:00Z',
     startedAt: '2026-04-17T09:58:05Z',
     completedAt: '2026-04-17T09:59:00Z',
+    runAttempt: 1,
     action: {
       type: 'Completed',
       data: { conclusion, runner: null, labels: [], steps: [] },

@@ -1013,6 +1013,7 @@ test.describe('kanban-keyboard-nav — pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
       })
       // job 2n for run 2n → labels ['pool-b']
@@ -1025,6 +1026,7 @@ test.describe('kanban-keyboard-nav — pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: ['pool-b'], steps: [] } },
       })
       // job 3n for run 3n → labels ['pool-a']
@@ -1037,6 +1039,7 @@ test.describe('kanban-keyboard-nav — pool-filter', () => {
         createdAt: '2026-01-01T12:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: ['pool-a'], steps: [] } },
       })
     })

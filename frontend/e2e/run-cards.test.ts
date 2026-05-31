@@ -263,6 +263,7 @@ test.describe('run-cards', () => {
               createdAt: '2026-04-17T09:59:00Z',
               startedAt: '2026-04-17T09:59:30Z',
               completedAt: null,
+              runAttempt: 1,
             },
           ],
           runnerPoolCapacities: [],

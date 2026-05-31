@@ -142,8 +142,11 @@ class RunStore {
    */
   jobStatsByRun = $derived.by<ReadonlyMap<bigint, JobStats>>(() => {
     const result = new Map<bigint, JobStats>()
-    for (const runId of this.runs.keys()) {
-      const jobs = this.jobsByRun.get(runId) ?? []
+    for (const [runId, run] of this.runs) {
+      // Filter to the run's current attempt so a re-run's card doesn't count
+      // the previous attempt's jobs (GitHub assigns fresh job IDs per attempt
+      // under the same run_id). Mirrors the backend read filter.
+      const jobs = (this.jobsByRun.get(runId) ?? []).filter((j) => j.runAttempt === run.runAttempt)
       const completed = jobs.filter((j) => j.status === 'Completed').length
       result.set(runId, {
         completed,
@@ -168,7 +171,11 @@ class RunStore {
   jobsByRunId = $derived.by<ReadonlyMap<bigint, Job[]>>(() => {
     const result = new Map<bigint, Job[]>()
     for (const [runId, jobs] of this.jobsByRun) {
-      result.set(runId, jobs)
+      // When the parent run is known, show only its current attempt's jobs.
+      // Unknown parent (job-before-run stub) → keep all; the attempt can't be
+      // compared yet and self-heals once the run event lands.
+      const run = this.runs.get(runId)
+      result.set(runId, run ? jobs.filter((j) => j.runAttempt === run.runAttempt) : jobs)
     }
     return result
   })
@@ -182,8 +189,11 @@ class RunStore {
    */
   jobs = $derived.by<Job[]>(() => {
     const result: Job[] = []
-    for (const arr of this.jobsByRun.values()) {
+    for (const [runId, arr] of this.jobsByRun) {
+      const run = this.runs.get(runId)
       for (const job of arr) {
+        // Drop prior-attempt jobs once the parent run has advanced.
+        if (run && job.runAttempt !== run.runAttempt) continue
         if (!isExpired(job.status, job.completedAt, this.displayTtlSeconds, uiStore.nowMs)) {
           result.push(job)
         }
@@ -338,6 +348,7 @@ class RunStore {
         createdAt: envelope.createdAt,
         startedAt: envelope.startedAt,
         completedAt: envelope.completedAt,
+        runAttempt: envelope.runAttempt,
       }
       jobs = [...existing, newJob]
     } else {
@@ -358,6 +369,7 @@ class RunStore {
         createdAt: envelope.createdAt,
         startedAt: envelope.startedAt ?? prev.startedAt,
         completedAt: envelope.completedAt ?? prev.completedAt,
+        runAttempt: envelope.runAttempt,
       }
       jobs = [...existing]
       jobs[jobIndex] = updated

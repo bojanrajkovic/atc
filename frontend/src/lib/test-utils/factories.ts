@@ -48,6 +48,7 @@ export function createMockJob(overrides: Partial<Job> = {}): Job {
     createdAt: '2026-04-16T10:00:00Z',
     startedAt: null,
     completedAt: null,
+    runAttempt: 1,
     ...overrides,
   }
 }

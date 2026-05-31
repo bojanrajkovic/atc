@@ -32,6 +32,7 @@ function makeJob(
     createdAt: createdAt ?? new Date().toISOString(),
     startedAt: startedAt ?? null,
     completedAt: completedAt ?? null,
+    runAttempt: 1,
   }
 }
 

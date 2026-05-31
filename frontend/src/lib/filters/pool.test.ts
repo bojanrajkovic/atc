@@ -129,6 +129,7 @@ describe('pool filter', () => {
       createdAt: '2025-01-01T00:00:00Z',
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
     }
 
     const mockJob2: Job = {
@@ -143,6 +144,7 @@ describe('pool filter', () => {
       createdAt: '2025-01-02T00:00:00Z',
       startedAt: '2025-01-02T00:00:30Z',
       completedAt: '2025-01-02T00:02:00Z',
+      runAttempt: 1,
     }
 
     it('null filter is identity passthrough', () => {

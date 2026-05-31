@@ -43,6 +43,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: [], steps: [] } },
       })
 
@@ -77,6 +78,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
       }
 
       runStore.loadSnapshot([newRun], [newJob])
@@ -144,6 +146,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: '2025-01-02T00:00:05Z',
         completedAt: '2025-01-02T00:00:15Z',
+        runAttempt: 1,
       }
 
       const job2: Job = {
@@ -158,6 +161,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: '2025-01-02T00:00:05Z',
         completedAt: '2025-01-02T00:00:20Z',
+        runAttempt: 1,
       }
 
       const job3: Job = {
@@ -172,6 +176,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T01:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
       }
 
       runStore.loadSnapshot([run1, run2], [job1, job2, job3])

@@ -70,6 +70,7 @@ function makeJobCommittedEvent(runId: bigint): CommittedEvent {
         createdAt: new Date().toISOString(),
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },

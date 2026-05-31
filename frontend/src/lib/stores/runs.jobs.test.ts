@@ -25,6 +25,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: {
@@ -58,6 +59,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -73,6 +75,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -99,6 +102,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: ['label1'], steps: [] },
@@ -115,6 +119,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: '2025-01-01T00:00:05Z',
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -145,6 +150,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: '2025-01-01T00:00:05Z',
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -165,6 +171,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: '2025-01-01T00:00:05Z',
         completedAt: '2025-01-01T00:00:15Z',
+        runAttempt: 1,
         action: {
           type: 'Completed',
           data: {
@@ -195,6 +202,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
