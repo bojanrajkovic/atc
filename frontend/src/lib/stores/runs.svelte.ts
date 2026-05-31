@@ -231,12 +231,16 @@ class RunStore {
     // would not invalidate per-key subscribers. Mirrors applyJobEvent's
     // immutable-update pattern and the backend atc-core CoW semantics.
     const existing = this.runs.get(runId)
+    // Normalize runAttempt at the store boundary: a pre-feature backend replica
+    // (rolling deploy) can emit run events without the field, so the runtime
+    // value is undefined despite the type. Default to 1.
+    const runAttempt = envelope.runAttempt ?? 1
     // GitHub re-runs reuse the same run_id with a higher run_attempt. When a
     // newer attempt arrives we must NOT carry the prior attempt's terminal
     // fields forward — otherwise a reopened run would keep showing its old
     // conclusion / completedAt. Mirrors the backend reset (atc-store-pg's
     // CASE-on-attempt UPSERT and atc-store-mem's fresh-start bypass).
-    const isNewAttempt = existing !== undefined && envelope.runAttempt > existing.runAttempt
+    const isNewAttempt = existing !== undefined && runAttempt > existing.runAttempt
     const carryExisting = isNewAttempt ? undefined : existing
 
     // Mirror the backend's `envelope.completed_at.or(existing.completed_at)`:
@@ -267,7 +271,7 @@ class RunStore {
           displayTitle: envelope.displayTitle,
           htmlUrl: envelope.htmlUrl,
           updatedAt: envelope.updatedAt,
-          runAttempt: envelope.runAttempt,
+          runAttempt,
         }
       : {
           id: runId,
@@ -286,7 +290,7 @@ class RunStore {
           createdAt: envelope.createdAt,
           runStartedAt: envelope.runStartedAt,
           updatedAt: envelope.updatedAt,
-          runAttempt: envelope.runAttempt,
+          runAttempt,
           ...completedAtPatch,
         }
 
@@ -296,6 +300,9 @@ class RunStore {
   applyJobEvent(envelope: JobEventEnvelope): void {
     const jobId = envelope.jobId
     const runId = envelope.runId
+    // Normalize runAttempt at the store boundary — see applyRunEvent. A
+    // pre-feature backend (rolling deploy) omits it; default to 1.
+    const runAttempt = envelope.runAttempt ?? 1
 
     // Determine status from the action type
     let status: 'Queued' | 'Waiting' | 'InProgress' | 'Completed'
@@ -350,7 +357,7 @@ class RunStore {
         createdAt: envelope.createdAt,
         startedAt: envelope.startedAt,
         completedAt: envelope.completedAt,
-        runAttempt: envelope.runAttempt,
+        runAttempt,
       }
       jobs = [...existing, newJob]
     } else {
@@ -371,7 +378,7 @@ class RunStore {
         createdAt: envelope.createdAt,
         startedAt: envelope.startedAt ?? prev.startedAt,
         completedAt: envelope.completedAt ?? prev.completedAt,
-        runAttempt: envelope.runAttempt,
+        runAttempt,
       }
       jobs = [...existing]
       jobs[jobIndex] = updated
@@ -399,7 +406,12 @@ class RunStore {
     displayTtlSeconds: number = 0,
   ): void {
     this.runs.clear()
-    for (const r of runs) this.runs.set(r.id, r)
+    // Normalize runAttempt at the wire/store boundary: a pre-feature backend
+    // replica (rolling deploy) serves /v1/state without the field, so the
+    // runtime value is undefined despite the type. Default to 1 so attempt
+    // comparisons in the job derivations don't collapse to false and hide
+    // every job. Mirrors the `displayTtlSeconds ?? 0` shim in connection.ts.
+    for (const r of runs) this.runs.set(r.id, { ...r, runAttempt: r.runAttempt ?? 1 })
 
     // Group into a plain Map first; arrays must be fully built before they
     // reach the SvelteMap (push-into-an-already-installed-array would not
@@ -407,7 +419,7 @@ class RunStore {
     const grouped = new Map<bigint, Job[]>()
     for (const job of jobs) {
       const arr = grouped.get(job.runId) ?? []
-      arr.push(job)
+      arr.push({ ...job, runAttempt: job.runAttempt ?? 1 })
       grouped.set(job.runId, arr)
     }
 
