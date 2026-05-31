@@ -36,6 +36,7 @@ fn run_forward_only_rejects_completed_to_in_progress() {
         run_started_at: Some(now),
         updated_at: now,
         completed_at: Some(now),
+        run_attempt: 1,
     };
 
     let envelope = make_run_event(run_id, RunEvent::InProgress);
@@ -83,6 +84,7 @@ fn run_first_sight_from_none_creates_run() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
         action: RunEvent::Requested,
     };
 
@@ -123,6 +125,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
     };
 
     // Envelope with workflow_name = None (common for in_progress events).
@@ -142,6 +145,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
         action: RunEvent::InProgress,
     };
 

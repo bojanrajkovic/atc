@@ -99,6 +99,10 @@ pub struct WorkflowRun {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub completed_at: Option<DateTime<Utc>>,
+    /// Attempt number (1-based). GitHub increments this on every re-run while
+    /// reusing the same `run_id`. The dashboard can display "attempt N" badges
+    /// for runs with `run_attempt > 1`.
+    pub run_attempt: i32,
 }
 
 impl WorkflowRun {
@@ -222,6 +226,7 @@ mod tests {
             run_started_at: Some(now),
             updated_at: now,
             completed_at: None,
+            run_attempt: 1,
         };
 
         assert_eq!(run.id, RunId(123));
@@ -269,6 +274,7 @@ mod tests {
             run_started_at: None,
             updated_at: now,
             completed_at: None,
+            run_attempt: 1,
         };
 
         let repo_key = run.repo_key();
@@ -321,6 +327,7 @@ mod tests {
             run_started_at: Some(now),
             updated_at: now,
             completed_at: Some(now),
+            run_attempt: 1,
         };
 
         let json_str = serde_json::to_string(&original).expect("serialize to JSON");
@@ -351,6 +358,7 @@ mod tests {
             run_started_at: None,
             updated_at: now,
             completed_at: None,
+            run_attempt: 1,
         };
 
         assert_eq!(run.branch, None);

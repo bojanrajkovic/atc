@@ -94,6 +94,10 @@ pub struct RunEventEnvelope {
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub completed_at: Option<DateTime<Utc>>,
+    /// Attempt number for this run (1 for the initial run, 2+ for re-runs).
+    /// Used by the persistence layer to detect when a new attempt supersedes a
+    /// completed/cancelled run and should reset its state.
+    pub run_attempt: i32,
     /// The action that occurred.
     pub action: RunEvent,
 }
