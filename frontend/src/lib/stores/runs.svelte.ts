@@ -283,8 +283,13 @@ class RunStore {
           id: runId,
           org: envelope.org,
           repo: envelope.repo,
-          workflowName: envelope.workflowName,
-          workflowPath: envelope.workflowPath,
+          // Reached for first-sight AND new-attempt resets. Workflow metadata
+          // is sticky and GitHub omits it on `in_progress` frames, so a re-run
+          // reopening via this branch must preserve the prior attempt's
+          // workflowName/workflowPath rather than null them. `existing` is the
+          // prior-attempt run on a reset and undefined on first-sight.
+          workflowName: envelope.workflowName ?? existing?.workflowName ?? null,
+          workflowPath: envelope.workflowPath ?? existing?.workflowPath ?? null,
           branch: envelope.branch,
           headSha: envelope.headSha,
           commitMessage: envelope.commitMessage,

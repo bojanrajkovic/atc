@@ -368,5 +368,39 @@ describe('RunStore', () => {
       expect(run.runAttempt).toBe(2)
       expect(run.conclusion).toBeNull()
     })
+
+    it('preserves sticky workflow metadata when a re-run reopens via an in_progress frame', () => {
+      const runId = 52n
+      // Attempt 1 established workflowName/workflowPath.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 1,
+          workflowName: 'CI',
+          workflowPath: '.github/workflows/ci.yml',
+          action: { type: 'Completed', data: { conclusion: 'Failure' } },
+        }),
+      )
+
+      // Re-run's first frame is in_progress (attempt 2) with workflow metadata
+      // omitted — GitHub sends null `workflow` on in_progress. The reset must
+      // clear the terminal conclusion but keep the sticky metadata.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 2,
+          workflowName: null,
+          workflowPath: null,
+          action: { type: 'InProgress' },
+        }),
+      )
+
+      const run = runStore.runs.get(runId)!
+      expect(run.status).toBe('InProgress')
+      expect(run.runAttempt).toBe(2)
+      expect(run.conclusion).toBeNull()
+      expect(run.workflowName).toBe('CI')
+      expect(run.workflowPath).toBe('.github/workflows/ci.yml')
+    })
   })
 })
