@@ -197,7 +197,7 @@ pub(crate) async fn read_all_jobs(
                j.run_attempt   AS "run_attempt!"
           FROM jobs j
           JOIN runs r ON r.id = j.run_id
-         WHERE j.run_attempt = r.run_attempt
+         WHERE j.run_attempt >= r.run_attempt
            AND ($1::timestamptz IS NULL
                 OR r.status != 'Completed'
                 OR r.completed_at IS NULL

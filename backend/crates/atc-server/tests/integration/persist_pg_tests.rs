@@ -343,6 +343,47 @@ async fn pg_jobs_filtered_to_current_attempt() {
     shutdown.cancel();
 }
 
+/// A higher-attempt queued job stays visible even before the run row advances.
+///
+/// GitHub emits no `workflow_run.requested` for a queued re-run, so the first
+/// signal can be `workflow_job.queued` at attempt 2 while the run is still the
+/// completed attempt 1. The `j.run_attempt >= r.run_attempt` read filter keeps
+/// that queued demand visible (only strictly-lower attempts are stale).
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_higher_attempt_job_visible_before_run_advances() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Attempt 1 completes.
+    store.apply_run_event(run_requested(1030)).await.unwrap();
+    store.apply_run_event(run_completed(1030)).await.unwrap();
+
+    // An attempt-2 queued job arrives before the attempt-2 run event would.
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 2,
+            ..job_queued(8003, 1030)
+        })
+        .await
+        .unwrap();
+
+    let snap = store.read_snapshot(None).await.expect("snapshot");
+    let job_ids: Vec<i64> = snap
+        .jobs
+        .iter()
+        .filter(|j| j.run_id == RunId(1030))
+        .map(|j| j.id.0)
+        .collect();
+    assert_eq!(
+        job_ids,
+        vec![8003],
+        "a higher-attempt queued job must stay visible before the run advances; got {job_ids:?}"
+    );
+    shutdown.cancel();
+}
+
 /// Queued → Queued is idempotent (same-status replay → Ok).
 #[tokio::test]
 #[serial_test::serial]

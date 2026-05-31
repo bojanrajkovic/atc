@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT j.id            AS \"id!\",\n               j.run_id        AS \"run_id!\",\n               j.name          AS \"name!\",\n               j.status        AS \"status!\",\n               j.conclusion    AS \"conclusion?\",\n               j.runner_id     AS \"runner_id?\",\n               j.runner_name   AS \"runner_name?\",\n               j.runner_group_name AS \"runner_group_name?\",\n               j.labels        AS \"labels!: Vec<String>\",\n               j.steps         AS \"steps!: serde_json::Value\",\n               j.created_at    AS \"created_at!\",\n               j.started_at    AS \"started_at?\",\n               j.completed_at  AS \"completed_at?\",\n               j.run_attempt   AS \"run_attempt!\"\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n         WHERE j.run_attempt = r.run_attempt\n           AND ($1::timestamptz IS NULL\n                OR r.status != 'Completed'\n                OR r.completed_at IS NULL\n                OR r.completed_at >= $1::timestamptz)\n           AND ($1::timestamptz IS NULL\n                OR j.status != 'Completed'\n                OR j.completed_at IS NULL\n                OR j.completed_at >= $1::timestamptz)\n         ORDER BY j.id\n        ",
+  "query": "\n        SELECT j.id            AS \"id!\",\n               j.run_id        AS \"run_id!\",\n               j.name          AS \"name!\",\n               j.status        AS \"status!\",\n               j.conclusion    AS \"conclusion?\",\n               j.runner_id     AS \"runner_id?\",\n               j.runner_name   AS \"runner_name?\",\n               j.runner_group_name AS \"runner_group_name?\",\n               j.labels        AS \"labels!: Vec<String>\",\n               j.steps         AS \"steps!: serde_json::Value\",\n               j.created_at    AS \"created_at!\",\n               j.started_at    AS \"started_at?\",\n               j.completed_at  AS \"completed_at?\",\n               j.run_attempt   AS \"run_attempt!\"\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n         WHERE j.run_attempt >= r.run_attempt\n           AND ($1::timestamptz IS NULL\n                OR r.status != 'Completed'\n                OR r.completed_at IS NULL\n                OR r.completed_at >= $1::timestamptz)\n           AND ($1::timestamptz IS NULL\n                OR j.status != 'Completed'\n                OR j.completed_at IS NULL\n                OR j.completed_at >= $1::timestamptz)\n         ORDER BY j.id\n        ",
   "describe": {
     "columns": [
       {
@@ -96,5 +96,5 @@
       false
     ]
   },
-  "hash": "ec33b4890059b86f975740d2f2be4d1c326e3a701c52f827571ed44803a698ab"
+  "hash": "18a958480b15a9fbb84e6827acbf848f05dff2bda614d7673d2067b41efd3a3d"
 }

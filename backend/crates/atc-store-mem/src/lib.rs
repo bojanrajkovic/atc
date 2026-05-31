@@ -254,14 +254,16 @@ impl InMemoryStore {
             .jobs
             .values()
             .filter(|j| {
-                // Filter jobs to the parent run's current attempt. A re-run
-                // reuses the run_id with fresh job IDs at a higher attempt;
-                // prior-attempt jobs must drop out so the snapshot doesn't mix
-                // attempts. When the parent run is absent (job-before-run stub),
-                // keep the job — its attempt can't be compared yet. Mirrors the
-                // PG read's `j.run_attempt = r.run_attempt` predicate.
+                // Filter out prior-attempt jobs. A re-run reuses the run_id
+                // with fresh job IDs at a higher attempt; jobs from a *lower*
+                // attempt than the parent run are stale and drop out. Jobs at
+                // the current OR a higher attempt are kept — a re-run's queued
+                // jobs can arrive (with the higher attempt) before the run row
+                // advances, and must stay visible. When the parent run is
+                // absent (job-before-run stub), keep the job. Mirrors the PG
+                // read's `j.run_attempt >= r.run_attempt` predicate.
                 let parent = state.runs.get(&j.run_id);
-                let attempt_current = parent.is_none_or(|r| r.run_attempt == j.run_attempt);
+                let attempt_current = parent.is_none_or(|r| j.run_attempt >= r.run_attempt);
                 let parent_alive = parent.is_none_or(|r| run_passes_cutoff(r, cutoff));
                 attempt_current && parent_alive && job_passes_cutoff(j, cutoff)
             })
