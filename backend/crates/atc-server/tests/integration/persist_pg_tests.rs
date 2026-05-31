@@ -60,34 +60,22 @@ fn run_completed(run_id: i64) -> RunEventEnvelope {
 
 /// Minimal queued job envelope.
 fn job_queued(job_id: i64, run_id: i64) -> JobEventEnvelope {
-    JobEventEnvelope {
-        job_id: JobId(job_id),
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        name: "test-job".to_string(),
-        created_at: ts(),
-        started_at: None,
-        completed_at: None,
-        action: JobEvent::Queued {
+    common::make_job_envelope(
+        JobId(job_id),
+        RunId(run_id),
+        JobEvent::Queued {
             labels: vec!["ubuntu-latest".to_string()],
             steps: vec![],
         },
-    }
+    )
 }
 
 /// InProgress job envelope with runner info.
 fn job_in_progress(job_id: i64, run_id: i64) -> JobEventEnvelope {
-    JobEventEnvelope {
-        job_id: JobId(job_id),
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        name: "test-job".to_string(),
-        created_at: ts(),
-        started_at: Some(ts()),
-        completed_at: None,
-        action: JobEvent::InProgress {
+    common::make_job_envelope(
+        JobId(job_id),
+        RunId(run_id),
+        JobEvent::InProgress {
             runner: Some(atc_core::job::RunnerInfo {
                 id: 42,
                 name: "runner-1".to_string(),
@@ -96,21 +84,15 @@ fn job_in_progress(job_id: i64, run_id: i64) -> JobEventEnvelope {
             labels: vec!["ubuntu-latest".to_string()],
             steps: vec![],
         },
-    }
+    )
 }
 
 /// Completed job envelope.
 fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
-    JobEventEnvelope {
-        job_id: JobId(job_id),
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        name: "test-job".to_string(),
-        created_at: ts(),
-        started_at: Some(ts()),
-        completed_at: Some(ts()),
-        action: JobEvent::Completed {
+    common::make_job_envelope(
+        JobId(job_id),
+        RunId(run_id),
+        JobEvent::Completed {
             conclusion: atc_core::JobConclusion::Success,
             runner: Some(atc_core::job::RunnerInfo {
                 id: 42,
@@ -120,7 +102,7 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
             labels: vec!["ubuntu-latest".to_string()],
             steps: vec![],
         },
-    }
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +239,106 @@ async fn pg_run_higher_attempt_reopens_completed_run() {
         row.completed_at.is_none(),
         "completed_at should reset on a new attempt, got {:?}",
         row.completed_at
+    );
+    shutdown.cancel();
+}
+
+/// A stale lower `run_attempt` event must NOT reopen or re-conclude a run that
+/// has already advanced to a newer attempt.
+///
+/// GitHub can deliver a delayed attempt-1 `completed` webhook after attempt 2
+/// is already in progress. Without the `EXCLUDED.run_attempt = runs.run_attempt`
+/// gate on the status-transition branch, that stale event would match (since
+/// `InProgress` is a valid predecessor of `Completed`), regress run_attempt to
+/// 1, and close the live attempt with the old conclusion.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_stale_lower_attempt_rejected() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Attempt 1 completes, then attempt 2 reopens the run (now InProgress @ 2).
+    store.apply_run_event(run_requested(1011)).await.unwrap();
+    store.apply_run_event(run_completed(1011)).await.unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            run_attempt: 2,
+            ..run_in_progress(1011)
+        })
+        .await
+        .unwrap();
+
+    // A delayed attempt-1 completed event arrives late. It must be rejected.
+    let stale = run_completed(1011); // run_attempt = 1
+    let result = store.apply_run_event(stale).await;
+    assert!(
+        matches!(result, Err(PersistError::InvalidTransition)),
+        "stale lower attempt should be rejected, got: {result:?}"
+    );
+
+    let row = sqlx::query!("SELECT status, conclusion, run_attempt FROM runs WHERE id = 1011")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.status, "InProgress", "live attempt must stay open");
+    assert_eq!(row.run_attempt, 2, "run_attempt must not regress to 1");
+    assert!(
+        row.conclusion.is_none(),
+        "live attempt must not inherit the stale conclusion, got {:?}",
+        row.conclusion
+    );
+    shutdown.cancel();
+}
+
+/// A re-run's jobs supersede the prior attempt's in the snapshot: only jobs
+/// whose `run_attempt` matches the run's current attempt are returned.
+///
+/// GitHub assigns fresh job IDs per attempt under the same run_id, so without
+/// the `j.run_attempt = r.run_attempt` read filter the card would mix dead
+/// attempt-1 jobs with the live attempt-2 ones.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_jobs_filtered_to_current_attempt() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Attempt 1: a completed job under an in-progress run.
+    store.apply_run_event(run_requested(1020)).await.unwrap();
+    store.apply_run_event(run_in_progress(1020)).await.unwrap();
+    store
+        .apply_job_event(job_completed(8001, 1020))
+        .await
+        .unwrap();
+
+    // Re-run: attempt 2 reopens the run with a fresh job ID.
+    store
+        .apply_run_event(RunEventEnvelope {
+            run_attempt: 2,
+            ..run_in_progress(1020)
+        })
+        .await
+        .unwrap();
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 2,
+            ..job_in_progress(8002, 1020)
+        })
+        .await
+        .unwrap();
+
+    let snap = store.read_snapshot(None).await.expect("snapshot");
+    let job_ids: Vec<i64> = snap
+        .jobs
+        .iter()
+        .filter(|j| j.run_id == RunId(1020))
+        .map(|j| j.id.0)
+        .collect();
+    assert_eq!(
+        job_ids,
+        vec![8002],
+        "snapshot must return only the current attempt's job (8002), not the prior attempt's (8001); got {job_ids:?}"
     );
     shutdown.cancel();
 }
@@ -587,6 +669,7 @@ async fn pg_job_coalesce_preserves_runner() {
         created_at: ts(),
         started_at: Some(ts()),
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::InProgress {
             runner: None, // omit runner — should be preserved
             labels: vec!["ubuntu-latest".to_string()],
@@ -640,6 +723,7 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
         created_at: ts(),
         started_at: Some(ts()),
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::InProgress {
             runner: Some(atc_core::job::RunnerInfo {
                 id: 99,
@@ -701,6 +785,7 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
         created_at: fixed_test_timestamp() + Duration::from_hours(1), // different created_at
         started_at: None,
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::Queued {
             labels: vec![],
             steps: vec![],

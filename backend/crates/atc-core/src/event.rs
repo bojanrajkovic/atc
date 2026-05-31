@@ -97,9 +97,22 @@ pub struct RunEventEnvelope {
     /// Attempt number for this run (1 for the initial run, 2+ for re-runs).
     /// Used by the persistence layer to detect when a new attempt supersedes a
     /// completed/cancelled run and should reset its state.
+    ///
+    /// Defaults to 1 on deserialization: the PG drain decodes persisted
+    /// `outbox.payload` rows back into this type, and rows written before this
+    /// field existed carry no `run_attempt`. Without the default they would
+    /// fail to deserialize and be silently dropped from the drain during a
+    /// rolling deploy / backlog drain. Mirrors the webhook parser's default.
+    #[serde(default = "default_run_attempt")]
     pub run_attempt: i32,
     /// The action that occurred.
     pub action: RunEvent,
+}
+
+/// Default `run_attempt` for envelopes deserialized without the field
+/// (pre-feature persisted outbox rows): the first attempt.
+fn default_run_attempt() -> i32 {
+    1
 }
 
 /// Action that occurred on a job.
@@ -182,6 +195,15 @@ pub struct JobEventEnvelope {
     pub started_at: Option<DateTime<Utc>>,
     /// When the job finished executing.
     pub completed_at: Option<DateTime<Utc>>,
+    /// Attempt number of the parent run this job belongs to. GitHub assigns
+    /// fresh job IDs per attempt but reuses the run ID; the store filters jobs
+    /// to the run's current attempt so a re-run's card doesn't mix attempts.
+    ///
+    /// Defaults to 1 on deserialization for the same reason as
+    /// [`RunEventEnvelope::run_attempt`] — the PG drain decodes pre-feature
+    /// `outbox.payload` rows that carry no `run_attempt`.
+    #[serde(default = "default_run_attempt")]
+    pub run_attempt: i32,
     /// The action that occurred.
     pub action: JobEvent,
 }

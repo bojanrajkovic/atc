@@ -254,11 +254,16 @@ impl InMemoryStore {
             .jobs
             .values()
             .filter(|j| {
-                let parent_alive = state
-                    .runs
-                    .get(&j.run_id)
-                    .is_none_or(|r| run_passes_cutoff(r, cutoff));
-                parent_alive && job_passes_cutoff(j, cutoff)
+                // Filter jobs to the parent run's current attempt. A re-run
+                // reuses the run_id with fresh job IDs at a higher attempt;
+                // prior-attempt jobs must drop out so the snapshot doesn't mix
+                // attempts. When the parent run is absent (job-before-run stub),
+                // keep the job — its attempt can't be compared yet. Mirrors the
+                // PG read's `j.run_attempt = r.run_attempt` predicate.
+                let parent = state.runs.get(&j.run_id);
+                let attempt_current = parent.is_none_or(|r| r.run_attempt == j.run_attempt);
+                let parent_alive = parent.is_none_or(|r| run_passes_cutoff(r, cutoff));
+                attempt_current && parent_alive && job_passes_cutoff(j, cutoff)
             })
             .cloned()
             .collect();
@@ -441,6 +446,20 @@ impl PersistentStore for InMemoryStore {
         let mut state = self.state.write().await;
 
         let existing = state.runs.get(&env.run_id).cloned();
+        // Reject a stale lower attempt outright — mirrors the PG predicate's
+        // `EXCLUDED.run_attempt = runs.run_attempt` gate. A delayed event from a
+        // superseded attempt must not reopen or re-conclude the current one.
+        if let Some(ref r) = existing
+            && env.run_attempt < r.run_attempt
+        {
+            tracing::warn!(
+                run_id = env.run_id.0,
+                event_attempt = env.run_attempt,
+                stored_attempt = r.run_attempt,
+                "rejecting stale lower run attempt"
+            );
+            return Err(atc_core::PersistError::InvalidTransition);
+        }
         // When a new attempt arrives (higher run_attempt), pass None so the
         // state machine constructs a fresh run rather than trying to transition
         // out of the prior attempt's terminal state.

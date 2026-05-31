@@ -111,6 +111,12 @@ pub(crate) struct WorkflowJobData {
     pub steps: Vec<StepData>,
     /// Runner labels requested by the job (e.g., `["ubuntu-latest"]`).
     pub labels: Vec<String>,
+    /// Attempt number of the parent run this job belongs to (1 for the initial
+    /// run, 2+ for re-runs). GitHub assigns new job IDs per attempt but reuses
+    /// the run ID; this lets the store filter stale jobs from prior attempts.
+    /// Defaulted to 1 when absent, matching the run-level parser.
+    #[serde(default = "default_run_attempt")]
+    pub run_attempt: i32,
     /// Runner ID assigned to the job. `None` until runner assignment.
     pub runner_id: Option<i64>,
     /// Runner name. `None` until runner assignment.

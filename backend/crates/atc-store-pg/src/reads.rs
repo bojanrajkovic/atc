@@ -193,10 +193,12 @@ pub(crate) async fn read_all_jobs(
                j.steps         AS "steps!: serde_json::Value",
                j.created_at    AS "created_at!",
                j.started_at    AS "started_at?",
-               j.completed_at  AS "completed_at?"
+               j.completed_at  AS "completed_at?",
+               j.run_attempt   AS "run_attempt!"
           FROM jobs j
           JOIN runs r ON r.id = j.run_id
-         WHERE ($1::timestamptz IS NULL
+         WHERE j.run_attempt = r.run_attempt
+           AND ($1::timestamptz IS NULL
                 OR r.status != 'Completed'
                 OR r.completed_at IS NULL
                 OR r.completed_at >= $1::timestamptz)
@@ -244,6 +246,7 @@ pub(crate) async fn read_all_jobs(
             created_at: row.created_at,
             started_at: row.started_at,
             completed_at: row.completed_at,
+            run_attempt: row.run_attempt,
         });
     }
     Ok(jobs)

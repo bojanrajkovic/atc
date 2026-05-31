@@ -122,6 +122,11 @@ pub struct Job {
     pub started_at: Option<DateTime<Utc>>,
     /// When the job finished executing.
     pub completed_at: Option<DateTime<Utc>>,
+    /// Attempt number of the parent run this job belongs to (1-based). A re-run
+    /// reuses the parent `run_id` with a higher attempt and fresh job IDs;
+    /// stores filter jobs to the run's current attempt so prior-attempt jobs
+    /// drop out of the snapshot and live views.
+    pub run_attempt: i32,
 }
 
 use std::fmt;

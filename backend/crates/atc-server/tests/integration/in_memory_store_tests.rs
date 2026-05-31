@@ -83,6 +83,7 @@ fn make_job_event(
         created_at: now,
         started_at: None,
         completed_at: None,
+        run_attempt: 1,
         action,
     }
 }
@@ -105,6 +106,7 @@ fn make_job_event_with_completed_at(
         created_at: now,
         started_at: None,
         completed_at,
+        run_attempt: 1,
         action,
     }
 }
@@ -270,6 +272,56 @@ async fn rerun_higher_attempt_reopens_completed_run() {
     assert!(
         run.conclusion.is_none(),
         "terminal conclusion should reset on a new attempt, got {:?}",
+        run.conclusion
+    );
+}
+
+/// A stale lower `run_attempt` event must be rejected, not applied.
+///
+/// Mirrors `pg_run_stale_lower_attempt_rejected`: once a run has advanced to
+/// attempt 2, a delayed attempt-1 event must not reopen or re-conclude it.
+#[tokio::test]
+async fn rerun_stale_lower_attempt_rejected() {
+    let store = make_store();
+    let run_id = RunId(7);
+
+    // Attempt 1 completes, then attempt 2 reopens (InProgress @ 2).
+    store
+        .apply_run_event(make_run_event(
+            run_id,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Cancelled,
+            },
+        ))
+        .await
+        .unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            run_attempt: 2,
+            ..make_run_event(run_id, RunEvent::InProgress)
+        })
+        .await
+        .unwrap();
+
+    // A delayed attempt-1 completed event (run_attempt = 1) must be rejected.
+    let stale = make_run_event(
+        run_id,
+        RunEvent::Completed {
+            conclusion: RunConclusion::Success,
+        },
+    );
+    let result = store.apply_run_event(stale).await;
+    assert!(
+        result.is_err(),
+        "stale lower attempt should be rejected, got {result:?}"
+    );
+
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.status, RunStatus::InProgress, "live attempt stays open");
+    assert_eq!(run.run_attempt, 2, "run_attempt must not regress");
+    assert!(
+        run.conclusion.is_none(),
+        "live attempt must not inherit the stale conclusion, got {:?}",
         run.conclusion
     );
 }

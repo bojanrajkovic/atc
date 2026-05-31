@@ -185,6 +185,7 @@ pub fn apply_job_event(
             steps, // Snapshot replacement
             started_at: envelope.started_at.or(existing.started_at),
             completed_at: envelope.completed_at.or(existing.completed_at),
+            run_attempt: envelope.run_attempt,
             ..existing
         },
         None => Job {
@@ -199,6 +200,7 @@ pub fn apply_job_event(
             created_at: envelope.created_at,
             started_at: envelope.started_at,
             completed_at: envelope.completed_at,
+            run_attempt: envelope.run_attempt,
         },
     };
 

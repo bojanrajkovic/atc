@@ -242,6 +242,7 @@ fn job_snapshot_step_replacement() {
         created_at: now,
         started_at: None,
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::Queued {
             labels: vec![],
             steps: three_steps,
@@ -274,6 +275,7 @@ fn job_snapshot_step_replacement() {
         created_at: now,
         started_at: Some(now),
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::InProgress {
             runner: None,
             labels: vec![],
@@ -322,6 +324,7 @@ fn not_evictable_active_job() {
         created_at: now - chrono::Duration::hours(2),
         started_at: Some(now - chrono::Duration::hours(2)),
         completed_at: None,
+        run_attempt: 1,
     };
     let ttl = Duration::from_mins(30);
 
@@ -361,5 +364,6 @@ fn build_completed_job(completed_at: Option<chrono::DateTime<Utc>>) -> Job {
         created_at: now - chrono::Duration::hours(3),
         started_at: Some(now - chrono::Duration::hours(3)),
         completed_at,
+        run_attempt: 1,
     }
 }

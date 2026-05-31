@@ -74,6 +74,7 @@ fn make_workflow_job_webhook(
         completed_at: Some(fixed_test_timestamp()),
         steps: vec![],
         labels: vec!["ubuntu-latest".to_string()],
+        run_attempt: 1,
         runner_id: if runner { Some(1) } else { None },
         runner_name: if runner {
             Some("runner-1".to_string())
@@ -318,6 +319,7 @@ fn test_translate_job_with_steps() {
         completed_at: None,
         steps,
         labels: vec!["ubuntu-latest".to_string()],
+        run_attempt: 1,
         runner_id: None,
         runner_name: None,
         runner_group_name: None,
@@ -456,6 +458,7 @@ fn test_unknown_step_status() {
         completed_at: None,
         steps,
         labels: vec![],
+        run_attempt: 1,
         runner_id: None,
         runner_name: None,
         runner_group_name: None,
@@ -496,6 +499,7 @@ fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
         completed_at: None,
         steps: vec![],
         labels: vec!["ubuntu-latest".to_string()],
+        run_attempt: 1,
         runner_id: Some(42),
         runner_name: Some("runner-42".to_string()),
         runner_group_name: Some(String::new()),

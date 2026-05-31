@@ -30,22 +30,18 @@ fn run_requested(run_id: i64) -> RunEventEnvelope {
 }
 
 fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
-    let now = fixed_test_timestamp();
     JobEventEnvelope {
-        job_id: JobId(job_id),
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
         name: "Eviction test job".to_string(),
-        created_at: now,
-        started_at: Some(now),
-        completed_at: Some(now),
-        action: JobEvent::Completed {
-            conclusion: JobConclusion::Success,
-            runner: None,
-            labels: vec![],
-            steps: vec![],
-        },
+        ..common::make_job_envelope(
+            JobId(job_id),
+            RunId(run_id),
+            JobEvent::Completed {
+                conclusion: JobConclusion::Success,
+                runner: None,
+                labels: vec![],
+                steps: vec![],
+            },
+        )
     }
 }
 

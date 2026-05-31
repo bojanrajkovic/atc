@@ -798,6 +798,38 @@ pub fn make_run_envelope(
     }
 }
 
+/// Build a `JobEventEnvelope` with sensible defaults, deriving `started_at` /
+/// `completed_at` from the action (matching the GitHub translation layer:
+/// `InProgress`/`Completed` have started, `Completed` has finished). The
+/// `makeFoo(required, overrides)` companion to [`make_run_envelope`]; runner
+/// and labels live inside the `action`, and other fields are overridable via
+/// struct-update syntax.
+pub fn make_job_envelope(
+    job_id: atc_core::types::JobId,
+    run_id: atc_core::types::RunId,
+    action: atc_core::event::JobEvent,
+) -> atc_core::event::JobEventEnvelope {
+    use atc_core::event::{JobEvent, JobEventEnvelope};
+    let now = atc_core::fixed_test_timestamp();
+    let (started_at, completed_at) = match &action {
+        JobEvent::Queued { .. } | JobEvent::Waiting { .. } => (None, None),
+        JobEvent::InProgress { .. } => (Some(now), None),
+        JobEvent::Completed { .. } => (Some(now), Some(now)),
+    };
+    JobEventEnvelope {
+        job_id,
+        run_id,
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: now,
+        started_at,
+        completed_at,
+        run_attempt: 1,
+        action,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Webhook posting helper
 // ---------------------------------------------------------------------------

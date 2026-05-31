@@ -33,6 +33,7 @@ fn test_job_with_all_fields() {
         created_at: now,
         started_at: Some(now),
         completed_at: Some(now),
+        run_attempt: 1,
     };
 
     // Verify each field is accessible
@@ -101,6 +102,7 @@ fn test_job_serde_round_trip() {
         created_at: now,
         started_at: Some(now),
         completed_at: Some(now),
+        run_attempt: 1,
     };
 
     // Serialize to JSON
@@ -177,6 +179,7 @@ fn test_runner_info_as_separate_struct() {
         created_at: fixed_test_timestamp(),
         started_at: None,
         completed_at: None,
+        run_attempt: 1,
     };
 
     // Verify accessible via job.runner

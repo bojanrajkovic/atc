@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO runs (\n            id, org, repo, workflow_name, workflow_path, branch, head_sha,\n            commit_message, event, display_title, status, conclusion,\n            html_url, created_at, run_started_at, updated_at, completed_at,\n            run_attempt\n        ) VALUES (\n            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,\n            $13, $14, $15, $16, $17, $18\n        )\n        ON CONFLICT (id) DO UPDATE SET\n            workflow_name  = COALESCE(EXCLUDED.workflow_name, runs.workflow_name),\n            workflow_path  = COALESCE(EXCLUDED.workflow_path, runs.workflow_path),\n            branch         = EXCLUDED.branch,\n            head_sha       = EXCLUDED.head_sha,\n            commit_message = EXCLUDED.commit_message,\n            event          = EXCLUDED.event,\n            display_title  = EXCLUDED.display_title,\n            status         = EXCLUDED.status,\n            conclusion     = CASE\n                               WHEN EXCLUDED.run_attempt > runs.run_attempt THEN EXCLUDED.conclusion\n                               ELSE COALESCE(EXCLUDED.conclusion, runs.conclusion)\n                             END,\n            html_url       = EXCLUDED.html_url,\n            created_at     = EXCLUDED.created_at,\n            run_started_at = CASE\n                               WHEN EXCLUDED.run_attempt > runs.run_attempt THEN EXCLUDED.run_started_at\n                               ELSE COALESCE(EXCLUDED.run_started_at, runs.run_started_at)\n                             END,\n            updated_at     = EXCLUDED.updated_at,\n            completed_at   = CASE\n                               WHEN EXCLUDED.run_attempt > runs.run_attempt THEN EXCLUDED.completed_at\n                               ELSE COALESCE(EXCLUDED.completed_at, runs.completed_at)\n                             END,\n            run_attempt    = EXCLUDED.run_attempt,\n            placeholder    = false\n        WHERE (runs.status = ANY($19::text[]) AND EXCLUDED.run_attempt = runs.run_attempt)\n           OR EXCLUDED.run_attempt > runs.run_attempt\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Int4",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d0137d09955b176252a0d56452489ad340338d557611e04e293ecf1ef6d99285"
+}

@@ -329,7 +329,8 @@ pub(crate) async fn upsert_run_in_txn(
                              END,
             run_attempt    = EXCLUDED.run_attempt,
             placeholder    = false
-        WHERE runs.status = ANY($19::text[]) OR EXCLUDED.run_attempt > runs.run_attempt
+        WHERE (runs.status = ANY($19::text[]) AND EXCLUDED.run_attempt = runs.run_attempt)
+           OR EXCLUDED.run_attempt > runs.run_attempt
         "#,
         run_id,
         env.org,
@@ -435,11 +436,11 @@ pub(crate) async fn upsert_job_in_txn(
         INSERT INTO jobs (
             id, run_id, name, status, conclusion, labels, steps,
             runner_id, runner_name, runner_group_name,
-            started_at, completed_at, created_at
+            started_at, completed_at, created_at, run_attempt
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7,
             $8, $9, $10,
-            $11, $12, $13
+            $11, $12, $13, $14
         )
         ON CONFLICT (id) DO UPDATE SET
             name              = jobs.name,
@@ -453,8 +454,9 @@ pub(crate) async fn upsert_job_in_txn(
             runner_group_name = CASE WHEN EXCLUDED.runner_id IS NOT NULL THEN EXCLUDED.runner_group_name ELSE jobs.runner_group_name END,
             started_at        = COALESCE(EXCLUDED.started_at,        jobs.started_at),
             completed_at      = COALESCE(EXCLUDED.completed_at,      jobs.completed_at),
-            created_at        = jobs.created_at
-        WHERE jobs.status = ANY($14::text[])
+            created_at        = jobs.created_at,
+            run_attempt       = EXCLUDED.run_attempt
+        WHERE jobs.status = ANY($15::text[])
         "#,
         job_id,
         run_id,
@@ -469,6 +471,7 @@ pub(crate) async fn upsert_job_in_txn(
         env.started_at,
         env.completed_at,
         env.created_at,
+        env.run_attempt,
         &preds_strs as &[&str],
     )
     .execute(&mut tx.executor())

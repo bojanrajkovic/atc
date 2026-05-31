@@ -111,6 +111,7 @@ pub(crate) fn translate_job(webhook: WorkflowJobWebhook) -> Result<JobEventEnvel
         created_at: job.created_at,
         started_at: job.started_at,
         completed_at: job.completed_at,
+        run_attempt: job.run_attempt,
         action,
     })
 }
