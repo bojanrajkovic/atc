@@ -14,16 +14,9 @@
 
 use crate::common;
 
-use std::sync::Arc;
-
-use atc_persist::PersistentStore;
-use atc_server::state::AppState;
-use atc_wire::CommittedEvent;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use opentelemetry::KeyValue;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 fn write_failure_attrs(kind: &'static str) -> Vec<KeyValue> {
@@ -32,43 +25,6 @@ fn write_failure_attrs(kind: &'static str) -> Vec<KeyValue> {
 
 fn notify_attrs(kind: &'static str) -> Vec<KeyValue> {
     vec![KeyValue::new("kind", kind)]
-}
-
-/// Build a full router with a real PG pool mounted.
-///
-/// Returns (router, app_state, broadcast_receiver). `app_state.shutdown` is
-/// the same cancellation token driving the store's listener+drain tasks, so
-/// `state.shutdown.cancel()` at end-of-test stops both the WS surface and
-/// the store's background tasks.
-pub async fn build_app_with_pg(
-    pool: atc_store_pg::TracedPool,
-    db_url: &str,
-) -> (
-    axum::Router,
-    Arc<AppState>,
-    tokio::sync::broadcast::Receiver<CommittedEvent>,
-) {
-    common::ensure_recorder_installed();
-    let shutdown = CancellationToken::new();
-    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
-    let rx = store.subscribe();
-    let persist = store as Arc<dyn atc_persist::PersistentStore>;
-    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: std::time::Duration::from_secs(60 * 60),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown,
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-    });
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
-    (app, app_state, rx)
 }
 
 /// POST a webhook and return the full response (status + body).
@@ -108,7 +64,7 @@ async fn post_webhook(app: axum::Router, event_type: &str, body: &[u8]) -> Statu
 #[serial_test::serial]
 async fn transactional_write_run_lifecycle() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Fixture run_id for workflow_run_requested.json (24290980517)
     let run_id = 24290980517i64;
@@ -200,7 +156,7 @@ async fn transactional_write_run_lifecycle() {
 #[serial_test::serial]
 async fn transactional_write_job_lifecycle() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Pre-insert the run first
     let run_body = common::fixture_workflow_run_requested();
@@ -231,7 +187,7 @@ async fn transactional_write_job_lifecycle() {
 #[serial_test::serial]
 async fn transactional_write_job_before_run_lifecycle() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Fire job first (before run)
     let job_body = common::fixture_workflow_job_queued();
@@ -284,7 +240,7 @@ async fn transactional_write_job_before_run_lifecycle() {
 #[serial_test::serial]
 async fn transactional_write_idempotent_replay() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     let body = common::fixture_workflow_run_requested();
 
@@ -319,7 +275,7 @@ async fn parity_metric_increments_when_pg_rejects() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // 1. Insert run through normal flow (Queued)
     post_webhook(
@@ -396,7 +352,7 @@ async fn transient_metric_increments_on_db_outage() {
     common::reset_metrics();
 
     let (pool, container, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Stop the container to simulate the DB outage. We previously called
     // `pool.close()` for the same effect, but `sqlx_tracing::Pool` does not
@@ -452,7 +408,7 @@ async fn pg_write_failure_counters_are_registered() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Establish a Queued run in both stores.
     let body = common::fixture_workflow_run_requested();
@@ -525,7 +481,7 @@ async fn in_memory_mode_behavioral_invariance() {
 #[serial_test::serial]
 async fn pg_invalid_transition_returns_rejected() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Establish a Queued run.
     let body = common::fixture_workflow_run_requested();
@@ -592,7 +548,7 @@ async fn pg_store_emits_metrics_on_success_and_parity_rejection() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Successful run event — should increment atc_pg_notify_emitted_total{kind="run"}.
     let (status, json) = post_webhook_full(

@@ -1,30 +1,13 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::common;
 use common::{fixture_workflow_job_queued, fixture_workflow_run_requested};
 
-/// Setup an ephemeral HTTP server for testing (in-memory mode).
-async fn test_setup() -> (SocketAddr, Arc<atc_server::state::AppState>) {
-    common::ensure_recorder_installed();
-
-    let (app, app_state) = common::build_app_no_secret();
-
-    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let main_addr = main_listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(main_listener, app).await.unwrap();
-    });
-
-    (main_addr, app_state)
-}
-
 /// GET /v1/state with no prior events returns seq: 0, empty collections
 #[tokio::test]
 #[serial_test::serial]
 async fn test_empty_state() {
-    let (server_addr, _) = test_setup().await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let client = reqwest::Client::new();
     let state_url = format!("http://{}/v1/state", server_addr);
@@ -240,7 +223,7 @@ fn state_snapshot_deserializes_without_runner_pool_capacities_field() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_state_after_run_event() {
-    let (server_addr, _) = test_setup().await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let client = reqwest::Client::new();
 
@@ -303,7 +286,7 @@ async fn test_state_after_run_event() {
 async fn test_snapshot_seq_consistent_under_concurrent_writes() {
     use common::fixture_workflow_job_in_progress;
 
-    let (server_addr, _) = test_setup().await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let client = reqwest::Client::new();
     let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
@@ -367,7 +350,7 @@ async fn test_snapshot_seq_consistent_under_concurrent_writes() {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_state_seq_consistency() {
-    let (server_addr, _) = test_setup().await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let client = reqwest::Client::new();
     let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);

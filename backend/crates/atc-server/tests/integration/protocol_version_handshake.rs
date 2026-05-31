@@ -15,60 +15,11 @@
 
 use crate::common;
 
-use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
-
-use atc_core::SystemClock;
-use atc_server::routes;
-use atc_server::state::AppState;
-use atc_store_mem::InMemoryStore;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 use futures_util::stream::StreamExt;
 use serde_json::Value;
-use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
-
-/// Lightweight ephemeral server fixture using the in-memory store. Returns the
-/// bound socket address plus the `AppState` so the test can cancel the
-/// shutdown token via `app_state.shutdown.cancel()`. The serve task itself is
-/// detached and kept running by the spawned task — its handle is dropped
-/// because no test in this file needs to join the serve task; the OS reclaims
-/// the listener when the test process exits.
-async fn test_setup() -> (SocketAddr, Arc<AppState>) {
-    common::ensure_recorder_installed();
-
-    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
-    let persist = InMemoryStore::new_for_test(Arc::clone(&clock), Duration::from_hours(1), 256)
-        as Arc<dyn atc_persist::PersistentStore>;
-
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-    });
-
-    let router = routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-
-    (addr, app_state)
-}
 
 /// First text frame on a fresh WS connection MUST be ServerHello, and its
 /// `version` field MUST equal the same VERGEN_GIT_DESCRIBE the server's
@@ -76,32 +27,14 @@ async fn test_setup() -> (SocketAddr, Arc<AppState>) {
 #[tokio::test]
 #[serial_test::serial]
 async fn ws_first_frame_is_server_hello_with_vergen_git_describe() {
-    let (server_addr, _state) = test_setup().await;
+    let (server_addr, _state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
 
-    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .expect("timed out waiting for first WS frame")
-        .expect("socket.next() should return Some")
-        .expect("first WS frame should be Ok");
-
-    let text = match frame {
-        Message::Text(t) => t,
-        other => panic!("first frame must be a text frame, got: {:?}", other),
-    };
-
-    let json: Value = serde_json::from_str(&text).expect("first frame should deserialize as JSON");
-
-    assert_eq!(
-        json.get("kind").and_then(|v| v.as_str()),
-        Some("ServerHello"),
-        "first frame's `kind` must be ServerHello; got: {}",
-        text
-    );
+    let json = common::consume_server_hello(&mut socket).await;
 
     let version = json
         .get("version")
@@ -126,7 +59,7 @@ async fn ws_first_frame_is_server_hello_with_vergen_git_describe() {
 #[tokio::test]
 #[serial_test::serial]
 async fn ws_going_away_precedes_close_on_graceful_shutdown() {
-    let (server_addr, state) = test_setup().await;
+    let (server_addr, state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
@@ -134,23 +67,7 @@ async fn ws_going_away_precedes_close_on_graceful_shutdown() {
         .expect("WebSocket connection failed");
 
     // Consume the ServerHello frame so the test focuses on shutdown ordering.
-    let first = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .expect("timed out on first frame")
-        .expect("first frame Some")
-        .expect("first frame Ok");
-    match first {
-        Message::Text(t) => {
-            let json: Value = serde_json::from_str(&t).expect("hello JSON");
-            assert_eq!(
-                json.get("kind").and_then(|v| v.as_str()),
-                Some("ServerHello"),
-                "ws_going_away test precondition: first frame must be ServerHello, got {}",
-                t
-            );
-        }
-        other => panic!("first frame must be Text(ServerHello), got: {:?}", other),
-    }
+    common::consume_server_hello(&mut socket).await;
 
     // Give the handler a moment to enter the select loop after the synchronous
     // ServerHello send completes.

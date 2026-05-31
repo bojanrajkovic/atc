@@ -9,14 +9,7 @@
 
 use crate::common;
 
-use std::sync::Arc;
 use std::time::Duration;
-
-use atc_persist::PersistentStore;
-use atc_server::state::AppState;
-use atc_wire::CommittedEvent;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -27,38 +20,6 @@ use tower::ServiceExt;
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/// Build a full router with a real PG pool mounted.
-async fn build_app_with_pg(
-    pool: atc_store_pg::TracedPool,
-    db_url: &str,
-) -> (
-    axum::Router,
-    Arc<AppState>,
-    tokio::sync::broadcast::Receiver<CommittedEvent>,
-) {
-    common::ensure_recorder_installed();
-    let shutdown = CancellationToken::new();
-    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
-    let rx = store.subscribe();
-    let persist = store as Arc<dyn atc_persist::PersistentStore>;
-    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: std::time::Duration::from_secs(60 * 60),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-    });
-    let app = atc_server::routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
-    (app, app_state, rx)
-}
 
 /// POST a webhook via tower::ServiceExt::oneshot and return (status, body).
 async fn post_webhook(
@@ -162,7 +123,7 @@ async fn fetch_status(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> 
 #[serial_test::serial]
 async fn run_webhook_produces_run_and_outbox_row() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     let (status, json) = post_webhook(
         app,
@@ -255,7 +216,7 @@ async fn seq_strictly_increasing() {
 #[serial_test::serial]
 async fn payload_roundtrips_as_envelope() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     post_webhook(
         app,
@@ -304,7 +265,7 @@ async fn payload_roundtrips_as_envelope() {
 #[serial_test::serial]
 async fn parity_rejection_rolls_back_outbox() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // The fixture run_id is 24290980517
     let run_id = 24290980517i64;
@@ -399,7 +360,7 @@ async fn bigserial_gap_property() {
 #[serial_test::serial]
 async fn job_upsert_rejection_rolls_back_stub_run() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Fixture shared IDs
     let run_id = 24290980517i64; // from all fixtures
@@ -484,7 +445,7 @@ async fn parity_rejection_returns_200_rejected() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Pre-insert Completed run to force parity rejection on Requested
     let run_id = 24290980517i64;
@@ -523,7 +484,7 @@ async fn success_returns_200_accepted() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     let (status, json) = post_webhook(
         app,
@@ -611,7 +572,7 @@ async fn no_pg_pool_uses_in_memory_path() {
 #[serial_test::serial]
 async fn job_webhook_creates_stub_run_and_outbox() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // The fixtures share run_id=24290980517, job_id=70928200168
     let run_id = 24290980517i64;
@@ -693,7 +654,7 @@ async fn job_webhook_creates_stub_run_and_outbox() {
 #[serial_test::serial]
 async fn payload_is_envelope_not_seq_event() {
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Fire a run webhook first (to have a real run row for the job FK)
     post_webhook(
@@ -780,7 +741,7 @@ async fn pg_mode_does_not_write_in_memory_state() {
     common::reset_metrics();
 
     let (pool, _c, db_url) = common::start_pg().await;
-    let (app, app_state, _rx) = build_app_with_pg(pool.clone(), &db_url).await;
+    let (app, app_state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Fire a webhook through the PG-mode handler.
     let (status, json) = post_webhook(

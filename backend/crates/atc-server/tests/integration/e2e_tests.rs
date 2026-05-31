@@ -7,32 +7,9 @@
 
 use crate::common;
 
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use futures_util::stream::StreamExt;
-
-/// Start an ephemeral server with in-memory mode and return the server address.
-///
-/// Uses `common::build_app_no_secret()` for fixture construction.
-/// OTel test harness installed via `common::ensure_recorder_installed`.
-/// Binds to an ephemeral port and spawns `axum::serve` in a background task.
-///
-/// Returns `SocketAddr` for HTTP/WS clients to connect to.
-async fn start_test_server() -> SocketAddr {
-    common::ensure_recorder_installed();
-
-    let (app, _state) = common::build_app_no_secret();
-
-    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let main_addr = main_listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(main_listener, app).await.unwrap();
-    });
-
-    main_addr
-}
 
 // ============================================================================
 // Webhook → REST state e2e test
@@ -42,7 +19,7 @@ async fn start_test_server() -> SocketAddr {
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_to_rest_state() {
-    let addr = start_test_server().await;
+    let addr = common::spawn_in_memory_server().await.0;
 
     let client = reqwest::Client::new();
     let webhook_body = common::fixture_workflow_run_requested();
@@ -122,7 +99,7 @@ async fn webhook_to_rest_state() {
 #[tokio::test]
 #[serial_test::serial]
 async fn webhook_to_websocket() {
-    let addr = start_test_server().await;
+    let addr = common::spawn_in_memory_server().await.0;
 
     let client = reqwest::Client::new();
     let webhook_body = common::fixture_workflow_run_requested();
@@ -136,19 +113,7 @@ async fn webhook_to_websocket() {
     let (_ws_write, mut ws_read) = futures_util::stream::StreamExt::split(ws_stream);
 
     // Skip the per-connection ServerHello envelope frame (issue #47).
-    let hello = tokio::time::timeout(Duration::from_secs(2), ws_read.next())
-        .await
-        .expect("timed out waiting for ServerHello")
-        .expect("ServerHello Some")
-        .expect("ServerHello Ok");
-    let hello_text = match hello {
-        tokio_tungstenite::tungstenite::Message::Text(t) => t,
-        other => panic!("expected ServerHello text frame, got {other:?}"),
-    };
-    assert!(
-        hello_text.contains("\"ServerHello\""),
-        "first frame must be ServerHello, got {hello_text}"
-    );
+    common::consume_server_hello(&mut ws_read).await;
 
     // POST webhook
     let webhook_url = format!("http://{}/v1/webhooks/github", addr);
@@ -196,7 +161,7 @@ async fn webhook_to_websocket() {
 #[tokio::test]
 #[serial_test::serial]
 async fn multi_event_sequence() {
-    let addr = start_test_server().await;
+    let addr = common::spawn_in_memory_server().await.0;
 
     let client = reqwest::Client::new();
 
@@ -209,19 +174,7 @@ async fn multi_event_sequence() {
     let (_ws_write, mut ws_read) = futures_util::stream::StreamExt::split(ws_stream);
 
     // Skip the per-connection ServerHello envelope frame (issue #47).
-    let hello = tokio::time::timeout(Duration::from_secs(2), ws_read.next())
-        .await
-        .expect("timed out waiting for ServerHello")
-        .expect("ServerHello Some")
-        .expect("ServerHello Ok");
-    let hello_text = match hello {
-        tokio_tungstenite::tungstenite::Message::Text(t) => t,
-        other => panic!("expected ServerHello text frame, got {other:?}"),
-    };
-    assert!(
-        hello_text.contains("\"ServerHello\""),
-        "first frame must be ServerHello, got {hello_text}"
-    );
+    common::consume_server_hello(&mut ws_read).await;
 
     // Post first webhook: workflow_run_requested
     let run_body = common::fixture_workflow_run_requested();
