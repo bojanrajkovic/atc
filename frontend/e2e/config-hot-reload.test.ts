@@ -1,6 +1,7 @@
 import type { Job } from '$lib/types/generated/Job'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+import { createMockJob, createMockRun, createMockRunner } from '../src/lib/test-utils/factories'
 import { expect, test } from './lib/fixtures'
 import { bigintReplacer, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
@@ -16,46 +17,32 @@ import { bigintReplacer, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
  */
 
 function makeRun(id: number): WorkflowRun {
-  return {
+  return createMockRun({
     id: BigInt(id),
-    org: 'test-org',
-    repo: 'test-repo',
-    workflowName: 'CI',
-    workflowPath: '.github/workflows/ci.yml',
-    branch: 'main',
-    headSha: 'abc123',
-    commitMessage: 'test commit',
-    event: 'push',
-    displayTitle: `Run ${id}`,
     status: 'InProgress',
-    conclusion: null,
+    displayTitle: `Run ${id}`,
     htmlUrl: `https://github.com/test-org/test-repo/actions/runs/${id}`,
     createdAt: '2026-04-17T09:59:00Z',
     runStartedAt: '2026-04-17T09:59:30Z',
     updatedAt: '2026-04-17T09:59:55Z',
-    runAttempt: 1,
-  }
+  })
 }
 
 function makeRunningJob(jobId: number, runId: number, labels: string[]): Job {
-  return {
+  return createMockJob({
     id: BigInt(jobId),
     runId: BigInt(runId),
     name: `job-${jobId}`,
     status: 'InProgress',
-    conclusion: null,
     labels,
-    runner: {
+    runner: createMockRunner({
       id: BigInt(jobId * 100),
       name: `runner-${jobId}`,
       groupName: 'self-hosted-pool',
-    },
-    steps: [],
+    }),
     createdAt: '2026-04-17T09:59:00Z',
     startedAt: '2026-04-17T09:59:30Z',
-    completedAt: null,
-    runAttempt: 1,
-  }
+  })
 }
 
 function snapshot(running: number, capacity: number): StateSnapshot {

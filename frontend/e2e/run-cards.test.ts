@@ -1,6 +1,7 @@
+import { createMockJob, createMockRun, createMockRunner } from '../src/lib/test-utils/factories'
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
 import { expect, test } from './lib/fixtures'
-import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { bigintReplacer, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 const STATUS_FIXTURE: Array<{
   id: number
@@ -93,25 +94,16 @@ const STATUS_FIXTURE: Array<{
 ]
 
 function makeWorkflowRun(f: (typeof STATUS_FIXTURE)[number]): StateSnapshot['runs'][number] {
-  return {
-    id: f.id as unknown as bigint, // reviver on page side converts numeric -> bigint
-    org: 'test-org',
-    repo: 'test-repo',
-    workflowName: 'CI',
-    workflowPath: '.github/workflows/ci.yml',
-    branch: 'main',
-    headSha: 'abc123',
-    commitMessage: 'test',
-    event: 'push',
-    displayTitle: `CI — run ${f.id}`,
+  return createMockRun({
+    id: BigInt(f.id),
     status: f.status,
     conclusion: f.conclusion,
+    displayTitle: `CI — run ${f.id}`,
     htmlUrl: `https://github.com/test-org/test-repo/actions/runs/${f.id}`,
     createdAt: '2026-04-17T09:59:00Z',
     runStartedAt: f.status === 'Queued' ? null : '2026-04-17T09:59:30Z',
     updatedAt: '2026-04-17T10:00:00Z',
-    runAttempt: 1,
-  }
+  })
 }
 
 test.describe('run-cards', () => {
@@ -125,13 +117,16 @@ test.describe('run-cards', () => {
     await page.route('**/v1/state', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({
-          lastSeq: 1 as unknown as bigint,
-          runs: STATUS_FIXTURE.map(makeWorkflowRun),
-          jobs: [],
-          runnerPoolCapacities: [],
-          displayTtlSeconds: 0,
-        } satisfies StateSnapshot),
+        body: JSON.stringify(
+          {
+            lastSeq: 1n,
+            runs: STATUS_FIXTURE.map(makeWorkflowRun),
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
       })
     })
 
@@ -158,33 +153,26 @@ test.describe('run-cards', () => {
     await page.route('**/v1/state', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({
-          lastSeq: 1 as unknown as bigint,
-          runs: [
-            {
-              id: 42 as unknown as bigint,
-              org: 'test-org',
-              repo: 'test-repo',
-              workflowName: 'CI',
-              workflowPath: '.github/workflows/ci.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'test',
-              event: 'push',
-              displayTitle: 'CI — main',
-              status: 'Queued',
-              conclusion: null,
-              htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/42',
-              createdAt: '2026-04-17T09:59:00Z',
-              runStartedAt: null,
-              updatedAt: '2026-04-17T09:59:00Z',
-              runAttempt: 1,
-            },
-          ],
-          jobs: [],
-          runnerPoolCapacities: [],
-          displayTtlSeconds: 0,
-        } satisfies StateSnapshot),
+        body: JSON.stringify(
+          {
+            lastSeq: 1n,
+            runs: [
+              createMockRun({
+                id: 42n,
+                status: 'Queued',
+                displayTitle: 'CI — main',
+                htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/42',
+                createdAt: '2026-04-17T09:59:00Z',
+                runStartedAt: null,
+                updatedAt: '2026-04-17T09:59:00Z',
+              }),
+            ],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
       })
     })
 
@@ -223,52 +211,37 @@ test.describe('run-cards', () => {
     await page.route('**/v1/state', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({
-          lastSeq: 1 as unknown as bigint,
-          runs: [
-            {
-              id: 1 as unknown as bigint,
-              org: 'test-org',
-              repo: 'test-repo',
-              workflowName: 'CI',
-              workflowPath: '.github/workflows/ci.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'test',
-              event: 'push',
-              displayTitle: 'CI — main',
-              status: 'InProgress',
-              conclusion: null,
-              htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1',
-              createdAt: '2026-04-17T09:59:00Z',
-              runStartedAt: '2026-04-17T09:59:30Z',
-              updatedAt: '2026-04-17T10:00:00Z',
-              runAttempt: 1,
-            },
-          ],
-          jobs: [
-            {
-              id: 100 as unknown as bigint,
-              runId: 1 as unknown as bigint,
-              name: 'build',
-              status: 'InProgress',
-              conclusion: null,
-              runner: {
-                id: 1 as unknown as bigint,
-                name: 'gh-hosted-1',
-                groupName: null,
-              },
-              labels: ['ubuntu-latest'],
-              steps: [],
-              createdAt: '2026-04-17T09:59:00Z',
-              startedAt: '2026-04-17T09:59:30Z',
-              completedAt: null,
-              runAttempt: 1,
-            },
-          ],
-          runnerPoolCapacities: [],
-          displayTtlSeconds: 0,
-        } satisfies StateSnapshot),
+        body: JSON.stringify(
+          {
+            lastSeq: 1n,
+            runs: [
+              createMockRun({
+                id: 1n,
+                status: 'InProgress',
+                displayTitle: 'CI — main',
+                htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1',
+                createdAt: '2026-04-17T09:59:00Z',
+                runStartedAt: '2026-04-17T09:59:30Z',
+                updatedAt: '2026-04-17T10:00:00Z',
+              }),
+            ],
+            jobs: [
+              createMockJob({
+                id: 100n,
+                runId: 1n,
+                name: 'build',
+                status: 'InProgress',
+                runner: createMockRunner({ id: 1n, name: 'gh-hosted-1' }),
+                labels: ['ubuntu-latest'],
+                createdAt: '2026-04-17T09:59:00Z',
+                startedAt: '2026-04-17T09:59:30Z',
+              }),
+            ],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
       })
     })
 
@@ -307,33 +280,26 @@ test.describe('run-cards', () => {
     await page.route('**/v1/state', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({
-          lastSeq: 1 as unknown as bigint,
-          runs: [
-            {
-              id: 1 as unknown as bigint,
-              org: 'test-org',
-              repo: 'test-repo',
-              workflowName: 'CI',
-              workflowPath: '.github/workflows/ci.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'test',
-              event: 'push',
-              displayTitle: 'CI — main',
-              status: 'InProgress',
-              conclusion: null,
-              htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1',
-              createdAt: '2026-04-17T09:59:00Z',
-              runStartedAt: '2026-04-17T09:59:55Z',
-              updatedAt: '2026-04-17T10:00:00Z',
-              runAttempt: 1,
-            },
-          ],
-          jobs: [],
-          runnerPoolCapacities: [],
-          displayTtlSeconds: 0,
-        } satisfies StateSnapshot),
+        body: JSON.stringify(
+          {
+            lastSeq: 1n,
+            runs: [
+              createMockRun({
+                id: 1n,
+                status: 'InProgress',
+                displayTitle: 'CI — main',
+                htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1',
+                createdAt: '2026-04-17T09:59:00Z',
+                runStartedAt: '2026-04-17T09:59:55Z',
+                updatedAt: '2026-04-17T10:00:00Z',
+              }),
+            ],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          } satisfies StateSnapshot,
+          bigintReplacer,
+        ),
       })
     })
 
