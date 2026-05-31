@@ -38,6 +38,8 @@ The domain types and their transition rules live in `atc-core` as pure, side-eff
 
 These are verified by unit + proptest suites in `atc-core`. Crate-specific implementation notes (the predecessor-includes-self predicate, `completed_at` preserve-first) live in `backend/crates/atc-core/CLAUDE.md`.
 
+Deterministic test fixtures for these types live in `atc-core`'s `test_support` module, gated on the `test-support` feature alongside `TestClock` / `fixed_test_timestamp`. It exposes event-envelope builders (`make_run_event`, `make_job_event`) and zero-arg domain-struct factories (`make_workflow_run`, `make_job`, `make_step`, `make_runner_info`) that callers specialize with struct-update syntax. Because the feature is opt-in via dev-dependency, cross-crate test code (e.g. `atc-server`'s in-memory store tests) builds domain values from this one canonical source rather than re-declaring the field lists.
+
 ## Webhook → Outbox → Drain → Broadcast pipeline
 
 A single GitHub webhook traverses this path end to end:

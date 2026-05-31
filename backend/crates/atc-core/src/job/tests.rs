@@ -1,5 +1,6 @@
 use super::*;
 use crate::clock::fixed_test_timestamp;
+use crate::test_support::{make_job, make_runner_info, make_step};
 use proptest::prelude::*;
 
 // Job fields: Construct a `Job` with all fields populated
@@ -9,31 +10,28 @@ use proptest::prelude::*;
 fn test_job_with_all_fields() {
     let now = fixed_test_timestamp();
     let runner = RunnerInfo {
-        id: 1,
-        name: "runner-1".to_string(),
         group_name: Some("default".to_string()),
+        ..make_runner_info()
     };
     let step = Step {
-        number: 1,
         name: "Run build".to_string(),
         status: StepStatus::Completed,
         conclusion: Some(JobConclusion::Success),
         started_at: Some(now),
         completed_at: Some(now),
+        ..make_step()
     };
     let job = Job {
         id: JobId(42),
-        name: "Test Job".to_string(),
         run_id: RunId(100),
         status: JobStatus::Completed,
         conclusion: Some(JobConclusion::Success),
         runner: Some(runner.clone()),
         labels: vec!["linux".to_string(), "self-hosted".to_string()],
         steps: vec![step.clone()],
-        created_at: now,
         started_at: Some(now),
         completed_at: Some(now),
-        run_attempt: 1,
+        ..make_job()
     };
 
     // Verify each field is accessible
@@ -56,12 +54,10 @@ fn test_job_with_all_fields() {
 fn test_step_with_all_fields() {
     let now = fixed_test_timestamp();
     let step = Step {
-        number: 1,
         name: "Build".to_string(),
         status: StepStatus::InProgress,
-        conclusion: None,
         started_at: Some(now),
-        completed_at: None,
+        ..make_step()
     };
 
     assert_eq!(step.number, 1);
@@ -77,18 +73,20 @@ fn test_step_with_all_fields() {
 #[test]
 fn test_job_serde_round_trip() {
     let now = fixed_test_timestamp();
+    // Every field differs from the canonical runner, so the factory's
+    // struct-update base would trip `clippy::needless_update` — keep the literal.
     let runner = RunnerInfo {
         id: 5,
         name: "runner-5".to_string(),
         group_name: Some("ci-group".to_string()),
     };
     let step = Step {
-        number: 1,
         name: "Test step".to_string(),
         status: StepStatus::Completed,
         conclusion: Some(JobConclusion::Success),
         started_at: Some(now),
         completed_at: Some(now),
+        ..make_step()
     };
     let job = Job {
         id: JobId(999),
@@ -99,10 +97,9 @@ fn test_job_serde_round_trip() {
         runner: Some(runner.clone()),
         labels: vec!["ubuntu".to_string(), "x64".to_string()],
         steps: vec![step.clone()],
-        created_at: now,
         started_at: Some(now),
         completed_at: Some(now),
-        run_attempt: 1,
+        ..make_job()
     };
 
     // Serialize to JSON
@@ -155,6 +152,8 @@ fn test_step_status_serialization() {
 // `job.runner`. Serialize/deserialize `RunnerInfo` independently.
 #[test]
 fn test_runner_info_as_separate_struct() {
+    // The runner is the subject here and every field is custom, so it stays a
+    // literal (a struct-update base would trip `clippy::needless_update`).
     let runner = RunnerInfo {
         id: 123,
         name: "my-runner".to_string(),
@@ -168,18 +167,10 @@ fn test_runner_info_as_separate_struct() {
 
     // Embed in a Job
     let job = Job {
-        id: JobId(1),
         name: "test".to_string(),
-        run_id: RunId(1),
         status: JobStatus::InProgress,
-        conclusion: None,
         runner: Some(runner.clone()),
-        labels: vec![],
-        steps: vec![],
-        created_at: fixed_test_timestamp(),
-        started_at: None,
-        completed_at: None,
-        run_attempt: 1,
+        ..make_job()
     };
 
     // Verify accessible via job.runner
@@ -196,6 +187,8 @@ fn test_runner_info_as_separate_struct() {
 #[test]
 fn test_step_serde_round_trip() {
     let now = fixed_test_timestamp();
+    // Every field differs from the canonical step, so a struct-update base would
+    // trip `clippy::needless_update` — keep the literal.
     let step = Step {
         number: 5,
         name: "Integration tests".to_string(),

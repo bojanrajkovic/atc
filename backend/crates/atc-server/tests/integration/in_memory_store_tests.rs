@@ -13,10 +13,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::{
-    JobConclusion, JobId, JobStatus, RunConclusion, RunId, RunStatus, RunnerInfo, SystemClock,
+    JobConclusion, JobId, JobStatus, RunConclusion, RunId, RunStatus, SystemClock,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     fixed_test_timestamp,
     job::{Step, StepStatus},
+    test_support::{make_job_event, make_run_event, make_runner_info, make_step},
     types::RepoKey,
 };
 use atc_persist::PersistentStore;
@@ -42,52 +43,9 @@ fn make_store_with_clock_and_ttl(
     InMemoryStore::new_for_test(clock, ttl, 256)
 }
 
-fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
-    let now = fixed_test_timestamp();
-    let completed_at = matches!(action, RunEvent::Completed { .. }).then_some(now);
-    RunEventEnvelope {
-        run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
-        workflow_name: Some("CI".to_string()),
-        workflow_path: Some(".github/workflows/ci.yml".to_string()),
-        branch: Some("main".to_string()),
-        head_sha: "abc123def456".to_string(),
-        commit_message: Some("Fix bug".to_string()),
-        trigger_event: "push".to_string(),
-        display_title: "CI Run".to_string(),
-        html_url: "https://github.com/octocat/Hello-World/actions/runs/123".to_string(),
-        created_at: now,
-        run_started_at: None,
-        updated_at: now,
-        completed_at,
-        run_attempt: 1,
-        action,
-    }
-}
-
-fn make_job_event(
-    job_id: JobId,
-    run_id: RunId,
-    org: &str,
-    repo: &str,
-    action: JobEvent,
-) -> JobEventEnvelope {
-    let now = fixed_test_timestamp();
-    JobEventEnvelope {
-        job_id,
-        run_id,
-        org: org.to_string(),
-        repo: repo.to_string(),
-        name: "Test Job".to_string(),
-        created_at: now,
-        started_at: None,
-        completed_at: None,
-        run_attempt: 1,
-        action,
-    }
-}
-
+/// [`make_job_event`] with an explicit completion timestamp. Thin wrapper over
+/// the shared builder so the TTL/eviction tests can pin `completed_at` without
+/// repeating the envelope's field list.
 fn make_job_event_with_completed_at(
     job_id: JobId,
     run_id: RunId,
@@ -96,18 +54,9 @@ fn make_job_event_with_completed_at(
     action: JobEvent,
     completed_at: Option<DateTime<Utc>>,
 ) -> JobEventEnvelope {
-    let now = fixed_test_timestamp();
     JobEventEnvelope {
-        job_id,
-        run_id,
-        org: org.to_string(),
-        repo: repo.to_string(),
-        name: "Test Job".to_string(),
-        created_at: now,
-        started_at: None,
         completed_at,
-        run_attempt: 1,
-        action,
+        ..make_job_event(job_id, run_id, org, repo, action)
     }
 }
 
@@ -380,11 +329,7 @@ async fn update_job_to_in_progress_with_runner() {
         .await
         .unwrap();
 
-    let runner = RunnerInfo {
-        id: 1,
-        name: "runner-1".to_string(),
-        group_name: None,
-    };
+    let runner = make_runner_info();
     store
         .apply_job_event(make_job_event(
             job_id,
@@ -464,20 +409,13 @@ async fn steps_snapshot_replacement_not_append() {
 
     let two_steps = vec![
         Step {
-            number: 1,
             name: "Step A".to_string(),
-            status: StepStatus::Queued,
-            conclusion: None,
-            started_at: None,
-            completed_at: None,
+            ..make_step()
         },
         Step {
             number: 2,
             name: "Step B".to_string(),
-            status: StepStatus::Queued,
-            conclusion: None,
-            started_at: None,
-            completed_at: None,
+            ..make_step()
         },
     ];
     store
@@ -500,28 +438,20 @@ async fn steps_snapshot_replacement_not_append() {
     // Update with 3 steps — should replace, not append
     let three_steps = vec![
         Step {
-            number: 1,
             name: "Step A".to_string(),
             status: StepStatus::InProgress,
-            conclusion: None,
             started_at: Some(fixed_test_timestamp()),
-            completed_at: None,
+            ..make_step()
         },
         Step {
             number: 2,
             name: "Step B".to_string(),
-            status: StepStatus::Queued,
-            conclusion: None,
-            started_at: None,
-            completed_at: None,
+            ..make_step()
         },
         Step {
             number: 3,
             name: "Step C".to_string(),
-            status: StepStatus::Queued,
-            conclusion: None,
-            started_at: None,
-            completed_at: None,
+            ..make_step()
         },
     ];
     store
@@ -784,12 +714,8 @@ async fn create_job_from_waiting() {
     let run_id = RunId(71);
 
     let step = Step {
-        number: 1,
         name: "Checkout".to_string(),
-        status: StepStatus::Queued,
-        conclusion: None,
-        started_at: None,
-        completed_at: None,
+        ..make_step()
     };
 
     store
@@ -827,25 +753,10 @@ async fn workflow_name_preserved_on_in_progress_without_name() {
         .unwrap();
 
     // InProgress with no workflow_name (common for this event type)
-    let now = fixed_test_timestamp();
     let env = RunEventEnvelope {
-        run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
         workflow_name: None,
         workflow_path: None,
-        branch: Some("main".to_string()),
-        head_sha: "abc123def456".to_string(),
-        commit_message: None,
-        trigger_event: "push".to_string(),
-        display_title: "CI Run".to_string(),
-        html_url: "https://github.com/octocat/Hello-World/actions/runs/123".to_string(),
-        created_at: now,
-        run_started_at: None,
-        updated_at: now,
-        completed_at: None,
-        run_attempt: 1,
-        action: RunEvent::InProgress,
+        ..make_run_event(run_id, RunEvent::InProgress)
     };
     store.apply_run_event(env).await.unwrap();
 

@@ -11,6 +11,8 @@ pub mod job;
 pub mod persist;
 pub mod run;
 pub mod state_machine;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod types;
 
 pub use clock::{Clock, SystemClock};
