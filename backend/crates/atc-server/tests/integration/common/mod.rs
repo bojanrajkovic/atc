@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI64, AtomicU64};
@@ -382,8 +383,87 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
 /// Broadcast capacity used by the shared in-memory app builders. Matches the
 /// production capacity (`InMemoryStore::start` constant) so `RecvError::Lagged`
 /// semantics in the shared helpers mirror production. Lagging-client coverage
-/// uses a smaller capacity via `InMemoryStore::new_for_test` directly.
+/// uses a smaller capacity via [`spawn_in_memory_server_with_capacity`].
 const IN_MEMORY_TEST_BROADCAST_CAPACITY: usize = 256;
+
+/// Build an in-memory app (no webhook secret), bind it to an ephemeral port,
+/// and spawn `axum::serve` on a detached task. Returns the bound address plus
+/// the `AppState` so tests can fire `state.shutdown` or drive the store
+/// directly. The serve task is detached — no test joins it; the OS reclaims
+/// the listener at process exit.
+pub async fn spawn_in_memory_server() -> (SocketAddr, Arc<AppState>) {
+    spawn_in_memory_server_with_capacity(IN_MEMORY_TEST_BROADCAST_CAPACITY).await
+}
+
+/// [`spawn_in_memory_server`] with a caller-chosen broadcast capacity. The
+/// lagging-client WS test passes a capacity smaller than the number of events
+/// it sends to force `RecvError::Lagged`.
+pub async fn spawn_in_memory_server_with_capacity(
+    broadcast_capacity: usize,
+) -> (SocketAddr, Arc<AppState>) {
+    ensure_recorder_installed();
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
+    let persist = InMemoryStore::new_for_test(
+        Arc::clone(&clock),
+        Duration::from_hours(1),
+        broadcast_capacity,
+    ) as Arc<dyn atc_persist::PersistentStore>;
+    let app_state = Arc::new(AppState {
+        persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
+        webhook_secret: None,
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
+        shutdown: CancellationToken::new(),
+        ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
+    });
+    let router = atc_server::routes::api_routes()
+        .with_state(app_state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (addr, app_state)
+}
+
+/// Read and validate the per-connection `ServerHello` text frame, returning its
+/// parsed JSON. Every fresh WS connection opens with a `WireFrame::ServerHello`
+/// (issue #47); tests that target later frames (Committed, ConfigUpdate,
+/// GoingAway, …) call this to skip it, and tests that assert on the hello
+/// itself (e.g. the version handshake) use the returned value.
+pub async fn consume_server_hello<S>(socket: &mut S) -> serde_json::Value
+where
+    S: futures_util::Stream<
+            Item = Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    use futures_util::stream::StreamExt as _;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("timed out waiting for ServerHello")
+        .expect("ServerHello frame Some")
+        .expect("ServerHello frame Ok");
+    let text = match frame {
+        Message::Text(t) => t,
+        other => panic!("expected ServerHello text frame, got: {other:?}"),
+    };
+    let json: serde_json::Value = serde_json::from_str(&text).expect("ServerHello JSON");
+    assert_eq!(
+        json.get("kind").and_then(|v| v.as_str()),
+        Some("ServerHello"),
+        "first frame must be ServerHello; got: {text}"
+    );
+    json
+}
 
 // Fixture: workflow_run_requested.json
 pub fn fixture_workflow_run_requested() -> Vec<u8> {
@@ -748,6 +828,46 @@ pub async fn start_pg_store_for_test_with_clock_and_retention(
     .await
     .expect("PgStore::start_with_test_hooks");
     store
+}
+
+/// Build a full Axum app backed by a real `PgStore` (listener + drain spawned
+/// via [`start_pg_store_for_test`]), returning the router, `AppState`, and a
+/// broadcast receiver. `AppState.shutdown` is the SAME token driving the
+/// store's background tasks, so `state.shutdown.cancel()` at end-of-test stops
+/// both the WS surface and the store.
+///
+/// Unlike [`build_app_with_pg_and_listener`] this does not wait for a first
+/// drain pass and exposes no test-hook handles — use it for write-path, route,
+/// and readyz coverage that drives the drain manually or doesn't depend on it.
+pub async fn build_pg_app(
+    pool: atc_store_pg::TracedPool,
+    db_url: &str,
+) -> (
+    axum::Router,
+    Arc<AppState>,
+    tokio::sync::broadcast::Receiver<atc_wire::CommittedEvent>,
+) {
+    ensure_recorder_installed();
+    let shutdown = CancellationToken::new();
+    let store = start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
+    let rx = store.subscribe();
+    let persist = store as Arc<dyn atc_persist::PersistentStore>;
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
+    let app_state = Arc::new(AppState {
+        persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
+        webhook_secret: None,
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
+        shutdown,
+        ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
+    });
+    let app = atc_server::routes::api_routes()
+        .with_state(app_state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+    (app, app_state, rx)
 }
 
 // ---------------------------------------------------------------------------

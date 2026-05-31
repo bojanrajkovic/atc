@@ -7,7 +7,6 @@
 
 use crate::common;
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,82 +23,11 @@ use futures_util::stream::StreamExt;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
-/// Build an ephemeral server with a custom broadcast capacity.
-/// Returns (server_address, AppState).
-///
-/// The broadcast capacity is parameterized so the lagging-client test can
-/// trigger lag by using a capacity smaller than the number of events sent.
-async fn test_setup(broadcast_capacity: usize) -> (SocketAddr, Arc<AppState>) {
-    common::ensure_recorder_installed();
-
-    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
-    let persist = InMemoryStore::new_for_test(
-        Arc::clone(&clock),
-        Duration::from_hours(1),
-        broadcast_capacity,
-    ) as Arc<dyn atc_persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-    });
-
-    let main_router = routes::api_routes()
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
-
-    let main_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let main_addr = main_listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(main_listener, main_router).await.unwrap();
-    });
-
-    (main_addr, app_state)
-}
-
-/// Consume the per-connection `ServerHello` text frame.
-///
-/// Every fresh WS connection now opens with a `WireFrame::ServerHello`
-/// carrying `VERGEN_GIT_DESCRIBE` (issue #47). Tests that target other frames
-/// (Committed, ConfigUpdate, ConfigReloadError) must skip ServerHello first.
-async fn consume_server_hello<S>(socket: &mut S)
-where
-    S: futures_util::Stream<
-            Item = Result<
-                tokio_tungstenite::tungstenite::Message,
-                tokio_tungstenite::tungstenite::Error,
-            >,
-        > + Unpin,
-{
-    let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
-        .await
-        .expect("timed out waiting for ServerHello")
-        .expect("ServerHello frame Some")
-        .expect("ServerHello frame Ok");
-    let text = match frame {
-        Message::Text(t) => t,
-        other => panic!("expected ServerHello text frame, got: {other:?}"),
-    };
-    let json: serde_json::Value = serde_json::from_str(&text).expect("ServerHello JSON");
-    assert_eq!(
-        json.get("kind").and_then(|v| v.as_str()),
-        Some("ServerHello"),
-        "first frame must be ServerHello; got: {text}"
-    );
-}
-
 /// GET /v1/ws upgrades to WebSocket connection
 #[tokio::test]
 #[serial_test::serial]
 async fn ws_upgrade_succeeds() {
-    let (server_addr, _) = test_setup(256).await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let result = tokio_tungstenite::connect_async(&ws_url).await;
@@ -119,14 +47,14 @@ async fn ws_upgrade_succeeds() {
 #[tokio::test]
 #[serial_test::serial]
 async fn ws_receives_webhook_event() {
-    let (server_addr, _) = test_setup(256).await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
 
-    consume_server_hello(&mut socket).await;
+    common::consume_server_hello(&mut socket).await;
 
     // Post a webhook via HTTP
     let client = reqwest::Client::new();
@@ -179,7 +107,7 @@ async fn ws_receives_webhook_event() {
 #[tokio::test]
 #[serial_test::serial]
 async fn multiple_clients_receive_same_event() {
-    let (server_addr, _state) = test_setup(256).await;
+    let (server_addr, _state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
 
@@ -191,8 +119,8 @@ async fn multiple_clients_receive_same_event() {
         .await
         .expect("WS client 2 connection failed");
 
-    consume_server_hello(&mut socket1).await;
-    consume_server_hello(&mut socket2).await;
+    common::consume_server_hello(&mut socket1).await;
+    common::consume_server_hello(&mut socket2).await;
 
     // Post a webhook via HTTP
     let client = reqwest::Client::new();
@@ -249,7 +177,7 @@ async fn multiple_clients_receive_same_event() {
 #[tokio::test]
 #[serial_test::serial]
 async fn disconnect_does_not_crash_server() {
-    let (server_addr, _state) = test_setup(256).await;
+    let (server_addr, _state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
 
@@ -261,7 +189,7 @@ async fn disconnect_does_not_crash_server() {
         .await
         .expect("WS client 2 connection failed");
 
-    consume_server_hello(&mut socket2).await;
+    common::consume_server_hello(&mut socket2).await;
 
     // Drop client 1 (disconnect). Its ServerHello may not have been read
     // before the drop, but that's irrelevant — the test asserts that the
@@ -314,7 +242,7 @@ async fn disconnect_does_not_crash_server() {
 #[serial_test::serial]
 async fn lagging_client_is_disconnected() {
     // Capacity-2 channel: 3 sends without any recv causes lag.
-    let (server_addr, state) = test_setup(2).await;
+    let (server_addr, state) = common::spawn_in_memory_server_with_capacity(2).await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
@@ -381,7 +309,7 @@ async fn lagging_client_is_disconnected() {
 #[tokio::test]
 #[serial_test::serial]
 async fn idle_client_receives_close_on_cancel() {
-    let (server_addr, state) = test_setup(256).await;
+    let (server_addr, state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
@@ -422,14 +350,14 @@ async fn idle_client_receives_close_on_cancel() {
 #[tokio::test]
 #[serial_test::serial]
 async fn wireframe_committed_kind_matches_camelcase() {
-    let (server_addr, _) = test_setup(256).await;
+    let (server_addr, _) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
 
-    consume_server_hello(&mut socket).await;
+    common::consume_server_hello(&mut socket).await;
 
     let client = reqwest::Client::new();
     let webhook_url = format!("http://{}/v1/webhooks/github", server_addr);
@@ -466,14 +394,14 @@ async fn wireframe_committed_kind_matches_camelcase() {
 #[tokio::test]
 #[serial_test::serial]
 async fn wireframe_config_update_kind_and_camelcase_fields() {
-    let (server_addr, state) = test_setup(256).await;
+    let (server_addr, state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
 
-    consume_server_hello(&mut socket).await;
+    common::consume_server_hello(&mut socket).await;
 
     // Wait briefly so the handler subscribes before we broadcast.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -511,14 +439,14 @@ async fn wireframe_config_update_kind_and_camelcase_fields() {
 #[tokio::test]
 #[serial_test::serial]
 async fn wireframe_config_reload_error_kind() {
-    let (server_addr, state) = test_setup(256).await;
+    let (server_addr, state) = common::spawn_in_memory_server().await;
 
     let ws_url = format!("ws://{}/v1/ws", server_addr);
     let (mut socket, _response) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .expect("WebSocket connection failed");
 
-    consume_server_hello(&mut socket).await;
+    common::consume_server_hello(&mut socket).await;
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 

@@ -6,10 +6,8 @@
 
 use crate::common;
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use atc_server::state::AppState;
 use axum::body::Body;
 use axum::body::to_bytes;
 use axum::http::{Request, StatusCode};
@@ -17,33 +15,17 @@ use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
+/// Thin adapter over [`common::build_pg_app`] returning just the router and the
+/// shared shutdown token this file's readyz tests cancel at end-of-test.
 async fn build_app_with_pool(
     pool: atc_store_pg::TracedPool,
     db_url: &str,
 ) -> (axum::Router, CancellationToken) {
-    common::ensure_recorder_installed();
-    let shutdown = CancellationToken::new();
-    let store = common::start_pg_store_for_test(pool, db_url, shutdown.clone()).await;
-    let persist = store as Arc<dyn atc_persist::PersistentStore>;
-    let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: shutdown.clone(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-    });
-    (
-        atc_server::routes::api_routes().with_state(app_state),
-        shutdown,
-    )
+    let (app, state, _rx) = common::build_pg_app(pool, db_url).await;
+    let shutdown = state.shutdown.clone();
+    (app, shutdown)
 }
 
 #[tokio::test]
