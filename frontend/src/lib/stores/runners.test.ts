@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createMockJob, createMockRun } from '$lib/test-utils/factories'
+import { createMockJob, createMockRun, createMockRunner } from '$lib/test-utils/factories'
 import { computePoolStats } from './runners.svelte'
 import { runStore } from './runs.svelte'
 
@@ -33,7 +33,7 @@ describe('computePoolStats (pure function)', () => {
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupName: 'GitHub' },
+      runner: createMockRunner({ name: 'r', groupName: 'GitHub' }),
     })
     const pools = computePoolStats([job])
     expect(pools[0]?.groupName).toBe('GitHub')
@@ -48,7 +48,7 @@ describe('computePoolStats (pure function)', () => {
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupName: 'GitHub' },
+      runner: createMockRunner({ name: 'r', groupName: 'GitHub' }),
     })
     const pools = computePoolStats([job])
     expect(pools[0]?.total).toEqual({ kind: 'Undeclared' })

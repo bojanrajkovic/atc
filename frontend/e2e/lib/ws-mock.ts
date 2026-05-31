@@ -113,6 +113,7 @@ export function makeRunEvent(
         createdAt: fields.createdAt,
         runStartedAt: fields.runStartedAt,
         updatedAt: fields.updatedAt,
+        runAttempt: 1,
         action: fields.action,
       },
     },
