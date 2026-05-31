@@ -39,7 +39,7 @@ describe('TopBar (browser mode)', () => {
       status: 'InProgress',
       labels,
       runner,
-      startedAt: new Date().toISOString(),
+      startedAt: '2026-04-16T10:00:00Z',
     })
   }
 

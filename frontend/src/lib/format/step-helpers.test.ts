@@ -10,14 +10,14 @@ import { computeStepDurationText, computeStepStatusKey } from './step-helpers'
 describe('computeStepStatusKey', () => {
   describe('Queued status', () => {
     it('returns Queued for a queued step', () => {
-      const step = createMockStep({ status: 'Queued', conclusion: null })
+      const step = createMockStep()
       expect(computeStepStatusKey(step)).toBe('Queued')
     })
   })
 
   describe('InProgress status', () => {
     it('returns InProgress for an in-progress step', () => {
-      const step = createMockStep({ status: 'InProgress', conclusion: null })
+      const step = createMockStep({ status: 'InProgress' })
       expect(computeStepStatusKey(step)).toBe('InProgress')
     })
   })

@@ -25,10 +25,8 @@ import { createMockRunCommittedEvent } from '$lib/test-utils/factories'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
-/** Build a minimal RunEvent CommittedEvent (Requested action triggers an announcement). */
-function makeRequestedRunEvent(runId: bigint, seq: bigint): CommittedEvent {
-  return createMockRunCommittedEvent(seq, { runId })
-}
+// Run events default to a Requested action (createMockRunCommittedEvent →
+// createMockRunEvent default), which triggers a live-region announcement.
 
 /** Serialize a CommittedEvent to JSON with bigint → string (matching the wire format). */
 function serializeEvent(event: CommittedEvent): string {
@@ -124,7 +122,7 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
     // Send a buffered event (arrives before state fetch resolves, seq >= snapshot.seq=5).
     const ws1 = MockWebSocket.getLastInstance()
     expect(ws1).toBeDefined()
-    ws1!.receiveMessage(serializeEvent(makeRequestedRunEvent(101n, 10n)))
+    ws1!.receiveMessage(serializeEvent(createMockRunCommittedEvent(10n, { runId: 101n })))
 
     // Let the receiveMessage microtask settle.
     await flushMicrotasks()
@@ -140,7 +138,7 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
     // Send a normal live event post-connect and flush the dispatcher manually.
     // setOnFlush is now wired to liveRegion.observeFlush, so this MUST fire it.
     const ws1Live = MockWebSocket.getLastInstance()!
-    ws1Live.receiveMessage(serializeEvent(makeRequestedRunEvent(102n, 20n)))
+    ws1Live.receiveMessage(serializeEvent(createMockRunCommittedEvent(20n, { runId: 102n })))
     await flushMicrotasks()
     eventDispatcher.flush()
 
@@ -178,7 +176,7 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
     const ws2 = MockWebSocket.getLastInstance()
     expect(ws2).toBeDefined()
     expect(ws2).not.toBe(ws1Live) // Must be a fresh WS instance.
-    ws2!.receiveMessage(serializeEvent(makeRequestedRunEvent(201n, 30n)))
+    ws2!.receiveMessage(serializeEvent(createMockRunCommittedEvent(30n, { runId: 201n })))
     await flushMicrotasks()
 
     // Resolve the second state fetch and let the async connect() chain finish.
@@ -192,7 +190,7 @@ describe('ARIA live-region silence during snapshot replay and buffered drain', (
 
     // Send a live event after the second drain — must fire observeFlush.
     const ws2Live = MockWebSocket.getLastInstance()!
-    ws2Live.receiveMessage(serializeEvent(makeRequestedRunEvent(202n, 40n)))
+    ws2Live.receiveMessage(serializeEvent(createMockRunCommittedEvent(40n, { runId: 202n })))
     await flushMicrotasks()
     eventDispatcher.flush()
 
