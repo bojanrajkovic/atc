@@ -25,69 +25,36 @@ fn ts() -> DateTime<Utc> {
 
 /// Minimal RunEventEnvelope for a Requested (Queued) event.
 fn run_requested(run_id: i64) -> RunEventEnvelope {
-    RunEventEnvelope {
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        workflow_name: Some("CI".to_string()),
-        workflow_path: Some(".github/workflows/ci.yml".to_string()),
-        branch: Some("main".to_string()),
-        head_sha: "abc123".to_string(),
-        commit_message: Some("Initial commit".to_string()),
-        trigger_event: "push".to_string(),
-        display_title: "Test run".to_string(),
-        html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
-        created_at: ts(),
-        run_started_at: None,
-        updated_at: ts(),
-        completed_at: None,
-        action: RunEvent::Requested,
-    }
+    common::make_run_envelope(RunId(run_id), RunEvent::Requested)
 }
 
 /// InProgress run event.
+///
+/// `workflow_name` and `workflow_path` are deliberately `None` — GitHub omits
+/// them on `in_progress` events, and the COALESCE in the UPSERT must preserve
+/// the value from the `Requested` row.
 fn run_in_progress(run_id: i64) -> RunEventEnvelope {
     RunEventEnvelope {
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        workflow_name: None, // deliberately omitted — should be preserved via COALESCE
+        workflow_name: None,
         workflow_path: None,
-        branch: Some("main".to_string()),
-        head_sha: "abc123".to_string(),
-        commit_message: Some("Initial commit".to_string()),
-        trigger_event: "push".to_string(),
-        display_title: "Test run".to_string(),
-        html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
-        created_at: ts(),
         run_started_at: Some(ts()),
-        updated_at: ts(),
-        completed_at: None,
         action: RunEvent::InProgress,
+        ..common::make_run_envelope(RunId(run_id), RunEvent::Requested)
     }
 }
 
 /// Completed run event.
 fn run_completed(run_id: i64) -> RunEventEnvelope {
     RunEventEnvelope {
-        run_id: RunId(run_id),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
         workflow_name: None,
         workflow_path: None,
-        branch: Some("main".to_string()),
-        head_sha: "abc123".to_string(),
-        commit_message: Some("Initial commit".to_string()),
-        trigger_event: "push".to_string(),
-        display_title: "Test run".to_string(),
-        html_url: format!("https://github.com/test-org/test-repo/actions/runs/{run_id}"),
-        created_at: ts(),
         run_started_at: Some(ts()),
-        updated_at: ts(),
-        completed_at: Some(ts()),
-        action: RunEvent::Completed {
-            conclusion: atc_core::RunConclusion::Success,
-        },
+        ..common::make_run_envelope(
+            RunId(run_id),
+            RunEvent::Completed {
+                conclusion: atc_core::RunConclusion::Success,
+            },
+        )
     }
 }
 
@@ -235,6 +202,62 @@ async fn pg_run_invalid_transition_returns_err() {
         .await
         .expect("row not found");
     assert_eq!(row.status, "Completed");
+    shutdown.cancel();
+}
+
+/// GitHub re-run: a higher `run_attempt` reopens a Completed run.
+///
+/// GitHub reuses the same `run_id` for re-runs and increments `run_attempt`.
+/// The UPSERT predicate admits the update via `EXCLUDED.run_attempt >
+/// runs.run_attempt` even though the stored status is terminal, and the
+/// reset CASE expressions clear `conclusion` / `completed_at`. This is the
+/// regression guard for the dropped-re-run bug.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_higher_attempt_reopens_completed_run() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Attempt 1: run completes with a Cancelled conclusion.
+    store.apply_run_event(run_requested(1010)).await.unwrap();
+    store.apply_run_event(run_in_progress(1010)).await.unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            completed_at: Some(ts()),
+            ..run_completed(1010)
+        })
+        .await
+        .unwrap();
+
+    // Attempt 2: GitHub re-runs the same run_id with run_attempt = 2,
+    // in_progress. The forward-only guard alone would reject this.
+    let rerun = RunEventEnvelope {
+        run_attempt: 2,
+        ..run_in_progress(1010)
+    };
+    let result = store.apply_run_event(rerun).await;
+    assert!(result.is_ok(), "re-run should be admitted, got: {result:?}");
+
+    let row = sqlx::query!(
+        "SELECT status, conclusion, completed_at, run_attempt FROM runs WHERE id = 1010"
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("row not found");
+
+    assert_eq!(row.status, "InProgress", "re-run should reopen the run");
+    assert_eq!(row.run_attempt, 2, "run_attempt should advance to 2");
+    assert!(
+        row.conclusion.is_none(),
+        "terminal conclusion should reset on a new attempt, got {:?}",
+        row.conclusion
+    );
+    assert!(
+        row.completed_at.is_none(),
+        "completed_at should reset on a new attempt, got {:?}",
+        row.completed_at
+    );
     shutdown.cancel();
 }
 
