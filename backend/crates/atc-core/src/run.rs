@@ -203,6 +203,7 @@ mod arb {
 mod tests {
     use super::*;
     use crate::clock::fixed_test_timestamp;
+    use crate::test_support::make_workflow_run;
     use proptest::prelude::*;
 
     #[test]
@@ -210,23 +211,11 @@ mod tests {
         let now = fixed_test_timestamp();
         let run = WorkflowRun {
             id: RunId(123),
-            org: "octocat".to_string(),
-            repo: "Hello-World".to_string(),
-            workflow_name: Some("CI".to_string()),
-            workflow_path: Some(".github/workflows/ci.yml".to_string()),
-            branch: Some("main".to_string()),
-            head_sha: "abc123def456".to_string(),
-            commit_message: Some("Fix bug".to_string()),
-            event: "push".to_string(),
             display_title: "Triggered by push".to_string(),
             status: RunStatus::InProgress,
-            conclusion: None,
             html_url: "https://github.com/octocat/Hello-World/actions/runs/123".to_string(),
-            created_at: now,
             run_started_at: Some(now),
-            updated_at: now,
-            completed_at: None,
-            run_attempt: 1,
+            ..make_workflow_run()
         };
 
         assert_eq!(run.id, RunId(123));
@@ -255,26 +244,10 @@ mod tests {
 
     #[test]
     fn test_workflow_run_repo_key() {
-        let now = fixed_test_timestamp();
         let run = WorkflowRun {
-            id: RunId(456),
             org: "github".to_string(),
             repo: "example".to_string(),
-            workflow_name: Some("Test".to_string()),
-            workflow_path: Some(".github/workflows/test.yml".to_string()),
-            branch: None,
-            head_sha: "xyz789".to_string(),
-            commit_message: None,
-            event: "pull_request".to_string(),
-            display_title: "PR".to_string(),
-            status: RunStatus::Queued,
-            conclusion: None,
-            html_url: "https://github.com/github/example/actions/runs/456".to_string(),
-            created_at: now,
-            run_started_at: None,
-            updated_at: now,
-            completed_at: None,
-            run_attempt: 1,
+            ..make_workflow_run()
         };
 
         let repo_key = run.repo_key();
@@ -309,25 +282,14 @@ mod tests {
     #[test]
     fn test_workflow_run_round_trip_json() {
         let now = fixed_test_timestamp();
+        // A fully-populated Completed run exercises the Some(conclusion) /
+        // Some(completed_at) arms across the serde boundary.
         let original = WorkflowRun {
-            id: RunId(789),
-            org: "myorg".to_string(),
-            repo: "myrepo".to_string(),
-            workflow_name: Some("Deploy".to_string()),
-            workflow_path: Some(".github/workflows/deploy.yml".to_string()),
-            branch: Some("release".to_string()),
-            head_sha: "fedcba987654".to_string(),
-            commit_message: Some("Release v1.0".to_string()),
-            event: "push".to_string(),
-            display_title: "Deploy to production".to_string(),
             status: RunStatus::Completed,
             conclusion: Some(RunConclusion::Success),
-            html_url: "https://github.com/myorg/myrepo/actions/runs/789".to_string(),
-            created_at: now,
             run_started_at: Some(now),
-            updated_at: now,
             completed_at: Some(now),
-            run_attempt: 1,
+            ..make_workflow_run()
         };
 
         let json_str = serde_json::to_string(&original).expect("serialize to JSON");
@@ -339,26 +301,10 @@ mod tests {
 
     #[test]
     fn test_workflow_run_with_optional_fields_none() {
-        let now = fixed_test_timestamp();
         let run = WorkflowRun {
-            id: RunId(999),
-            org: "testorg".to_string(),
-            repo: "testrepo".to_string(),
-            workflow_name: Some("TestFlow".to_string()),
-            workflow_path: Some(".github/workflows/test.yml".to_string()),
             branch: None,
-            head_sha: "111222333444".to_string(),
             commit_message: None,
-            event: "schedule".to_string(),
-            display_title: "Scheduled run".to_string(),
-            status: RunStatus::Queued,
-            conclusion: None,
-            html_url: "https://github.com/testorg/testrepo/actions/runs/999".to_string(),
-            created_at: now,
-            run_started_at: None,
-            updated_at: now,
-            completed_at: None,
-            run_attempt: 1,
+            ..make_workflow_run()
         };
 
         assert_eq!(run.branch, None);

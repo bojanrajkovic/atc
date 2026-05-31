@@ -9,6 +9,7 @@ use super::*;
 use crate::clock::fixed_test_timestamp;
 use crate::job::{JobConclusion, Step, StepStatus};
 use crate::run::RunConclusion;
+use crate::test_support::{make_job, make_job_event, make_workflow_run};
 use chrono::Utc;
 
 // ===== apply_run_event =====
@@ -20,23 +21,11 @@ fn run_forward_only_rejects_completed_to_in_progress() {
     let run_id = RunId(1001);
     let completed_run = WorkflowRun {
         id: run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
-        workflow_name: Some("CI".to_string()),
-        workflow_path: Some(".github/workflows/ci.yml".to_string()),
-        branch: Some("main".to_string()),
-        head_sha: "abc123".to_string(),
-        commit_message: Some("Fix bug".to_string()),
-        event: "push".to_string(),
-        display_title: "CI Run".to_string(),
         status: RunStatus::Completed,
         conclusion: Some(RunConclusion::Success),
-        html_url: "https://github.com/octocat/Hello-World/actions/runs/1001".to_string(),
-        created_at: now,
         run_started_at: Some(now),
-        updated_at: now,
         completed_at: Some(now),
-        run_attempt: 1,
+        ..make_workflow_run()
     };
 
     let envelope = make_run_event(run_id, RunEvent::InProgress);
@@ -66,10 +55,10 @@ fn run_idempotent_same_status_requested_twice() {
 /// First-sight: `apply_run_event(None, Requested)` creates a new run with envelope fields.
 #[test]
 fn run_first_sight_from_none_creates_run() {
-    let now = fixed_test_timestamp();
     let run_id = RunId(1003);
+    // Distinct-from-default values so the assertions prove the envelope's fields
+    // (not the builder's defaults) flow through to the created run.
     let envelope = RunEventEnvelope {
-        run_id,
         org: "myorg".to_string(),
         repo: "myrepo".to_string(),
         workflow_name: Some("Build".to_string()),
@@ -77,15 +66,9 @@ fn run_first_sight_from_none_creates_run() {
         branch: Some("feature".to_string()),
         head_sha: "deadbeef".to_string(),
         commit_message: Some("Add feature".to_string()),
-        trigger_event: "push".to_string(),
         display_title: "Build #42".to_string(),
         html_url: "https://github.com/myorg/myrepo/actions/runs/1003".to_string(),
-        created_at: now,
-        run_started_at: None,
-        updated_at: now,
-        completed_at: None,
-        run_attempt: 1,
-        action: RunEvent::Requested,
+        ..make_run_event(run_id, RunEvent::Requested)
     };
 
     let run = apply_run_event(None, envelope).expect("first-sight should succeed");
@@ -103,50 +86,21 @@ fn run_first_sight_from_none_creates_run() {
 /// Struct-update merge: an envelope without `workflow_name` preserves the existing value.
 #[test]
 fn run_struct_update_merge_preserves_workflow_name() {
-    let now = fixed_test_timestamp();
     let run_id = RunId(1004);
 
     // Build an existing run with a workflow_name already set.
     let existing = WorkflowRun {
         id: run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
         workflow_name: Some("My Workflow".to_string()),
         workflow_path: Some(".github/workflows/my.yml".to_string()),
-        branch: Some("main".to_string()),
-        head_sha: "abc123".to_string(),
-        commit_message: None,
-        event: "push".to_string(),
-        display_title: "Run".to_string(),
-        status: RunStatus::Queued,
-        conclusion: None,
-        html_url: "https://example.com".to_string(),
-        created_at: now,
-        run_started_at: None,
-        updated_at: now,
-        completed_at: None,
-        run_attempt: 1,
+        ..make_workflow_run()
     };
 
     // Envelope with workflow_name = None (common for in_progress events).
     let envelope = RunEventEnvelope {
-        run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
         workflow_name: None,
         workflow_path: None,
-        branch: Some("main".to_string()),
-        head_sha: "abc123".to_string(),
-        commit_message: None,
-        trigger_event: "push".to_string(),
-        display_title: "Run".to_string(),
-        html_url: "https://example.com".to_string(),
-        created_at: now,
-        run_started_at: None,
-        updated_at: now,
-        completed_at: None,
-        run_attempt: 1,
-        action: RunEvent::InProgress,
+        ..make_run_event(run_id, RunEvent::InProgress)
     };
 
     let updated = apply_run_event(Some(existing), envelope).expect("transition should succeed");
@@ -233,21 +187,16 @@ fn job_snapshot_step_replacement() {
         })
         .collect();
 
-    let initial_envelope = JobEventEnvelope {
+    let initial_envelope = make_job_event(
         job_id,
         run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
-        name: "build".to_string(),
-        created_at: now,
-        started_at: None,
-        completed_at: None,
-        run_attempt: 1,
-        action: JobEvent::Queued {
+        "octocat",
+        "Hello-World",
+        JobEvent::Queued {
             labels: vec![],
             steps: three_steps,
         },
-    };
+    );
 
     // Create the job first.
     let job_with_3_steps =
@@ -267,20 +216,18 @@ fn job_snapshot_step_replacement() {
         .collect();
 
     let update_envelope = JobEventEnvelope {
-        job_id,
-        run_id,
-        org: "octocat".to_string(),
-        repo: "Hello-World".to_string(),
-        name: "build".to_string(),
-        created_at: now,
         started_at: Some(now),
-        completed_at: None,
-        run_attempt: 1,
-        action: JobEvent::InProgress {
-            runner: None,
-            labels: vec![],
-            steps: two_steps,
-        },
+        ..make_job_event(
+            job_id,
+            run_id,
+            "octocat",
+            "Hello-World",
+            JobEvent::InProgress {
+                runner: None,
+                labels: vec![],
+                steps: two_steps,
+            },
+        )
     };
 
     let updated =
@@ -317,14 +264,9 @@ fn not_evictable_active_job() {
         name: "build".to_string(),
         run_id: RunId(300),
         status: JobStatus::InProgress,
-        conclusion: None,
-        runner: None,
-        labels: vec![],
-        steps: vec![],
         created_at: now - chrono::Duration::hours(2),
         started_at: Some(now - chrono::Duration::hours(2)),
-        completed_at: None,
-        run_attempt: 1,
+        ..make_job()
     };
     let ttl = Duration::from_mins(30);
 
@@ -358,12 +300,9 @@ fn build_completed_job(completed_at: Option<chrono::DateTime<Utc>>) -> Job {
         run_id: RunId(900),
         status: JobStatus::Completed,
         conclusion: Some(JobConclusion::Success),
-        runner: None,
-        labels: vec![],
-        steps: vec![],
         created_at: now - chrono::Duration::hours(3),
         started_at: Some(now - chrono::Duration::hours(3)),
         completed_at,
-        run_attempt: 1,
+        ..make_job()
     }
 }
