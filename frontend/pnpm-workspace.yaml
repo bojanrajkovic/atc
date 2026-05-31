@@ -12,7 +12,7 @@ catalog:
   '@vitest/browser': 4.1.7
   '@vitest/browser-playwright': 4.1.7
   '@vitest/coverage-v8': 4.1.7
-  '@lucide/svelte': 1.16.0
+  '@lucide/svelte': 1.17.0
   'bits-ui': 2.18.1
   clsx: 2.1.1
   'command-score': 0.1.2
