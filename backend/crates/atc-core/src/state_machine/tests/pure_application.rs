@@ -36,6 +36,7 @@ fn run_forward_only_rejects_completed_to_in_progress() {
         run_started_at: Some(now),
         updated_at: now,
         completed_at: Some(now),
+        run_attempt: 1,
     };
 
     let envelope = make_run_event(run_id, RunEvent::InProgress);
@@ -83,6 +84,7 @@ fn run_first_sight_from_none_creates_run() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
         action: RunEvent::Requested,
     };
 
@@ -123,6 +125,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
     };
 
     // Envelope with workflow_name = None (common for in_progress events).
@@ -142,6 +145,7 @@ fn run_struct_update_merge_preserves_workflow_name() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
         action: RunEvent::InProgress,
     };
 
@@ -238,6 +242,7 @@ fn job_snapshot_step_replacement() {
         created_at: now,
         started_at: None,
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::Queued {
             labels: vec![],
             steps: three_steps,
@@ -270,6 +275,7 @@ fn job_snapshot_step_replacement() {
         created_at: now,
         started_at: Some(now),
         completed_at: None,
+        run_attempt: 1,
         action: JobEvent::InProgress {
             runner: None,
             labels: vec![],
@@ -318,6 +324,7 @@ fn not_evictable_active_job() {
         created_at: now - chrono::Duration::hours(2),
         started_at: Some(now - chrono::Duration::hours(2)),
         completed_at: None,
+        run_attempt: 1,
     };
     let ttl = Duration::from_mins(30);
 
@@ -357,5 +364,6 @@ fn build_completed_job(completed_at: Option<chrono::DateTime<Utc>>) -> Job {
         created_at: now - chrono::Duration::hours(3),
         started_at: Some(now - chrono::Duration::hours(3)),
         completed_at,
+        run_attempt: 1,
     }
 }

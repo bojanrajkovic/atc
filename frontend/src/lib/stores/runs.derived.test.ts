@@ -494,6 +494,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -509,6 +510,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Completed',
           data: {
@@ -529,6 +531,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -571,6 +574,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -609,6 +613,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
       }
 
       const job2Details = {
@@ -619,6 +624,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:01Z',
         startedAt: '2026-04-17T00:00:05Z',
         completedAt: null,
+        runAttempt: 1,
       }
 
       const job3Details = {
@@ -629,6 +635,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:02Z',
         startedAt: '2026-04-17T00:00:05Z',
         completedAt: '2026-04-17T00:00:10Z',
+        runAttempt: 1,
       }
 
       // Job 1: Queued
@@ -696,6 +703,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -715,6 +723,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -749,6 +758,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -768,6 +778,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -804,6 +815,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -820,6 +832,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: '2026-04-17T00:00:10Z',
+        runAttempt: 1,
         action: {
           type: 'Completed',
           data: {
@@ -841,6 +854,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: '2026-04-17T00:00:05Z',
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -876,6 +890,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: [], steps: [] } },
       })
 
@@ -892,6 +907,7 @@ describe('RunStore', () => {
         createdAt: '2026-04-17T00:00:01Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: [], steps: [] } },
       })
 

@@ -42,6 +42,16 @@ startedAt: string | null,
  */
 completedAt: string | null, 
 /**
+ * Attempt number of the parent run this job belongs to. GitHub assigns
+ * fresh job IDs per attempt but reuses the run ID; the store filters jobs
+ * to the run's current attempt so a re-run's card doesn't mix attempts.
+ *
+ * Defaults to 1 on deserialization for the same reason as
+ * [`RunEventEnvelope::run_attempt`] — the PG drain decodes pre-feature
+ * `outbox.payload` rows that carry no `run_attempt`.
+ */
+runAttempt: number, 
+/**
  * The action that occurred.
  */
 action: JobEvent, };

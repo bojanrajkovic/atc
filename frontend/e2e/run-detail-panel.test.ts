@@ -161,6 +161,7 @@ test.describe('Run detail panel', () => {
             createdAt: new Date().toISOString(),
             startedAt: new Date().toISOString(),
             completedAt: null,
+            runAttempt: 1,
             action: { type: 'InProgress', data: { runner: null, labels: ['linux'], steps: [] } },
           },
         }),
@@ -298,6 +299,7 @@ test.describe('Run detail panel', () => {
             createdAt: new Date().toISOString(),
             startedAt: new Date().toISOString(),
             completedAt: null,
+            runAttempt: 1,
             action: {
               type: 'InProgress',
               data: {

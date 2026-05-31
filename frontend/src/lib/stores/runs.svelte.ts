@@ -142,8 +142,12 @@ class RunStore {
    */
   jobStatsByRun = $derived.by<ReadonlyMap<bigint, JobStats>>(() => {
     const result = new Map<bigint, JobStats>()
-    for (const runId of this.runs.keys()) {
-      const jobs = this.jobsByRun.get(runId) ?? []
+    for (const [runId, run] of this.runs) {
+      // Drop prior-attempt jobs (stale) but keep current-or-higher ones — a
+      // re-run's queued jobs can arrive at a higher attempt before the run row
+      // advances, and must stay counted. GitHub assigns fresh job IDs per
+      // attempt under the same run_id. Mirrors the backend read filter.
+      const jobs = (this.jobsByRun.get(runId) ?? []).filter((j) => j.runAttempt >= run.runAttempt)
       const completed = jobs.filter((j) => j.status === 'Completed').length
       result.set(runId, {
         completed,
@@ -168,7 +172,11 @@ class RunStore {
   jobsByRunId = $derived.by<ReadonlyMap<bigint, Job[]>>(() => {
     const result = new Map<bigint, Job[]>()
     for (const [runId, jobs] of this.jobsByRun) {
-      result.set(runId, jobs)
+      // Drop prior-attempt (stale) jobs; keep current-or-higher so a re-run's
+      // queued jobs stay visible before the run row advances. Unknown parent
+      // (job-before-run stub) → keep all; self-heals once the run event lands.
+      const run = this.runs.get(runId)
+      result.set(runId, run ? jobs.filter((j) => j.runAttempt >= run.runAttempt) : jobs)
     }
     return result
   })
@@ -182,8 +190,12 @@ class RunStore {
    */
   jobs = $derived.by<Job[]>(() => {
     const result: Job[] = []
-    for (const arr of this.jobsByRun.values()) {
+    for (const [runId, arr] of this.jobsByRun) {
+      const run = this.runs.get(runId)
       for (const job of arr) {
+        // Drop prior-attempt (stale) jobs; keep current-or-higher so a re-run's
+        // queued jobs stay visible before the run row advances.
+        if (run && job.runAttempt < run.runAttempt) continue
         if (!isExpired(job.status, job.completedAt, this.displayTtlSeconds, uiStore.nowMs)) {
           result.push(job)
         }
@@ -219,26 +231,45 @@ class RunStore {
     // would not invalidate per-key subscribers. Mirrors applyJobEvent's
     // immutable-update pattern and the backend atc-core CoW semantics.
     const existing = this.runs.get(runId)
+    // Normalize runAttempt at the store boundary: a pre-feature backend replica
+    // (rolling deploy) can emit run events without the field, so the runtime
+    // value is undefined despite the type. Default to 1.
+    const runAttempt = envelope.runAttempt ?? 1
+    // Ignore a stale lower-attempt run event — mirrors the backend stores'
+    // rejection (atc-store-pg's same-attempt UPSERT gate, atc-store-mem's hard
+    // reject). A delayed attempt-1 frame (from an older replica during a
+    // rolling deploy / backlog drain, or a stale buffered frame) must not
+    // overwrite or regress a newer attempt the client already holds.
+    if (existing !== undefined && runAttempt < existing.runAttempt) return
+    // GitHub re-runs reuse the same run_id with a higher run_attempt. When a
+    // newer attempt arrives we must NOT carry the prior attempt's terminal
+    // fields forward — otherwise a reopened run would keep showing its old
+    // conclusion / completedAt. Mirrors the backend reset (atc-store-pg's
+    // CASE-on-attempt UPSERT and atc-store-mem's fresh-start bypass).
+    const isNewAttempt = existing !== undefined && runAttempt > existing.runAttempt
+    const carryExisting = isNewAttempt ? undefined : existing
+
     // Mirror the backend's `envelope.completed_at.or(existing.completed_at)`:
     // envelope wins when defined, existing carries through otherwise. The
     // field is `completedAt?: string` (TS optional), so we only include it
     // when defined — `exactOptionalPropertyTypes: true` rejects explicit
     // `completedAt: undefined`. Without this carry, a WS Completed event
     // would leave `completedAt` undefined and the display-TTL filter would
-    // never expire the row until the next snapshot fetch.
-    const completedAt = envelope.completedAt ?? existing?.completedAt
+    // never expire the row until the next snapshot fetch. On a new attempt
+    // `carryExisting` is undefined, so the stale completedAt is dropped.
+    const completedAt = envelope.completedAt ?? carryExisting?.completedAt
     const completedAtPatch = completedAt === undefined ? {} : { completedAt }
 
-    const run: WorkflowRun = existing
+    const run: WorkflowRun = carryExisting
       ? {
-          ...existing,
+          ...carryExisting,
           ...completedAtPatch,
           status,
-          conclusion: conclusion ?? existing.conclusion,
+          conclusion: conclusion ?? carryExisting.conclusion,
           // Preserve optional fields that may be absent in some events
-          workflowName: envelope.workflowName ?? existing.workflowName,
-          workflowPath: envelope.workflowPath ?? existing.workflowPath,
-          runStartedAt: envelope.runStartedAt ?? existing.runStartedAt,
+          workflowName: envelope.workflowName ?? carryExisting.workflowName,
+          workflowPath: envelope.workflowPath ?? carryExisting.workflowPath,
+          runStartedAt: envelope.runStartedAt ?? carryExisting.runStartedAt,
           // Overwrite fields that the backend always replaces
           branch: envelope.branch,
           headSha: envelope.headSha,
@@ -246,13 +277,19 @@ class RunStore {
           displayTitle: envelope.displayTitle,
           htmlUrl: envelope.htmlUrl,
           updatedAt: envelope.updatedAt,
+          runAttempt,
         }
       : {
           id: runId,
           org: envelope.org,
           repo: envelope.repo,
-          workflowName: envelope.workflowName,
-          workflowPath: envelope.workflowPath,
+          // Reached for first-sight AND new-attempt resets. Workflow metadata
+          // is sticky and GitHub omits it on `in_progress` frames, so a re-run
+          // reopening via this branch must preserve the prior attempt's
+          // workflowName/workflowPath rather than null them. `existing` is the
+          // prior-attempt run on a reset and undefined on first-sight.
+          workflowName: envelope.workflowName ?? existing?.workflowName ?? null,
+          workflowPath: envelope.workflowPath ?? existing?.workflowPath ?? null,
           branch: envelope.branch,
           headSha: envelope.headSha,
           commitMessage: envelope.commitMessage,
@@ -264,6 +301,7 @@ class RunStore {
           createdAt: envelope.createdAt,
           runStartedAt: envelope.runStartedAt,
           updatedAt: envelope.updatedAt,
+          runAttempt,
           ...completedAtPatch,
         }
 
@@ -273,6 +311,9 @@ class RunStore {
   applyJobEvent(envelope: JobEventEnvelope): void {
     const jobId = envelope.jobId
     const runId = envelope.runId
+    // Normalize runAttempt at the store boundary — see applyRunEvent. A
+    // pre-feature backend (rolling deploy) omits it; default to 1.
+    const runAttempt = envelope.runAttempt ?? 1
 
     // Determine status from the action type
     let status: 'Queued' | 'Waiting' | 'InProgress' | 'Completed'
@@ -327,6 +368,7 @@ class RunStore {
         createdAt: envelope.createdAt,
         startedAt: envelope.startedAt,
         completedAt: envelope.completedAt,
+        runAttempt,
       }
       jobs = [...existing, newJob]
     } else {
@@ -347,6 +389,7 @@ class RunStore {
         createdAt: envelope.createdAt,
         startedAt: envelope.startedAt ?? prev.startedAt,
         completedAt: envelope.completedAt ?? prev.completedAt,
+        runAttempt,
       }
       jobs = [...existing]
       jobs[jobIndex] = updated
@@ -374,7 +417,12 @@ class RunStore {
     displayTtlSeconds: number = 0,
   ): void {
     this.runs.clear()
-    for (const r of runs) this.runs.set(r.id, r)
+    // Normalize runAttempt at the wire/store boundary: a pre-feature backend
+    // replica (rolling deploy) serves /v1/state without the field, so the
+    // runtime value is undefined despite the type. Default to 1 so attempt
+    // comparisons in the job derivations don't collapse to false and hide
+    // every job. Mirrors the `displayTtlSeconds ?? 0` shim in connection.ts.
+    for (const r of runs) this.runs.set(r.id, { ...r, runAttempt: r.runAttempt ?? 1 })
 
     // Group into a plain Map first; arrays must be fully built before they
     // reach the SvelteMap (push-into-an-already-installed-array would not
@@ -382,7 +430,7 @@ class RunStore {
     const grouped = new Map<bigint, Job[]>()
     for (const job of jobs) {
       const arr = grouped.get(job.runId) ?? []
-      arr.push(job)
+      arr.push({ ...job, runAttempt: job.runAttempt ?? 1 })
       grouped.set(job.runId, arr)
     }
 

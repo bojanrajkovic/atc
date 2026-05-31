@@ -319,6 +319,7 @@ describe('RovingFocusProvider.browser.test — pool-filter arrow nav', () => {
       createdAt: '2026-01-01T00:00:01Z',
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
       action: { type: 'Queued', data: { labels: ['A'], steps: [] } },
     })
     runStore.applyJobEvent({
@@ -330,6 +331,7 @@ describe('RovingFocusProvider.browser.test — pool-filter arrow nav', () => {
       createdAt: '2026-01-01T00:00:02Z',
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
       action: { type: 'Queued', data: { labels: ['B'], steps: [] } },
     })
     runStore.applyJobEvent({
@@ -341,6 +343,7 @@ describe('RovingFocusProvider.browser.test — pool-filter arrow nav', () => {
       createdAt: '2026-01-01T00:00:03Z',
       startedAt: null,
       completedAt: null,
+      runAttempt: 1,
       action: { type: 'Queued', data: { labels: ['A'], steps: [] } },
     })
     await tick()

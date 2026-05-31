@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-23
+Last verified: 2026-05-30
 
 `atc-server` is the single executable crate in the workspace. It wires the six library crates into a running Axum HTTP server: accepting GitHub webhook POST requests, verifying HMAC signatures, applying domain events to the active store, and delivering a real-time WebSocket stream plus a REST snapshot to the frontend. The persistence crate split is recorded in [ADR-0008](../architecture-decisions/0008-persistence-crate-split.md).
 
@@ -27,6 +27,16 @@ graph TD
     pg --> wire
     pg --> core
 ```
+
+## Domain model and state-machine invariants
+
+The domain types and their transition rules live in `atc-core` as pure, side-effect-free functions (`apply_run_event` / `apply_job_event`). Three invariants hold across both storage backends:
+
+- **Forward-only.** Run and job status only advances (`Queued → InProgress → Completed`); a terminal `Completed` never reverts. The sole documented exception is a GitHub re-run, which arrives with a higher `run_attempt` and is handled at the persistence layer — see § "GitHub re-runs and `run_attempt`".
+- **Idempotent reapplication.** Replaying the same event (same status target) is a no-op rather than an error. In PG mode this is enforced by the predicated UPSERT's predecessor set including the target status itself; in memory by the same-status short-circuit.
+- **Conclusion implies completion.** A `conclusion` is only populated on the `Completed` transition and, once recorded, is preserved across idempotent replay (`completed_at` follows the same preserve-first rule).
+
+These are verified by unit + proptest suites in `atc-core`. Crate-specific implementation notes (the predecessor-includes-self predicate, `completed_at` preserve-first) live in `backend/crates/atc-core/CLAUDE.md`.
 
 ## Webhook → Outbox → Drain → Broadcast pipeline
 
@@ -71,6 +81,7 @@ Migrations live in `backend/crates/atc-store-pg/migrations/`, embedded in the bi
 - `outbox_watermarks` table: per-replica heartbeat tracking for multi-replica outbox retention. Every write of `updated_at` uses a `Clock`-sourced timestamp (not `DEFAULT now()`) so `TestClock`-driven tests can advance time deterministically. See [ADR-0007](../architecture-decisions/0007-outbox-retention-policy.md).
 - `runs.placeholder` column: FK-only stub rows created when a job event arrives before its parent run event. `/v1/state` reads `WHERE placeholder = false`. Stubs are promoted to real rows when the matching `workflow_run` webhook arrives.
 - `runs.completed_at` column (added in a later migration): used by the composite index for display-TTL snapshot filtering.
+- `runs.run_attempt` column (added in migration `0008`): GitHub's 1-based attempt counter, reused across re-runs. Drives the re-run reset path in the run UPSERT predicate — see § "GitHub re-runs and `run_attempt`".
 
 **Placeholder note:** The `placeholder` mechanism provides out-of-order event tolerance at the storage layer. A job event always has a parent run to satisfy the FK constraint, even if the run event arrives later.
 
@@ -81,6 +92,7 @@ erDiagram
         bool placeholder
         text status
         timestamptz completed_at
+        int run_attempt
     }
     jobs {
         bigint id PK
@@ -104,6 +116,20 @@ erDiagram
 
     runs ||--o{ jobs : "parent of"
 ```
+
+## GitHub re-runs and `run_attempt`
+
+GitHub's "Re-run jobs" / "Re-run all jobs" feature reuses the **same `run_id`** and increments a `run_attempt` counter (1 for the initial run, 2+ for re-runs). Without special handling this collides with ATC's forward-only run state machine: a completed/cancelled run is already in a terminal `Completed` status, so the re-run's `workflow_run` `requested`/`in_progress` event would be rejected — the predicated UPSERT's `WHERE runs.status = ANY(predecessors)` guard matches no rows, the event is dropped, and the re-run never surfaces on the dashboard.
+
+The fix threads `run_attempt` (parsed from the webhook in `atc-github`) through `RunEventEnvelope` and onto `WorkflowRun`. The detection that "a higher attempt means start fresh" is deliberately a **persistence-layer concern**, not a domain rule:
+
+- **`atc-core`** stays forward-only. `apply_run_event` copies `run_attempt` onto the resulting run but never compares attempts or resets state. The pure transition functions remain side-effect-free and attempt-agnostic.
+- **`atc-store-pg`** extends the run UPSERT predicate to `WHERE (runs.status = ANY(predecessors) AND EXCLUDED.run_attempt = runs.run_attempt) OR EXCLUDED.run_attempt > runs.run_attempt`. The same-attempt clause on the status branch rejects a *delayed lower-attempt* event (an attempt-1 `completed` arriving after attempt 2 is live would otherwise match, since `InProgress` is a valid predecessor of `Completed`, and regress the run). When a higher attempt arrives, the row updates even from a terminal status, and `conclusion` / `completed_at` / `run_started_at` use `CASE` expressions that take the incoming value (rather than `COALESCE`-preserving the prior one) so the terminal state is cleared for the new attempt. `run_attempt` is always written from `EXCLUDED`.
+- **`atc-store-mem`** achieves the same semantics by passing `None` (not the existing run) to `apply_run_event` when `env.run_attempt > existing.run_attempt`, and rejecting a lower attempt outright.
+
+The two stores must stay behaviorally aligned on this path.
+
+**Jobs are attempt-scoped too.** A re-run's jobs arrive under the same `run_id` with fresh job IDs, so prior-attempt job rows accumulate. `jobs.run_attempt` (migration `0009`, parsed from the `workflow_job` payload) records each job's attempt; the snapshot read filters jobs to `j.run_attempt >= r.run_attempt` (and the in-memory store applies the same parent-attempt filter), so a reopened run's card drops the prior attempt's stale jobs. The comparison is `>=`, not `=`: GitHub emits no `workflow_run.requested` for a queued re-run, so the first signal can be a `workflow_job.queued` at attempt 2 while the run row is still attempt 1 — those queued jobs must stay visible, so only strictly-lower (stale) attempts are dropped. In steady state no job outlives its run's attempt, so nothing mixes. Filtering on read — rather than deleting prior-attempt rows on re-run — is also safe under webhook reordering. A higher-attempt job additionally bypasses the parent-run display-TTL cutoff: if a long-completed run is re-run and the queued job arrives before the run event, the parent row is still the aged-out prior attempt, and gating the fresh job on it would hide queued demand. The frontend run store mirrors the attempt filter in its `jobStatsByRun` / `jobsByRunId` / `jobs` derivations.
 
 ## Snapshot/stream reconciliation
 

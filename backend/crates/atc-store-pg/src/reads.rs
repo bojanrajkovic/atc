@@ -100,7 +100,8 @@ pub(crate) async fn read_all_runs(
         r#"
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, status, conclusion,
-               html_url, created_at, run_started_at, updated_at, completed_at
+               html_url, created_at, run_started_at, updated_at, completed_at,
+               run_attempt
           FROM runs
          WHERE placeholder = false
            AND ($1::timestamptz IS NULL
@@ -140,6 +141,7 @@ pub(crate) async fn read_all_runs(
             run_started_at: row.run_started_at,
             updated_at: row.updated_at,
             completed_at: row.completed_at,
+            run_attempt: row.run_attempt,
         });
     }
     Ok(runs)
@@ -191,10 +193,16 @@ pub(crate) async fn read_all_jobs(
                j.steps         AS "steps!: serde_json::Value",
                j.created_at    AS "created_at!",
                j.started_at    AS "started_at?",
-               j.completed_at  AS "completed_at?"
+               j.completed_at  AS "completed_at?",
+               j.run_attempt   AS "run_attempt!"
           FROM jobs j
           JOIN runs r ON r.id = j.run_id
-         WHERE ($1::timestamptz IS NULL
+         WHERE j.run_attempt >= r.run_attempt
+           AND ($1::timestamptz IS NULL
+                -- A higher-attempt job's parent row is still the aged-out prior
+                -- attempt; don't gate the fresh job on the stale run's cutoff.
+                -- It self-heals once the run event advances the row.
+                OR j.run_attempt > r.run_attempt
                 OR r.status != 'Completed'
                 OR r.completed_at IS NULL
                 OR r.completed_at >= $1::timestamptz)
@@ -242,6 +250,7 @@ pub(crate) async fn read_all_jobs(
             created_at: row.created_at,
             started_at: row.started_at,
             completed_at: row.completed_at,
+            run_attempt: row.run_attempt,
         });
     }
     Ok(jobs)

@@ -29,6 +29,7 @@ describe('EventDispatcher', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: {
           type: 'Requested',
         },
@@ -68,6 +69,7 @@ describe('EventDispatcher', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: {
           type: 'Requested',
         },
@@ -94,6 +96,7 @@ describe('EventDispatcher', () => {
         createdAt: new Date().toISOString(),
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: {
@@ -144,6 +147,7 @@ describe('EventDispatcher', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: {
           type: 'Requested',
         },
@@ -211,6 +215,7 @@ describe('EventDispatcher', () => {
           createdAt: new Date().toISOString(),
           runStartedAt: null,
           updatedAt: new Date().toISOString(),
+          runAttempt: 1,
           action: { type: 'Requested' },
         },
       },
@@ -336,6 +341,7 @@ describe('EventDispatcher', () => {
             createdAt: new Date().toISOString(),
             runStartedAt: null,
             updatedAt: new Date().toISOString(),
+            runAttempt: 1,
             action: { type: 'Requested' },
           },
         },
@@ -374,6 +380,7 @@ describe('EventDispatcher', () => {
           createdAt: new Date().toISOString(),
           runStartedAt: null,
           updatedAt: new Date().toISOString(),
+          runAttempt: 1,
           action: { type: 'Requested' },
         },
       },
@@ -458,6 +465,7 @@ describe('EventDispatcher', () => {
             createdAt: new Date().toISOString(),
             runStartedAt: null,
             updatedAt: new Date().toISOString(),
+            runAttempt: 1,
             action: { type: 'Requested' },
           },
         },

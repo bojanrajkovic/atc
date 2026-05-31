@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-store-mem
 
-Last verified: 2026-05-23
+Last verified: 2026-05-30
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence / Storage modes section). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture doc.
 
@@ -13,6 +13,10 @@ Used in **dev/test mode only** (single replica, lossy on restart). Production de
 ## Sharp edges
 
 **No `sqlx`, no DB I/O.** This crate must not pull in any storage-library dependency — that is the architectural separation between `atc-store-mem` and `atc-store-pg`. `atc-github` is required because `apply_*_event` constructs `WebhookEvent::Run(env)` / `WebhookEvent::Job(env)` to populate the `CommittedEvent.event` field before broadcasting.
+
+**Re-run detection lives here, not in the FSM.** When an incoming `RunEventEnvelope` has a higher `run_attempt` than the stored run, `apply_run_event` is called with `None` as the existing run so the state machine constructs a fresh run rather than rejecting the transition out of the prior attempt's terminal state. A *lower* `run_attempt` than the stored run is rejected outright (`PersistError::InvalidTransition`) before the pure call — a delayed event from a superseded attempt must not reopen or re-conclude the live one. The comparison is made in this crate before the pure call — atc-core never sees it. `atc-store-pg` implements the equivalent semantics in its UPSERT predicate; the two stores must stay behaviorally aligned on re-runs.
+
+**Jobs are filtered to drop prior attempts on read.** `read_snapshot_inner` drops jobs whose `run_attempt` is *lower* than their parent run's (when the parent is known) so a re-run's card doesn't show the prior attempt's stale jobs. Current-or-higher attempts are kept — a queued re-run job can arrive at a higher attempt before the run row advances (GitHub emits no `requested` for a queued re-run), and must stay visible. Jobs with an absent parent (job-before-run stub) are kept. A higher-attempt job also bypasses the parent run's display-TTL cutoff (`parent_alive`) — the parent row is the aged-out prior attempt and must not hide the fresh job. Mirrors `atc-store-pg`'s `j.run_attempt >= r.run_attempt` read filter and its cutoff bypass.
 
 **Eviction handle ownership.** `InMemoryStore::start` spawns the eviction task and stores its `JoinHandle` inside the returned `Arc<Self>`. Callers MUST cancel the same `CancellationToken` they passed to `start()` before invoking `shutdown()`; otherwise the eviction task never observes cancellation and `shutdown()` waits the full `EVICTION_SHUTDOWN_TIMEOUT` (1 second) before aborting. Stores constructed via `new_for_test` skip the spawn and `shutdown()` returns immediately.
 

@@ -287,6 +287,7 @@ describe('RunStore.applyRunEvent — completedAt carry-through (WS path)', () =>
       runStartedAt: '2026-04-17T09:00:01Z',
       updatedAt: completedAt,
       completedAt,
+      runAttempt: 1,
       action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
 
@@ -314,6 +315,7 @@ describe('RunStore.applyRunEvent — completedAt carry-through (WS path)', () =>
       runStartedAt: '2026-04-17T09:00:01Z',
       updatedAt: firstCompletedAt,
       completedAt: firstCompletedAt,
+      runAttempt: 1,
       action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
     expect(runStore.runs.get(runId)?.completedAt).toBe(firstCompletedAt)
@@ -334,6 +336,7 @@ describe('RunStore.applyRunEvent — completedAt carry-through (WS path)', () =>
       createdAt: '2026-04-17T09:00:00Z',
       runStartedAt: '2026-04-17T09:00:01Z',
       updatedAt: '2026-04-17T10:05:00Z',
+      runAttempt: 1,
       action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
     expect(runStore.runs.get(runId)?.completedAt).toBe(firstCompletedAt)
@@ -359,6 +362,7 @@ describe('RunStore.applyRunEvent — completedAt carry-through (WS path)', () =>
       createdAt: '2026-04-17T09:00:00Z',
       runStartedAt: '2026-04-17T09:00:01Z',
       updatedAt: '2026-04-17T09:00:01Z',
+      runAttempt: 1,
       action: { type: 'InProgress' },
     })
 
@@ -380,6 +384,7 @@ describe('RunStore.applyRunEvent — completedAt carry-through (WS path)', () =>
       runStartedAt: '2026-04-17T09:00:01Z',
       updatedAt: completedAt,
       completedAt,
+      runAttempt: 1,
       action: { type: 'Completed', data: { conclusion: 'Success' } },
     })
 

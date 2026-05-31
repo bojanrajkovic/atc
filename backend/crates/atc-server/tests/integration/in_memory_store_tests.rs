@@ -61,6 +61,7 @@ fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
         run_started_at: None,
         updated_at: now,
         completed_at,
+        run_attempt: 1,
         action,
     }
 }
@@ -82,6 +83,7 @@ fn make_job_event(
         created_at: now,
         started_at: None,
         completed_at: None,
+        run_attempt: 1,
         action,
     }
 }
@@ -104,6 +106,7 @@ fn make_job_event_with_completed_at(
         created_at: now,
         started_at: None,
         completed_at,
+        run_attempt: 1,
         action,
     }
 }
@@ -222,6 +225,104 @@ async fn invalid_run_transition_completed_to_in_progress() {
     assert!(
         result.is_err(),
         "Completed→InProgress should return Err, got {result:?}"
+    );
+}
+
+/// GitHub re-run: a higher `run_attempt` reopens a Completed run.
+///
+/// Mirrors `pg_run_higher_attempt_reopens_completed_run` for the in-memory
+/// store. The store detects the higher attempt and passes `None` to the
+/// state machine so a fresh run is constructed instead of rejecting the
+/// transition out of the terminal state. Regression guard for the
+/// dropped-re-run bug.
+#[tokio::test]
+async fn rerun_higher_attempt_reopens_completed_run() {
+    let store = make_store();
+    let run_id = RunId(6);
+
+    store
+        .apply_run_event(make_run_event(run_id, RunEvent::Requested))
+        .await
+        .unwrap();
+    store
+        .apply_run_event(make_run_event(
+            run_id,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Cancelled,
+            },
+        ))
+        .await
+        .unwrap();
+
+    // Re-run with run_attempt = 2, in_progress. Same-attempt this would be
+    // rejected (see invalid_run_transition_completed_to_in_progress); the
+    // higher attempt reopens the run.
+    let rerun = RunEventEnvelope {
+        run_attempt: 2,
+        ..make_run_event(run_id, RunEvent::InProgress)
+    };
+    store
+        .apply_run_event(rerun)
+        .await
+        .expect("re-run with higher attempt should be admitted");
+
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.status, RunStatus::InProgress, "re-run should reopen");
+    assert_eq!(run.run_attempt, 2, "run_attempt should advance to 2");
+    assert!(
+        run.conclusion.is_none(),
+        "terminal conclusion should reset on a new attempt, got {:?}",
+        run.conclusion
+    );
+}
+
+/// A stale lower `run_attempt` event must be rejected, not applied.
+///
+/// Mirrors `pg_run_stale_lower_attempt_rejected`: once a run has advanced to
+/// attempt 2, a delayed attempt-1 event must not reopen or re-conclude it.
+#[tokio::test]
+async fn rerun_stale_lower_attempt_rejected() {
+    let store = make_store();
+    let run_id = RunId(7);
+
+    // Attempt 1 completes, then attempt 2 reopens (InProgress @ 2).
+    store
+        .apply_run_event(make_run_event(
+            run_id,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Cancelled,
+            },
+        ))
+        .await
+        .unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            run_attempt: 2,
+            ..make_run_event(run_id, RunEvent::InProgress)
+        })
+        .await
+        .unwrap();
+
+    // A delayed attempt-1 completed event (run_attempt = 1) must be rejected.
+    let stale = make_run_event(
+        run_id,
+        RunEvent::Completed {
+            conclusion: RunConclusion::Success,
+        },
+    );
+    let result = store.apply_run_event(stale).await;
+    assert!(
+        result.is_err(),
+        "stale lower attempt should be rejected, got {result:?}"
+    );
+
+    let run = store.get_run(&run_id).await.expect("run should exist");
+    assert_eq!(run.status, RunStatus::InProgress, "live attempt stays open");
+    assert_eq!(run.run_attempt, 2, "run_attempt must not regress");
+    assert!(
+        run.conclusion.is_none(),
+        "live attempt must not inherit the stale conclusion, got {:?}",
+        run.conclusion
     );
 }
 
@@ -743,6 +844,7 @@ async fn workflow_name_preserved_on_in_progress_without_name() {
         run_started_at: None,
         updated_at: now,
         completed_at: None,
+        run_attempt: 1,
         action: RunEvent::InProgress,
     };
     store.apply_run_event(env).await.unwrap();
@@ -1226,6 +1328,57 @@ async fn read_snapshot_filters_completed_older_than_cutoff() {
     assert!(
         !job_ids.contains(&old_job),
         "aged-out completed job must be filtered: {job_ids:?}"
+    );
+}
+
+/// A higher-attempt job survives even when its parent run has aged past the
+/// cutoff — re-running a long-completed run queues attempt-2 jobs before the
+/// run event advances the row, and the fresh job must not be gated on the
+/// aged-out parent. Mirrors `pg_higher_attempt_job_bypasses_stale_parent_cutoff`.
+#[tokio::test]
+async fn read_snapshot_keeps_higher_attempt_job_past_parent_cutoff() {
+    let store = make_store();
+    let now = fixed_test_timestamp();
+
+    // Attempt 1 completed (completed_at = now, the make_run_event default).
+    let run = RunId(7400);
+    store
+        .apply_run_event(make_run_event(
+            run,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Success,
+            },
+        ))
+        .await
+        .unwrap();
+
+    // Re-run: attempt-2 queued job arrives before the attempt-2 run event.
+    let job = JobId(74_000);
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 2,
+            ..make_job_event(
+                job,
+                run,
+                "octocat",
+                "Hello-World",
+                JobEvent::Queued {
+                    labels: vec![],
+                    steps: vec![],
+                },
+            )
+        })
+        .await
+        .unwrap();
+
+    // Cutoff after the attempt-1 completion → the parent run is aged out, but
+    // the higher-attempt job must still appear.
+    let cutoff = now + chrono::Duration::hours(1);
+    let snap = store.read_snapshot(Some(cutoff)).await.expect("snapshot");
+    let job_ids: Vec<_> = snap.jobs.iter().map(|j| j.id).collect();
+    assert!(
+        job_ids.contains(&job),
+        "higher-attempt job must survive the aged-out parent's cutoff: {job_ids:?}"
     );
 }
 

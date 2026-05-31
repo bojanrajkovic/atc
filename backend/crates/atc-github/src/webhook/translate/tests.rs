@@ -7,9 +7,18 @@ use crate::webhook::types::{
 
 // ===== Test helpers =====
 
-/// Create a minimal `WorkflowRunWebhook` with sensible defaults.
-fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> WorkflowRunWebhook {
-    let workflow_run = WorkflowRunData {
+/// Baseline `WorkflowRunData` with sensible defaults.
+///
+/// Override specific fields with struct-update syntax:
+///
+/// ```rust
+/// let run = WorkflowRunData {
+///     run_attempt: 2,
+///     ..default_run_data(Some("cancelled"))
+/// };
+/// ```
+fn default_run_data(conclusion: Option<&str>) -> WorkflowRunData {
+    WorkflowRunData {
         id: 123_456,
         status: "completed".to_string(),
         conclusion: conclusion.map(std::string::ToString::to_string),
@@ -24,7 +33,13 @@ fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> Workflow
         created_at: fixed_test_timestamp(),
         run_started_at: Some(fixed_test_timestamp()),
         updated_at: fixed_test_timestamp(),
-    };
+        run_attempt: 1,
+    }
+}
+
+/// Create a minimal `WorkflowRunWebhook` with sensible defaults.
+fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> WorkflowRunWebhook {
+    let workflow_run = default_run_data(conclusion);
 
     WorkflowRunWebhook {
         action: action.to_string(),
@@ -59,6 +74,7 @@ fn make_workflow_job_webhook(
         completed_at: Some(fixed_test_timestamp()),
         steps: vec![],
         labels: vec!["ubuntu-latest".to_string()],
+        run_attempt: 1,
         runner_id: if runner { Some(1) } else { None },
         runner_name: if runner {
             Some("runner-1".to_string())
@@ -303,6 +319,7 @@ fn test_translate_job_with_steps() {
         completed_at: None,
         steps,
         labels: vec!["ubuntu-latest".to_string()],
+        run_attempt: 1,
         runner_id: None,
         runner_name: None,
         runner_group_name: None,
@@ -441,6 +458,7 @@ fn test_unknown_step_status() {
         completed_at: None,
         steps,
         labels: vec![],
+        run_attempt: 1,
         runner_id: None,
         runner_name: None,
         runner_group_name: None,
@@ -481,6 +499,7 @@ fn make_runner_info_normalizes_empty_runner_group_name_to_none() {
         completed_at: None,
         steps: vec![],
         labels: vec!["ubuntu-latest".to_string()],
+        run_attempt: 1,
         runner_id: Some(42),
         runner_name: Some("runner-42".to_string()),
         runner_group_name: Some(String::new()),

@@ -102,6 +102,7 @@ pub fn apply_run_event(
             // legitimately move `completed_at` backward; preserve the first
             // observation across idempotent replay.
             completed_at: envelope.completed_at.or(existing.completed_at),
+            run_attempt: envelope.run_attempt,
             ..existing
         },
         None => WorkflowRun {
@@ -122,6 +123,7 @@ pub fn apply_run_event(
             run_started_at: envelope.run_started_at,
             updated_at: envelope.updated_at,
             completed_at: envelope.completed_at,
+            run_attempt: envelope.run_attempt,
         },
     };
 
@@ -183,6 +185,7 @@ pub fn apply_job_event(
             steps, // Snapshot replacement
             started_at: envelope.started_at.or(existing.started_at),
             completed_at: envelope.completed_at.or(existing.completed_at),
+            run_attempt: envelope.run_attempt,
             ..existing
         },
         None => Job {
@@ -197,6 +200,7 @@ pub fn apply_job_event(
             created_at: envelope.created_at,
             started_at: envelope.started_at,
             completed_at: envelope.completed_at,
+            run_attempt: envelope.run_attempt,
         },
     };
 

@@ -78,7 +78,16 @@ class RunnerStore {
     // GitHub does not emit workflow_job events for jobs that were Queued but
     // never started when a run is cancelled. Filter those orphans out so they
     // don't inflate the queued count in the runner bar.
-    const liveJobs = runStore.jobs.filter((j) => runStore.runs.get(j.runId)?.status !== 'Completed')
+    //
+    // Exception: a higher-attempt job whose parent row is still the old
+    // Completed attempt is a fresh re-run's queued demand (the run event hasn't
+    // advanced the row yet) — keep it so re-run capacity shows immediately.
+    // Mirrors the backend read's parent-cutoff bypass for higher-attempt jobs.
+    const liveJobs = runStore.jobs.filter((j) => {
+      const parent = runStore.runs.get(j.runId)
+      if (parent && j.runAttempt > parent.runAttempt) return true
+      return parent?.status !== 'Completed'
+    })
     return computePoolStats(liveJobs, runStore.runnerPoolCapacities)
   })
 }

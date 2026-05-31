@@ -751,6 +751,86 @@ pub async fn start_pg_store_for_test_with_clock_and_retention(
 }
 
 // ---------------------------------------------------------------------------
+// Domain-event test-data helpers
+// ---------------------------------------------------------------------------
+
+/// Build a `RunEventEnvelope` with sensible defaults.
+///
+/// The Rust equivalent of TypeScript's `makeFoo(required, overrides)` pattern:
+/// call this to get a fully-populated envelope, then override specific fields
+/// with struct-update syntax:
+///
+/// ```rust
+/// let rerun = RunEventEnvelope {
+///     run_attempt: 2,
+///     action: RunEvent::InProgress,
+///     ..common::make_run_envelope(RunId(42), RunEvent::Requested)
+/// };
+/// ```
+pub fn make_run_envelope(
+    run_id: atc_core::types::RunId,
+    action: atc_core::event::RunEvent,
+) -> atc_core::event::RunEventEnvelope {
+    use atc_core::event::{RunEvent, RunEventEnvelope};
+    let now = atc_core::fixed_test_timestamp();
+    let completed_at = matches!(action, RunEvent::Completed { .. }).then_some(now);
+    RunEventEnvelope {
+        run_id,
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        workflow_name: Some("CI".to_string()),
+        workflow_path: Some(".github/workflows/ci.yml".to_string()),
+        branch: Some("main".to_string()),
+        head_sha: "abc123".to_string(),
+        commit_message: Some("Initial commit".to_string()),
+        trigger_event: "push".to_string(),
+        display_title: "Test run".to_string(),
+        html_url: format!(
+            "https://github.com/test-org/test-repo/actions/runs/{}",
+            run_id.0
+        ),
+        created_at: now,
+        run_started_at: None,
+        updated_at: now,
+        completed_at,
+        run_attempt: 1,
+        action,
+    }
+}
+
+/// Build a `JobEventEnvelope` with sensible defaults, deriving `started_at` /
+/// `completed_at` from the action (matching the GitHub translation layer:
+/// `InProgress`/`Completed` have started, `Completed` has finished). The
+/// `makeFoo(required, overrides)` companion to [`make_run_envelope`]; runner
+/// and labels live inside the `action`, and other fields are overridable via
+/// struct-update syntax.
+pub fn make_job_envelope(
+    job_id: atc_core::types::JobId,
+    run_id: atc_core::types::RunId,
+    action: atc_core::event::JobEvent,
+) -> atc_core::event::JobEventEnvelope {
+    use atc_core::event::{JobEvent, JobEventEnvelope};
+    let now = atc_core::fixed_test_timestamp();
+    let (started_at, completed_at) = match &action {
+        JobEvent::Queued { .. } | JobEvent::Waiting { .. } => (None, None),
+        JobEvent::InProgress { .. } => (Some(now), None),
+        JobEvent::Completed { .. } => (Some(now), Some(now)),
+    };
+    JobEventEnvelope {
+        job_id,
+        run_id,
+        org: "test-org".to_string(),
+        repo: "test-repo".to_string(),
+        name: "test-job".to_string(),
+        created_at: now,
+        started_at,
+        completed_at,
+        run_attempt: 1,
+        action,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Webhook posting helper
 // ---------------------------------------------------------------------------
 

@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status, conclusion, run_attempt FROM runs WHERE id = 1011",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "conclusion",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "run_attempt",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "bf47b5d1fad65913600208b19a95c425a77927a75f487ac7d2e98ed2ee1b3c51"
+}

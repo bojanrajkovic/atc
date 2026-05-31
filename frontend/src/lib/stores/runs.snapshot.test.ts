@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createMockRun } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
+import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { runStore } from './runs.svelte'
 
 describe('RunStore', () => {
@@ -30,6 +31,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       })
 
@@ -42,6 +44,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: [], steps: [] } },
       })
 
@@ -76,6 +79,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
       }
 
       runStore.loadSnapshot([newRun], [newJob])
@@ -143,6 +147,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: '2025-01-02T00:00:05Z',
         completedAt: '2025-01-02T00:00:15Z',
+        runAttempt: 1,
       }
 
       const job2: Job = {
@@ -157,6 +162,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: '2025-01-02T00:00:05Z',
         completedAt: '2025-01-02T00:00:20Z',
+        runAttempt: 1,
       }
 
       const job3: Job = {
@@ -171,6 +177,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-02T01:00:00Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
       }
 
       runStore.loadSnapshot([run1, run2], [job1, job2, job3])
@@ -333,6 +340,43 @@ describe('RunStore', () => {
       // Order should be identical (descending id tie-breaker)
       expect(firstOrderIds).toEqual(secondOrderIds)
       expect(firstOrderIds).toEqual([222n, 221n, 220n])
+    })
+  })
+
+  describe('rolling-deploy: missing runAttempt', () => {
+    it('defaults missing runAttempt to 1 so jobs are not hidden', () => {
+      // A pre-feature backend replica serves /v1/state without `runAttempt`.
+      // The TS type claims it is always present, but at runtime it is absent —
+      // simulate by deleting the field. Without normalization, the job
+      // derivations compare `undefined >= undefined` (false) and drop every job.
+      const run = { ...createMockRun({ id: 700n, status: 'InProgress' }) } as Record<
+        string,
+        unknown
+      >
+      delete run.runAttempt
+      const job: Job = {
+        id: 7001n,
+        name: 'job',
+        runId: 700n,
+        status: 'InProgress',
+        conclusion: null,
+        runner: null,
+        labels: [],
+        steps: [],
+        createdAt: '2025-01-02T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        runAttempt: 1,
+      }
+      const jobNoAttempt = { ...job } as Record<string, unknown>
+      delete jobNoAttempt.runAttempt
+
+      runStore.loadSnapshot([run as unknown as WorkflowRun], [jobNoAttempt as unknown as Job])
+
+      // Normalized to 1 on both sides → job stays visible.
+      expect(runStore.runs.get(700n)?.runAttempt).toBe(1)
+      expect(runStore.jobsByRunId.get(700n)?.length).toBe(1)
+      expect(runStore.jobStatsByRun.get(700n)?.total).toBe(1)
     })
   })
 })

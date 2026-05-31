@@ -68,6 +68,7 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
         createdAt: '2026-04-29T12:00:01Z',
         startedAt: '2026-04-29T12:00:30Z',
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'InProgress',
           data: {
@@ -104,6 +105,7 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
         createdAt: '2026-04-29T12:01:01Z',
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: { type: 'Queued', data: { labels: WINDOWS_LABELS, steps: [] } },
       },
     }),

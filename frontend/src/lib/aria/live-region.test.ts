@@ -47,6 +47,7 @@ function makeRunCommittedEvent(opts: {
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         // biome-ignore lint/suspicious/noExplicitAny: test fixture
         action: actionPayload as any,
       },
@@ -69,6 +70,7 @@ function makeJobCommittedEvent(runId: bigint): CommittedEvent {
         createdAt: new Date().toISOString(),
         startedAt: null,
         completedAt: null,
+        runAttempt: 1,
         action: {
           type: 'Queued',
           data: { labels: [], steps: [] },
@@ -96,6 +98,7 @@ function setupRun(runId: bigint, opts: Partial<WorkflowRun> = {}): void {
     createdAt: new Date().toISOString(),
     runStartedAt: null,
     updatedAt: new Date().toISOString(),
+    runAttempt: 1,
     action: { type: 'Requested' },
   })
 }
@@ -171,6 +174,7 @@ describe('LiveRegion', () => {
         createdAt: new Date().toISOString(),
         runStartedAt: null,
         updatedAt: new Date().toISOString(),
+        runAttempt: 1,
         action: { type: 'Completed', data: { conclusion: 'Success' } },
       })
 

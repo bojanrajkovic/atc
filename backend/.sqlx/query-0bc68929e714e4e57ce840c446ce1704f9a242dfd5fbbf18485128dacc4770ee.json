@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT j.id            AS \"id!\",\n               j.run_id        AS \"run_id!\",\n               j.name          AS \"name!\",\n               j.status        AS \"status!\",\n               j.conclusion    AS \"conclusion?\",\n               j.runner_id     AS \"runner_id?\",\n               j.runner_name   AS \"runner_name?\",\n               j.runner_group_name AS \"runner_group_name?\",\n               j.labels        AS \"labels!: Vec<String>\",\n               j.steps         AS \"steps!: serde_json::Value\",\n               j.created_at    AS \"created_at!\",\n               j.started_at    AS \"started_at?\",\n               j.completed_at  AS \"completed_at?\",\n               j.run_attempt   AS \"run_attempt!\"\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n         WHERE j.run_attempt >= r.run_attempt\n           AND ($1::timestamptz IS NULL\n                -- A higher-attempt job's parent row is still the aged-out prior\n                -- attempt; don't gate the fresh job on the stale run's cutoff.\n                -- It self-heals once the run event advances the row.\n                OR j.run_attempt > r.run_attempt\n                OR r.status != 'Completed'\n                OR r.completed_at IS NULL\n                OR r.completed_at >= $1::timestamptz)\n           AND ($1::timestamptz IS NULL\n                OR j.status != 'Completed'\n                OR j.completed_at IS NULL\n                OR j.completed_at >= $1::timestamptz)\n         ORDER BY j.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "conclusion?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "runner_id?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "runner_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "runner_group_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "labels!: Vec<String>",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 9,
+        "name": "steps!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "started_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "completed_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "run_attempt!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "0bc68929e714e4e57ce840c446ce1704f9a242dfd5fbbf18485128dacc4770ee"
+}

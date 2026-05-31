@@ -33,6 +33,7 @@ function makeRun(id: number): WorkflowRun {
     createdAt: '2026-04-17T09:59:00Z',
     runStartedAt: '2026-04-17T09:59:30Z',
     updatedAt: '2026-04-17T09:59:55Z',
+    runAttempt: 1,
   }
 }
 
@@ -53,6 +54,7 @@ function makeRunningJob(jobId: number, runId: number, labels: string[]): Job {
     createdAt: '2026-04-17T09:59:00Z',
     startedAt: '2026-04-17T09:59:30Z',
     completedAt: null,
+    runAttempt: 1,
   }
 }
 

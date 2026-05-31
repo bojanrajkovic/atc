@@ -106,6 +106,7 @@ describe('deterministic 1000-event burst coalescing', () => {
       createdAt: '2026-05-02T10:00:00Z',
       runStartedAt: null,
       updatedAt: '2026-05-02T10:00:00Z',
+      runAttempt: 1,
       action: { type: 'Requested' },
     }
     return {

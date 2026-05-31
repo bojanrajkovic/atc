@@ -28,6 +28,7 @@ function makeRun(id: number, status: WorkflowRun['status']): WorkflowRun {
     createdAt: '2026-05-02T10:00:00Z',
     runStartedAt: status === 'Queued' ? null : '2026-05-02T10:00:10Z',
     updatedAt: '2026-05-02T10:00:00Z',
+    runAttempt: 1,
   }
 }
 

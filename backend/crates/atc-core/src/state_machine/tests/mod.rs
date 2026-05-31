@@ -31,6 +31,7 @@ fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
         run_started_at: None,
         updated_at: now,
         completed_at,
+        run_attempt: 1,
         action,
     }
 }

@@ -254,11 +254,21 @@ impl InMemoryStore {
             .jobs
             .values()
             .filter(|j| {
-                let parent_alive = state
-                    .runs
-                    .get(&j.run_id)
-                    .is_none_or(|r| run_passes_cutoff(r, cutoff));
-                parent_alive && job_passes_cutoff(j, cutoff)
+                // Filter out prior-attempt jobs. A re-run reuses the run_id
+                // with fresh job IDs at a higher attempt; jobs from a *lower*
+                // attempt than the parent run are stale and drop out. Jobs at
+                // the current OR a higher attempt are kept — a re-run's queued
+                // jobs can arrive (with the higher attempt) before the run row
+                // advances, and must stay visible. When the parent run is
+                // absent (job-before-run stub), keep the job. Mirrors the PG
+                // read's `j.run_attempt >= r.run_attempt` predicate.
+                let parent = state.runs.get(&j.run_id);
+                let attempt_current = parent.is_none_or(|r| j.run_attempt >= r.run_attempt);
+                // A higher-attempt job's parent row is still the aged-out prior
+                // attempt; don't gate the fresh job on the stale run's cutoff.
+                let parent_alive = parent
+                    .is_none_or(|r| j.run_attempt > r.run_attempt || run_passes_cutoff(r, cutoff));
+                attempt_current && parent_alive && job_passes_cutoff(j, cutoff)
             })
             .cloned()
             .collect();
@@ -441,7 +451,32 @@ impl PersistentStore for InMemoryStore {
         let mut state = self.state.write().await;
 
         let existing = state.runs.get(&env.run_id).cloned();
-        let run = atc_core::state_machine::apply_run_event(existing, env.clone()).map_err(|e| {
+        // Reject a stale lower attempt outright — mirrors the PG predicate's
+        // `EXCLUDED.run_attempt = runs.run_attempt` gate. A delayed event from a
+        // superseded attempt must not reopen or re-conclude the current one.
+        if let Some(ref r) = existing
+            && env.run_attempt < r.run_attempt
+        {
+            tracing::warn!(
+                run_id = env.run_id.0,
+                event_attempt = env.run_attempt,
+                stored_attempt = r.run_attempt,
+                "rejecting stale lower run attempt"
+            );
+            return Err(atc_core::PersistError::InvalidTransition);
+        }
+        // When a new attempt arrives (higher run_attempt), pass None so the
+        // state machine constructs a fresh run rather than trying to transition
+        // out of the prior attempt's terminal state.
+        let is_new_attempt = existing
+            .as_ref()
+            .map(|r| env.run_attempt > r.run_attempt)
+            .unwrap_or(false);
+        let run = atc_core::state_machine::apply_run_event(
+            if is_new_attempt { None } else { existing },
+            env.clone(),
+        )
+        .map_err(|e| {
             tracing::warn!(error = %e, "state machine rejected run transition");
             atc_core::PersistError::from(e)
         })?;

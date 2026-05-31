@@ -52,6 +52,7 @@ export class LiveRegion {
           transitions.push({ committedEvent, kind })
         }
       } catch (err) {
+        // biome-ignore lint/suspicious/noConsole: intentional diagnostic for off-shape wire values that violate the classifyEvent invariant
         console.error(
           `classifyEvent invariant violation: ${err instanceof Error ? err.message : String(err)}`,
           committedEvent,

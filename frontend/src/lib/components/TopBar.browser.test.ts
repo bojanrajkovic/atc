@@ -43,6 +43,7 @@ describe('TopBar (browser mode)', () => {
       createdAt: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       completedAt: null,
+      runAttempt: 1,
     }
   }
 

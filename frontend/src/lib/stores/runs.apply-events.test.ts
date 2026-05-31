@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createMockRunEvent } from '$lib/test-utils/factories'
 import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import { runStore } from './runs.svelte'
 
@@ -29,6 +30,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       }
 
@@ -58,6 +60,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       }
 
@@ -89,6 +92,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       }
 
@@ -111,6 +115,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: '2025-01-01T00:00:10Z',
         updatedAt: '2025-01-01T00:00:10Z',
+        runAttempt: 1,
         action: { type: 'InProgress' },
       }
 
@@ -141,6 +146,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       })
 
@@ -160,6 +166,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: '2025-01-01T00:00:10Z',
         updatedAt: '2025-01-01T00:00:10Z',
+        runAttempt: 1,
         action: { type: 'InProgress' },
       })
 
@@ -179,6 +186,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: '2025-01-01T00:00:10Z',
         updatedAt: '2025-01-01T00:00:20Z',
+        runAttempt: 1,
         action: { type: 'Completed', data: { conclusion: 'Success' } },
       })
 
@@ -207,6 +215,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: '2025-01-01T00:00:05Z',
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       })
 
@@ -226,6 +235,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null, // But new startedAt should not overwrite if different
         updatedAt: '2025-01-01T00:00:10Z',
+        runAttempt: 1,
         action: { type: 'InProgress' },
       })
 
@@ -255,6 +265,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: null,
         updatedAt: '2025-01-01T00:00:00Z',
+        runAttempt: 1,
         action: { type: 'Requested' },
       }
 
@@ -291,6 +302,7 @@ describe('RunStore', () => {
         createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: '2025-01-01T00:00:05Z',
         updatedAt: '2025-01-01T00:00:15Z',
+        runAttempt: 1,
         action: { type: 'Completed', data: { conclusion: 'Success' } },
       }
 
@@ -301,6 +313,94 @@ describe('RunStore', () => {
       runStore.applyRunEvent(completionEnvelope)
       expect(runStore.runs.get(runId)!.conclusion).toBe('Success')
       expect(runStore.runs.size).toBe(1) // Still just one run
+    })
+  })
+
+  describe('Re-run with higher run_attempt', () => {
+    it('reopens a completed run and clears its terminal conclusion', () => {
+      const runId = 50n
+      // Attempt 1 completes as Cancelled.
+      runStore.applyRunEvent(
+        createMockRunEvent({ runId, runAttempt: 1, action: { type: 'Requested' } }),
+      )
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 1,
+          action: { type: 'Completed', data: { conclusion: 'Cancelled' } },
+        }),
+      )
+      expect(runStore.runs.get(runId)!.status).toBe('Completed')
+      expect(runStore.runs.get(runId)!.conclusion).toBe('Cancelled')
+
+      // Attempt 2 (re-run) arrives in_progress. Mirrors the backend reset:
+      // the run reopens and the stale Cancelled conclusion is dropped.
+      runStore.applyRunEvent(
+        createMockRunEvent({ runId, runAttempt: 2, action: { type: 'InProgress' } }),
+      )
+
+      const run = runStore.runs.get(runId)!
+      expect(run.status).toBe('InProgress')
+      expect(run.runAttempt).toBe(2)
+      expect(run.conclusion).toBeNull()
+      expect(runStore.runs.size).toBe(1)
+    })
+
+    it('ignores a stale lower-attempt run event (no regression)', () => {
+      const runId = 51n
+      // Client already holds attempt 2, in progress.
+      runStore.applyRunEvent(
+        createMockRunEvent({ runId, runAttempt: 2, action: { type: 'InProgress' } }),
+      )
+
+      // A delayed attempt-1 Completed frame arrives (e.g. older replica during
+      // a rolling deploy). It must not overwrite or regress the live attempt.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 1,
+          action: { type: 'Completed', data: { conclusion: 'Cancelled' } },
+        }),
+      )
+
+      const run = runStore.runs.get(runId)!
+      expect(run.status).toBe('InProgress')
+      expect(run.runAttempt).toBe(2)
+      expect(run.conclusion).toBeNull()
+    })
+
+    it('preserves sticky workflow metadata when a re-run reopens via an in_progress frame', () => {
+      const runId = 52n
+      // Attempt 1 established workflowName/workflowPath.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 1,
+          workflowName: 'CI',
+          workflowPath: '.github/workflows/ci.yml',
+          action: { type: 'Completed', data: { conclusion: 'Failure' } },
+        }),
+      )
+
+      // Re-run's first frame is in_progress (attempt 2) with workflow metadata
+      // omitted — GitHub sends null `workflow` on in_progress. The reset must
+      // clear the terminal conclusion but keep the sticky metadata.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          runAttempt: 2,
+          workflowName: null,
+          workflowPath: null,
+          action: { type: 'InProgress' },
+        }),
+      )
+
+      const run = runStore.runs.get(runId)!
+      expect(run.status).toBe('InProgress')
+      expect(run.runAttempt).toBe(2)
+      expect(run.conclusion).toBeNull()
+      expect(run.workflowName).toBe('CI')
+      expect(run.workflowPath).toBe('.github/workflows/ci.yml')
     })
   })
 })

@@ -80,6 +80,18 @@ updatedAt: string,
  */
 completedAt?: string, 
 /**
+ * Attempt number for this run (1 for the initial run, 2+ for re-runs).
+ * Used by the persistence layer to detect when a new attempt supersedes a
+ * completed/cancelled run and should reset its state.
+ *
+ * Defaults to 1 on deserialization: the PG drain decodes persisted
+ * `outbox.payload` rows back into this type, and rows written before this
+ * field existed carry no `run_attempt`. Without the default they would
+ * fail to deserialize and be silently dropped from the drain during a
+ * rolling deploy / backlog drain. Mirrors the webhook parser's default.
+ */
+runAttempt: number, 
+/**
  * The action that occurred.
  */
 action: RunEvent, };

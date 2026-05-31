@@ -32,6 +32,7 @@ function makeJob(
     createdAt: createdAt ?? new Date().toISOString(),
     startedAt: startedAt ?? null,
     completedAt: completedAt ?? null,
+    runAttempt: overrides.runAttempt ?? 1,
   }
 }
 
@@ -187,6 +188,7 @@ function makeRun(
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     runStartedAt: overrides.runStartedAt ?? null,
     updatedAt: overrides.updatedAt ?? new Date().toISOString(),
+    runAttempt: overrides.runAttempt ?? 1,
   }
 }
 
@@ -231,6 +233,26 @@ describe('runnerStore.pools (derived)', () => {
     runStore.runs.set(10n, run)
 
     expect(runnerStore.pools).toHaveLength(0)
+  })
+
+  it('counts a higher-attempt Queued job even when the parent run is still the old Completed attempt', async () => {
+    // Re-run: workflow_job.queued (attempt 2) arrives before the run event, so
+    // the parent row is still the old Completed attempt-1 run. The fresh queued
+    // demand must still count toward runner pools (not treated as an orphan).
+    const { runnerStore } = await import('./runners.svelte')
+    const job = makeJob({
+      id: 1n,
+      runId: 30n,
+      status: 'Queued',
+      labels: ['ubuntu-latest'],
+      runAttempt: 2,
+    })
+    const run = makeRun({ id: 30n, status: 'Completed', conclusion: 'Success', runAttempt: 1 })
+    runStore.jobsByRun.set(30n, [job])
+    runStore.runs.set(30n, run)
+
+    expect(runnerStore.pools).toHaveLength(1)
+    expect(runnerStore.pools[0]?.queued).toBe(1)
   })
 
   it('includes Queued jobs whose parent run is not Completed', async () => {
