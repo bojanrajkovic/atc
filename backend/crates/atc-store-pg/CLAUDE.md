@@ -1,6 +1,6 @@
 # CLAUDE.md — atc-store-pg
 
-Last verified: 2026-05-23
+Last verified: 2026-05-30
 
 > Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence § PG mode, § Drain pipeline, § NOTIFY emission) and `docs/architecture/metrics.md` (PG-mode emit sites). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture docs.
 
@@ -21,6 +21,8 @@ PostgreSQL-backed `PersistentStore` implementation. Owns pool initialization, em
 **`sqlx::query!` requires the offline cache or a live `DATABASE_URL` at compile time.** The cache lives in `backend/.sqlx/`. If you change a query's SQL string or bind types, regenerate the cache with `cargo sqlx prepare` run from `backend/`, and commit the regenerated JSON files alongside the SQL change. `cargo sqlx prepare --check` is the CI gate.
 
 **Migrations must stay co-located with this crate.** The `sqlx::migrate!` macro resolves relative to `CARGO_MANIFEST_DIR`. Moving or splitting the `migrations/` directory breaks the embedded migrator. New migrations append a higher number; never edit a checked-in migration file.
+
+**Re-run detection lives in the run UPSERT predicate, not the FSM.** GitHub re-runs reuse the same `run_id` with a higher `run_attempt`. The forward-only `WHERE runs.status = ANY(...)` guard would otherwise reject a fresh `Queued`/`InProgress` event arriving on top of a `Completed` row. The predicate is therefore `WHERE runs.status = ANY($N::text[]) OR EXCLUDED.run_attempt > runs.run_attempt`, and `conclusion`, `completed_at`, and `run_started_at` use CASE expressions that take the incoming value (instead of `COALESCE`-preserving the old one) when `EXCLUDED.run_attempt > runs.run_attempt` — i.e. terminal state is reset on a new attempt. `run_attempt` itself is always written from `EXCLUDED`. `atc-store-mem` implements the same semantics by passing `None` to `apply_run_event`; keep the two paths behaviorally aligned. The FK-stub `runs` insert in `upsert_job_in_txn` seeds `run_attempt` to 1.
 
 **The LISTEN connection requires session-mode pooling.** `LISTEN` state is session-scoped in Postgres. A transaction-mode or statement-mode pooler (e.g. PgBouncer in transaction mode) drops the subscription on each connection hand-back. The listener task must use a dedicated connection acquired outside the shared pool, not a pooled connection.
 

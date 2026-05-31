@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,\n               commit_message, event, display_title, status, conclusion,\n               html_url, created_at, run_started_at, updated_at, completed_at\n          FROM runs\n         WHERE placeholder = false\n           AND ($1::timestamptz IS NULL\n                OR status != 'Completed'\n                OR completed_at IS NULL\n                OR completed_at >= $1::timestamptz)\n         ORDER BY id\n        ",
+  "query": "\n        SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,\n               commit_message, event, display_title, status, conclusion,\n               html_url, created_at, run_started_at, updated_at, completed_at,\n               run_attempt\n          FROM runs\n         WHERE placeholder = false\n           AND ($1::timestamptz IS NULL\n                OR status != 'Completed'\n                OR completed_at IS NULL\n                OR completed_at >= $1::timestamptz)\n         ORDER BY id\n        ",
   "describe": {
     "columns": [
       {
@@ -87,6 +87,11 @@
         "ordinal": 16,
         "name": "completed_at",
         "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "run_attempt",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -111,8 +116,9 @@
       false,
       true,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "c0a6391fc27f7587fcc893c64d31073f675a02ce43cef36fad4b6f45013478fd"
+  "hash": "c0ef5b0071818f3abc08723b09e70cabb2a77fd0e15aebfbfc5a8a721a57de00"
 }

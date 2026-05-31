@@ -100,7 +100,8 @@ pub(crate) async fn read_all_runs(
         r#"
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, status, conclusion,
-               html_url, created_at, run_started_at, updated_at, completed_at
+               html_url, created_at, run_started_at, updated_at, completed_at,
+               run_attempt
           FROM runs
          WHERE placeholder = false
            AND ($1::timestamptz IS NULL
@@ -140,6 +141,7 @@ pub(crate) async fn read_all_runs(
             run_started_at: row.run_started_at,
             updated_at: row.updated_at,
             completed_at: row.completed_at,
+            run_attempt: row.run_attempt,
         });
     }
     Ok(runs)

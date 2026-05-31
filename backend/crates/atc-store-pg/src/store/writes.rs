@@ -297,10 +297,11 @@ pub(crate) async fn upsert_run_in_txn(
         INSERT INTO runs (
             id, org, repo, workflow_name, workflow_path, branch, head_sha,
             commit_message, event, display_title, status, conclusion,
-            html_url, created_at, run_started_at, updated_at, completed_at
+            html_url, created_at, run_started_at, updated_at, completed_at,
+            run_attempt
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, $17
+            $13, $14, $15, $16, $17, $18
         )
         ON CONFLICT (id) DO UPDATE SET
             workflow_name  = COALESCE(EXCLUDED.workflow_name, runs.workflow_name),
@@ -311,14 +312,24 @@ pub(crate) async fn upsert_run_in_txn(
             event          = EXCLUDED.event,
             display_title  = EXCLUDED.display_title,
             status         = EXCLUDED.status,
-            conclusion     = COALESCE(EXCLUDED.conclusion, runs.conclusion),
+            conclusion     = CASE
+                               WHEN EXCLUDED.run_attempt > runs.run_attempt THEN EXCLUDED.conclusion
+                               ELSE COALESCE(EXCLUDED.conclusion, runs.conclusion)
+                             END,
             html_url       = EXCLUDED.html_url,
             created_at     = EXCLUDED.created_at,
-            run_started_at = COALESCE(EXCLUDED.run_started_at, runs.run_started_at),
+            run_started_at = CASE
+                               WHEN EXCLUDED.run_attempt > runs.run_attempt THEN EXCLUDED.run_started_at
+                               ELSE COALESCE(EXCLUDED.run_started_at, runs.run_started_at)
+                             END,
             updated_at     = EXCLUDED.updated_at,
-            completed_at   = COALESCE(EXCLUDED.completed_at, runs.completed_at),
+            completed_at   = CASE
+                               WHEN EXCLUDED.run_attempt > runs.run_attempt THEN EXCLUDED.completed_at
+                               ELSE COALESCE(EXCLUDED.completed_at, runs.completed_at)
+                             END,
+            run_attempt    = EXCLUDED.run_attempt,
             placeholder    = false
-        WHERE runs.status = ANY($18::text[])
+        WHERE runs.status = ANY($19::text[]) OR EXCLUDED.run_attempt > runs.run_attempt
         "#,
         run_id,
         env.org,
@@ -337,6 +348,7 @@ pub(crate) async fn upsert_run_in_txn(
         env.run_started_at,
         env.updated_at,
         env.completed_at,
+        env.run_attempt,
         &preds_strs as &[&str],
     )
     .execute(&mut tx.executor())
@@ -400,8 +412,8 @@ pub(crate) async fn upsert_job_in_txn(
     // in-memory store, which never exposed FK-only stubs.
     sqlx::query!(
         r#"
-        INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at, placeholder)
-        VALUES ($1, $2, $3, '', '', '', '', 'Queued', $4, $4, true)
+        INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at, placeholder, run_attempt)
+        VALUES ($1, $2, $3, '', '', '', '', 'Queued', $4, $4, true, 1)
         ON CONFLICT (id) DO NOTHING
         "#,
         run_id,
