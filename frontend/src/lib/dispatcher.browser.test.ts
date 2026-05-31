@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMockJobCommittedEvent, createMockRunner } from '$lib/test-utils/factories'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
-import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
 
 describe('pool-stats derivation: dispatcher + runnerStore integration (browser mode)', () => {
   let eventDispatcher: typeof import('$lib/dispatcher')['eventDispatcher']
@@ -25,23 +25,8 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     jobId: bigint,
     runId: bigint,
     action: JobEventEnvelope['action'],
-  ): CommittedEvent => ({
-    seq: jobId,
-    event: {
-      type: 'Job',
-      data: {
-        jobId,
-        runId,
-        org: 'org',
-        repo: 'repo',
-        name: `job-${jobId}`,
-        createdAt: new Date().toISOString(),
-        startedAt: null,
-        completedAt: null,
-        action,
-      } as JobEventEnvelope,
-    },
-  })
+  ): CommittedEvent =>
+    createMockJobCommittedEvent(jobId, { jobId, runId, name: `job-${jobId}`, action })
 
   it('Queued job creates pool with queued=1, running=0', () => {
     eventDispatcher.dispatch(
@@ -60,11 +45,7 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
   })
 
   it('InProgress job with groupName populated produces running=1', () => {
-    const runner: RunnerInfo = {
-      id: 1n,
-      name: 'runner-1',
-      groupName: 'Default',
-    }
+    const runner = createMockRunner({ groupName: 'Default' })
 
     // First: Queued
     eventDispatcher.dispatch(
@@ -91,11 +72,7 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
   })
 
   it('Completed job removes pool', () => {
-    const runner: RunnerInfo = {
-      id: 1n,
-      name: 'runner-1',
-      groupName: 'Default',
-    }
+    const runner = createMockRunner({ groupName: 'Default' })
 
     eventDispatcher.dispatch(
       makeJobEvent(1n, 10n, { type: 'Queued', data: { labels: ['ubuntu-latest'], steps: [] } }),

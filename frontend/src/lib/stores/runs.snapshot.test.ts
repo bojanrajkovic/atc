@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createMockRun } from '$lib/test-utils/factories'
+import {
+  createMockJob,
+  createMockJobEvent,
+  createMockRun,
+  createMockRunEvent,
+  createMockRunner,
+} from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { runStore } from './runs.svelte'
@@ -16,37 +22,8 @@ describe('RunStore', () => {
   describe('Atomic loadSnapshot', () => {
     it('should replace all runs and jobs when loading a snapshot', () => {
       // Set up initial state
-      runStore.applyRunEvent({
-        runId: 50n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Old Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      })
-
-      runStore.applyJobEvent({
-        jobId: 500n,
-        runId: 50n,
-        org: 'org',
-        repo: 'repo',
-        name: 'Old Job',
-        createdAt: '2025-01-01T00:00:00Z',
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-        action: { type: 'Queued', data: { labels: [], steps: [] } },
-      })
+      runStore.applyRunEvent(createMockRunEvent({ runId: 50n, displayTitle: 'Old Run' }))
+      runStore.applyJobEvent(createMockJobEvent({ jobId: 500n, runId: 50n, name: 'Old Job' }))
 
       // Verify initial state
       expect(runStore.runs.size).toBe(1)
@@ -55,32 +32,20 @@ describe('RunStore', () => {
       // Load new snapshot
       const newRun = createMockRun({
         id: 51n,
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        headSha: 'newsha',
-        commitMessage: 'New msg',
         displayTitle: 'New Run',
         status: 'InProgress',
-        htmlUrl: 'newurl',
         createdAt: '2025-01-02T00:00:00Z',
         runStartedAt: '2025-01-02T00:00:05Z',
         updatedAt: '2025-01-02T00:00:05Z',
       })
 
-      const newJob: Job = {
+      const newJob = createMockJob({
         id: 501n,
         name: 'New Job',
         runId: 51n,
-        status: 'Queued',
-        conclusion: null,
-        runner: null,
         labels: ['ubuntu-latest'],
-        steps: [],
         createdAt: '2025-01-02T00:00:00Z',
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-      }
+      })
 
       runStore.loadSnapshot([newRun], [newJob])
 
@@ -105,15 +70,9 @@ describe('RunStore', () => {
     it('should handle loading snapshot with multiple runs and jobs', () => {
       const run1 = createMockRun({
         id: 60n,
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        headSha: 'sha1',
-        commitMessage: 'msg1',
-        event: 'push',
         displayTitle: 'Run 1',
         status: 'Completed',
         conclusion: 'Success',
-        htmlUrl: 'url1',
         createdAt: '2025-01-02T00:00:00Z',
         runStartedAt: '2025-01-02T00:00:05Z',
         updatedAt: '2025-01-02T00:00:15Z',
@@ -124,61 +83,45 @@ describe('RunStore', () => {
         workflowName: 'Test',
         workflowPath: '.github/workflows/test.yml',
         branch: 'develop',
-        headSha: 'sha2',
-        commitMessage: 'msg2',
         event: 'pull_request',
         displayTitle: 'Run 2',
         status: 'InProgress',
-        htmlUrl: 'url2',
         createdAt: '2025-01-02T01:00:00Z',
         runStartedAt: '2025-01-02T01:00:05Z',
         updatedAt: '2025-01-02T01:00:10Z',
       })
 
-      const job1: Job = {
+      const job1 = createMockJob({
         id: 600n,
         name: 'Job 1',
         runId: 60n,
         status: 'Completed',
         conclusion: 'Success',
-        runner: { id: 1n, name: 'Runner1', groupName: null },
+        runner: createMockRunner({ name: 'Runner1' }),
         labels: ['ubuntu-latest'],
-        steps: [],
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: '2025-01-02T00:00:05Z',
         completedAt: '2025-01-02T00:00:15Z',
-        runAttempt: 1,
-      }
+      })
 
-      const job2: Job = {
+      const job2 = createMockJob({
         id: 601n,
         name: 'Job 2',
         runId: 60n,
         status: 'Completed',
         conclusion: 'Failure',
-        runner: { id: 2n, name: 'Runner2', groupName: null },
-        labels: [],
-        steps: [],
+        runner: createMockRunner({ id: 2n, name: 'Runner2' }),
         createdAt: '2025-01-02T00:00:00Z',
         startedAt: '2025-01-02T00:00:05Z',
         completedAt: '2025-01-02T00:00:20Z',
-        runAttempt: 1,
-      }
+      })
 
-      const job3: Job = {
+      const job3 = createMockJob({
         id: 602n,
         name: 'Job 3',
         runId: 61n,
-        status: 'Queued',
-        conclusion: null,
-        runner: null,
-        labels: [],
-        steps: [],
         createdAt: '2025-01-02T01:00:00Z',
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-      }
+      })
 
       runStore.loadSnapshot([run1, run2], [job1, job2, job3])
 
@@ -203,29 +146,22 @@ describe('RunStore', () => {
         id: 200n,
         displayTitle: 'Run 1',
         status: 'Queued',
-        htmlUrl: 'url1',
         createdAt: '2026-04-16T09:00:00Z',
         updatedAt: '2026-04-16T09:00:00Z',
       })
 
       const run2 = createMockRun({
         id: 201n,
-        headSha: 'sha2',
-        commitMessage: 'msg2',
         displayTitle: 'Run 2',
         status: 'Queued',
-        htmlUrl: 'url2',
         createdAt: '2026-04-16T09:00:00Z',
         updatedAt: '2026-04-16T09:00:00Z',
       })
 
       const run3 = createMockRun({
         id: 202n,
-        headSha: 'sha3',
-        commitMessage: 'msg3',
         displayTitle: 'Run 3',
         status: 'Queued',
-        htmlUrl: 'url3',
         createdAt: '2026-04-16T09:00:00Z',
         updatedAt: '2026-04-16T09:00:00Z',
       })
@@ -248,7 +184,6 @@ describe('RunStore', () => {
         id: 210n,
         displayTitle: 'Run 1',
         status: 'InProgress',
-        htmlUrl: 'url1',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:05Z',
@@ -256,11 +191,8 @@ describe('RunStore', () => {
 
       const run2 = createMockRun({
         id: 211n,
-        headSha: 'sha2',
-        commitMessage: 'msg2',
         displayTitle: 'Run 2',
         status: 'InProgress',
-        htmlUrl: 'url2',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:05Z',
@@ -268,11 +200,8 @@ describe('RunStore', () => {
 
       const run3 = createMockRun({
         id: 212n,
-        headSha: 'sha3',
-        commitMessage: 'msg3',
         displayTitle: 'Run 3',
         status: 'InProgress',
-        htmlUrl: 'url3',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:05Z',
@@ -297,7 +226,6 @@ describe('RunStore', () => {
         displayTitle: 'Run 1',
         status: 'Completed',
         conclusion: 'Success',
-        htmlUrl: 'url1',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:15Z',
@@ -305,12 +233,9 @@ describe('RunStore', () => {
 
       const run2 = createMockRun({
         id: 221n,
-        headSha: 'sha2',
-        commitMessage: 'msg2',
         displayTitle: 'Run 2',
         status: 'Completed',
         conclusion: 'Success',
-        htmlUrl: 'url2',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:15Z',
@@ -318,12 +243,9 @@ describe('RunStore', () => {
 
       const run3 = createMockRun({
         id: 222n,
-        headSha: 'sha3',
-        commitMessage: 'msg3',
         displayTitle: 'Run 3',
         status: 'Completed',
         conclusion: 'Success',
-        htmlUrl: 'url3',
         createdAt: '2026-04-16T09:00:00Z',
         runStartedAt: '2026-04-16T09:00:05Z',
         updatedAt: '2026-04-16T09:00:15Z',
@@ -354,21 +276,9 @@ describe('RunStore', () => {
         unknown
       >
       delete run.runAttempt
-      const job: Job = {
-        id: 7001n,
-        name: 'job',
-        runId: 700n,
-        status: 'InProgress',
-        conclusion: null,
-        runner: null,
-        labels: [],
-        steps: [],
-        createdAt: '2025-01-02T00:00:00Z',
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-      }
-      const jobNoAttempt = { ...job } as Record<string, unknown>
+      const jobNoAttempt = {
+        ...createMockJob({ id: 7001n, name: 'job', runId: 700n, status: 'InProgress' }),
+      } as Record<string, unknown>
       delete jobNoAttempt.runAttempt
 
       runStore.loadSnapshot([run as unknown as WorkflowRun], [jobNoAttempt as unknown as Job])

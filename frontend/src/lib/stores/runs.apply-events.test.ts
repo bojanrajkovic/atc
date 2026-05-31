@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createMockRunEvent } from '$lib/test-utils/factories'
-import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import { runStore } from './runs.svelte'
 
 describe('RunStore', () => {
@@ -15,26 +14,7 @@ describe('RunStore', () => {
   describe('Create new run for unknown run ID', () => {
     it('should create a new run when given an envelope for an unknown run ID', () => {
       const runId = 1n
-      const envelope: RunEventEnvelope = {
-        runId,
-        org: 'test-org',
-        repo: 'test-repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'Test commit',
-        triggerEvent: 'push',
-        displayTitle: 'Test Run',
-        htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      }
-
-      runStore.applyRunEvent(envelope)
+      runStore.applyRunEvent(createMockRunEvent({ runId }))
 
       expect(runStore.runs.has(runId)).toBe(true)
       const run = runStore.runs.get(runId)!
@@ -45,26 +25,7 @@ describe('RunStore', () => {
     })
 
     it('should handle Requested action creating a Queued run', () => {
-      const envelope: RunEventEnvelope = {
-        runId: 2n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      }
-
-      runStore.applyRunEvent(envelope)
+      runStore.applyRunEvent(createMockRunEvent({ runId: 2n }))
 
       const run = runStore.runs.get(2n)!
       expect(run.status).toBe('Queued')
@@ -76,50 +37,22 @@ describe('RunStore', () => {
     it('should update an existing run from Queued to InProgress', () => {
       const runId = 3n
 
-      // Create initial Queued run
-      const queuedEnvelope: RunEventEnvelope = {
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'message',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      }
-
-      runStore.applyRunEvent(queuedEnvelope)
+      // Create initial Queued run (workflowName 'CI' comes from the factory default)
+      runStore.applyRunEvent(createMockRunEvent({ runId }))
       expect(runStore.runs.get(runId)!.status).toBe('Queued')
 
-      // Update to InProgress
-      const inProgressEnvelope: RunEventEnvelope = {
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null, // GitHub often sends null in subsequent events
-        workflowPath: null,
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'message',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:10Z',
-        updatedAt: '2025-01-01T00:00:10Z',
-        runAttempt: 1,
-        action: { type: 'InProgress' },
-      }
-
-      runStore.applyRunEvent(inProgressEnvelope)
+      // Update to InProgress — GitHub often sends null workflow metadata in
+      // subsequent events, so the prior 'CI' must be preserved.
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          workflowName: null,
+          workflowPath: null,
+          runStartedAt: '2025-01-01T00:00:10Z',
+          updatedAt: '2025-01-01T00:00:10Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       const updated = runStore.runs.get(runId)!
       expect(updated.status).toBe('InProgress')
@@ -130,65 +63,32 @@ describe('RunStore', () => {
     it('should update from InProgress to Completed with conclusion', () => {
       const runId = 4n
 
-      // Create Queued
-      runStore.applyRunEvent({
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'msg',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      })
+      // Create Queued (workflowName 'CI' from factory default)
+      runStore.applyRunEvent(createMockRunEvent({ runId }))
 
       // Update to InProgress
-      runStore.applyRunEvent({
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'msg',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:10Z',
-        updatedAt: '2025-01-01T00:00:10Z',
-        runAttempt: 1,
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          workflowName: null,
+          workflowPath: null,
+          runStartedAt: '2025-01-01T00:00:10Z',
+          updatedAt: '2025-01-01T00:00:10Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       // Update to Completed
-      runStore.applyRunEvent({
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'msg',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:10Z',
-        updatedAt: '2025-01-01T00:00:20Z',
-        runAttempt: 1,
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          workflowName: null,
+          workflowPath: null,
+          runStartedAt: '2025-01-01T00:00:10Z',
+          updatedAt: '2025-01-01T00:00:20Z',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
       const completed = runStore.runs.get(runId)!
       expect(completed.status).toBe('Completed')
@@ -200,44 +100,29 @@ describe('RunStore', () => {
       const runId = 5n
 
       // Initial event with all fields
-      runStore.applyRunEvent({
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'MyWorkflow',
-        workflowPath: '.github/workflows/my.yml',
-        branch: 'develop',
-        headSha: 'sha123',
-        commitMessage: 'Initial commit',
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url1',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: '2025-01-01T00:00:05Z',
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          workflowName: 'MyWorkflow',
+          workflowPath: '.github/workflows/my.yml',
+          branch: 'develop',
+          commitMessage: 'Initial commit',
+          runStartedAt: '2025-01-01T00:00:05Z',
+        }),
+      )
 
       // Second event with nulls (typical for GitHub events)
-      runStore.applyRunEvent({
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: null,
-        workflowPath: null,
-        branch: null,
-        headSha: 'sha123',
-        commitMessage: null,
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'url1',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null, // But new startedAt should not overwrite if different
-        updatedAt: '2025-01-01T00:00:10Z',
-        runAttempt: 1,
-        action: { type: 'InProgress' },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId,
+          workflowName: null,
+          workflowPath: null,
+          branch: null,
+          commitMessage: null,
+          updatedAt: '2025-01-01T00:00:10Z',
+          action: { type: 'InProgress' },
+        }),
+      )
 
       const run = runStore.runs.get(runId)!
       expect(run.workflowName).toBe('MyWorkflow') // Preserved (optional field)
@@ -250,24 +135,7 @@ describe('RunStore', () => {
   describe('Idempotent duplicate events', () => {
     it('should handle duplicate run events without creating duplicates', () => {
       const runId = 70n
-      const envelope: RunEventEnvelope = {
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'msg',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
-        runStartedAt: null,
-        updatedAt: '2025-01-01T00:00:00Z',
-        runAttempt: 1,
-        action: { type: 'Requested' },
-      }
+      const envelope = createMockRunEvent({ runId })
 
       // Apply same event twice
       runStore.applyRunEvent(envelope)
@@ -287,24 +155,12 @@ describe('RunStore', () => {
       const runId = 72n
 
       // Scenario: Completed event fires multiple times with same data
-      const completionEnvelope: RunEventEnvelope = {
+      const completionEnvelope = createMockRunEvent({
         runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'sha',
-        commitMessage: 'msg',
-        triggerEvent: 'push',
-        displayTitle: 'Run',
-        htmlUrl: 'url',
-        createdAt: '2025-01-01T00:00:00Z',
         runStartedAt: '2025-01-01T00:00:05Z',
         updatedAt: '2025-01-01T00:00:15Z',
-        runAttempt: 1,
         action: { type: 'Completed', data: { conclusion: 'Success' } },
-      }
+      })
 
       // Apply multiple times
       runStore.applyRunEvent(completionEnvelope)

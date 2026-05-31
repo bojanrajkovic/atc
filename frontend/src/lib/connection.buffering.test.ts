@@ -10,8 +10,7 @@ import { ConnectionManager } from '$lib/connection'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
-import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
-import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
+import { createMockRunCommittedEvent } from '$lib/test-utils/factories'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
 describe('ConnectionManager', () => {
@@ -71,31 +70,7 @@ describe('ConnectionManager', () => {
       // Get the mock WebSocket and send an event while state fetch is in progress
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        const event: CommittedEvent = {
-          seq: 10n,
-          event: {
-            type: 'Run',
-            data: {
-              runId: 999n,
-              org: 'org',
-              repo: 'repo',
-              workflowName: 'test',
-              workflowPath: '.github/workflows/test.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'test commit',
-              triggerEvent: 'push',
-              displayTitle: 'Test run',
-              htmlUrl: 'https://github.com/org/repo/actions/runs/999',
-              createdAt: new Date().toISOString(),
-              runStartedAt: null,
-              updatedAt: new Date().toISOString(),
-              action: {
-                type: 'Requested',
-              },
-            } as RunEventEnvelope,
-          },
-        }
+        const event = createMockRunCommittedEvent(10n, { runId: 999n })
         ws.receiveMessage(
           JSON.stringify({ kind: 'Committed', ...event }, (_key, value) => {
             if (typeof value === 'bigint') {
@@ -152,31 +127,7 @@ describe('ConnectionManager', () => {
       // Get the mock WebSocket and send an event with seq <= snapshot.lastSeq (should be discarded)
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        const staleEvent: CommittedEvent = {
-          seq: 5n,
-          event: {
-            type: 'Run',
-            data: {
-              runId: 888n,
-              org: 'org',
-              repo: 'repo',
-              workflowName: 'test',
-              workflowPath: '.github/workflows/test.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'test commit',
-              triggerEvent: 'push',
-              displayTitle: 'Stale run',
-              htmlUrl: 'https://github.com/org/repo/actions/runs/888',
-              createdAt: new Date().toISOString(),
-              runStartedAt: null,
-              updatedAt: new Date().toISOString(),
-              action: {
-                type: 'Requested',
-              },
-            } as RunEventEnvelope,
-          },
-        }
+        const staleEvent = createMockRunCommittedEvent(5n, { runId: 888n })
         ws.receiveMessage(
           JSON.stringify({ kind: 'Committed', ...staleEvent }, (_key, value) => {
             if (typeof value === 'bigint') {
@@ -232,31 +183,7 @@ describe('ConnectionManager', () => {
       // Get the mock WebSocket and send an event with seq === snapshot.lastSeq (should be discarded)
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
-        const freshEvent: CommittedEvent = {
-          seq: 10n,
-          event: {
-            type: 'Run',
-            data: {
-              runId: 777n,
-              org: 'org',
-              repo: 'repo',
-              workflowName: 'test',
-              workflowPath: '.github/workflows/test.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'test commit',
-              triggerEvent: 'push',
-              displayTitle: 'Fresh run',
-              htmlUrl: 'https://github.com/org/repo/actions/runs/777',
-              createdAt: new Date().toISOString(),
-              runStartedAt: null,
-              updatedAt: new Date().toISOString(),
-              action: {
-                type: 'Requested',
-              },
-            } as RunEventEnvelope,
-          },
-        }
+        const freshEvent = createMockRunCommittedEvent(10n, { runId: 777n })
         ws.receiveMessage(
           JSON.stringify({ kind: 'Committed', ...freshEvent }, (_key, value) => {
             if (typeof value === 'bigint') {
@@ -309,29 +236,7 @@ describe('ConnectionManager', () => {
       const ws = MockWebSocket.getLastInstance()
       if (ws) {
         // seq=1 is the first broadcast seq with pre-increment counter
-        const firstEvent: CommittedEvent = {
-          seq: 1n,
-          event: {
-            type: 'Run',
-            data: {
-              runId: 42n,
-              org: 'org',
-              repo: 'repo',
-              workflowName: 'test',
-              workflowPath: '.github/workflows/test.yml',
-              branch: 'main',
-              headSha: 'abc123',
-              commitMessage: 'first commit',
-              triggerEvent: 'push',
-              displayTitle: 'First run',
-              htmlUrl: 'https://github.com/org/repo/actions/runs/42',
-              createdAt: new Date().toISOString(),
-              runStartedAt: null,
-              updatedAt: new Date().toISOString(),
-              action: { type: 'Requested' },
-            } as RunEventEnvelope,
-          },
-        }
+        const firstEvent = createMockRunCommittedEvent(1n, { runId: 42n })
         ws.receiveMessage(
           JSON.stringify({ kind: 'Committed', ...firstEvent }, (_key, value) =>
             typeof value === 'bigint' ? value.toString() : value,
@@ -376,29 +281,7 @@ describe('ConnectionManager', () => {
       await new Promise((resolve) => setTimeout(resolve, 10))
 
       const ws = MockWebSocket.getLastInstance()!
-      const legacyEvent: CommittedEvent = {
-        seq: 10n,
-        event: {
-          type: 'Run',
-          data: {
-            runId: 123n,
-            org: 'org',
-            repo: 'repo',
-            workflowName: 'test',
-            workflowPath: '.github/workflows/test.yml',
-            branch: 'main',
-            headSha: 'abc',
-            commitMessage: 'legacy',
-            triggerEvent: 'push',
-            displayTitle: 'Legacy run',
-            htmlUrl: 'https://example.com/123',
-            createdAt: new Date().toISOString(),
-            runStartedAt: null,
-            updatedAt: new Date().toISOString(),
-            action: { type: 'Requested' },
-          } as RunEventEnvelope,
-        },
-      }
+      const legacyEvent = createMockRunCommittedEvent(10n, { runId: 123n })
       // Send the legacy shape (no `kind` wrapper) — what a pre-this-PR
       // backend would emit.
       ws.receiveMessage(

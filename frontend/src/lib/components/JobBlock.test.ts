@@ -1,25 +1,8 @@
 import { render, screen } from '@testing-library/svelte'
 import { describe, expect, it } from 'vitest'
 
-import { createMockJob } from '$lib/test-utils/factories'
-import type { Step } from '$lib/types/generated/Step'
+import { createMockJob, createMockStep } from '$lib/test-utils/factories'
 import JobBlock from './JobBlock.svelte'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeStep(overrides: Partial<Step> = {}): Step {
-  return {
-    number: 1n,
-    name: 'test step',
-    status: 'Queued',
-    conclusion: null,
-    startedAt: null,
-    completedAt: null,
-    ...overrides,
-  }
-}
 
 describe('JobBlock', () => {
   it('sets id="job-{job.id}" on the section element', () => {
@@ -64,9 +47,19 @@ describe('JobBlock', () => {
   it('renders one StepItem per step in job.steps', () => {
     const job = createMockJob({
       steps: [
-        makeStep({ number: 1n, name: 'Checkout code', status: 'Completed', conclusion: 'Success' }),
-        makeStep({ number: 2n, name: 'Install deps', status: 'Completed', conclusion: 'Success' }),
-        makeStep({ number: 3n, name: 'Run tests', status: 'InProgress' }),
+        createMockStep({
+          number: 1n,
+          name: 'Checkout code',
+          status: 'Completed',
+          conclusion: 'Success',
+        }),
+        createMockStep({
+          number: 2n,
+          name: 'Install deps',
+          status: 'Completed',
+          conclusion: 'Success',
+        }),
+        createMockStep({ number: 3n, name: 'Run tests', status: 'InProgress' }),
       ],
     })
     render(JobBlock, {

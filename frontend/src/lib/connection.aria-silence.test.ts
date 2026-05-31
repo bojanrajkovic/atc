@@ -21,35 +21,13 @@ import { ConnectionManager } from '$lib/connection'
 import { eventDispatcher } from '$lib/dispatcher'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
+import { createMockRunCommittedEvent } from '$lib/test-utils/factories'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
-import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 import type { StateSnapshot } from '$lib/types/generated/StateSnapshot'
 
 /** Build a minimal RunEvent CommittedEvent (Requested action triggers an announcement). */
 function makeRequestedRunEvent(runId: bigint, seq: bigint): CommittedEvent {
-  return {
-    seq,
-    event: {
-      type: 'Run',
-      data: {
-        runId,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'ci',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test commit',
-        triggerEvent: 'push',
-        displayTitle: `Run ${runId}`,
-        htmlUrl: `https://github.com/org/repo/actions/runs/${runId}`,
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        action: { type: 'Requested' },
-      } as RunEventEnvelope,
-    },
-  }
+  return createMockRunCommittedEvent(seq, { runId })
 }
 
 /** Serialize a CommittedEvent to JSON with bigint → string (matching the wire format). */

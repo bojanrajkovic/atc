@@ -1,23 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { createMockStep } from '$lib/test-utils/factories'
 import type { JobConclusion } from '$lib/types/generated/JobConclusion'
-import type { Step } from '$lib/types/generated/Step'
 import { computeStepDurationText, computeStepStatusKey } from './step-helpers'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeStep(overrides: Partial<Step> = {}): Step {
-  return {
-    number: 1n,
-    name: 'test step',
-    status: 'Queued',
-    conclusion: null,
-    startedAt: null,
-    completedAt: null,
-    ...overrides,
-  }
-}
 
 // ---------------------------------------------------------------------------
 // computeStepStatusKey
@@ -26,14 +10,14 @@ function makeStep(overrides: Partial<Step> = {}): Step {
 describe('computeStepStatusKey', () => {
   describe('Queued status', () => {
     it('returns Queued for a queued step', () => {
-      const step = makeStep({ status: 'Queued', conclusion: null })
+      const step = createMockStep({ status: 'Queued', conclusion: null })
       expect(computeStepStatusKey(step)).toBe('Queued')
     })
   })
 
   describe('InProgress status', () => {
     it('returns InProgress for an in-progress step', () => {
-      const step = makeStep({ status: 'InProgress', conclusion: null })
+      const step = createMockStep({ status: 'InProgress', conclusion: null })
       expect(computeStepStatusKey(step)).toBe('InProgress')
     })
   })
@@ -51,12 +35,12 @@ describe('computeStepStatusKey', () => {
     ] as const satisfies ReadonlyArray<
       [JobConclusion, string]
     >)('returns %s for conclusion=%s', (conclusion, expected) => {
-      const step = makeStep({ status: 'Completed', conclusion })
+      const step = createMockStep({ status: 'Completed', conclusion })
       expect(computeStepStatusKey(step)).toBe(expected)
     })
 
     it('returns Cancelled for bare-Completed (null conclusion) — same fallback as job', () => {
-      const step = makeStep({ status: 'Completed', conclusion: null })
+      const step = createMockStep({ status: 'Completed', conclusion: null })
       expect(computeStepStatusKey(step)).toBe('Cancelled')
     })
   })
@@ -65,7 +49,7 @@ describe('computeStepStatusKey', () => {
     it('throws when an unknown conclusion value is encountered at the boundary', () => {
       expect(() =>
         computeStepStatusKey(
-          makeStep({ status: 'Completed', conclusion: 'failure' as JobConclusion }),
+          createMockStep({ status: 'Completed', conclusion: 'failure' as JobConclusion }),
         ),
       ).toThrow(/unhandled.*conclusion/i)
     })
@@ -78,22 +62,22 @@ describe('computeStepStatusKey', () => {
 
 describe('computeStepDurationText', () => {
   it('returns em dash when both startedAt and completedAt are null', () => {
-    const step = makeStep({ startedAt: null, completedAt: null })
+    const step = createMockStep({ startedAt: null, completedAt: null })
     expect(computeStepDurationText(step)).toBe('—')
   })
 
   it('returns em dash when only startedAt is null', () => {
-    const step = makeStep({ startedAt: null, completedAt: '2026-04-17T10:00:00Z' })
+    const step = createMockStep({ startedAt: null, completedAt: '2026-04-17T10:00:00Z' })
     expect(computeStepDurationText(step)).toBe('—')
   })
 
   it('returns em dash when only completedAt is null (incomplete step)', () => {
-    const step = makeStep({ startedAt: '2026-04-17T09:58:00Z', completedAt: null })
+    const step = createMockStep({ startedAt: '2026-04-17T09:58:00Z', completedAt: null })
     expect(computeStepDurationText(step)).toBe('—')
   })
 
   it('returns static MM:SS when both startedAt and completedAt are present', () => {
-    const step = makeStep({
+    const step = createMockStep({
       startedAt: '2026-04-17T09:58:00Z',
       completedAt: '2026-04-17T10:00:00Z',
     })
@@ -101,7 +85,7 @@ describe('computeStepDurationText', () => {
   })
 
   it('returns H:MM:SS for durations over 1 hour', () => {
-    const step = makeStep({
+    const step = createMockStep({
       startedAt: '2026-04-17T08:00:00Z',
       completedAt: '2026-04-17T09:30:45Z',
     })
@@ -109,7 +93,7 @@ describe('computeStepDurationText', () => {
   })
 
   it('is stable — same output on repeated calls with same input', () => {
-    const step = makeStep({
+    const step = createMockStep({
       startedAt: '2026-04-17T09:58:00Z',
       completedAt: '2026-04-17T10:00:14Z',
     })
