@@ -1,34 +1,25 @@
 import type { Page } from '@playwright/test'
+import { createMockRun } from '../src/lib/test-utils/factories'
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
 import type { WorkflowRun } from '../src/lib/types/generated/WorkflowRun'
 import { expect, test } from './lib/fixtures'
-import { WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { bigintReplacer, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
 
 function makeWorkflowRun(id: number): WorkflowRun {
-  return {
-    id: id as unknown as bigint,
-    org: 'test-org',
-    repo: 'test-repo',
-    workflowName: 'CI',
-    workflowPath: '.github/workflows/ci.yml',
-    branch: 'main',
-    headSha: 'abc123',
-    commitMessage: `commit ${id}`,
-    event: 'push',
-    displayTitle: `CI — run ${id}`,
+  return createMockRun({
+    id: BigInt(id),
     status: 'InProgress',
-    conclusion: null,
+    displayTitle: `CI — run ${id}`,
     htmlUrl: `https://github.com/test-org/test-repo/actions/runs/${id}`,
     createdAt: '2026-04-17T09:59:00Z',
     runStartedAt: '2026-04-17T09:59:30Z',
     updatedAt: '2026-04-17T10:00:00Z',
-    runAttempt: 1,
-  }
+  })
 }
 
 function snapshotWith(runs: WorkflowRun[]): StateSnapshot {
   return {
-    lastSeq: 1 as unknown as bigint,
+    lastSeq: 1n,
     runs,
     jobs: [],
     runnerPoolCapacities: [],
@@ -40,7 +31,10 @@ function snapshotWith(runs: WorkflowRun[]): StateSnapshot {
 async function preparePage(page: Page, snapshot: StateSnapshot): Promise<void> {
   await page.addInitScript(WS_MOCK_INIT_SCRIPT)
   await page.route('**/v1/state', (route) =>
-    route.fulfill({ contentType: 'application/json', body: JSON.stringify(snapshot) }),
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify(snapshot, bigintReplacer),
+    }),
   )
 }
 

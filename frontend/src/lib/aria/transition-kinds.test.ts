@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMockJobCommittedEvent, createMockRunCommittedEvent } from '$lib/test-utils/factories'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import { classifyEvent, VERB_BY_CONCLUSION } from './transition-kinds'
@@ -21,55 +22,17 @@ export type _CheckExhaustive = Expect<Equal<keyof typeof VERB_BY_CONCLUSION, Run
 // ---------------------------------------------------------------------------
 
 function makeRunCommittedEvent(action: { type: string; data?: unknown }): CommittedEvent {
-  return {
-    seq: 1n,
-    event: {
-      type: 'Run',
-      data: {
-        runId: 1n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test',
-        triggerEvent: 'push',
-        displayTitle: 'Test run',
-        htmlUrl: 'https://example.com',
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        runAttempt: 1,
-        // biome-ignore lint/suspicious/noExplicitAny: test fixture constructs off-shape values
-        action: action as any,
-      },
-    },
-  }
+  // The off-shape tests deliberately pass invalid action shapes (lowercase
+  // conclusions, null/undefined conclusion) to exercise the boundary guard, so
+  // the action is cast loosely here rather than constrained to `RunEvent`.
+  return createMockRunCommittedEvent(1n, {
+    // biome-ignore lint/suspicious/noExplicitAny: test fixture constructs off-shape values
+    action: action as any,
+  })
 }
 
 function makeJobCommittedEvent(): CommittedEvent {
-  return {
-    seq: 2n,
-    event: {
-      type: 'Job',
-      data: {
-        jobId: 10n,
-        runId: 1n,
-        org: 'org',
-        repo: 'repo',
-        name: 'test-job',
-        createdAt: new Date().toISOString(),
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-        action: {
-          type: 'Queued',
-          data: { labels: [], steps: [] },
-        },
-      },
-    },
-  }
+  return createMockJobCommittedEvent(2n, { jobId: 10n })
 }
 
 // ---------------------------------------------------------------------------

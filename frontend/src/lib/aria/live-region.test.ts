@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runStore } from '$lib/stores/runs.svelte'
+import {
+  createMockJobCommittedEvent,
+  createMockRunCommittedEvent,
+  createMockRunEvent,
+} from '$lib/test-utils/factories'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
+import type { RunEvent } from '$lib/types/generated/RunEvent'
 import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
 import { LiveRegion } from './live-region.svelte'
 
@@ -19,88 +25,44 @@ function makeRunCommittedEvent(opts: {
   repo?: string
 }): CommittedEvent {
   seqCounter++
-  let actionPayload: { type: string; data?: unknown }
-  if (opts.action === 'Requested') {
-    actionPayload = { type: 'Requested' }
-  } else if (opts.action === 'InProgress') {
-    actionPayload = { type: 'InProgress' }
-  } else {
-    actionPayload = { type: 'Completed', data: { conclusion: opts.action.Completed.conclusion } }
-  }
-
-  return {
-    seq: BigInt(seqCounter),
-    event: {
-      type: 'Run',
-      data: {
-        runId: opts.runId,
-        org: opts.org ?? 'test-org',
-        repo: opts.repo ?? 'test-repo',
-        workflowName: 'CI',
-        workflowPath: '.github/workflows/ci.yml',
-        branch: opts.branch === undefined ? 'main' : opts.branch,
-        headSha: 'abc123',
-        commitMessage: 'test',
-        triggerEvent: 'push',
-        displayTitle: opts.displayTitle ?? `Run ${opts.runId}`,
-        htmlUrl: 'https://example.com',
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        runAttempt: 1,
-        // biome-ignore lint/suspicious/noExplicitAny: test fixture
-        action: actionPayload as any,
-      },
-    },
-  }
+  const action: RunEvent =
+    opts.action === 'Requested'
+      ? { type: 'Requested' }
+      : opts.action === 'InProgress'
+        ? { type: 'InProgress' }
+        : // biome-ignore lint/suspicious/noExplicitAny: test fixture may carry off-shape conclusions
+          { type: 'Completed', data: { conclusion: opts.action.Completed.conclusion as any } }
+  return createMockRunCommittedEvent(BigInt(seqCounter), {
+    runId: opts.runId,
+    org: opts.org ?? 'test-org',
+    repo: opts.repo ?? 'test-repo',
+    branch: opts.branch === undefined ? 'main' : opts.branch,
+    displayTitle: opts.displayTitle ?? `Run ${opts.runId}`,
+    action,
+  })
 }
 
 function makeJobCommittedEvent(runId: bigint): CommittedEvent {
   seqCounter++
-  return {
-    seq: BigInt(seqCounter),
-    event: {
-      type: 'Job',
-      data: {
-        jobId: BigInt(seqCounter) * 100n,
-        runId,
-        org: 'test-org',
-        repo: 'test-repo',
-        name: 'test-job',
-        createdAt: new Date().toISOString(),
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-        action: {
-          type: 'Queued',
-          data: { labels: [], steps: [] },
-        },
-      },
-    },
-  }
+  return createMockJobCommittedEvent(BigInt(seqCounter), {
+    jobId: BigInt(seqCounter) * 100n,
+    runId,
+  })
 }
 
 // Populate the run store with a run so formatRunTransition can look it up
 function setupRun(runId: bigint, opts: Partial<WorkflowRun> = {}): void {
   // Dispatch a Requested event to create the run in the store
-  runStore.applyRunEvent({
-    runId,
-    org: opts.org ?? 'test-org',
-    repo: opts.repo ?? 'test-repo',
-    workflowName: 'CI',
-    workflowPath: null,
-    branch: opts.branch === undefined ? 'main' : opts.branch,
-    headSha: 'abc123',
-    commitMessage: 'test',
-    triggerEvent: 'push',
-    displayTitle: opts.displayTitle ?? `Run ${runId}`,
-    htmlUrl: 'https://example.com',
-    createdAt: new Date().toISOString(),
-    runStartedAt: null,
-    updatedAt: new Date().toISOString(),
-    runAttempt: 1,
-    action: { type: 'Requested' },
-  })
+  runStore.applyRunEvent(
+    createMockRunEvent({
+      runId,
+      org: opts.org ?? 'test-org',
+      repo: opts.repo ?? 'test-repo',
+      workflowPath: null,
+      branch: opts.branch === undefined ? 'main' : opts.branch,
+      displayTitle: opts.displayTitle ?? `Run ${runId}`,
+    }),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -159,24 +121,14 @@ describe('LiveRegion', () => {
     it('same-run Queued+Completed in one flush produces 2 per-run announcements joined by ". "', () => {
       setupRun(1n)
       // After Requested the run is in store; then Completed updates it
-      runStore.applyRunEvent({
-        runId: 1n,
-        org: 'test-org',
-        repo: 'test-repo',
-        workflowName: 'CI',
-        workflowPath: null,
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test',
-        triggerEvent: 'push',
-        displayTitle: 'Run 1',
-        htmlUrl: 'https://example.com',
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        runAttempt: 1,
-        action: { type: 'Completed', data: { conclusion: 'Success' } },
-      })
+      runStore.applyRunEvent(
+        createMockRunEvent({
+          runId: 1n,
+          workflowPath: null,
+          displayTitle: 'Run 1',
+          action: { type: 'Completed', data: { conclusion: 'Success' } },
+        }),
+      )
 
       liveRegion.observeFlush([
         makeRunCommittedEvent({ runId: 1n, action: 'Requested' }),

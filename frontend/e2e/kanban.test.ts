@@ -1,4 +1,5 @@
 import type { Route } from '@playwright/test'
+import { createMockRun } from '../src/lib/test-utils/factories'
 import type { StateSnapshot } from '../src/lib/types/generated/StateSnapshot'
 import { expect, test } from './lib/fixtures'
 import { bigintReplacer, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
@@ -71,25 +72,15 @@ test.describe('Kanban board', () => {
           {
             lastSeq: 1n,
             runs: [
-              {
+              createMockRun({
                 id: 1002n,
-                org: 'test-org',
-                repo: 'test-repo',
-                workflowName: 'CI',
-                workflowPath: '.github/workflows/ci.yml',
-                branch: 'main',
+                status: 'Queued',
                 headSha: 'def456',
                 commitMessage: 'another commit',
-                event: 'push',
-                displayTitle: 'CI — main',
-                status: 'Queued',
-                conclusion: null,
                 htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1002',
                 createdAt: '2026-04-16T11:00:00Z',
-                runStartedAt: null,
                 updatedAt: '2026-04-16T11:00:00Z',
-                runAttempt: 1,
-              },
+              }),
             ],
             jobs: [],
             runnerPoolCapacities: [],
@@ -169,25 +160,18 @@ test.describe('Kanban board', () => {
           {
             lastSeq: 1n,
             runs: [
-              {
+              createMockRun({
                 id: 1003n,
-                org: 'test-org',
-                repo: 'test-repo',
                 workflowName: 'Build',
                 workflowPath: '.github/workflows/build.yml',
-                branch: 'main',
                 headSha: 'ghi789',
                 commitMessage: 'reduced motion test',
-                event: 'push',
                 displayTitle: 'Build — main',
                 status: 'Queued',
-                conclusion: null,
                 htmlUrl: 'https://github.com/test-org/test-repo/actions/runs/1003',
                 createdAt: '2026-04-16T12:00:00Z',
-                runStartedAt: null,
                 updatedAt: '2026-04-16T12:00:00Z',
-                runAttempt: 1,
-              },
+              }),
             ],
             jobs: [],
             runnerPoolCapacities: [],

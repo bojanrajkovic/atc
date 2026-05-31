@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { eventDispatcher } from '$lib/dispatcher'
 import { runStore } from '$lib/stores/runs.svelte'
+import { createMockJobCommittedEvent, createMockRunCommittedEvent } from '$lib/test-utils/factories'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
-import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
-import type { RunEventEnvelope } from '$lib/types/generated/RunEventEnvelope'
 
 describe('EventDispatcher', () => {
   beforeEach(() => {
@@ -13,35 +12,7 @@ describe('EventDispatcher', () => {
 
   describe('Basic event dispatching', () => {
     it('dispatches a Run event to the store', () => {
-      // Create a minimal RunEventEnvelope
-      const envelope: RunEventEnvelope = {
-        runId: 1n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'test',
-        workflowPath: '.github/workflows/test.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test commit',
-        triggerEvent: 'push',
-        displayTitle: 'Test run',
-        htmlUrl: 'https://github.com/org/repo/actions/runs/1',
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        runAttempt: 1,
-        action: {
-          type: 'Requested',
-        },
-      }
-
-      const committedEvent: CommittedEvent = {
-        seq: 1n,
-        event: {
-          type: 'Run',
-          data: envelope,
-        },
-      }
+      const committedEvent = createMockRunCommittedEvent(1n)
 
       eventDispatcher.dispatch(committedEvent)
       eventDispatcher.flush()
@@ -54,65 +25,11 @@ describe('EventDispatcher', () => {
 
     it('dispatches a Job event to the store', () => {
       // First create a run for the job to belong to
-      const runEnvelope: RunEventEnvelope = {
-        runId: 1n,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'test',
-        workflowPath: '.github/workflows/test.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test commit',
-        triggerEvent: 'push',
-        displayTitle: 'Test run',
-        htmlUrl: 'https://github.com/org/repo/actions/runs/1',
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        runAttempt: 1,
-        action: {
-          type: 'Requested',
-        },
-      }
-
-      const runCommittedEvent: CommittedEvent = {
-        seq: 1n,
-        event: {
-          type: 'Run',
-          data: runEnvelope,
-        },
-      }
-
-      eventDispatcher.dispatch(runCommittedEvent)
+      eventDispatcher.dispatch(createMockRunCommittedEvent(1n))
       eventDispatcher.flush()
 
       // Now dispatch a job event
-      const jobEnvelope: JobEventEnvelope = {
-        jobId: 100n,
-        runId: 1n,
-        org: 'org',
-        repo: 'repo',
-        name: 'test-job',
-        createdAt: new Date().toISOString(),
-        startedAt: null,
-        completedAt: null,
-        runAttempt: 1,
-        action: {
-          type: 'Queued',
-          data: {
-            labels: [],
-            steps: [],
-          },
-        },
-      }
-
-      const jobCommittedEvent: CommittedEvent = {
-        seq: 2n,
-        event: {
-          type: 'Job',
-          data: jobEnvelope,
-        },
-      }
+      const jobCommittedEvent = createMockJobCommittedEvent(2n, { jobId: 100n })
 
       eventDispatcher.dispatch(jobCommittedEvent)
       eventDispatcher.flush()
@@ -131,41 +48,10 @@ describe('EventDispatcher', () => {
     it('batches multiple events dispatched rapidly into a single flush', () => {
       const applyRunEventSpy = vi.spyOn(runStore, 'applyRunEvent')
 
-      // Create 3 run envelopes
-      const createRunEnvelope = (id: bigint): RunEventEnvelope => ({
-        runId: id,
-        org: 'org',
-        repo: 'repo',
-        workflowName: 'test',
-        workflowPath: '.github/workflows/test.yml',
-        branch: 'main',
-        headSha: 'abc123',
-        commitMessage: 'test commit',
-        triggerEvent: 'push',
-        displayTitle: 'Test run',
-        htmlUrl: 'https://github.com/org/repo/actions/runs/1',
-        createdAt: new Date().toISOString(),
-        runStartedAt: null,
-        updatedAt: new Date().toISOString(),
-        runAttempt: 1,
-        action: {
-          type: 'Requested',
-        },
-      })
-
       // Dispatch 3 events rapidly without flushing between
-      const event1: CommittedEvent = {
-        seq: 1n,
-        event: { type: 'Run', data: createRunEnvelope(1n) },
-      }
-      const event2: CommittedEvent = {
-        seq: 2n,
-        event: { type: 'Run', data: createRunEnvelope(2n) },
-      }
-      const event3: CommittedEvent = {
-        seq: 3n,
-        event: { type: 'Run', data: createRunEnvelope(3n) },
-      }
+      const event1 = createMockRunCommittedEvent(1n, { runId: 1n })
+      const event2 = createMockRunCommittedEvent(2n, { runId: 2n })
+      const event3 = createMockRunCommittedEvent(3n, { runId: 3n })
 
       eventDispatcher.dispatch(event1)
       eventDispatcher.dispatch(event2)
@@ -196,30 +82,8 @@ describe('EventDispatcher', () => {
       runStore.clear()
     })
 
-    const makeRunCommittedEvent = (id: bigint): CommittedEvent => ({
-      seq: id,
-      event: {
-        type: 'Run',
-        data: {
-          runId: id,
-          org: 'org',
-          repo: 'repo',
-          workflowName: 'test',
-          workflowPath: null,
-          branch: 'main',
-          headSha: 'abc',
-          commitMessage: null,
-          triggerEvent: 'push',
-          displayTitle: `Run ${id}`,
-          htmlUrl: 'https://example.com',
-          createdAt: new Date().toISOString(),
-          runStartedAt: null,
-          updatedAt: new Date().toISOString(),
-          runAttempt: 1,
-          action: { type: 'Requested' },
-        },
-      },
-    })
+    const makeRunCommittedEvent = (id: bigint): CommittedEvent =>
+      createMockRunCommittedEvent(id, { runId: id })
 
     it('callback is invoked with flushed events after flush()', () => {
       const cb = vi.fn()
@@ -322,30 +186,7 @@ describe('EventDispatcher', () => {
     })
 
     it('returns the number of queued events before flush', () => {
-      const e1: CommittedEvent = {
-        seq: 1n,
-        event: {
-          type: 'Run',
-          data: {
-            runId: 1n,
-            org: 'o',
-            repo: 'r',
-            workflowName: null,
-            workflowPath: null,
-            branch: null,
-            headSha: 'x',
-            commitMessage: null,
-            triggerEvent: 'push',
-            displayTitle: 'R',
-            htmlUrl: 'https://x',
-            createdAt: new Date().toISOString(),
-            runStartedAt: null,
-            updatedAt: new Date().toISOString(),
-            runAttempt: 1,
-            action: { type: 'Requested' },
-          },
-        },
-      }
+      const e1 = createMockRunCommittedEvent(1n, { runId: 1n })
       const e2 = { ...e1, seq: 2n }
 
       eventDispatcher.dispatch(e1)
@@ -361,30 +202,8 @@ describe('EventDispatcher', () => {
 
   describe('unknown event type tolerance (wire-skew resilience)', () => {
     // Helper factories
-    const makeRunCommittedEvent = (id: bigint): CommittedEvent => ({
-      seq: id,
-      event: {
-        type: 'Run',
-        data: {
-          runId: id,
-          org: 'org',
-          repo: 'repo',
-          workflowName: 'test',
-          workflowPath: null,
-          branch: 'main',
-          headSha: 'abc',
-          commitMessage: null,
-          triggerEvent: 'push',
-          displayTitle: `Run ${id}`,
-          htmlUrl: 'https://example.com',
-          createdAt: new Date().toISOString(),
-          runStartedAt: null,
-          updatedAt: new Date().toISOString(),
-          runAttempt: 1,
-          action: { type: 'Requested' },
-        },
-      },
-    })
+    const makeRunCommittedEvent = (id: bigint): CommittedEvent =>
+      createMockRunCommittedEvent(id, { runId: id })
 
     const makeUnknownCommittedEvent = (seq: bigint, unknownType: string): CommittedEvent =>
       ({ seq, event: { type: unknownType } }) as unknown as CommittedEvent
@@ -447,28 +266,7 @@ describe('EventDispatcher', () => {
     it('Committed frame routes to runStore via the RAF-batched path', () => {
       eventDispatcher.dispatch({
         kind: 'Committed',
-        seq: 7n,
-        event: {
-          type: 'Run',
-          data: {
-            runId: 7n,
-            org: 'o',
-            repo: 'r',
-            workflowName: null,
-            workflowPath: null,
-            branch: 'main',
-            headSha: 'sha',
-            commitMessage: null,
-            triggerEvent: 'push',
-            displayTitle: 'Run 7',
-            htmlUrl: 'https://example.com',
-            createdAt: new Date().toISOString(),
-            runStartedAt: null,
-            updatedAt: new Date().toISOString(),
-            runAttempt: 1,
-            action: { type: 'Requested' },
-          },
-        },
+        ...createMockRunCommittedEvent(7n, { runId: 7n }),
       })
       eventDispatcher.flush()
       expect(runStore.runs.has(7n)).toBe(true)

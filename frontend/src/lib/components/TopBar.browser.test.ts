@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMockJob, createMockRunner } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import type { RunnerInfo } from '$lib/types/generated/RunnerInfo'
 
@@ -31,29 +32,20 @@ describe('TopBar (browser mode)', () => {
     labels: string[],
     runner: RunnerInfo | null,
   ): Job {
-    return {
+    return createMockJob({
       id,
       runId,
       name: `job-${id}`,
       status: 'InProgress',
-      conclusion: null,
       labels,
       runner,
-      steps: [],
-      createdAt: new Date().toISOString(),
-      startedAt: new Date().toISOString(),
-      completedAt: null,
-      runAttempt: 1,
-    }
+      startedAt: '2026-04-16T10:00:00Z',
+    })
   }
 
   // Helper to create a runner with given groupName
   function makeRunner(groupName: string | null): RunnerInfo {
-    return {
-      id: 1n,
-      name: 'runner-1',
-      groupName,
-    }
+    return createMockRunner({ groupName })
   }
 
   let TopBar: typeof import('./TopBar.svelte').default

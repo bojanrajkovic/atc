@@ -1,40 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Job } from '$lib/types/generated/Job'
-import type { WorkflowRun } from '$lib/types/generated/WorkflowRun'
+import { createMockJob, createMockRun, createMockRunner } from '$lib/test-utils/factories'
 import { computePoolStats } from './runners.svelte'
 import { runStore } from './runs.svelte'
-
-// Minimal Job factory
-function makeJob(
-  overrides: Partial<Job> & { id: bigint; runId: bigint; status: Job['status']; labels: string[] },
-): Job {
-  const {
-    id,
-    runId,
-    status,
-    labels,
-    runner,
-    conclusion,
-    steps,
-    createdAt,
-    startedAt,
-    completedAt,
-  } = overrides
-  return {
-    id,
-    runId,
-    name: overrides.name ?? 'test-job',
-    status,
-    conclusion: conclusion ?? null,
-    labels,
-    runner: runner ?? null,
-    steps: steps ?? [],
-    createdAt: createdAt ?? new Date().toISOString(),
-    startedAt: startedAt ?? null,
-    completedAt: completedAt ?? null,
-    runAttempt: overrides.runAttempt ?? 1,
-  }
-}
 
 describe('computePoolStats (pure function)', () => {
   it('returns empty array for no jobs', () => {
@@ -43,16 +10,16 @@ describe('computePoolStats (pure function)', () => {
 
   it('skips Waiting and Completed jobs', () => {
     const jobs = [
-      makeJob({ id: 1n, runId: 1n, status: 'Waiting', labels: ['ubuntu-latest'] }),
-      makeJob({ id: 2n, runId: 1n, status: 'Completed', labels: ['ubuntu-latest'] }),
+      createMockJob({ id: 1n, runId: 1n, status: 'Waiting', labels: ['ubuntu-latest'] }),
+      createMockJob({ id: 2n, runId: 1n, status: 'Completed', labels: ['ubuntu-latest'] }),
     ]
     expect(computePoolStats(jobs)).toHaveLength(0)
   })
 
   it('counts Queued jobs', () => {
     const jobs = [
-      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
-      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
+      createMockJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
+      createMockJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
     ]
     const pools = computePoolStats(jobs)
     expect(pools).toHaveLength(1)
@@ -61,12 +28,12 @@ describe('computePoolStats (pure function)', () => {
   })
 
   it('captures groupName from the most recent InProgress runner', () => {
-    const job = makeJob({
+    const job = createMockJob({
       id: 1n,
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupName: 'GitHub' },
+      runner: createMockRunner({ name: 'r', groupName: 'GitHub' }),
     })
     const pools = computePoolStats([job])
     expect(pools[0]?.groupName).toBe('GitHub')
@@ -76,12 +43,12 @@ describe('computePoolStats (pure function)', () => {
     // Regression guard: only operator-declared capacities drive a pool's
     // bounded/unbounded/undeclared classification — runner group names
     // do not influence `total`.
-    const job = makeJob({
+    const job = createMockJob({
       id: 1n,
       runId: 1n,
       status: 'InProgress',
       labels: ['ubuntu-latest'],
-      runner: { id: 1n, name: 'r', groupName: 'GitHub' },
+      runner: createMockRunner({ name: 'r', groupName: 'GitHub' }),
     })
     const pools = computePoolStats([job])
     expect(pools[0]?.total).toEqual({ kind: 'Undeclared' })
@@ -89,8 +56,8 @@ describe('computePoolStats (pure function)', () => {
 
   it('LabelSet parity: deduplicates labels before keying', () => {
     const jobs = [
-      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['a', 'a', 'b'] }),
-      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['a', 'b'] }),
+      createMockJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['a', 'a', 'b'] }),
+      createMockJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['a', 'b'] }),
     ]
     const pools = computePoolStats(jobs)
     expect(pools).toHaveLength(1)
@@ -100,8 +67,8 @@ describe('computePoolStats (pure function)', () => {
 
   it('sorts result by JSON-stringified labels', () => {
     const jobs = [
-      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['z'] }),
-      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['a'] }),
+      createMockJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['z'] }),
+      createMockJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['a'] }),
     ]
     const pools = computePoolStats(jobs)
     expect(pools[0]?.labels).toEqual(['a'])
@@ -110,7 +77,7 @@ describe('computePoolStats (pure function)', () => {
 
   it('merges_bounded_capacity_to_total_bounded — integer declaration produces Bounded', () => {
     const jobs = [
-      makeJob({
+      createMockJob({
         id: 1n,
         runId: 1n,
         status: 'InProgress',
@@ -126,7 +93,9 @@ describe('computePoolStats (pure function)', () => {
   })
 
   it('merges_unbounded_capacity_to_total_unbounded — null declaration produces Unbounded', () => {
-    const jobs = [makeJob({ id: 1n, runId: 1n, status: 'InProgress', labels: ['ubuntu-latest'] })]
+    const jobs = [
+      createMockJob({ id: 1n, runId: 1n, status: 'InProgress', labels: ['ubuntu-latest'] }),
+    ]
     const pools = computePoolStats(jobs, [{ labels: ['ubuntu-latest'], capacity: null }])
     expect(pools).toHaveLength(1)
     expect(pools[0]?.total).toEqual({ kind: 'Unbounded' })
@@ -135,8 +104,8 @@ describe('computePoolStats (pure function)', () => {
 
   it('pool_without_declaration_is_undeclared — observed pools without a config entry stay Undeclared', () => {
     const jobs = [
-      makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
-      makeJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['self-hosted', 'linux'] }),
+      createMockJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] }),
+      createMockJob({ id: 2n, runId: 1n, status: 'Queued', labels: ['self-hosted', 'linux'] }),
     ]
     const pools = computePoolStats(jobs, [{ labels: ['ubuntu-latest'], capacity: 20 }])
     const declared = pools.find((p) => p.labels[0] === 'ubuntu-latest')
@@ -149,7 +118,7 @@ describe('computePoolStats (pure function)', () => {
     // Capacities arrive from the wire pre-sorted by the backend's BTreeSet, but
     // poolKey() re-sorts on the frontend so unsorted input still matches.
     const jobs = [
-      makeJob({
+      createMockJob({
         id: 1n,
         runId: 1n,
         status: 'InProgress',
@@ -161,36 +130,11 @@ describe('computePoolStats (pure function)', () => {
   })
 
   it('omitting capacities argument keeps existing zero-config behavior', () => {
-    const jobs = [makeJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] })]
+    const jobs = [createMockJob({ id: 1n, runId: 1n, status: 'Queued', labels: ['ubuntu-latest'] })]
     const pools = computePoolStats(jobs)
     expect(pools[0]?.total).toEqual({ kind: 'Undeclared' })
   })
 })
-
-// Minimal WorkflowRun factory
-function makeRun(
-  overrides: Partial<WorkflowRun> & { id: bigint; status: WorkflowRun['status'] },
-): WorkflowRun {
-  return {
-    id: overrides.id,
-    org: overrides.org ?? 'test-org',
-    repo: overrides.repo ?? 'test-repo',
-    workflowName: overrides.workflowName ?? null,
-    workflowPath: overrides.workflowPath ?? null,
-    branch: overrides.branch ?? null,
-    headSha: overrides.headSha ?? 'abc123',
-    commitMessage: overrides.commitMessage ?? null,
-    event: overrides.event ?? 'push',
-    displayTitle: overrides.displayTitle ?? 'Test Run',
-    status: overrides.status,
-    conclusion: overrides.conclusion ?? null,
-    htmlUrl: overrides.htmlUrl ?? 'https://github.com/test',
-    createdAt: overrides.createdAt ?? new Date().toISOString(),
-    runStartedAt: overrides.runStartedAt ?? null,
-    updatedAt: overrides.updatedAt ?? new Date().toISOString(),
-    runAttempt: overrides.runAttempt ?? 1,
-  }
-}
 
 describe('runnerStore.pools (derived)', () => {
   beforeEach(() => {
@@ -209,7 +153,7 @@ describe('runnerStore.pools (derived)', () => {
 
   it('reflects pools after adding jobs to runStore', async () => {
     const { runnerStore } = await import('./runners.svelte')
-    const job = makeJob({ id: 1n, runId: 10n, status: 'Queued', labels: ['ubuntu-latest'] })
+    const job = createMockJob({ id: 1n, runId: 10n, status: 'Queued', labels: ['ubuntu-latest'] })
     runStore.jobsByRun.set(10n, [job])
 
     expect(runnerStore.pools).toHaveLength(1)
@@ -227,8 +171,8 @@ describe('runnerStore.pools (derived)', () => {
     // GitHub does not emit workflow_job terminal events when a run is cancelled
     // before the job starts. These jobs stay Queued but their run is Completed.
     const { runnerStore } = await import('./runners.svelte')
-    const job = makeJob({ id: 1n, runId: 10n, status: 'Queued', labels: ['ubuntu-latest'] })
-    const run = makeRun({ id: 10n, status: 'Completed', conclusion: 'Cancelled' })
+    const job = createMockJob({ id: 1n, runId: 10n, status: 'Queued', labels: ['ubuntu-latest'] })
+    const run = createMockRun({ id: 10n, status: 'Completed', conclusion: 'Cancelled' })
     runStore.jobsByRun.set(10n, [job])
     runStore.runs.set(10n, run)
 
@@ -240,14 +184,19 @@ describe('runnerStore.pools (derived)', () => {
     // the parent row is still the old Completed attempt-1 run. The fresh queued
     // demand must still count toward runner pools (not treated as an orphan).
     const { runnerStore } = await import('./runners.svelte')
-    const job = makeJob({
+    const job = createMockJob({
       id: 1n,
       runId: 30n,
       status: 'Queued',
       labels: ['ubuntu-latest'],
       runAttempt: 2,
     })
-    const run = makeRun({ id: 30n, status: 'Completed', conclusion: 'Success', runAttempt: 1 })
+    const run = createMockRun({
+      id: 30n,
+      status: 'Completed',
+      conclusion: 'Success',
+      runAttempt: 1,
+    })
     runStore.jobsByRun.set(30n, [job])
     runStore.runs.set(30n, run)
 
@@ -257,8 +206,8 @@ describe('runnerStore.pools (derived)', () => {
 
   it('includes Queued jobs whose parent run is not Completed', async () => {
     const { runnerStore } = await import('./runners.svelte')
-    const job = makeJob({ id: 1n, runId: 20n, status: 'Queued', labels: ['ubuntu-latest'] })
-    const run = makeRun({ id: 20n, status: 'InProgress' })
+    const job = createMockJob({ id: 1n, runId: 20n, status: 'Queued', labels: ['ubuntu-latest'] })
+    const run = createMockRun({ id: 20n, status: 'InProgress' })
     runStore.jobsByRun.set(20n, [job])
     runStore.runs.set(20n, run)
 
