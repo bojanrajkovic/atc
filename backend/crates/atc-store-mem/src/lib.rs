@@ -264,7 +264,10 @@ impl InMemoryStore {
                 // read's `j.run_attempt >= r.run_attempt` predicate.
                 let parent = state.runs.get(&j.run_id);
                 let attempt_current = parent.is_none_or(|r| j.run_attempt >= r.run_attempt);
-                let parent_alive = parent.is_none_or(|r| run_passes_cutoff(r, cutoff));
+                // A higher-attempt job's parent row is still the aged-out prior
+                // attempt; don't gate the fresh job on the stale run's cutoff.
+                let parent_alive = parent
+                    .is_none_or(|r| j.run_attempt > r.run_attempt || run_passes_cutoff(r, cutoff));
                 attempt_current && parent_alive && job_passes_cutoff(j, cutoff)
             })
             .cloned()

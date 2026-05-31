@@ -199,6 +199,10 @@ pub(crate) async fn read_all_jobs(
           JOIN runs r ON r.id = j.run_id
          WHERE j.run_attempt >= r.run_attempt
            AND ($1::timestamptz IS NULL
+                -- A higher-attempt job's parent row is still the aged-out prior
+                -- attempt; don't gate the fresh job on the stale run's cutoff.
+                -- It self-heals once the run event advances the row.
+                OR j.run_attempt > r.run_attempt
                 OR r.status != 'Completed'
                 OR r.completed_at IS NULL
                 OR r.completed_at >= $1::timestamptz)

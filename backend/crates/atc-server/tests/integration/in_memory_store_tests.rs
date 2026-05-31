@@ -1331,6 +1331,57 @@ async fn read_snapshot_filters_completed_older_than_cutoff() {
     );
 }
 
+/// A higher-attempt job survives even when its parent run has aged past the
+/// cutoff — re-running a long-completed run queues attempt-2 jobs before the
+/// run event advances the row, and the fresh job must not be gated on the
+/// aged-out parent. Mirrors `pg_higher_attempt_job_bypasses_stale_parent_cutoff`.
+#[tokio::test]
+async fn read_snapshot_keeps_higher_attempt_job_past_parent_cutoff() {
+    let store = make_store();
+    let now = fixed_test_timestamp();
+
+    // Attempt 1 completed (completed_at = now, the make_run_event default).
+    let run = RunId(7400);
+    store
+        .apply_run_event(make_run_event(
+            run,
+            RunEvent::Completed {
+                conclusion: RunConclusion::Success,
+            },
+        ))
+        .await
+        .unwrap();
+
+    // Re-run: attempt-2 queued job arrives before the attempt-2 run event.
+    let job = JobId(74_000);
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 2,
+            ..make_job_event(
+                job,
+                run,
+                "octocat",
+                "Hello-World",
+                JobEvent::Queued {
+                    labels: vec![],
+                    steps: vec![],
+                },
+            )
+        })
+        .await
+        .unwrap();
+
+    // Cutoff after the attempt-1 completion → the parent run is aged out, but
+    // the higher-attempt job must still appear.
+    let cutoff = now + chrono::Duration::hours(1);
+    let snap = store.read_snapshot(Some(cutoff)).await.expect("snapshot");
+    let job_ids: Vec<_> = snap.jobs.iter().map(|j| j.id).collect();
+    assert!(
+        job_ids.contains(&job),
+        "higher-attempt job must survive the aged-out parent's cutoff: {job_ids:?}"
+    );
+}
+
 /// Jobs whose parent run is filtered out by the cutoff are also dropped,
 /// even if the job's own status / completed_at would have kept it alive
 /// (orphan-job guard, mirroring the PG `JOIN runs r ON ...` predicate).

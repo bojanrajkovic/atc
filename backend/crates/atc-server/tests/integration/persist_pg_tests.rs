@@ -384,6 +384,57 @@ async fn pg_higher_attempt_job_visible_before_run_advances() {
     shutdown.cancel();
 }
 
+/// A higher-attempt job survives the display-TTL cutoff even when its parent
+/// run has aged out. Re-running a long-completed run sends `workflow_job.queued`
+/// (attempt 2) before any run event, so the parent row is still the aged-out
+/// attempt-1 Completed run; the fresh job must not be gated on that stale row's
+/// cutoff.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_higher_attempt_job_bypasses_stale_parent_cutoff() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Attempt 1 completed "long ago" — well before any reasonable cutoff.
+    let old = ts() - chrono::Duration::hours(48);
+    store.apply_run_event(run_requested(1040)).await.unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            completed_at: Some(old),
+            updated_at: old,
+            ..run_completed(1040)
+        })
+        .await
+        .unwrap();
+
+    // Re-run: attempt-2 queued job arrives before the attempt-2 run event.
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 2,
+            ..job_queued(8004, 1040)
+        })
+        .await
+        .unwrap();
+
+    // Snapshot with a cutoff 1h ago: the attempt-1 run is aged out, but the
+    // fresh attempt-2 job must still appear (bypasses the stale parent cutoff).
+    let cutoff = ts() - chrono::Duration::hours(1);
+    let snap = store.read_snapshot(Some(cutoff)).await.expect("snapshot");
+    let job_ids: Vec<i64> = snap
+        .jobs
+        .iter()
+        .filter(|j| j.run_id == RunId(1040))
+        .map(|j| j.id.0)
+        .collect();
+    assert_eq!(
+        job_ids,
+        vec![8004],
+        "a higher-attempt job must survive the aged-out parent's cutoff; got {job_ids:?}"
+    );
+    shutdown.cancel();
+}
+
 /// Queued → Queued is idempotent (same-status replay → Ok).
 #[tokio::test]
 #[serial_test::serial]
