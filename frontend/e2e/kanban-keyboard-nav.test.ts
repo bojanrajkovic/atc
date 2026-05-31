@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './lib/fixtures'
-import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { setupMockedPage } from './lib/page-setup'
+import { makeRunEvent, sendWS } from './lib/ws-mock'
 
 /**
  * E2E integration verification for kanban 2D keyboard navigation.
@@ -26,65 +27,13 @@ const cmdOrCtrl = process.platform === 'darwin' ? 'Meta' : 'Control'
 // ---------------------------------------------------------------------------
 
 /**
- * Standard page setup: inject WS mock (replaces /v1/ws WebSocket), disable
- * hover-media-query so HoverPeekPopover never opens during keyboard tests
- * (open popover suppresses RunCard's auto-focus $effect via !popoverOpen guard),
- * stub /v1/state, navigate, wait for connected.
+ * Standard page setup with the hover-media stub these keyboard-nav tests
+ * require: an open HoverPeekPopover suppresses RunCard's auto-focus `$effect`
+ * via the `!popoverOpen` guard, so `stubHover` keeps `canHover === false` and
+ * the cursor can't steal focus mid-test. See {@link setupMockedPage}.
  */
 async function setupPage(page: Page): Promise<void> {
-  await page.addInitScript(WS_MOCK_INIT_SCRIPT)
-
-  // Disable hover capability so HoverPeekPopover.canHover === false.
-  // If the Playwright mouse cursor lands over a card during keyboard tests,
-  // the 250ms debounce would fire and popoverOpen would become true, which
-  // suppresses RunCard's $effect focus sync. Stubbing matchMedia prevents this.
-  await page.addInitScript(() => {
-    const original = window.matchMedia
-    window.matchMedia = (query: string): MediaQueryList => {
-      if (query === '(hover: hover) and (pointer: fine)') {
-        return {
-          matches: false,
-          media: query,
-          addListener: () => {},
-          removeListener: () => {},
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => false,
-          onchange: null,
-        } as unknown as MediaQueryList
-      }
-      return original.call(window, query)
-    }
-  })
-
-  await page.route('**/v1/state', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
-    })
-  })
-
-  await page.goto('/')
-
-  try {
-    await page.waitForFunction(
-      () => {
-        const s = window.__stores
-        return (
-          typeof s?.uiStore !== 'undefined' &&
-          typeof s?.runStore !== 'undefined' &&
-          typeof s?.connectionStore !== 'undefined' &&
-          s.connectionStore.status === 'connected'
-        )
-      },
-      { timeout: 15_000 },
-    )
-  } catch {
-    // Fallback: at minimum wait for uiStore to be available
-    await page.waitForFunction(() => typeof window.__stores?.uiStore !== 'undefined', {
-      timeout: 10_000,
-    })
-  }
+  await setupMockedPage(page, { stubHover: true })
 }
 
 // ---------------------------------------------------------------------------

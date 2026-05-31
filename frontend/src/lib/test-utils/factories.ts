@@ -158,3 +158,17 @@ export function createMockJobCommittedEvent(
 ): CommittedEvent {
   return { seq, event: { type: 'Job', data: createMockJobEvent(overrides) } }
 }
+
+/**
+ * Convenience over `createMockJobCommittedEvent` for tests that don't care
+ * about `seq` ordering (e.g. pool-stats derivation): reuses `jobId` as the
+ * sequence and derives `name` as `job-<jobId>`. Pass the `action` to model the
+ * job transition under test.
+ */
+export function createMockJobEventFor(
+  jobId: bigint,
+  runId: bigint,
+  action: JobEventEnvelope['action'],
+): CommittedEvent {
+  return createMockJobCommittedEvent(jobId, { jobId, runId, name: `job-${jobId}`, action })
+}

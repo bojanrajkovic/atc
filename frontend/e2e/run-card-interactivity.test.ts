@@ -1,40 +1,6 @@
 import { expect, test } from './lib/fixtures'
-import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
-
-/**
- * Standard page setup: inject WS mock, stub /v1/state, navigate, wait for
- * connected. Mirrors the pattern from run-detail-panel.test.ts.
- */
-async function setupPage(page: import('@playwright/test').Page) {
-  await page.addInitScript(WS_MOCK_INIT_SCRIPT)
-  await page.route('**/v1/state', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
-    })
-  })
-  await page.setViewportSize({ width: 1280, height: 720 })
-  await page.goto('/')
-  try {
-    await page.waitForFunction(
-      () => {
-        const s = window.__stores
-        return (
-          typeof s?.uiStore !== 'undefined' &&
-          typeof s?.runStore !== 'undefined' &&
-          typeof s?.connectionStore !== 'undefined' &&
-          s.connectionStore.status === 'connected'
-        )
-      },
-      { timeout: 15_000 },
-    )
-  } catch {
-    // Fallback: at minimum wait for uiStore to be available
-    await page.waitForFunction(() => typeof window.__stores?.uiStore !== 'undefined', {
-      timeout: 10_000,
-    })
-  }
-}
+import { setupMockedPage } from './lib/page-setup'
+import { makeRunEvent, sendWS } from './lib/ws-mock'
 
 /**
  * Seed one run into each of the three kanban columns:
@@ -84,7 +50,7 @@ async function seedThreeRuns(page: import('@playwright/test').Page) {
 
 test.describe('RunCard interactivity', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page, { viewport: { width: 1280, height: 720 } })
     await seedThreeRuns(page)
   })
 

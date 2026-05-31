@@ -1,29 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { createMockJob } from '$lib/test-utils/factories'
 import type { Job } from '$lib/types/generated/Job'
 import { summarizeRunners } from './runners'
-
-/**
- * Minimal inline Job fixture for testing.
- * Fields required for summarizeRunners are just runner and runner.name.
- * Other fields are included to satisfy the Job type but are unused by the tests.
- */
-function createMockJob(overrides?: Partial<Job>): Job {
-  return {
-    id: 1n,
-    name: 'test-job',
-    runId: 1n,
-    status: 'Queued',
-    conclusion: null,
-    runner: null,
-    labels: [],
-    steps: [],
-    createdAt: '2026-04-17T00:00:00Z',
-    startedAt: null,
-    completedAt: null,
-    runAttempt: 1,
-    ...overrides,
-  }
-}
 
 describe('format/runners', () => {
   describe('Aggregates multiple jobs with same runner name', () => {
