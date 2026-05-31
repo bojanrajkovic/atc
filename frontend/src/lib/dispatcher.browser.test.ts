@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMockJobCommittedEvent, createMockRunner } from '$lib/test-utils/factories'
-import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
-import type { JobEventEnvelope } from '$lib/types/generated/JobEventEnvelope'
+import { createMockJobEventFor, createMockRunner } from '$lib/test-utils/factories'
 
 describe('pool-stats derivation: dispatcher + runnerStore integration (browser mode)', () => {
   let eventDispatcher: typeof import('$lib/dispatcher')['eventDispatcher']
@@ -21,16 +19,12 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     runStore.jobsByRun.clear()
   })
 
-  const makeJobEvent = (
-    jobId: bigint,
-    runId: bigint,
-    action: JobEventEnvelope['action'],
-  ): CommittedEvent =>
-    createMockJobCommittedEvent(jobId, { jobId, runId, name: `job-${jobId}`, action })
-
   it('Queued job creates pool with queued=1, running=0', () => {
     eventDispatcher.dispatch(
-      makeJobEvent(1n, 10n, { type: 'Queued', data: { labels: ['ubuntu-latest'], steps: [] } }),
+      createMockJobEventFor(1n, 10n, {
+        type: 'Queued',
+        data: { labels: ['ubuntu-latest'], steps: [] },
+      }),
     )
     eventDispatcher.flush()
 
@@ -49,13 +43,16 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
 
     // First: Queued
     eventDispatcher.dispatch(
-      makeJobEvent(1n, 10n, { type: 'Queued', data: { labels: ['ubuntu-latest'], steps: [] } }),
+      createMockJobEventFor(1n, 10n, {
+        type: 'Queued',
+        data: { labels: ['ubuntu-latest'], steps: [] },
+      }),
     )
     eventDispatcher.flush()
 
     // Then: InProgress with runner
     eventDispatcher.dispatch(
-      makeJobEvent(1n, 10n, {
+      createMockJobEventFor(1n, 10n, {
         type: 'InProgress',
         data: { runner, labels: ['ubuntu-latest'], steps: [] },
       }),
@@ -75,12 +72,15 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
     const runner = createMockRunner({ groupName: 'Default' })
 
     eventDispatcher.dispatch(
-      makeJobEvent(1n, 10n, { type: 'Queued', data: { labels: ['ubuntu-latest'], steps: [] } }),
+      createMockJobEventFor(1n, 10n, {
+        type: 'Queued',
+        data: { labels: ['ubuntu-latest'], steps: [] },
+      }),
     )
     eventDispatcher.flush()
 
     eventDispatcher.dispatch(
-      makeJobEvent(1n, 10n, {
+      createMockJobEventFor(1n, 10n, {
         type: 'Completed',
         data: { conclusion: 'Success', runner, labels: ['ubuntu-latest'], steps: [] },
       }),
@@ -91,7 +91,7 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
   })
 
   it('Duplicate Job event dispatch produces idempotent pools (deep-equal across two dispatches)', () => {
-    const event = makeJobEvent(1n, 10n, {
+    const event = createMockJobEventFor(1n, 10n, {
       type: 'Queued',
       data: { labels: ['ubuntu-latest'], steps: [] },
     })
@@ -111,13 +111,16 @@ describe('pool-stats derivation: dispatcher + runnerStore integration (browser m
   it('LabelSet parity: labels ["a","a","b"] and ["a","b"] key to the same pool', () => {
     // Job 1: labels with duplicate
     eventDispatcher.dispatch(
-      makeJobEvent(1n, 10n, { type: 'Queued', data: { labels: ['a', 'a', 'b'], steps: [] } }),
+      createMockJobEventFor(1n, 10n, {
+        type: 'Queued',
+        data: { labels: ['a', 'a', 'b'], steps: [] },
+      }),
     )
     eventDispatcher.flush()
 
     // Job 2: same labels without duplicate — should merge into same pool
     eventDispatcher.dispatch(
-      makeJobEvent(2n, 10n, { type: 'Queued', data: { labels: ['a', 'b'], steps: [] } }),
+      createMockJobEventFor(2n, 10n, { type: 'Queued', data: { labels: ['a', 'b'], steps: [] } }),
     )
     eventDispatcher.flush()
 

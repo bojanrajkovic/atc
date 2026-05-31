@@ -1,62 +1,12 @@
 import { expect, test } from './lib/fixtures'
-import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { setupMockedPage } from './lib/page-setup'
+import { makeRunEvent, sendWS } from './lib/ws-mock'
 
 /**
  * Cross-platform Cmd/Ctrl+K chord. Uses Meta on macOS, Control elsewhere.
  * Applied to every chord press so CI (Linux) works alongside local macOS.
  */
 const cmdOrCtrl = process.platform === 'darwin' ? 'Meta' : 'Control'
-
-/** Standard page setup: inject WS mock, stub /v1/state, navigate, wait for connected. */
-async function setupPage(page: import('@playwright/test').Page) {
-  await page.addInitScript(WS_MOCK_INIT_SCRIPT)
-  // Stub matchMedia so HoverPeekPopover's canHover flag is always false.
-  // This prevents the 250ms hover timer from firing during keyboard-driven tests
-  // and stealing focus from the element that onCloseAutoFocus just restored.
-  await page.addInitScript(() => {
-    const original = window.matchMedia
-    window.matchMedia = (query: string): MediaQueryList => {
-      if (query === '(hover: hover) and (pointer: fine)') {
-        return {
-          matches: false,
-          media: query,
-          addListener: () => {},
-          removeListener: () => {},
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => false,
-          onchange: null,
-        } as unknown as MediaQueryList
-      }
-      return original.call(window, query)
-    }
-  })
-  await page.route('**/v1/state', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
-    })
-  })
-  await page.goto('/')
-  try {
-    await page.waitForFunction(
-      () => {
-        const s = window.__stores
-        return (
-          typeof s?.uiStore !== 'undefined' &&
-          typeof s?.runStore !== 'undefined' &&
-          typeof s?.connectionStore !== 'undefined' &&
-          s.connectionStore.status === 'connected'
-        )
-      },
-      { timeout: 15_000 },
-    )
-  } catch {
-    await page.waitForFunction(() => typeof window.__stores?.uiStore !== 'undefined', {
-      timeout: 10_000,
-    })
-  }
-}
 
 /**
  * Seed run id=1 via WS and open the detail panel by clicking the RunCard's
@@ -84,7 +34,7 @@ async function seedAndOpenPanelViaClick(page: import('@playwright/test').Page) {
 
 test.describe('Sheet + Command stacking', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page, { stubHover: true })
     await seedAndOpenPanelViaClick(page)
   })
 

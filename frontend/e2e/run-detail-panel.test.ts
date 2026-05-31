@@ -1,36 +1,7 @@
 import type { RunConclusion } from '$lib/types/generated/RunConclusion'
 import { expect, test } from './lib/fixtures'
-import { makeJobCommittedEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
-
-/** Standard page setup: inject WS mock, stub /v1/state, navigate, wait for connected. */
-async function setupPage(page: import('@playwright/test').Page) {
-  await page.addInitScript(WS_MOCK_INIT_SCRIPT)
-  await page.route('**/v1/state', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
-    })
-  })
-  await page.goto('/')
-  try {
-    await page.waitForFunction(
-      () => {
-        const s = window.__stores
-        return (
-          typeof s?.uiStore !== 'undefined' &&
-          typeof s?.runStore !== 'undefined' &&
-          typeof s?.connectionStore !== 'undefined' &&
-          s.connectionStore.status === 'connected'
-        )
-      },
-      { timeout: 15_000 },
-    )
-  } catch {
-    await page.waitForFunction(() => typeof window.__stores?.uiStore !== 'undefined', {
-      timeout: 10_000,
-    })
-  }
-}
+import { setupMockedPage } from './lib/page-setup'
+import { makeJobCommittedEvent, makeRunEvent, sendWS } from './lib/ws-mock'
 
 /** Seed run id=1 and open the detail panel. Returns the canonical htmlUrl for run 1. */
 async function seedAndOpenPanel(
@@ -58,7 +29,7 @@ async function seedAndOpenPanel(
 
 test.describe('Run detail panel', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page)
   })
 
   test('interactivity — panel opens and renders header + meta-grid when selectedRunId is set', async ({

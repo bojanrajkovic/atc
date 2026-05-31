@@ -13,36 +13,8 @@
  */
 
 import { expect, test } from './lib/fixtures'
-import { makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
-
-/** Standard page setup */
-async function setupPage(page: import('@playwright/test').Page) {
-  await page.addInitScript(WS_MOCK_INIT_SCRIPT)
-  await page.route('**/v1/state', (route) =>
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
-    }),
-  )
-  await page.goto('/')
-  try {
-    await page.waitForFunction(
-      () => {
-        const s = window.__stores
-        return (
-          typeof s?.runStore !== 'undefined' &&
-          typeof s?.connectionStore !== 'undefined' &&
-          s.connectionStore.status === 'connected'
-        )
-      },
-      { timeout: 15_000 },
-    )
-  } catch {
-    await page.waitForFunction(() => typeof window.__stores?.runStore !== 'undefined', {
-      timeout: 10_000,
-    })
-  }
-}
+import { setupMockedPage } from './lib/page-setup'
+import { makeRunEvent, sendWS } from './lib/ws-mock'
 
 /** Helper: read outline-width and box-shadow of currently focused element */
 function getFocusedElementIndicator(
@@ -78,7 +50,7 @@ function hasVisibleIndicator(indicator: { outlineWidth: string; boxShadow: strin
 
 test.describe('Focus rings — command palette items', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page)
   })
 
   test('command-item has visible focus indicator when navigated via keyboard', async ({ page }) => {
@@ -119,7 +91,7 @@ test.describe('Focus rings — command palette items', () => {
 
 test.describe('Focus rings — PoolFilterPill clear button', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page)
   })
 
   test('PoolFilterPill clear button has visible focus indicator', async ({ page }) => {
@@ -171,7 +143,7 @@ test.describe('Focus rings — PoolFilterPill clear button', () => {
 
 test.describe('Focus rings — PanelActions', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page)
   })
 
   test('PanelActions close button has visible focus indicator', async ({ page }) => {
@@ -247,7 +219,7 @@ test.describe('Focus rings — PanelActions', () => {
 
 test.describe('Focus rings — RunCard activate button', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page)
   })
 
   test('RunCard .run-card-activate has visible focus indicator', async ({ page }) => {

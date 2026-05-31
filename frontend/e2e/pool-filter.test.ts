@@ -1,5 +1,6 @@
 import { expect, test } from './lib/fixtures'
-import { makeJobCommittedEvent, makeRunEvent, sendWS, WS_MOCK_INIT_SCRIPT } from './lib/ws-mock'
+import { setupMockedPage } from './lib/page-setup'
+import { makeJobCommittedEvent, makeRunEvent, sendWS } from './lib/ws-mock'
 
 /**
  * Pool filter integration E2E.
@@ -19,28 +20,6 @@ const WINDOWS_LABELS = ['self-hosted', 'windows']
 /** Compute the PoolKey brand string for a label set. Mirrors `poolKey()` in `$lib/filters/pool`. */
 function brandKey(labels: readonly string[]): string {
   return [...labels].sort().join('|')
-}
-
-async function setupPage(page: import('@playwright/test').Page) {
-  await page.addInitScript(WS_MOCK_INIT_SCRIPT)
-  await page.route('**/v1/state', (route) => {
-    route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({ lastSeq: 1, runs: [], jobs: [] }),
-    })
-  })
-  await page.goto('/')
-  await page.waitForFunction(
-    () => {
-      const s = window.__stores
-      return (
-        typeof s?.uiStore !== 'undefined' &&
-        typeof s?.runnerStore !== 'undefined' &&
-        s.connectionStore?.status === 'connected'
-      )
-    },
-    { timeout: 15_000 },
-  )
 }
 
 async function seedRunsAndPools(page: import('@playwright/test').Page) {
@@ -114,7 +93,7 @@ async function seedRunsAndPools(page: import('@playwright/test').Page) {
 
 test.describe('Pool filter integration', () => {
   test.beforeEach(async ({ page }) => {
-    await setupPage(page)
+    await setupMockedPage(page)
     await seedRunsAndPools(page)
     // Both runs visible by default (in their respective columns)
     await expect(page.locator('.run-card[data-run-id="1"]')).toBeVisible()
