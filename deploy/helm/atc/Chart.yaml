@@ -2,8 +2,8 @@ apiVersion: v2
 name: atc
 description: Real-time GitHub Actions dashboard
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 kubeVersion: ">=1.32.0-0"
 maintainers:
   - name: Bojan Rajkovic
