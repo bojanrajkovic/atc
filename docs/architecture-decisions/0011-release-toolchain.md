@@ -79,6 +79,21 @@ Tagging manually and creating releases through the GitHub UI is the baseline fro
 - **Attestation is repository-scoped.** Verification requires the repository reference (`-R bojanrajkovic/atc`). If the repository moves or is renamed, existing attestations cannot be re-anchored.
 - **Pre-release artifacts are unattested.** The private-repo attestation restriction means rc/dev builds carry no verifiable provenance. This is acceptable for pre-release cycles; the restriction dissolves when the repository goes public.
 
+## Amendment (2026-06-04) — single-product release model
+
+The original decision modelled ATC's nine surfaces as nine release-please packages held in lockstep by the `linked-versions` plugin, with the Helm chart versioned independently and `skip-github-release: true` delegating Release creation to `release.yml`. Two failures surfaced:
+
+- `skip-github-release: true` suppresses the **tag** as well as the Release (release-please mints both in one Releases-API call), so merging a release PR produced no tag — `release.yml` never triggered and the 0.2.0 release silently failed.
+- Even with that removed, nine packages plus `include-component-in-tag: false` make every package resolve to the same bare `v<version>` tag. On a real release-PR merge the first package creates the tag and Release and the other eight collide as duplicate-tag errors — a partial release with a non-deterministic body.
+
+Both stem from treating internal workspace crates as independently-released artifacts. They are not: the crates are never published; ATC ships one product (the `atc-server` image and binaries plus the Helm chart). The configuration now matches that reality — which is what the Context section argued for all along, "a single version number, not nine independently moving versions":
+
+- **One release-please package** at the repository root (`release-type: simple`). Every commit aggregates into one root `CHANGELOG.md`; one bare `v<version>` tag; one GitHub Release whose body is that aggregate changelog.
+- **One version, propagated by `extra-files`.** The crates inherit `[workspace.package].version` (`version.workspace = true`); release-please bumps that one field plus `frontend/package.json` and `Chart.yaml`'s `version` and `appVersion`. The `refresh-lockfile` companion job keeps `Cargo.lock` in sync via `cargo update --workspace`.
+- **Chart version is locked to the product version.** Because the chart's `appVersion` is the default image tag, locking guarantees `appVersion` always names a published image and every release ships an upgradable chart. This supersedes the independent-chart-version decision above; the `sync-helm-app-version` companion job is removed, since the `extra-files` updater sets `appVersion` directly.
+- **`release.yml`'s `create-release` is an idempotent safety net** — it creates a Release only for a tag that has none (the manually-pushed rc path) and never edits an existing one, so release-please's notes are preserved.
+- **Pre-release artifacts are now attested.** The repository is public, so the private-repo attestation restriction noted in the Decision and Consequences above no longer applies; rc binaries and container images carry the same Sigstore provenance as final releases. Only Helm publishing is still skipped on prereleases, because the chart version is decoupled from the rc tag.
+
 ## References
 
 - [CONTRIBUTING.md § Releases](../CONTRIBUTING.md) — human-facing description of the release flow and version-bump rules

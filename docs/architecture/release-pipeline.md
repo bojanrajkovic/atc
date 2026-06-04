@@ -1,8 +1,8 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-05-23
+Last verified: 2026-06-04
 
-The release pipeline runs in two phases. `release-please.yml` monitors conventional commits on `main` and maintains a release PR that bumps version fields, updates CHANGELOG files, and coordinates companion jobs. Merging that PR creates a `v*` tag. `release.yml` is tag-triggered: it builds and publishes all release artifacts — binaries, container images, and the Helm chart. The boundary between the two phases preserves a human review gate: a release happens only when a developer merges the release PR. The toolchain choice and rejected alternatives are in [ADR-0011](../architecture-decisions/0011-release-toolchain.md).
+The release pipeline runs in two phases. `release-please.yml` monitors conventional commits on `main` and maintains a release PR that bumps the version, updates the product `CHANGELOG.md`, and runs a lockfile-refresh companion job. Merging that PR makes release-please create the `v*` tag **and** the GitHub Release together — the Release body is the aggregated product changelog. The tag push then triggers `release.yml`, which builds and publishes all release artifacts — binaries, container images, and the Helm chart — and uploads them to that Release. The boundary between the two phases preserves a human review gate: a release happens only when a developer merges the release PR. The toolchain choice and rejected alternatives are in [ADR-0011](../architecture-decisions/0011-release-toolchain.md).
 
 ## Two-phase release flow
 
@@ -11,16 +11,15 @@ flowchart TD
     commits["Conventional commits\nland on main"]
     rp["release-please.yml\nopens/updates release PR"]
     lockfile["refresh-lockfile job\nbot-committed on release PR branch"]
-    appver["sync-helm-app-version job\nbot-committed on release PR branch"]
     merge["Human merges release PR"]
-    tag["v* tag created"]
+    tag["release-please creates\nv* tag + GitHub Release\n(aggregated changelog body)"]
     release["release.yml triggers"]
 
     frontend["build-frontend\nSvelte SPA built once\nshared artifact"]
     binaries["build-binaries matrix\nLinux x86_64 · Linux aarch64 · macOS aarch64\nnative GitHub-hosted runners"]
     containers["build-container matrix\nLinux amd64 · Linux arm64\nnative runners"]
     manifest["merge-manifest\ndocker buildx imagetools create\nmulti-arch manifest list"]
-    github_release["create-release\nGitHub Release + CHANGELOG section"]
+    github_release["create-release\nidempotent safety net\n(creates Release only for manual rc tags)"]
     helm_oci["publish-helm-chart\nOCI on ghcr.io + Sigstore attestation"]
     helm_pages["publish-helm-pages\nclassic HTTP repo on GitHub Pages"]
     attest_bin["Sigstore attestation\nper-binary archive"]
@@ -29,9 +28,7 @@ flowchart TD
 
     commits --> rp
     rp --> lockfile
-    rp --> appver
     lockfile --> merge
-    appver --> merge
     merge --> tag
     tag --> release
     release --> github_release
@@ -50,14 +47,13 @@ Conventional commit type determines version bump: `feat:` → minor, `fix:` → 
 
 ## Lockstep versioning
 
-All seven Rust crates (`atc-core`, `atc-github`, `atc-wire`, `atc-persist`, `atc-store-pg`, `atc-store-mem`, `atc-server`) and the frontend version in lockstep via release-please's `linked-versions` plugin. The highest-precedence bump across any member sets the version for the whole group. One release PR covers all of them.
+ATC releases as a single product. `release-please-config.json` registers one package at the repository root (`release-type: simple`), so every conventional commit feeds one aggregate root `CHANGELOG.md` and one bare `v<version>` tag. The seven Rust crates are internal to the `atc-server` build and are never published independently, so they inherit a single version from `[workspace.package].version` in `backend/Cargo.toml` (`version.workspace = true`). release-please bumps that one field — plus `frontend/package.json` and the Helm chart's `version` and `appVersion` — through `extra-files` typed updaters.
 
-The Helm chart at `deploy/helm/atc` is registered as a separate release-please package (`release-type: helm`) and is deliberately excluded from `linked-versions`. Chart-only changes — values schema additions, template fixes — produce a chart release without bumping the application version, and vice versa.
+Modelling the surfaces as independent release-please packages instead made them collide on the shared bare `v<version>` tag: with `include-component-in-tag: false`, every package resolved to the same tag, so only the first won and the rest were skipped as duplicates. The single-product model removes that whole class of failure. The chart `version` is locked to the product version, so every release ships an installable chart whose `appVersion` always names a published image. See [ADR-0011](../architecture-decisions/0011-release-toolchain.md) for the rationale and rejected alternatives.
 
-Two companion jobs run after release-please on the same workflow:
+One companion job runs after release-please on the same workflow:
 
-- **refresh-lockfile** — release-please bumps crate versions in `Cargo.toml` without touching `Cargo.lock`. The companion job runs `cargo update --workspace` and commits the refreshed lockfile to the release PR branch so `cargo build --locked` continues to pass in CI and in `release.yml`.
-- **sync-helm-app-version** — reads the resolved app version from `.release-please-manifest.json` and rewrites `Chart.yaml`'s `appVersion` field. An idempotent `git diff --quiet` guard skips the commit when the value is already correct.
+- **refresh-lockfile** — release-please bumps the workspace version in `backend/Cargo.toml` without touching `Cargo.lock`. The companion job runs `cargo update --workspace` and commits the refreshed lockfile to the release PR branch so `cargo build --locked` continues to pass in CI and in `release.yml`. The chart's `appVersion` no longer needs a companion job — the `extra-files` updater bumps it directly to the product version.
 
 Both jobs commit under the releaser GitHub App identity (see "GitHub App token" below).
 
@@ -65,7 +61,7 @@ Both jobs commit under the releaser GitHub App identity (see "GitHub App token" 
 
 `release.yml` triggers on `v*` tags. Jobs run in dependency order established by `needs:`:
 
-**GitHub Release** — extracts the relevant CHANGELOG section and creates the GitHub Release entry. All upload jobs declare `needs: create-release`.
+**GitHub Release** — the canonical Release is created by release-please when the release PR merges (atomically with the `v*` tag, with the aggregated product changelog as its body), so for a real release it already exists when this workflow starts. The `create-release` job is therefore an idempotent safety net: when the Release already exists it does nothing (never editing the body, so release-please's notes are preserved); when it is missing it creates one **only** for a prerelease/rc tag (the manually-pushed path release-please does not drive) and **fails loud** for a stable tag — a stable release always comes from release-please, so a missing one signals a bypass or failure rather than a manual cut. All upload jobs declare `needs: create-release` purely as an ordering gate, so the job always runs and either succeeds or fails loud.
 
 **Frontend build** — compiles the Svelte SPA once and uploads `frontend/dist` as a workflow artifact. `atc-server` embeds the frontend at compile time via `rust-embed`; without a pre-built `frontend/dist`, a clean binary build would fail or ship an empty SPA. Each binary matrix job downloads this artifact before invoking `cargo build`.
 
@@ -95,7 +91,11 @@ release-please and the companion jobs commit to the release PR branch under a de
 
 ## Pre-release tag behavior
 
-Tags containing a hyphen (e.g., `v1.0.0-rc1`) trigger `release.yml` but skip Sigstore attestation and Helm chart publishing. This avoids the GitHub API restriction on attestations for artifacts produced in private repos and prevents rc versions from occupying slots in the Helm release channel. Binary builds and container image builds run normally.
+Pre-release tags are pushed manually — release-please only drives the canonical `vMAJOR.MINOR.PATCH` releases, so it never creates a Release for an rc tag. The `create-release` safety-net job covers that gap: for a tag with no existing Release it creates one with GitHub-generated notes and the `--prerelease` flag.
+
+Tags containing a hyphen (e.g., `v1.0.0-rc1`) trigger `release.yml` and build binaries and container images normally, **with** Sigstore attestation. (Attestation was once skipped for prereleases to dodge the `attest-build-provenance` restriction on user-owned private repos; the repo is public now, so that restriction no longer applies and rc artifacts are attested like finals.)
+
+Only Helm chart publishing is skipped on prereleases — and the reason is a version decoupling, not a policy choice. The chart version comes from `Chart.yaml`, which release-please bumps on release-PR merge, **not** from the git tag. A manually-pushed rc tag therefore still carries the last stable chart version, so publishing would repackage that stable version and `helm push` it to the OCI registry (which has no skip-existing guard), clobbering the attested stable chart. The gh-pages channel is shielded by chart-releaser's `skip_existing`, but would still do pointless work. Publishing genuine prerelease charts would first require the chart version to track the tag's prerelease identifier.
 
 ## Cross-references
 

@@ -1,37 +1,16 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "skip-github-release": true,
+  "release-type": "simple",
   "include-component-in-tag": false,
-  "separate-pull-requests": false,
+  "changelog-path": "CHANGELOG.md",
   "packages": {
-    "backend/crates/atc-core": { "release-type": "rust", "component": "atc-core" },
-    "backend/crates/atc-github": { "release-type": "rust", "component": "atc-github" },
-    "backend/crates/atc-wire": { "release-type": "rust", "component": "atc-wire" },
-    "backend/crates/atc-persist": { "release-type": "rust", "component": "atc-persist" },
-    "backend/crates/atc-store-pg": { "release-type": "rust", "component": "atc-store-pg" },
-    "backend/crates/atc-store-mem": { "release-type": "rust", "component": "atc-store-mem" },
-    "backend/crates/atc-server": { "release-type": "rust", "component": "atc-server" },
-    "frontend": { "release-type": "node", "component": "frontend" },
-    "deploy/helm/atc": {
-      "release-type": "helm",
-      "component": "helm",
-      "package-name": "atc"
-    }
-  },
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "atc",
-      "components": [
-        "atc-core",
-        "atc-github",
-        "atc-wire",
-        "atc-persist",
-        "atc-store-pg",
-        "atc-store-mem",
-        "atc-server",
-        "frontend"
+    ".": {
+      "extra-files": [
+        { "type": "toml", "path": "backend/Cargo.toml", "jsonpath": "$.workspace.package.version" },
+        { "type": "json", "path": "frontend/package.json", "jsonpath": "$.version" },
+        { "type": "yaml", "path": "deploy/helm/atc/Chart.yaml", "jsonpath": "$.version" },
+        { "type": "yaml", "path": "deploy/helm/atc/Chart.yaml", "jsonpath": "$.appVersion" }
       ]
     }
-  ]
+  }
 }

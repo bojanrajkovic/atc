@@ -23,19 +23,44 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - uses: taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651 # v1.11.0
-        with:
-          changelog: backend/crates/atc-server/CHANGELOG.md
-          # Tolerate a missing CHANGELOG on pre-release tags (rc/dev cycles
-          # run before release-please has materialised the file). Real
-          # release tags (no `-` suffix) still fail-loud if the CHANGELOG
-          # has gone missing.
-          allow-missing-changelog: ${{ contains(github.ref_name, '-') }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # release-please owns the canonical GitHub Release. When the release PR
+      # merges it creates the `v*` tag AND the Release together (one Releases-API
+      # call), with the aggregated product changelog as the Release body — so for
+      # a real release the Release already exists the moment the tag push triggers
+      # this workflow, and this step is a no-op.
+      #
+      # This step is an idempotent SAFETY NET, not the creator: if a Release for
+      # the tag already exists it does nothing (it never edits the body, so
+      # release-please's notes stay intact). If one is MISSING, the only
+      # legitimate case is a manually-pushed prerelease/rc tag (`v*-rc*` etc.),
+      # which release-please does not drive — that gets GitHub-generated notes and
+      # the prerelease flag. A missing Release on a STABLE tag is an error
+      # (release-please was bypassed or failed); fabricating one and letting the
+      # workflow continue would ship an inconsistent release — e.g. the Helm jobs
+      # run for non-`-` tags and would package a stale `Chart.yaml` version,
+      # clobbering the prior stable chart. So the step fails loud instead.
+      # Downstream upload jobs declare `needs: create-release` purely as an
+      # ordering gate, so this job must run and either succeed or fail loud.
+      - name: Ensure GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists (created by release-please); preserving its notes."
+            exit 0
+          fi
+          case "$TAG" in
+            *-*)
+              echo "Prerelease tag $TAG has no Release — creating one with generated notes."
+              gh release create "$TAG" \
+                --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --prerelease
+              ;;
+            *)
+              echo "::error::Stable tag $TAG has no GitHub Release. Stable releases are created by release-please atomically with the tag; refusing to fabricate one. Investigate the release-please run." >&2
+              exit 1
+              ;;
+          esac
 
   # Build the frontend once and share `frontend/dist` with every binary build
   # in the matrix below. The atc-server binary embeds frontend/dist at compile
@@ -203,14 +228,11 @@ jobs:
           ARCHIVE=$(ls atc-server-${{ matrix.target }}.* 2>/dev/null | head -1)
           echo "path=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
-      # Skip attestation on pre-release tags. The actions/attest-build-
-      # provenance API rejects requests from user-owned private repos
-      # ("Feature not available for user-owned private repositories");
-      # rc/dev cycles should not fail on that. When the repo flips to
-      # public for v1.0, this guard becomes a no-op for the canonical
-      # release tag and attestation runs as before.
+      # Attest every binary, prereleases included. The repo is public, so the
+      # actions/attest-build-provenance restriction on user-owned private repos
+      # no longer applies; rc/dev tags now get the same Sigstore provenance as a
+      # canonical release, so policy-gated test environments can verify them.
       - name: Attest binary
-        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: ${{ steps.archive.outputs.path }}
@@ -367,20 +389,24 @@ jobs:
         env:
           STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
 
-      # Same private-repo limitation as the binary attestation above —
-      # skip on pre-release tags.
+      # Attest the manifest digest for every tag, prereleases included — same
+      # rationale as the binary attestation above (public repo, so the
+      # user-owned-private-repo restriction is gone).
       - name: Attest container image
-        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
 
-  # Skipped on pre-release tags (e.g. v*-rc*, v*-beta*) so the rc/dev cycle
-  # doesn't push Helm chart versions to the OCI registry — those publish
-  # paths have weak retraction semantics and `skip_existing: true` in the
-  # downstream chart-releaser job would block reissuing a real release.
+  # Skipped on pre-release tags (e.g. v*-rc*, v*-beta*). The chart version comes
+  # from Chart.yaml — bumped by release-please on release-PR merge, not by the
+  # git tag — so a manually-pushed rc tag still carries the last STABLE chart
+  # version. Publishing here would repackage that stable version and `helm push`
+  # it to the OCI registry with no skip-existing guard, clobbering the attested
+  # stable chart. (The gh-pages job below is shielded by chart-releaser's
+  # skip_existing, but would still do pointless work under an rc trigger.) Real
+  # prerelease charts would first need the chart version to track the tag.
   publish-helm-chart:
     name: Publish Helm Chart
     needs: [create-release, build-container, merge-manifest]
