@@ -52,6 +52,12 @@
       "minimumReleaseAge": "0 days"
     },
     {
+      "description": "Never manage our own first-party image in the chart's default values. image.tag is intentionally empty so the deployment template resolves it to .Chart.AppVersion; digest-pinning it appends @sha256 to an empty tag and renders a malformed `repo:@sha256:...` reference (InvalidImageName). appVersion already tracks the release.",
+      "matchManagers": ["helm-values"],
+      "matchPackageNames": ["ghcr.io/bojanrajkovic/atc"],
+      "enabled": false
+    },
+    {
       "description": "devDependencies and pnpm catalog devDeps: automerge minor + patch.",
       "matchDepTypes": ["devDependencies", "pnpm.catalog.default"],
       "matchUpdateTypes": ["minor", "patch"],
