@@ -127,6 +127,18 @@ chore: bump rust to 1.94.0
 
 Commits are validated by commitlint via lefthook's commit-msg hook. Non-conventional commits are rejected automatically.
 
+### Keep parentheses balanced on each line of a commit body
+
+release-please parses every commit — subject **and** body — with a strict conventional-commits parser to build the changelog and decide version bumps. It reads a `word(` (an open paren glued to a token, like a function or macro call) as the start of a scope and expects the matching `)` before the line ends. A `(` left open at the end of a line, or a `something(...)` call split across lines, makes the parser throw — and release-please then **silently drops the entire commit**: no changelog entry, no version bump.
+
+In practice:
+
+- Keep each line's parentheses balanced. Don't end a line on an open `name(`, and don't split a call or macro like `overriding(vec![ … ])` or `process::exit(1)` across lines.
+- Prose parentheticals are fine as long as they open and close on the same line — `(self-healing)` is OK; a `(` that wraps to the next line is not.
+- This governs the squash-merge body too: the PR description becomes the commit message on `main`, so the same rule applies to any PR description that pastes in code snippets.
+
+This is a known release-please limitation with no lenient-parse option ([googleapis/release-please#2564](https://github.com/googleapis/release-please/issues/2564)); authoring discipline is the fix.
+
 ### Atomic commits
 
 Each logical change is one commit, even when a sub-phase contains many of them. A reviewer should be able to scan a commit's diff in seconds and understand what landed. PR-tab summaries describe what shipped *overall*; the commit history is what someone running `git blame` will read months later.

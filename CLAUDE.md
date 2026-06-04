@@ -107,6 +107,8 @@ This project uses a six-layer documentation model with a strict non-duplication 
 
 Conventional Commits required. See `CONTRIBUTING.md` section "Commit Conventions".
 
+**Keep parentheses balanced on each line of a commit body** (and PR description — it becomes the squash body on `main`): an open `name(` at end of line, or a call split across lines, makes release-please's parser drop the whole commit from the changelog and version bump. Detail in `CONTRIBUTING.md`.
+
 ## Pull Requests
 
 This repo uses **squash merges** — the PR description becomes the squashed commit body. PR body voice, test-plan placement, and title conventions are in `CONTRIBUTING.md` § "Pull Requests".
