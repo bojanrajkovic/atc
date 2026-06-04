@@ -9,7 +9,7 @@ image:
   # -- Container image repository.
   repository: ghcr.io/bojanrajkovic/atc
   # -- Container image tag. Defaults to the chart's appVersion when left empty.
-  tag: ""
+  tag: "@sha256:02c4146223c2208363dda07c271ac60cef29b2869986d7379b1ceb68955d61cd"
   # -- Image pull policy.
   pullPolicy: IfNotPresent
 
