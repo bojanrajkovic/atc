@@ -1,6 +1,6 @@
 # Documentation System
 
-Last verified: 2026-05-23
+Last verified: 2026-06-04
 
 ## Six-Layer Documentation Model
 
@@ -76,6 +76,17 @@ Architecture Decision Records live in `docs/architecture-decisions/`. When a sig
 ```
 
 This keeps historical documents readable while marking what changed.
+
+### Write decisions conceptually, not name-locked
+
+An ADR records a *decision* — what was chosen, the alternatives, the rationale — not a snapshot of the current implementation. Implementation specifics rot at the same rate as the code; the decision they illustrate does not. So:
+
+- **No `file:line` citations.** Any edit shifts the line, so `see foo.rs:80` is wrong after the next refactor and tells the reader nothing about the decision. A reader who wants the current signature can grep for the trait or crate name.
+- **No pasted struct / signature / field-list dumps.** They convey implementation, not decision, and drift just as fast. Describe the contract's *shape* in prose ("two async methods, one per webhook event variant, each returning the assigned monotonic seq or a persist error") rather than the latest signature.
+- **Use names only where the name *is* the decision.** Trait names, crate names, error-variant names, and named constants identify the decision's components — fair game. Function names, struct fields, and exact signatures are implementation choices that can change without invalidating the decision — leave them out.
+- **Mermaid diagrams are durable** when their labels name roles or lifecycle states (`Starting`, `Running`, `Replica A`) rather than class or function names that may be renamed. Crate names in a dependency graph are usually durable enough.
+
+The test for any ADR sentence: does it convey the *decision* or just the *current implementation*? If the latter, rephrase or drop it.
 
 ## Terminology
 
