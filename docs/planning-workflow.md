@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-23
+Last verified: 2026-06-04
 
 ## Purpose
 
@@ -83,7 +83,7 @@ Write the full design plan to the file created in Phase 3. Required sections, in
 2. **Definition of Done** — carried from Phase 3.
 3. **Locked Decisions** — decisions established in prior phases, ADRs, or earlier in the planning session that are NOT open for re-evaluation. Cite source by file path.
 4. **Architecture** — design decisions with rejected alternatives and rationale; include file:line citations where relevant.
-5. **Implementation Phases** — TDD-ordered (≤8; phases are checkpoints, not padding targets — do not add phases to reach 8). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
+5. **Implementation Steps** — TDD-ordered (≤8; steps are checkpoints, not padding targets — do not add steps to reach 8). Use topic-titled headers, not `Phase N` markers (per CONTRIBUTING.md § Planning-Artifact Labels). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
 6. **Acceptance Criteria** — success AND failure cases for each DoD item, numbered (AC1, AC2, …) so the implementation context can check them off.
 7. **Documents to Update** — every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.yaml` entry that must change alongside the implementation, with the specific change.
 8. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
