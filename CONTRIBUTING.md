@@ -174,6 +174,7 @@ Design plans, ADRs, and implementation tickets use numbering schemes to coordina
 **Keep in:**
 
 - ADRs (`docs/architecture-decisions/`), design plans (`docs/design-plans/`), ideation (`docs/ideation/`) — these documents *are* the historical record. Acceptance criteria belong in design plans by design; the numbers are useful inside the plan, they just shouldn't escape into the code.
+  - **Exception — phase markers in design plans.** `Phase N` markers do *not* belong even inside `docs/design-plans/`. Use topic-titled section headers under `## Implementation Steps` (e.g., `### Config scaffolding`, `### GitHub OAuth client in atc-github`) rather than `### Phase N — …`, and reference work by its topic ("the OAuth routes step"), not by phase number ("Phase 4"). Acceptance-criteria numbering (`AC1`, `AC2.1`) still stays — only phase numbers are out, because they add a coordination label the topic title already carries.
 - Commit messages and CHANGELOG.
 - The `Last verified: YYYY-MM-DD (#N closed: …)` line at the top of CLAUDE.md / AGENTS.md (authorship metadata).
 - Captured external history — e.g., webhook fixture commit messages from real GitHub Actions output (data, not authored content).
