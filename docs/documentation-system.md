@@ -35,6 +35,8 @@ Architecture docs are **not** a fill-in form. Different components have differen
 
 **Mermaid diagrams.** Reach for a diagram whenever prose would have to hand-wave: crate dependency graphs, webhook-to-WebSocket pipeline flowcharts, schema ER diagrams, state machines, and supervision/shutdown sequences all compress cleanly into Mermaid. One diagram often does what three paragraphs struggle to, without the rot.
 
+> **Label gotcha.** In `stateDiagram-v2`, a transition (`A --> B : label`) treats the **first** `:` as the separator — so a label containing `::`, `()`, `/`, or another `:` (a Rust path, a function signature) makes GitHub render *"Unable to render rich display"* for that one block while the rest of the doc renders fine. Keep transition labels to plain phrases — letters, digits, spaces, commas, hyphens, periods — that describe the event rather than naming functions (which also keeps them durable, per the ADR rule below). Avoid `:`, `(`, `)`, `/`, `*`, `[`, `]`; use `<br>` or a `note` block for line breaks.
+
 **Contract sections.** Any guarantee the source cannot express on its own earns a section: snapshot/stream reconciliation rules, storage-mode invariants, durable-cursor monotonicity, placeholder semantics for out-of-order events. Pair a prose explanation with a Mermaid sequence or table where the protocol or failure behavior matters.
 
 **Schema descriptions.** When a component owns a schema, describe the key columns, relationships, and non-obvious constraints. Pair with an `erDiagram`. Migration mechanics or column-level trivia live in the migration files; the arch doc captures the shape and why it was designed that way.
