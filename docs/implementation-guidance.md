@@ -54,7 +54,7 @@ When a Rust test file exceeds ~500 lines or covers more than two distinct concer
 
 ### 11. Visual regression against playground reference
 
-When implementing UI components, capture Playwright screenshots (`page.screenshot()`) and compare against the playground prototype at `docs/ideation/playground.html`. Applies to any phase that produces visible UI.
+When implementing UI components, capture Playwright screenshots (`page.screenshot()`) and compare against the playground prototype at `docs/ideation/playground.html`. Applies to any step that produces visible UI.
 
 ### 12. Updating shadcn-svelte components
 
