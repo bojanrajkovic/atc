@@ -244,7 +244,7 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 | `fix:` | Patch (0.0.x) | Bug fix |
 | `feat!:` or `BREAKING CHANGE:` | Major (x.0.0) | Breaking change |
 
-All packages (7 Rust crates + frontend) version in lockstep via the `linked-versions` plugin.
+ATC releases as a single product: one version drives the seven Rust crates (inherited from `[workspace.package].version`), the frontend, and the Helm chart, and one bare `v<version>` tag triggers the release workflow.
 
 **Container image:** `docker pull ghcr.io/bojanrajkovic/atc:latest`
 

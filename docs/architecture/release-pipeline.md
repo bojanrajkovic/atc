@@ -2,7 +2,7 @@
 
 Last verified: 2026-06-04
 
-The release pipeline runs in two phases. `release-please.yml` monitors conventional commits on `main` and maintains a release PR that bumps version fields, updates CHANGELOG files, and coordinates companion jobs. Merging that PR makes release-please create the `v*` tag **and** the GitHub Release together — the Release body is release-please's aggregated, multi-package changelog. The tag push then triggers `release.yml`, which builds and publishes all release artifacts — binaries, container images, and the Helm chart — and uploads them to that Release. The boundary between the two phases preserves a human review gate: a release happens only when a developer merges the release PR. The toolchain choice and rejected alternatives are in [ADR-0011](../architecture-decisions/0011-release-toolchain.md).
+The release pipeline runs in two phases. `release-please.yml` monitors conventional commits on `main` and maintains a release PR that bumps the version, updates the product `CHANGELOG.md`, and runs a lockfile-refresh companion job. Merging that PR makes release-please create the `v*` tag **and** the GitHub Release together — the Release body is the aggregated product changelog. The tag push then triggers `release.yml`, which builds and publishes all release artifacts — binaries, container images, and the Helm chart — and uploads them to that Release. The boundary between the two phases preserves a human review gate: a release happens only when a developer merges the release PR. The toolchain choice and rejected alternatives are in [ADR-0011](../architecture-decisions/0011-release-toolchain.md).
 
 ## Two-phase release flow
 
@@ -11,7 +11,6 @@ flowchart TD
     commits["Conventional commits\nland on main"]
     rp["release-please.yml\nopens/updates release PR"]
     lockfile["refresh-lockfile job\nbot-committed on release PR branch"]
-    appver["sync-helm-app-version job\nbot-committed on release PR branch"]
     merge["Human merges release PR"]
     tag["release-please creates\nv* tag + GitHub Release\n(aggregated changelog body)"]
     release["release.yml triggers"]
@@ -29,9 +28,7 @@ flowchart TD
 
     commits --> rp
     rp --> lockfile
-    rp --> appver
     lockfile --> merge
-    appver --> merge
     merge --> tag
     tag --> release
     release --> github_release
@@ -50,14 +47,13 @@ Conventional commit type determines version bump: `feat:` → minor, `fix:` → 
 
 ## Lockstep versioning
 
-All seven Rust crates (`atc-core`, `atc-github`, `atc-wire`, `atc-persist`, `atc-store-pg`, `atc-store-mem`, `atc-server`) and the frontend version in lockstep via release-please's `linked-versions` plugin. The highest-precedence bump across any member sets the version for the whole group. One release PR covers all of them.
+ATC releases as a single product. `release-please-config.json` registers one package at the repository root (`release-type: simple`), so every conventional commit feeds one aggregate root `CHANGELOG.md` and one bare `v<version>` tag. The seven Rust crates are internal to the `atc-server` build and are never published independently, so they inherit a single version from `[workspace.package].version` in `backend/Cargo.toml` (`version.workspace = true`). release-please bumps that one field — plus `frontend/package.json` and the Helm chart's `version` and `appVersion` — through `extra-files` typed updaters.
 
-The Helm chart at `deploy/helm/atc` is registered as a separate release-please package (`release-type: helm`) and is deliberately excluded from `linked-versions`. Chart-only changes — values schema additions, template fixes — produce a chart release without bumping the application version, and vice versa.
+Modelling the surfaces as independent release-please packages instead made them collide on the shared bare `v<version>` tag: with `include-component-in-tag: false`, every package resolved to the same tag, so only the first won and the rest were skipped as duplicates. The single-product model removes that whole class of failure. The chart `version` is locked to the product version, so every release ships an installable chart whose `appVersion` always names a published image. See [ADR-0011](../architecture-decisions/0011-release-toolchain.md) for the rationale and rejected alternatives.
 
-Two companion jobs run after release-please on the same workflow:
+One companion job runs after release-please on the same workflow:
 
-- **refresh-lockfile** — release-please bumps crate versions in `Cargo.toml` without touching `Cargo.lock`. The companion job runs `cargo update --workspace` and commits the refreshed lockfile to the release PR branch so `cargo build --locked` continues to pass in CI and in `release.yml`.
-- **sync-helm-app-version** — reads the resolved app version from `.release-please-manifest.json` and rewrites `Chart.yaml`'s `appVersion` field. An idempotent `git diff --quiet` guard skips the commit when the value is already correct.
+- **refresh-lockfile** — release-please bumps the workspace version in `backend/Cargo.toml` without touching `Cargo.lock`. The companion job runs `cargo update --workspace` and commits the refreshed lockfile to the release PR branch so `cargo build --locked` continues to pass in CI and in `release.yml`. The chart's `appVersion` no longer needs a companion job — the `extra-files` updater bumps it directly to the product version.
 
 Both jobs commit under the releaser GitHub App identity (see "GitHub App token" below).
 

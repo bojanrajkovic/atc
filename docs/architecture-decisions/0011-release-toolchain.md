@@ -79,13 +79,20 @@ Tagging manually and creating releases through the GitHub UI is the baseline fro
 - **Attestation is repository-scoped.** Verification requires the repository reference (`-R bojanrajkovic/atc`). If the repository moves or is renamed, existing attestations cannot be re-anchored.
 - **Pre-release artifacts are unattested.** The private-repo attestation restriction means rc/dev builds carry no verifiable provenance. This is acceptable for pre-release cycles; the restriction dissolves when the repository goes public.
 
-## Amendment (2026-06-04) — release-please owns the GitHub Release
+## Amendment (2026-06-04) — single-product release model
 
-The original design had `skip-github-release: true` in `release-please-config.json`, with `taiki-e/create-gh-release-action` (in `release.yml`) creating the GitHub Release from a single crate's CHANGELOG. The intent was for release-please to create only the `v*` tag and delegate the Release to the tag-triggered workflow.
+The original decision modelled ATC's nine surfaces as nine release-please packages held in lockstep by the `linked-versions` plugin, with the Helm chart versioned independently and `skip-github-release: true` delegating Release creation to `release.yml`. Two failures surfaced:
 
-That intent does not match release-please's behavior: `skip-github-release` suppresses the **tag** as well as the Release (release-please creates the tag as part of the Releases-API call), so merging a release PR produced no tag at all — `release.yml` never triggered and no release shipped (see the 0.2.0 incident). The setting also left the merged release PR labelled `autorelease: pending`, which made release-please abort opening subsequent release PRs ("untagged, merged release PRs outstanding").
+- `skip-github-release: true` suppresses the **tag** as well as the Release (release-please mints both in one Releases-API call), so merging a release PR produced no tag — `release.yml` never triggered and the 0.2.0 release silently failed.
+- Even with that removed, nine packages plus `include-component-in-tag: false` make every package resolve to the same bare `v<version>` tag. On a real release-PR merge the first package creates the tag and Release and the other eight collide as duplicate-tag errors — a partial release with a non-deterministic body.
 
-`skip-github-release` is now removed. Release-please creates the `v*` tag **and** the GitHub Release together on release-PR merge, using its aggregated multi-package changelog as the Release body (a richer artifact than the single-crate CHANGELOG section). `release.yml`'s `create-release` job is now an idempotent safety net: it creates a Release only when one is missing (the manually-pushed pre-release/rc tag path) and never edits an existing Release, so release-please's notes are preserved. No token-scope change was needed — GitHub Releases live under the `contents` permission, which release-please already holds.
+Both stem from treating internal workspace crates as independently-released artifacts. They are not: the crates are never published; ATC ships one product (the `atc-server` image and binaries plus the Helm chart). The configuration now matches that reality — which is what the Context section argued for all along, "a single version number, not nine independently moving versions":
+
+- **One release-please package** at the repository root (`release-type: simple`). Every commit aggregates into one root `CHANGELOG.md`; one bare `v<version>` tag; one GitHub Release whose body is that aggregate changelog.
+- **One version, propagated by `extra-files`.** The crates inherit `[workspace.package].version` (`version.workspace = true`); release-please bumps that one field plus `frontend/package.json` and `Chart.yaml`'s `version` and `appVersion`. The `refresh-lockfile` companion job keeps `Cargo.lock` in sync via `cargo update --workspace`.
+- **Chart version is locked to the product version.** Because the chart's `appVersion` is the default image tag, locking guarantees `appVersion` always names a published image and every release ships an upgradable chart. This supersedes the independent-chart-version decision above; the `sync-helm-app-version` companion job is removed, since the `extra-files` updater sets `appVersion` directly.
+- **`release.yml`'s `create-release` is an idempotent safety net** — it creates a Release only for a tag that has none (the manually-pushed rc path) and never edits an existing one, so release-please's notes are preserved.
+- **Pre-release artifacts are now attested.** The repository is public, so the private-repo attestation restriction noted in the Decision and Consequences above no longer applies; rc binaries and container images carry the same Sigstore provenance as final releases. Only Helm publishing is still skipped on prereleases, because the chart version is decoupled from the rc tag.
 
 ## References
 
