@@ -1,8 +1,8 @@
 # Release Pipeline — Architecture
 
-Last verified: 2026-05-23
+Last verified: 2026-06-04
 
-The release pipeline runs in two phases. `release-please.yml` monitors conventional commits on `main` and maintains a release PR that bumps version fields, updates CHANGELOG files, and coordinates companion jobs. Merging that PR creates a `v*` tag. `release.yml` is tag-triggered: it builds and publishes all release artifacts — binaries, container images, and the Helm chart. The boundary between the two phases preserves a human review gate: a release happens only when a developer merges the release PR. The toolchain choice and rejected alternatives are in [ADR-0011](../architecture-decisions/0011-release-toolchain.md).
+The release pipeline runs in two phases. `release-please.yml` monitors conventional commits on `main` and maintains a release PR that bumps version fields, updates CHANGELOG files, and coordinates companion jobs. Merging that PR makes release-please create the `v*` tag **and** the GitHub Release together — the Release body is release-please's aggregated, multi-package changelog. The tag push then triggers `release.yml`, which builds and publishes all release artifacts — binaries, container images, and the Helm chart — and uploads them to that Release. The boundary between the two phases preserves a human review gate: a release happens only when a developer merges the release PR. The toolchain choice and rejected alternatives are in [ADR-0011](../architecture-decisions/0011-release-toolchain.md).
 
 ## Two-phase release flow
 
@@ -13,14 +13,14 @@ flowchart TD
     lockfile["refresh-lockfile job\nbot-committed on release PR branch"]
     appver["sync-helm-app-version job\nbot-committed on release PR branch"]
     merge["Human merges release PR"]
-    tag["v* tag created"]
+    tag["release-please creates\nv* tag + GitHub Release\n(aggregated changelog body)"]
     release["release.yml triggers"]
 
     frontend["build-frontend\nSvelte SPA built once\nshared artifact"]
     binaries["build-binaries matrix\nLinux x86_64 · Linux aarch64 · macOS aarch64\nnative GitHub-hosted runners"]
     containers["build-container matrix\nLinux amd64 · Linux arm64\nnative runners"]
     manifest["merge-manifest\ndocker buildx imagetools create\nmulti-arch manifest list"]
-    github_release["create-release\nGitHub Release + CHANGELOG section"]
+    github_release["create-release\nidempotent safety net\n(creates Release only for manual rc tags)"]
     helm_oci["publish-helm-chart\nOCI on ghcr.io + Sigstore attestation"]
     helm_pages["publish-helm-pages\nclassic HTTP repo on GitHub Pages"]
     attest_bin["Sigstore attestation\nper-binary archive"]
@@ -65,7 +65,7 @@ Both jobs commit under the releaser GitHub App identity (see "GitHub App token" 
 
 `release.yml` triggers on `v*` tags. Jobs run in dependency order established by `needs:`:
 
-**GitHub Release** — extracts the relevant CHANGELOG section and creates the GitHub Release entry. All upload jobs declare `needs: create-release`.
+**GitHub Release** — the canonical Release is created by release-please when the release PR merges (atomically with the `v*` tag, with the aggregated multi-package changelog as its body), so for a real release it already exists when this workflow starts. The `create-release` job is therefore an idempotent safety net: it creates a Release only when one is missing — the manually-pushed pre-release/rc tag path, which release-please does not drive — and never edits an existing Release, so release-please's notes are preserved. All upload jobs declare `needs: create-release` purely as an ordering gate, so the job always runs and succeeds.
 
 **Frontend build** — compiles the Svelte SPA once and uploads `frontend/dist` as a workflow artifact. `atc-server` embeds the frontend at compile time via `rust-embed`; without a pre-built `frontend/dist`, a clean binary build would fail or ship an empty SPA. Each binary matrix job downloads this artifact before invoking `cargo build`.
 
@@ -94,6 +94,8 @@ Attestations are repository-scoped. If the repository is renamed or moved, exist
 release-please and the companion jobs commit to the release PR branch under a dedicated GitHub App identity, not under `GITHUB_TOKEN`. This is a GitHub loop-prevention constraint: commits and PRs opened by `GITHUB_TOKEN` do not trigger downstream workflows, which would leave the release PR without CI status checks. The releaser GitHub App mints short-lived installation tokens via `actions/create-github-app-token` scoped to only the permissions each step needs (`contents: write` + `pull-requests: write` + `issues: write` for release-please; `contents: write` for the companion jobs). The zizmor [`github-app`](https://docs.zizmor.sh/audits/#github-app) audit enforces the least-privilege shape.
 
 ## Pre-release tag behavior
+
+Pre-release tags are pushed manually — release-please only drives the canonical `vMAJOR.MINOR.PATCH` releases, so it never creates a Release for an rc tag. The `create-release` safety-net job covers that gap: for a tag with no existing Release it creates one with GitHub-generated notes and the `--prerelease` flag.
 
 Tags containing a hyphen (e.g., `v1.0.0-rc1`) trigger `release.yml` but skip Sigstore attestation and Helm chart publishing. This avoids the GitHub API restriction on attestations for artifacts produced in private repos and prevents rc versions from occupying slots in the Helm release channel. Binary builds and container image builds run normally.
 

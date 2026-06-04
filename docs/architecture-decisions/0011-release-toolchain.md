@@ -79,6 +79,14 @@ Tagging manually and creating releases through the GitHub UI is the baseline fro
 - **Attestation is repository-scoped.** Verification requires the repository reference (`-R bojanrajkovic/atc`). If the repository moves or is renamed, existing attestations cannot be re-anchored.
 - **Pre-release artifacts are unattested.** The private-repo attestation restriction means rc/dev builds carry no verifiable provenance. This is acceptable for pre-release cycles; the restriction dissolves when the repository goes public.
 
+## Amendment (2026-06-04) — release-please owns the GitHub Release
+
+The original design had `skip-github-release: true` in `release-please-config.json`, with `taiki-e/create-gh-release-action` (in `release.yml`) creating the GitHub Release from a single crate's CHANGELOG. The intent was for release-please to create only the `v*` tag and delegate the Release to the tag-triggered workflow.
+
+That intent does not match release-please's behavior: `skip-github-release` suppresses the **tag** as well as the Release (release-please creates the tag as part of the Releases-API call), so merging a release PR produced no tag at all — `release.yml` never triggered and no release shipped (see the 0.2.0 incident). The setting also left the merged release PR labelled `autorelease: pending`, which made release-please abort opening subsequent release PRs ("untagged, merged release PRs outstanding").
+
+`skip-github-release` is now removed. Release-please creates the `v*` tag **and** the GitHub Release together on release-PR merge, using its aggregated multi-package changelog as the Release body (a richer artifact than the single-crate CHANGELOG section). `release.yml`'s `create-release` job is now an idempotent safety net: it creates a Release only when one is missing (the manually-pushed pre-release/rc tag path) and never edits an existing Release, so release-please's notes are preserved. No token-scope change was needed — GitHub Releases live under the `contents` permission, which release-please already holds.
+
 ## References
 
 - [CONTRIBUTING.md § Releases](../CONTRIBUTING.md) — human-facing description of the release flow and version-bump rules

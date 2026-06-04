@@ -31,11 +31,12 @@ jobs:
           app-id: ${{ vars.RELEASER_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASER_BOT_PRIVATE_KEY }}
           # Least-privilege scopes for release-please: it commits the
-          # release manifest/changelog (contents), opens/updates the
-          # release PR (pull-requests), and labels it with autorelease
-          # state markers (issues — labels are managed via the shared
-          # issues API). `skip-github-release: true` in
-          # release-please-config.json means we don't need release scope.
+          # release manifest/changelog and, on release-PR merge, creates the
+          # `v*` tag + GitHub Release (all under `contents`), opens/updates the
+          # release PR (pull-requests), and labels it with autorelease state
+          # markers (issues — labels are managed via the shared issues API).
+          # GitHub Releases live under the `contents` permission, so
+          # contents:write is the only scope tag/Release creation needs.
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
