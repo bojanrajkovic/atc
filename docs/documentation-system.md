@@ -19,6 +19,8 @@ Each piece of information has exactly one home (**non-duplication rule**). The s
 
 **Non-duplication rule:** Do not copy content between layers. CLAUDE.md points to docs/ — it doesn't summarize them. README.md links to CONTRIBUTING.md — it doesn't repeat setup instructions. Architecture docs link to operator runbooks for how-to content rather than embedding recipes. When information changes, it changes in one place.
 
+**Verify before pruning as duplicate.** When auditing whether a CLAUDE.md (or other pointing-layer) section actually duplicates its canonical doc — versus carrying load-bearing content that only *looks* like a paraphrase — grep the canonical doc for the section's key terms before deciding. Do not trust a section heading (calling something "Contracts" doesn't make it duplicate; calling it "Sharp edges" doesn't make it load-bearing), a subagent's framing, or an intuition about what "ought to" be in the arch doc. The cost of skipping the grep is committing a confidently-wrong "this is / isn't duplicated" claim into the record. When asserting in a PR that a section is load-bearing, cite the grep evidence (e.g. "verified: no mention of `predecessors_of` in `backend-server.md`").
+
 **When a feature ships:** The ideation doc archives (add "Shipped — see `docs/architecture/<topic>.md`" header) and the architecture doc becomes the source of truth.
 
 ## Architecture Doc Guidance
