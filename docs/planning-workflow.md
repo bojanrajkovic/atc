@@ -1,6 +1,6 @@
 # Planning Workflow
 
-Last verified: 2026-05-23
+Last verified: 2026-06-04
 
 ## Purpose
 
@@ -83,10 +83,10 @@ Write the full design plan to the file created in Phase 3. Required sections, in
 2. **Definition of Done** — carried from Phase 3.
 3. **Locked Decisions** — decisions established in prior phases, ADRs, or earlier in the planning session that are NOT open for re-evaluation. Cite source by file path.
 4. **Architecture** — design decisions with rejected alternatives and rationale; include file:line citations where relevant.
-5. **Implementation Phases** — TDD-ordered (≤8; phases are checkpoints, not padding targets — do not add phases to reach 8). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
+5. **Implementation Steps** — TDD-ordered (≤8; steps are checkpoints, not padding targets — do not add steps to reach 8). Use topic-titled headers, not `Phase N` markers (per CONTRIBUTING.md § Planning-Artifact Labels). Step 1 should be "write failing tests"; Step 2 should be "make them pass."
 6. **Acceptance Criteria** — success AND failure cases for each DoD item, numbered (AC1, AC2, …) so the implementation context can check them off.
 7. **Documents to Update** — every architecture doc, `CLAUDE.md`, and `scripts/doc-mapping.yaml` entry that must change alongside the implementation, with the specific change.
-8. **Out of Scope** — explicitly deferred items, with the issue/phase number that owns each.
+8. **Out of Scope** — explicitly deferred items, with the issue that owns each.
 9. **Glossary** — if the plan introduces or relies on non-obvious terminology.
 
 A "Summary" section is optional; Context usually carries it. If included, keep it to a paragraph.
@@ -129,7 +129,7 @@ When creating an ADR, sweep **all** existing documents, tests, and code comments
 
 ### Justfile Evolution
 
-`just` recipes evolve as code lands. Each phase should update only the recipes relevant to its deliverables. Do not pre-stub commands for functionality that doesn't exist yet.
+`just` recipes evolve as code lands. Each step should update only the recipes relevant to its deliverables. Do not pre-stub commands for functionality that doesn't exist yet.
 
 ---
 

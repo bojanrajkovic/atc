@@ -1,6 +1,6 @@
 # Documentation System
 
-Last verified: 2026-05-23
+Last verified: 2026-06-04
 
 ## Six-Layer Documentation Model
 
@@ -18,6 +18,8 @@ Each piece of information has exactly one home (**non-duplication rule**). The s
 **Architecture vs operator runbook split:** architecture docs describe how ATC's own internals work and why they were designed that way (`docs/architecture/deployment.md` explains why we picked RollingUpdate, why the `preStop sleep` matters, what the multi-replica invariants are). Operator runbooks describe how to operate ATC against external infrastructure that isn't part of ATC itself (`docs/operator/authentication.md` shows how to wire Pomerium / oauth2-proxy / etc. in front of it). When a runbook needs to reference an architectural decision, it links rather than restating.
 
 **Non-duplication rule:** Do not copy content between layers. CLAUDE.md points to docs/ — it doesn't summarize them. README.md links to CONTRIBUTING.md — it doesn't repeat setup instructions. Architecture docs link to operator runbooks for how-to content rather than embedding recipes. When information changes, it changes in one place.
+
+**Verify before pruning as duplicate.** When auditing whether a CLAUDE.md (or other pointing-layer) section actually duplicates its canonical doc — versus carrying load-bearing content that only *looks* like a paraphrase — grep the canonical doc for the section's key terms before deciding. Do not trust a section heading (calling something "Contracts" doesn't make it duplicate; calling it "Sharp edges" doesn't make it load-bearing), a subagent's framing, or an intuition about what "ought to" be in the arch doc. The cost of skipping the grep is committing a confidently-wrong "this is / isn't duplicated" claim into the record. When asserting in a PR that a section is load-bearing, cite the grep evidence (e.g. "verified: no mention of `predecessors_of` in `backend-server.md`").
 
 **When a feature ships:** The ideation doc archives (add "Shipped — see `docs/architecture/<topic>.md`" header) and the architecture doc becomes the source of truth.
 
@@ -76,6 +78,17 @@ Architecture Decision Records live in `docs/architecture-decisions/`. When a sig
 ```
 
 This keeps historical documents readable while marking what changed.
+
+### Write decisions conceptually, not name-locked
+
+An ADR records a *decision* — what was chosen, the alternatives, the rationale — not a snapshot of the current implementation. Implementation specifics rot at the same rate as the code; the decision they illustrate does not. So:
+
+- **No `file:line` citations.** Any edit shifts the line, so `see foo.rs:80` is wrong after the next refactor and tells the reader nothing about the decision. A reader who wants the current signature can grep for the trait or crate name.
+- **No pasted struct / signature / field-list dumps.** They convey implementation, not decision, and drift just as fast. Describe the contract's *shape* in prose ("two async methods, one per webhook event variant, each returning the assigned monotonic seq or a persist error") rather than the latest signature.
+- **Use names only where the name *is* the decision.** Trait names, crate names, error-variant names, and named constants identify the decision's components — fair game. Function names, struct fields, and exact signatures are implementation choices that can change without invalidating the decision — leave them out.
+- **Mermaid diagrams are durable** when their labels name roles or lifecycle states (`Starting`, `Running`, `Replica A`) rather than class or function names that may be renamed. Crate names in a dependency graph are usually durable enough.
+
+The test for any ADR sentence: does it convey the *decision* or just the *current implementation*? If the latter, rephrase or drop it.
 
 ## Terminology
 

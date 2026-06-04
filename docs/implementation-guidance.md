@@ -1,6 +1,6 @@
 # Implementation Guidance
 
-Last verified: 2026-05-13
+Last verified: 2026-06-04
 
 ## Purpose
 
@@ -54,7 +54,7 @@ When a Rust test file exceeds ~500 lines or covers more than two distinct concer
 
 ### 11. Visual regression against playground reference
 
-When implementing UI components, capture Playwright screenshots (`page.screenshot()`) and compare against the playground prototype at `docs/ideation/playground.html`. Applies to any phase that produces visible UI.
+When implementing UI components, capture Playwright screenshots (`page.screenshot()`) and compare against the playground prototype at `docs/ideation/playground.html`. Applies to any step that produces visible UI.
 
 ### 12. Updating shadcn-svelte components
 
@@ -66,15 +66,15 @@ When some tests need browser mode (e.g., Svelte 5 `$effect` reliability) and oth
 
 ### 14. Use implementation subagents when they pay for themselves
 
-The orchestrating context reads the committed design plan from `docs/design-plans/` and coordinates. **Dispatch implementation subagents when:** (a) two or more genuinely independent file sets need parallel edit application, or (b) a phase requires search/grep over ~15+ files where keeping the artifacts out of the main context is worth the dispatch overhead.
+The orchestrating context reads the committed design plan from `docs/design-plans/` and coordinates. **Dispatch implementation subagents when:** (a) two or more genuinely independent file sets need parallel edit application, or (b) a step requires search/grep over ~15+ files where keeping the artifacts out of the main context is worth the dispatch overhead.
 
 **Skip subagents when** the work is a coherent sequential edit chain — coordination overhead exceeds the parallelism gain, and reading back a subagent's output to apply edits manually is slower than editing inline.
 
-The planning Claude may name phases as parallelizable in the design plan; the implementing Claude is the final arbiter of whether the parallelism is worth the dispatch.
+The planning Claude may name steps as parallelizable in the design plan; the implementing Claude is the final arbiter of whether the parallelism is worth the dispatch.
 
 ### 15. Lefthook hooks are pre-configured
 
-New implementation phases should NOT modify `lefthook.yml` unless adding an entirely new tool category. Run `just setup` at the start of any implementation session (especially after cloning or creating worktrees) to ensure hooks are installed. Verify with `ls .git/hooks/pre-commit` — a `.sample` file only means hooks are not wired.
+New implementation steps should NOT modify `lefthook.yml` unless adding an entirely new tool category. Run `just setup` at the start of any implementation session (especially after cloning or creating worktrees) to ensure hooks are installed. Verify with `ls .git/hooks/pre-commit` — a `.sample` file only means hooks are not wired.
 
 ### 16. Use project-specific researcher agents for investigation
 
