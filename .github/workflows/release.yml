@@ -221,14 +221,11 @@ jobs:
           ARCHIVE=$(ls atc-server-${{ matrix.target }}.* 2>/dev/null | head -1)
           echo "path=${ARCHIVE}" >> "$GITHUB_OUTPUT"
 
-      # Skip attestation on pre-release tags. The actions/attest-build-
-      # provenance API rejects requests from user-owned private repos
-      # ("Feature not available for user-owned private repositories");
-      # rc/dev cycles should not fail on that. When the repo flips to
-      # public for v1.0, this guard becomes a no-op for the canonical
-      # release tag and attestation runs as before.
+      # Attest every binary, prereleases included. The repo is public, so the
+      # actions/attest-build-provenance restriction on user-owned private repos
+      # no longer applies; rc/dev tags now get the same Sigstore provenance as a
+      # canonical release, so policy-gated test environments can verify them.
       - name: Attest binary
-        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-path: ${{ steps.archive.outputs.path }}
@@ -385,20 +382,24 @@ jobs:
         env:
           STEPS_META_OUTPUTS_VERSION: ${{ steps.meta.outputs.version }}
 
-      # Same private-repo limitation as the binary attestation above —
-      # skip on pre-release tags.
+      # Attest the manifest digest for every tag, prereleases included — same
+      # rationale as the binary attestation above (public repo, so the
+      # user-owned-private-repo restriction is gone).
       - name: Attest container image
-        if: ${{ !contains(github.ref_name, '-') }}
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
 
-  # Skipped on pre-release tags (e.g. v*-rc*, v*-beta*) so the rc/dev cycle
-  # doesn't push Helm chart versions to the OCI registry — those publish
-  # paths have weak retraction semantics and `skip_existing: true` in the
-  # downstream chart-releaser job would block reissuing a real release.
+  # Skipped on pre-release tags (e.g. v*-rc*, v*-beta*). The chart version comes
+  # from Chart.yaml — bumped by release-please on release-PR merge, not by the
+  # git tag — so a manually-pushed rc tag still carries the last STABLE chart
+  # version. Publishing here would repackage that stable version and `helm push`
+  # it to the OCI registry with no skip-existing guard, clobbering the attested
+  # stable chart. (The gh-pages job below is shielded by chart-releaser's
+  # skip_existing, but would still do pointless work under an rc trigger.) Real
+  # prerelease charts would first need the chart version to track the tag.
   publish-helm-chart:
     name: Publish Helm Chart
     needs: [create-release, build-container, merge-manifest]

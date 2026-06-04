@@ -97,7 +97,9 @@ release-please and the companion jobs commit to the release PR branch under a de
 
 Pre-release tags are pushed manually — release-please only drives the canonical `vMAJOR.MINOR.PATCH` releases, so it never creates a Release for an rc tag. The `create-release` safety-net job covers that gap: for a tag with no existing Release it creates one with GitHub-generated notes and the `--prerelease` flag.
 
-Tags containing a hyphen (e.g., `v1.0.0-rc1`) trigger `release.yml` but skip Sigstore attestation and Helm chart publishing. This avoids the GitHub API restriction on attestations for artifacts produced in private repos and prevents rc versions from occupying slots in the Helm release channel. Binary builds and container image builds run normally.
+Tags containing a hyphen (e.g., `v1.0.0-rc1`) trigger `release.yml` and build binaries and container images normally, **with** Sigstore attestation. (Attestation was once skipped for prereleases to dodge the `attest-build-provenance` restriction on user-owned private repos; the repo is public now, so that restriction no longer applies and rc artifacts are attested like finals.)
+
+Only Helm chart publishing is skipped on prereleases — and the reason is a version decoupling, not a policy choice. The chart version comes from `Chart.yaml`, which release-please bumps on release-PR merge, **not** from the git tag. A manually-pushed rc tag therefore still carries the last stable chart version, so publishing would repackage that stable version and `helm push` it to the OCI registry (which has no skip-existing guard), clobbering the attested stable chart. The gh-pages channel is shielded by chart-releaser's `skip_existing`, but would still do pointless work. Publishing genuine prerelease charts would first require the chart version to track the tag's prerelease identifier.
 
 ## Cross-references
 
