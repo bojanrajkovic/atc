@@ -2,43 +2,27 @@
   "enabledPlugins": {
     "elements-of-style@superpowers-marketplace": true,
     "agent-browser@agent-browser": true,
-    "ed3d-hook-security-hardening@ed3d-plugins": true,
-    "code-simplifier@claude-plugins-official": true,
-    "ed3d-hook-claudemd-reminder@ed3d-plugins": true,
-    "ed3d-hook-skill-reinforcement@ed3d-plugins": true,
     "impeccable@impeccable": true
   },
-  "skillListingBudgetFraction": 0.025,
   "extraKnownMarketplaces": {
     "agent-browser": {
       "source": {
-        "source": "github",
-        "repo": "vercel-labs/agent-browser"
-      }
-    },
-    "claude-plugins-official": {
-      "source": {
-        "source": "github",
-        "repo": "anthropics/claude-plugins-official"
-      }
-    },
-    "ed3d-plugins": {
-      "source": {
-        "source": "github",
-        "repo": "ed3dai/ed3d-plugins"
+        "repo": "vercel-labs/agent-browser",
+        "source": "github"
       }
     },
     "impeccable": {
       "source": {
-        "source": "github",
-        "repo": "pbakaus/impeccable"
+        "repo": "pbakaus/impeccable",
+        "source": "github"
       }
     },
     "superpowers-marketplace": {
       "source": {
-        "source": "github",
-        "repo": "obra/superpowers-marketplace"
+        "repo": "obra/superpowers-marketplace",
+        "source": "github"
       }
     }
-  }
+  },
+  "skillListingBudgetFraction": 0.025
 }
