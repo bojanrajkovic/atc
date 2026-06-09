@@ -25,7 +25,7 @@ tower-http = { version = "=0.6.11", features = ["cors", "trace"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
-chrono = "=0.4.44"
+chrono = "=0.4.45"
 opentelemetry = { version = "=0.31.0", features = ["metrics", "trace"] }
 opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
 opentelemetry-otlp = { version = "=0.31.1", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "metrics", "trace"] }
@@ -46,7 +46,7 @@ atc-store-mem = { path = "../atc-store-mem", features = ["test-support"] }
 # integration test binary (PgStoreTestHooks, start_with_test_hooks, sync
 # tick / accessor methods on PgStore).
 atc-store-pg = { path = "../atc-store-pg", features = ["test-support"] }
-chrono = { version = "=0.4.44", features = ["serde"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
 const-hex = "=1.19.1"
 futures-util = "=0.3.32"
 hmac = "=0.13.0"
