@@ -17,7 +17,7 @@ atc-github = { path = "../atc-github" }
 atc-persist = { path = "../atc-persist" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
-chrono = "=0.4.44"
+chrono = "=0.4.45"
 opentelemetry = { version = "=0.31.0", features = ["metrics", "trace"] }
 serde_json = "=1.0.150"
 sqlx = { version = "=0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "chrono", "migrate", "macros", "json"] }

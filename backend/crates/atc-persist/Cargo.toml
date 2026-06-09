@@ -13,6 +13,6 @@ async-trait = { workspace = true }
 # Not a storage-backend dep — the "no sqlx/redis here" rule in the crate
 # README still applies; chrono is a value-typed time crate consumed by
 # both stores and the snapshot reader.
-chrono = { version = "=0.4.44", features = ["serde"] }
+chrono = { version = "=0.4.45", features = ["serde"] }
 tokio = { version = "=1.52.3", features = ["sync", "time", "rt"] }
 tracing = { workspace = true }
