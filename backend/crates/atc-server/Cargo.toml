@@ -33,7 +33,7 @@ tracing-opentelemetry = { version = "=0.32.1", features = ["metrics"] }
 opentelemetry-http = "=0.31.0"
 opentelemetry-semantic-conventions = "=0.31.0"
 opentelemetry-system-metrics = "=0.31.0"
-http = "=1.4.1"
+http = "=1.4.2"
 axum-otel-metrics = "=0.13.0"
 uuid = { version = "=1.23.2", features = ["v4", "fast-rng"] }
 humantime-serde = "=1.1.1"
