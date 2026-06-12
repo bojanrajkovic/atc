@@ -27,7 +27,7 @@ tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
 chrono = "=0.4.45"
 opentelemetry = { version = "=0.31.0", features = ["metrics", "trace"] }
-opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
+opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
 opentelemetry-otlp = { version = "=0.31.1", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "metrics", "trace"] }
 tracing-opentelemetry = { version = "=0.32.1", features = ["metrics"] }
 opentelemetry-http = "=0.31.0"
@@ -50,7 +50,7 @@ chrono = { version = "=0.4.45", features = ["serde"] }
 const-hex = "=1.19.1"
 futures-util = "=0.3.32"
 hmac = "=0.13.0"
-opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
+opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
 reqwest = { version = "=0.13.4", features = ["json"] }
 serial_test = "=3.5.0"
 sha2 = "=0.11.0"
