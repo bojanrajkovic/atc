@@ -82,12 +82,18 @@ the lines are:
 | Ping | INFO | `ping received` | `event_type`, `delivery_id` |
 | Skipped (unhandled type) | INFO | `event skipped` | `event_type`, `delivery_id` |
 | State transition committed | INFO | `event accepted` | `event_type`, `seq`, `run_id`, `job_id` (jobs), `delivery_id` |
+| Invalid transition (rejected) | WARN | `transition invalid; rejecting` | `event_type`, `run_id`, `job_id` (jobs), `delivery_id` |
+| Missing signature header | WARN | `missing X-Hub-Signature-256 header` | `delivery_id` |
+| Signature verification failed | WARN | `HMAC verification failed` | `delivery_id` |
 | Parse failure | ERROR | `webhook parse error` | `error`, `event_type`, `delivery_id` |
+| Persistence write failed | ERROR | `persistence write failed` | `error`, `event_type`, `delivery_id` |
 
 `delivery_id` is the `X-GitHub-Delivery` header — GitHub's per-delivery
-correlation id, recorded on the `webhook.handler` span and carried on each line so
-it survives pretty (non-span-list) log output. Invalid transitions still log at
-WARN (`transition invalid; rejecting`) and missing/invalid signatures at WARN.
+correlation id, recorded on the `webhook.handler` span and carried on **every**
+emitted line (logged as the bare string value, empty when the header is absent) so
+a line correlates to a specific GitHub delivery even in pretty (non-span-list) log
+output. A request missing the `X-GitHub-Event` header is rejected `400` without a
+log line — it never reaches a boundary outcome.
 
 ## Config hot-reload
 

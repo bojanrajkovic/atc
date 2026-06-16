@@ -83,6 +83,16 @@ fn find<'a>(events: &'a [CapturedEvent], message: &str) -> &'a CapturedEvent {
         .unwrap_or_else(|| panic!("expected a log line {message:?}; captured: {events:?}"))
 }
 
+fn webhook_request(event_type: &str, delivery_id: &str, body: Vec<u8>) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/webhooks/github")
+        .header("x-github-event", event_type)
+        .header("x-github-delivery", delivery_id)
+        .body(Body::from(body))
+        .unwrap()
+}
+
 /// Fire one webhook request against a fresh in-memory app while capturing log
 /// events on this thread, returning the captured events.
 async fn capture_webhook_logs(
@@ -95,14 +105,10 @@ async fn capture_webhook_logs(
     let guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(capture));
 
     let (app, _state) = common::build_app_no_secret();
-    let request = Request::builder()
-        .method("POST")
-        .uri("/v1/webhooks/github")
-        .header("x-github-event", event_type)
-        .header("x-github-delivery", delivery_id)
-        .body(Body::from(body))
+    let response = app
+        .oneshot(webhook_request(event_type, delivery_id, body))
+        .await
         .unwrap();
-    let response = app.oneshot(request).await.unwrap();
     let status = response.status();
     drop(guard);
 
@@ -211,6 +217,59 @@ async fn parse_failure_logs_at_error_with_delivery_id() {
         line.fields.get("delivery_id").map(String::as_str),
         Some("d-bad-1"),
         "parse-error line must carry the bare delivery_id (not Debug-wrapped); got {:?}",
+        line.fields
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn invalid_transition_logs_warn_with_delivery_id() {
+    let (app, _state) = common::build_app_no_secret();
+
+    // Drive the run to Completed first (accepted), outside the capture window.
+    let setup = app
+        .clone()
+        .oneshot(webhook_request(
+            "workflow_run",
+            "d-setup",
+            common::fixture_workflow_run_completed(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(setup.status(), axum::http::StatusCode::OK);
+
+    // Capture the backward Completed → InProgress transition, which the store
+    // rejects as an invalid transition.
+    let capture = CaptureLayer::default();
+    let events = capture.events.clone();
+    let guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(capture));
+    let rejected = app
+        .oneshot(webhook_request(
+            "workflow_run",
+            "d-reject-1",
+            common::fixture_workflow_run_in_progress(),
+        ))
+        .await
+        .unwrap();
+    drop(guard);
+    assert_eq!(rejected.status(), axum::http::StatusCode::OK);
+
+    let events = events.lock().unwrap().clone();
+    let line = find(&events, "transition invalid; rejecting");
+    assert_eq!(
+        line.level,
+        Level::WARN,
+        "invalid transition must log at WARN"
+    );
+    assert_eq!(
+        line.fields.get("delivery_id").map(String::as_str),
+        Some("d-reject-1"),
+        "invalid-transition line must carry delivery_id; got {:?}",
+        line.fields
+    );
+    assert!(
+        line.fields.contains_key("run_id"),
+        "invalid-transition line must carry run_id; got {:?}",
         line.fields
     );
 }

@@ -241,7 +241,7 @@ async fn webhook_handler(
                 {
                     Some(sig) => sig,
                     None => {
-                        tracing::warn!("missing X-Hub-Signature-256 header");
+                        tracing::warn!(delivery_id = delivery_id.unwrap_or_default(), "missing X-Hub-Signature-256 header");
                         break 'response (
                             StatusCode::UNAUTHORIZED,
                             Json(
@@ -252,7 +252,7 @@ async fn webhook_handler(
                 };
 
                 if let Err(_e) = verify_signature(secret.as_bytes(), &body, signature) {
-                    tracing::warn!("HMAC verification failed");
+                    tracing::warn!(delivery_id = delivery_id.unwrap_or_default(), "HMAC verification failed");
                     break 'response (
                         StatusCode::UNAUTHORIZED,
                         Json(serde_json::json!({"error": "invalid signature"})),
@@ -320,6 +320,7 @@ async fn webhook_handler(
                                     tracing::warn!(
                                         event_type,
                                         run_id = env.run_id.0,
+                                        delivery_id = delivery_id.unwrap_or_default(),
                                         "transition invalid; rejecting"
                                     );
                                 }
@@ -328,6 +329,7 @@ async fn webhook_handler(
                                         event_type,
                                         run_id = env.run_id.0,
                                         job_id = env.job_id.0,
+                                        delivery_id = delivery_id.unwrap_or_default(),
                                         "transition invalid; rejecting"
                                     );
                                 }
@@ -338,7 +340,7 @@ async fn webhook_handler(
                             )
                         }
                         Err(PersistError::Backend(e)) => {
-                            tracing::error!(error = %e, "persistence write failed");
+                            tracing::error!(error = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "persistence write failed");
                             (
                                 StatusCode::SERVICE_UNAVAILABLE,
                                 Json(serde_json::json!({"status": "error"})),
