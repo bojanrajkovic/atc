@@ -93,6 +93,33 @@ async fn webhook_ingestion_unknown_event_returns_skipped() {
     assert_eq!(json["status"], "skipped");
 }
 
+/// Ping event (webhook connectivity check) returns 200 with {"status": "ok"}
+#[tokio::test]
+#[serial_test::serial]
+async fn webhook_ingestion_ping_returns_ok() {
+    let (app, _) = build_app_no_secret();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/github")
+                .header("x-github-event", "ping")
+                .body(Body::from(
+                    br#"{"zen": "Anything added dilutes everything else."}"#.to_vec(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("failed to read response body");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("response is valid JSON");
+    assert_eq!(json["status"], "ok");
+}
+
 /// Missing X-GitHub-Event header returns 400
 #[tokio::test]
 #[serial_test::serial]

@@ -209,11 +209,14 @@ async fn webhook_handler(
 
     async move {
         let response: (StatusCode, Json<serde_json::Value>) = 'response: {
-            if let Some(delivery_id) = headers
+            // Captured once and reused on the boundary log lines below (in
+            // addition to the span field), so `delivery_id` is present even in
+            // pretty (non-span-list) log output.
+            let delivery_id = headers
                 .get("x-github-delivery")
-                .and_then(|v| v.to_str().ok())
-            {
-                Span::current().record("webhook.delivery_id", delivery_id);
+                .and_then(|v| v.to_str().ok());
+            if let Some(d) = delivery_id {
+                Span::current().record("webhook.delivery_id", d);
             }
 
             // 1. Extract X-GitHub-Event header
@@ -238,7 +241,7 @@ async fn webhook_handler(
                 {
                     Some(sig) => sig,
                     None => {
-                        tracing::warn!("missing X-Hub-Signature-256 header");
+                        tracing::warn!(delivery_id = delivery_id.unwrap_or_default(), "missing X-Hub-Signature-256 header");
                         break 'response (
                             StatusCode::UNAUTHORIZED,
                             Json(
@@ -249,7 +252,7 @@ async fn webhook_handler(
                 };
 
                 if let Err(_e) = verify_signature(secret.as_bytes(), &body, signature) {
-                    tracing::warn!("HMAC verification failed");
+                    tracing::warn!(delivery_id = delivery_id.unwrap_or_default(), "HMAC verification failed");
                     break 'response (
                         StatusCode::UNAUTHORIZED,
                         Json(serde_json::json!({"error": "invalid signature"})),
@@ -261,7 +264,7 @@ async fn webhook_handler(
             let result = match parse_webhook(event_type, &body) {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::error!(error = %e, event_type, "webhook parse error");
+                    tracing::error!(error = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "webhook parse error");
                     break 'response (
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(serde_json::json!({"error": e.to_string()})),
@@ -285,7 +288,27 @@ async fn webhook_handler(
 
                     match persist_result {
                         Ok(seq) => {
-                            tracing::info!(event_type, seq, "event accepted");
+                            match &event {
+                                atc_github::WebhookEvent::Run(env) => {
+                                    tracing::info!(
+                                        event_type,
+                                        seq,
+                                        run_id = env.run_id.0,
+                                        delivery_id = delivery_id.unwrap_or_default(),
+                                        "event accepted"
+                                    );
+                                }
+                                atc_github::WebhookEvent::Job(env) => {
+                                    tracing::info!(
+                                        event_type,
+                                        seq,
+                                        run_id = env.run_id.0,
+                                        job_id = env.job_id.0,
+                                        delivery_id = delivery_id.unwrap_or_default(),
+                                        "event accepted"
+                                    );
+                                }
+                            }
                             (
                                 StatusCode::OK,
                                 Json(serde_json::json!({"status": "accepted", "seq": seq})),
@@ -297,6 +320,7 @@ async fn webhook_handler(
                                     tracing::warn!(
                                         event_type,
                                         run_id = env.run_id.0,
+                                        delivery_id = delivery_id.unwrap_or_default(),
                                         "transition invalid; rejecting"
                                     );
                                 }
@@ -305,6 +329,7 @@ async fn webhook_handler(
                                         event_type,
                                         run_id = env.run_id.0,
                                         job_id = env.job_id.0,
+                                        delivery_id = delivery_id.unwrap_or_default(),
                                         "transition invalid; rejecting"
                                     );
                                 }
@@ -315,7 +340,7 @@ async fn webhook_handler(
                             )
                         }
                         Err(PersistError::Backend(e)) => {
-                            tracing::error!(error = %e, "persistence write failed");
+                            tracing::error!(error = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "persistence write failed");
                             (
                                 StatusCode::SERVICE_UNAVAILABLE,
                                 Json(serde_json::json!({"status": "error"})),
@@ -323,8 +348,12 @@ async fn webhook_handler(
                         }
                     }
                 }
+                ParseResult::Ping => {
+                    tracing::info!(event_type, delivery_id = delivery_id.unwrap_or_default(), "ping received");
+                    (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
+                }
                 ParseResult::Skipped { ref event_type } => {
-                    tracing::debug!(event_type, "event skipped");
+                    tracing::info!(event_type, delivery_id = delivery_id.unwrap_or_default(), "event skipped");
                     (
                         StatusCode::OK,
                         Json(serde_json::json!({"status": "skipped"})),

@@ -125,7 +125,7 @@ async fn outbox_lag_is_deterministic_under_test_clock() {
             atc_github::WebhookEvent::Run(e) => e,
             _ => panic!("expected Run variant"),
         },
-        atc_github::ParseResult::Skipped { .. } => panic!("fixture must not be skipped"),
+        other => panic!("fixture must parse to Run, got {other:?}"),
     };
     let mut env = base_env.clone();
     env.run_id = atc_core::types::RunId(run_id);

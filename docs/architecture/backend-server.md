@@ -50,6 +50,7 @@ flowchart TD
     HMAC -->|valid| PARSE["Parse webhook\natc-github"]
     HMAC -->|invalid| R401["401 Unauthorized"]
     PARSE -->|Parsed| APPLY["store.apply_event\natc-persist trait"]
+    PARSE -->|Ping| R200P["200 ok"]
     PARSE -->|Skipped| R200S["200 skipped"]
     PARSE -->|Error| R422["422 Unprocessable"]
     APPLY -->|PG mode| TXN["Transactional UPSERT\n+ outbox INSERT\n+ pg_notify"]
@@ -61,6 +62,38 @@ flowchart TD
     MEM --> BCAST
     BCAST --> WS["WebSocket handlers\n→ connected clients"]
 ```
+
+`parse_webhook` (`atc-github`) returns one of three outcomes: `Parsed` (a
+`workflow_run` / `workflow_job` translated to a domain event), `Ping` (a GitHub
+connectivity check, no payload), or `Skipped` (a recognized-but-unhandled event
+type — `push`, `pull_request`, …). Ping is a first-class variant rather than a
+server-side string check, so the handler's match stays exhaustive.
+
+### Webhook boundary logging
+
+Every webhook outcome emits exactly one boundary log line so an operator can tell
+"webhook never arrived" from "arrived but unhandled" from "handled but rejected"
+at the default `info` filter. The level policy and the rationale for emitting
+skipped/ping at INFO live in [metrics.md](metrics.md) § "Webhook boundary logs";
+the lines are:
+
+| Outcome | Level | Message | Fields |
+|---------|-------|---------|--------|
+| Ping | INFO | `ping received` | `event_type`, `delivery_id` |
+| Skipped (unhandled type) | INFO | `event skipped` | `event_type`, `delivery_id` |
+| State transition committed | INFO | `event accepted` | `event_type`, `seq`, `run_id`, `job_id` (jobs), `delivery_id` |
+| Invalid transition (rejected) | WARN | `transition invalid; rejecting` | `event_type`, `run_id`, `job_id` (jobs), `delivery_id` |
+| Missing signature header | WARN | `missing X-Hub-Signature-256 header` | `delivery_id` |
+| Signature verification failed | WARN | `HMAC verification failed` | `delivery_id` |
+| Parse failure | ERROR | `webhook parse error` | `error`, `event_type`, `delivery_id` |
+| Persistence write failed | ERROR | `persistence write failed` | `error`, `event_type`, `delivery_id` |
+
+`delivery_id` is the `X-GitHub-Delivery` header — GitHub's per-delivery
+correlation id, recorded on the `webhook.handler` span and carried on **every**
+emitted line (logged as the bare string value, empty when the header is absent) so
+a line correlates to a specific GitHub delivery even in pretty (non-span-list) log
+output. A request missing the `X-GitHub-Event` header is rejected `400` without a
+log line — it never reaches a boundary outcome.
 
 ## Config hot-reload
 

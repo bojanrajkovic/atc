@@ -106,7 +106,7 @@ async fn metrics_outbox_lag_records_observation_for_future_inserted_at() {
             atc_github::WebhookEvent::Run(e) => e,
             _ => panic!("expected Run variant"),
         },
-        atc_github::ParseResult::Skipped { .. } => panic!("fixture must not be skipped"),
+        other => panic!("fixture must parse to Run, got {other:?}"),
     };
 
     let mut env = base_env.clone();
