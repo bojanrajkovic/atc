@@ -1,7 +1,7 @@
 packages: []
 catalog:
   '@bgotink/playwright-coverage': 0.3.2
-  '@biomejs/biome': 2.4.16
+  '@biomejs/biome': 2.5.0
   '@internationalized/date': 3.12.2
   '@playwright/test': 1.60.0
   '@sveltejs/vite-plugin-svelte': 7.1.2
