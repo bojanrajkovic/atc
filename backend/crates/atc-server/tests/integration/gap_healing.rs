@@ -164,7 +164,7 @@ async fn dedup_suppresses_rescan_rebroadcast() {
             atc_github::WebhookEvent::Run(e) => e,
             _ => panic!("expected Run variant"),
         },
-        atc_github::ParseResult::Skipped { .. } => panic!("fixture must not be skipped"),
+        other => panic!("fixture must parse to Run, got {other:?}"),
     };
 
     let mut env_a = base_env.clone();
@@ -320,7 +320,7 @@ async fn drain_paginates_across_batch_boundary() {
             atc_github::WebhookEvent::Run(e) => e,
             _ => panic!("expected Run variant"),
         },
-        atc_github::ParseResult::Skipped { .. } => panic!("fixture must not be skipped"),
+        other => panic!("fixture must parse to Run, got {other:?}"),
     };
 
     for i in 0i64..600 {

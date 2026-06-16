@@ -39,6 +39,17 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, the SDK is never initialized: the O
 
 **Sampler.** The default SDK sampler (`OTEL_TRACES_SAMPLER` env, defaulting to `parentbased_always_on`) is used without override. Operators wishing to tail-sample pass a sampling collector in front of the OTLP endpoint.
 
+### Webhook boundary logs
+
+The webhook handler emits one log line per ingestion outcome so smoke-testing and debugging are possible from logs alone (issue #338). The level policy:
+
+- **Every webhook outcome is visible at the default `info` filter.** `ping received` and `event skipped` (any recognized-but-unhandled event type) both log at **INFO**, not DEBUG. This trades a small amount of log volume for the ability to answer "is the webhook wired up?" without raising `ATC_LOG_FILTER`. ATC's webhook is typically subscribed to a narrow event set, so INFO-level skip volume is bounded in practice.
+- **`event accepted`** logs at INFO with `seq` + `run_id` (+ `job_id` for jobs) — the state-transition-committed signal.
+- **`webhook parse error`** logs at ERROR; **invalid transitions** and **signature/header failures** log at WARN.
+- Every boundary line carries `delivery_id` (the `X-GitHub-Delivery` header) so a line correlates to a specific GitHub delivery even in pretty (non-span-list) output.
+
+The full message/field table is in [backend-server.md](backend-server.md) § "Webhook boundary logging".
+
 ## Metric and span authoring contract
 
 Every metric ATC emits MUST ship with documentation in this section covering its interpretation surface. Every span boundary ATC adds MUST be enumerated in [Span inventory](#span-inventory).

@@ -61,6 +61,9 @@ pub enum ParseError {
 pub enum ParseResult {
     /// Successfully parsed and translated to a domain event.
     Parsed(Box<WebhookEvent>),
+    /// A GitHub `ping` event — a webhook connectivity check fired when the hook
+    /// is created. Carries no payload; the delivery itself is the signal.
+    Ping,
     /// Unrecognized event type — not an error, just not ATC's concern.
     Skipped {
         /// The event type string that was skipped.
@@ -83,8 +86,9 @@ pub enum WebhookEvent {
 ///
 /// Accepts the event type string (from the `X-GitHub-Event` HTTP header)
 /// and the raw JSON body. Returns [`ParseResult::Parsed`] for recognized
-/// events (`workflow_run`, `workflow_job`), or [`ParseResult::Skipped`]
-/// for any other event type.
+/// events (`workflow_run`, `workflow_job`), [`ParseResult::Ping`] for a
+/// `ping` connectivity check, or [`ParseResult::Skipped`] for any other
+/// event type.
 ///
 /// # Errors
 ///
@@ -144,6 +148,10 @@ pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, Parse
             );
             Ok(ParseResult::Parsed(Box::new(WebhookEvent::Job(envelope))))
         }
+        "ping" => {
+            tracing::debug!("ping webhook received");
+            Ok(ParseResult::Ping)
+        }
         _ => {
             tracing::debug!(event_type = event_type, "skipped webhook");
             Ok(ParseResult::Skipped {
@@ -173,7 +181,7 @@ mod tests {
                 }
                 WebhookEvent::Job(_) => panic!("expected Run variant"),
             },
-            ParseResult::Skipped { .. } => panic!("expected Parsed variant"),
+            other => panic!("expected Parsed variant, got {other:?}"),
         }
     }
 
@@ -195,7 +203,7 @@ mod tests {
                 }
                 WebhookEvent::Run(_) => panic!("expected Job variant"),
             },
-            ParseResult::Skipped { .. } => panic!("expected Parsed variant"),
+            other => panic!("expected Parsed variant, got {other:?}"),
         }
     }
 
@@ -207,7 +215,7 @@ mod tests {
             ParseResult::Skipped { event_type } => {
                 assert_eq!(event_type, "push");
             }
-            ParseResult::Parsed(_) => panic!("expected Skipped variant"),
+            other => panic!("expected Skipped variant, got {other:?}"),
         }
     }
 
@@ -220,8 +228,19 @@ mod tests {
             ParseResult::Skipped { event_type } => {
                 assert_eq!(event_type, "unknown_event");
             }
-            ParseResult::Parsed(_) => panic!("expected Skipped variant"),
+            other => panic!("expected Skipped variant, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_parse_ping_event() {
+        let result = parse_webhook("ping", b"{\"zen\": \"Keep it simple.\", \"hook_id\": 1}")
+            .expect("should return ParseResult::Ping");
+
+        assert!(
+            matches!(result, ParseResult::Ping),
+            "ping must map to ParseResult::Ping, got {result:?}"
+        );
     }
 
     #[test]
