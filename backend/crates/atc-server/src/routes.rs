@@ -264,7 +264,7 @@ async fn webhook_handler(
             let result = match parse_webhook(event_type, &body) {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::error!(error = %e, event_type, delivery_id = ?delivery_id, "webhook parse error");
+                    tracing::error!(error = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "webhook parse error");
                     break 'response (
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(serde_json::json!({"error": e.to_string()})),
@@ -294,7 +294,7 @@ async fn webhook_handler(
                                         event_type,
                                         seq,
                                         run_id = env.run_id.0,
-                                        delivery_id = ?delivery_id,
+                                        delivery_id = delivery_id.unwrap_or_default(),
                                         "event accepted"
                                     );
                                 }
@@ -304,7 +304,7 @@ async fn webhook_handler(
                                         seq,
                                         run_id = env.run_id.0,
                                         job_id = env.job_id.0,
-                                        delivery_id = ?delivery_id,
+                                        delivery_id = delivery_id.unwrap_or_default(),
                                         "event accepted"
                                     );
                                 }
@@ -347,11 +347,11 @@ async fn webhook_handler(
                     }
                 }
                 ParseResult::Ping => {
-                    tracing::info!(event_type, delivery_id = ?delivery_id, "ping received");
+                    tracing::info!(event_type, delivery_id = delivery_id.unwrap_or_default(), "ping received");
                     (StatusCode::OK, Json(serde_json::json!({"status": "ok"})))
                 }
                 ParseResult::Skipped { ref event_type } => {
-                    tracing::info!(event_type, delivery_id = ?delivery_id, "event skipped");
+                    tracing::info!(event_type, delivery_id = delivery_id.unwrap_or_default(), "event skipped");
                     (
                         StatusCode::OK,
                         Json(serde_json::json!({"status": "skipped"})),

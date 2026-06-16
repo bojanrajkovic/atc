@@ -139,11 +139,10 @@ async fn ping_logs_at_info_with_delivery_id() {
         line.fields.get("event_type").map(String::as_str),
         Some("ping")
     );
-    assert!(
-        line.fields
-            .get("delivery_id")
-            .is_some_and(|v| v.contains("d-ping-1")),
-        "ping line must carry delivery_id; got {:?}",
+    assert_eq!(
+        line.fields.get("delivery_id").map(String::as_str),
+        Some("d-ping-1"),
+        "ping line must carry the bare delivery_id (not Debug-wrapped); got {:?}",
         line.fields
     );
 }
@@ -161,11 +160,10 @@ async fn skipped_event_logs_at_info_with_delivery_id() {
         line.fields.get("event_type").map(String::as_str),
         Some("push")
     );
-    assert!(
-        line.fields
-            .get("delivery_id")
-            .is_some_and(|v| v.contains("d-push-1")),
-        "skipped line must carry delivery_id; got {:?}",
+    assert_eq!(
+        line.fields.get("delivery_id").map(String::as_str),
+        Some("d-push-1"),
+        "skipped line must carry the bare delivery_id (not Debug-wrapped); got {:?}",
         line.fields
     );
 }
@@ -209,11 +207,10 @@ async fn parse_failure_logs_at_error_with_delivery_id() {
         line.fields.get("event_type").map(String::as_str),
         Some("workflow_run")
     );
-    assert!(
-        line.fields
-            .get("delivery_id")
-            .is_some_and(|v| v.contains("d-bad-1")),
-        "parse-error line must carry delivery_id; got {:?}",
+    assert_eq!(
+        line.fields.get("delivery_id").map(String::as_str),
+        Some("d-bad-1"),
+        "parse-error line must carry the bare delivery_id (not Debug-wrapped); got {:?}",
         line.fields
     );
 }
