@@ -83,12 +83,14 @@
       "automerge": false
     },
     {
-      "description": "OpenTelemetry Rust ecosystem (cross-repo): bundle every otel-coupled crate into one PR. Covers opentelemetry-rust monorepo, tracing-opentelemetry, opentelemetry-system-metrics, axum-otel-metrics. 0.x ecosystem upgrades are coordinated breaking changes, so manual review and a single coherent PR are both required.",
-      "matchSourceUrls": [
-        "https://github.com/open-telemetry/opentelemetry-rust",
-        "https://github.com/tokio-rs/tracing-opentelemetry",
-        "https://github.com/haixuanTao/opentelemetry-system-metrics",
-        "https://github.com/ttys3/axum-otel-metrics"
+      "description": "OpenTelemetry Rust ecosystem (cross-repo): bundle every otel-coupled crate into one PR. Matched by crate NAME, not source URL: the opentelemetry-rust monorepo crates publish per-subdirectory `repository` deep-links (e.g. https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-sdk) that don't equal the bare repo root, and matchSourceUrls matches exactly — so the old source-URL rule silently grouped almost nothing and the crates spilled into separate PRs (the diamond split this rule exists to prevent). Covers the opentelemetry-rust monorepo (opentelemetry, opentelemetry_sdk, opentelemetry-otlp, opentelemetry-http, opentelemetry-semantic-conventions), opentelemetry-system-metrics, tracing-opentelemetry, and axum-otel-metrics. 0.x ecosystem upgrades are coordinated breaking changes, so manual review and a single coherent PR are both required.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": [
+        "opentelemetry",
+        "opentelemetry-*",
+        "opentelemetry_*",
+        "tracing-opentelemetry",
+        "axum-otel-metrics"
       ],
       "groupName": "opentelemetry ecosystem",
       "automerge": false
