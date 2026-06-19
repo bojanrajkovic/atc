@@ -1,4 +1,4 @@
-use vergen_gix::{BuildBuilder, CargoBuilder, Emitter, GixBuilder, RustcBuilder};
+use vergen_gix::{Build, Cargo, Emitter, Gix, Rustc};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Migrations live in `atc-store-pg/migrations/` (#169). The
@@ -9,9 +9,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // *additions* of new migration files, so the explicit anchor in the
     // store-pg crate is load-bearing.
     Ok(Emitter::default()
-        .add_instructions(&BuildBuilder::all_build()?)?
-        .add_instructions(&CargoBuilder::all_cargo()?)?
-        .add_instructions(&GixBuilder::all_git()?)?
-        .add_instructions(&RustcBuilder::all_rustc()?)?
+        .add_instructions(&Build::all_build())?
+        .add_instructions(&Cargo::all_cargo())?
+        .add_instructions(&Gix::all_git())?
+        .add_instructions(&Rustc::all_rustc())?
         .emit()?)
 }
