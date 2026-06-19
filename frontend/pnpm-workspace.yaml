@@ -9,9 +9,9 @@ catalog:
   '@testing-library/svelte': 5.3.1
   '@types/node': 25.9.3
   '@typescript-eslint/parser': 8.61.1
-  '@vitest/browser': 4.1.8
-  '@vitest/browser-playwright': 4.1.8
-  '@vitest/coverage-v8': 4.1.8
+  '@vitest/browser': 4.1.9
+  '@vitest/browser-playwright': 4.1.9
+  '@vitest/coverage-v8': 4.1.9
   '@lucide/svelte': 1.18.0
   'bits-ui': 2.18.1
   clsx: 2.1.1
@@ -31,6 +31,6 @@ catalog:
   tailwindcss: 4.3.1
   typescript: 6.0.3
   vite: 8.0.16
-  vitest: 4.1.8
+  vitest: 4.1.9
 allowBuilds:
   msw: true
