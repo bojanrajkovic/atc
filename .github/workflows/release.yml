@@ -77,7 +77,7 @@ jobs:
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -170,7 +170,7 @@ jobs:
       # nearest tag, so on a shallow clone vergen falls back to an
       # idempotent-output sentinel and the binary loses the tag label.
       # Full history is a few seconds and only fires on tag pushes.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -188,7 +188,7 @@ jobs:
       - if: contains(matrix.target, 'linux-musl')
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
-          toolchain: stable
+          toolchain: 1.96.0
           # Explicitly install the matrix target via rustup so the build step
           # below can use `cargo build --target ...` directly. Without this,
           # upload-rust-binary-action's auto-detect chooses `cross` for
@@ -273,7 +273,7 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -420,7 +420,7 @@ jobs:
     outputs:
       chart-version: ${{ steps.chart-version.outputs.chart-version }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -492,7 +492,7 @@ jobs:
       # fetch-depth: 0 — chart-releaser diffs the chart against prior tags to
       # decide what's new. Shallow clones make it think nothing changed and
       # silently no-op.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
