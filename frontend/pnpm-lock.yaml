@@ -28,8 +28,8 @@ catalogs:
       specifier: 4.3.1
       version: 4.3.1
     '@testing-library/svelte':
-      specifier: 5.3.1
-      version: 5.3.1
+      specifier: 5.4.0
+      version: 5.4.0
     '@types/node':
       specifier: 25.9.4
       version: 25.9.4
@@ -146,7 +146,7 @@ importers:
         version: 4.3.1(vite@8.0.16(@types/node@25.9.4)(jiti@2.7.0))
       '@testing-library/svelte':
         specifier: 'catalog:'
-        version: 5.3.1(svelte@5.56.3(@typescript-eslint/types@8.61.1))(vite@8.0.16(@types/node@25.9.4)(jiti@2.7.0))(vitest@4.1.9)
+        version: 5.4.0(svelte@5.56.3(@typescript-eslint/types@8.61.1))(vite@8.0.16(@types/node@25.9.4)(jiti@2.7.0))(vitest@4.1.9)
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.4
@@ -742,14 +742,14 @@ packages:
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
     engines: {node: '>=18'}
 
-  '@testing-library/svelte-core@1.0.0':
-    resolution: {integrity: sha512-VkUePoLV6oOYwSUvX6ShA8KLnJqZiYMIbP2JW2t0GLWLkJxKGvuH5qrrZBV/X7cXFnLGuFQEC7RheYiZOW68KQ==}
+  '@testing-library/svelte-core@1.1.0':
+    resolution: {integrity: sha512-7ZAFtBhUI/gFoevSSg9K1zkcSETJMXxUa6qwlW1SpCOvelSbrGhr8uvjK2+REhQ5HHjXwsTUaH//FImAhT4UWg==}
     engines: {node: '>=16'}
     peerDependencies:
       svelte: ^3 || ^4 || ^5 || ^5.0.0-next.0
 
-  '@testing-library/svelte@5.3.1':
-    resolution: {integrity: sha512-8Ez7ZOqW5geRf9PF5rkuopODe5RGy3I9XR+kc7zHh26gBiktLaxTfKmhlGaSHYUOTQE7wFsLMN9xCJVCszw47w==}
+  '@testing-library/svelte@5.4.0':
+    resolution: {integrity: sha512-7DyHgWrgxGpPEBLO11BC503eg282qKYvbyFKGB9oyCI59R7fPZxX/qdVTrE0nwTgWUDr53A9cH4fzCNd0Su4+g==}
     engines: {node: '>= 10'}
     peerDependencies:
       svelte: ^3 || ^4 || ^5 || ^5.0.0-next.0
@@ -2469,14 +2469,14 @@ snapshots:
       picocolors: 1.1.1
       pretty-format: 27.5.1
 
-  '@testing-library/svelte-core@1.0.0(svelte@5.56.3(@typescript-eslint/types@8.61.1))':
+  '@testing-library/svelte-core@1.1.0(svelte@5.56.3(@typescript-eslint/types@8.61.1))':
     dependencies:
       svelte: 5.56.3(@typescript-eslint/types@8.61.1)
 
-  '@testing-library/svelte@5.3.1(svelte@5.56.3(@typescript-eslint/types@8.61.1))(vite@8.0.16(@types/node@25.9.4)(jiti@2.7.0))(vitest@4.1.9)':
+  '@testing-library/svelte@5.4.0(svelte@5.56.3(@typescript-eslint/types@8.61.1))(vite@8.0.16(@types/node@25.9.4)(jiti@2.7.0))(vitest@4.1.9)':
     dependencies:
       '@testing-library/dom': 10.4.1
-      '@testing-library/svelte-core': 1.0.0(svelte@5.56.3(@typescript-eslint/types@8.61.1))
+      '@testing-library/svelte-core': 1.1.0(svelte@5.56.3(@typescript-eslint/types@8.61.1))
       svelte: 5.56.3(@typescript-eslint/types@8.61.1)
     optionalDependencies:
       vite: 8.0.16(@types/node@25.9.4)(jiti@2.7.0)
