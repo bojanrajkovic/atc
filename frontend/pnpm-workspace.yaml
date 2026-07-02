@@ -8,7 +8,7 @@ catalog:
   '@tailwindcss/vite': 4.3.2
   '@testing-library/svelte': 5.4.2
   '@types/node': 25.9.4
-  '@typescript-eslint/parser': 8.62.0
+  '@typescript-eslint/parser': 8.62.1
   '@vitest/browser': 4.1.9
   '@vitest/browser-playwright': 4.1.9
   '@vitest/coverage-v8': 4.1.9
