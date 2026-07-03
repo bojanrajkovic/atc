@@ -99,7 +99,7 @@ async fn sweep_stale_jobs(
         // A per-row failure (e.g. a race this function doesn't anticipate)
         // must not abort the rest of the batch or the runs pass after it —
         // log and continue, mirroring `atc-store-mem`'s per-row resilience.
-        match sweep_one_job(now, cutoff, job_id, pool).await {
+        match sweep_one_job(now, cutoff, job_id, pool, metrics).await {
             Ok(true) => swept += 1,
             Ok(false) => {}
             Err(e) => {
@@ -137,6 +137,7 @@ async fn sweep_one_job(
     cutoff: chrono::DateTime<chrono::Utc>,
     job_id: i64,
     pool: &TracedPool,
+    metrics: &PgMetrics,
 ) -> Result<bool, PersistError> {
     let mut tx = pool.begin().await.map_err(backend)?;
 
@@ -228,6 +229,11 @@ async fn sweep_one_job(
     let seq = insert_outbox_job_in_txn(&mut tx, &env).await?;
     notify_outbox_seq_in_txn(&mut tx, "job", seq).await?;
     tx.commit().await.map_err(backend)?;
+    // Emit AFTER commit, same as `PgStore::apply_job_event`: PG delivers
+    // NOTIFYs on COMMIT, and the listener/drain will process this row's
+    // outbox entry regardless of who wrote it — the emitted counter must
+    // count it too, or emitted/received parity dashboards under-report.
+    metrics.notify_emitted_job();
 
     tracing::debug!(job_id = row.id, "staleness sweep force-completed job");
     Ok(true)
@@ -272,7 +278,7 @@ async fn sweep_stale_runs(
 
     let mut swept = 0u64;
     for run_id in candidate_ids {
-        match sweep_one_run(now, cutoff, run_id, pool).await {
+        match sweep_one_run(now, cutoff, run_id, pool, metrics).await {
             Ok(true) => swept += 1,
             Ok(false) => {}
             Err(e) => {
@@ -315,6 +321,7 @@ async fn sweep_one_run(
     cutoff: chrono::DateTime<chrono::Utc>,
     run_id: i64,
     pool: &TracedPool,
+    metrics: &PgMetrics,
 ) -> Result<bool, PersistError> {
     let mut tx = pool.begin().await.map_err(backend)?;
 
@@ -391,6 +398,8 @@ async fn sweep_one_run(
     let seq = insert_outbox_run_in_txn(&mut tx, &env).await?;
     notify_outbox_seq_in_txn(&mut tx, "run", seq).await?;
     tx.commit().await.map_err(backend)?;
+    // Emit AFTER commit — see the matching comment in `sweep_one_job`.
+    metrics.notify_emitted_run();
 
     tracing::debug!(run_id = row.id, "staleness sweep force-completed run");
     Ok(true)

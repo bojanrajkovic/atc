@@ -17,12 +17,17 @@ use atc_core::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use atc_core::types::{JobId, RunId};
 use atc_core::{JobConclusion, fixed_test_timestamp};
 use atc_persist::PersistentStore;
+use opentelemetry::KeyValue;
 use serial_test::serial;
 use sqlx::Row;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 const THRESHOLD: Duration = Duration::from_secs(48 * 60 * 60);
+
+fn notify_attrs(kind: &'static str) -> Vec<KeyValue> {
+    vec![KeyValue::new("kind", kind)]
+}
 
 fn job_envelope(
     job_id: i64,
@@ -112,6 +117,74 @@ async fn stale_job_is_force_completed_and_broadcast() {
         .expect("broadcast did not arrive within 5s")
         .expect("broadcast channel closed");
     assert!(event.seq >= 1);
+
+    shutdown.cancel();
+    timeout(Duration::from_secs(8), store.shutdown())
+        .await
+        .expect("shutdown");
+}
+
+/// A stale-swept job's synthetic NOTIFY is counted by
+/// `atc_pg_notify_emitted_total{kind="job"}` — the same counter
+/// `PgStore::apply_job_event` increments after a real webhook commit. The
+/// listener/drain process this row's outbox entry regardless of who wrote
+/// it, so the emitted counter must count it too, or emitted/received parity
+/// dashboards under-report.
+#[tokio::test]
+#[serial]
+async fn stale_job_sweep_increments_notify_emitted_metric() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
+    let (pool, _container, db_url) = common::start_pg().await;
+    let now = fixed_test_timestamp();
+    let clock = Arc::new(TestClock::new(now));
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test_with_clock_and_staleness(
+        clock.clone(),
+        pool.clone(),
+        &db_url,
+        shutdown.clone(),
+        THRESHOLD,
+    )
+    .await;
+
+    let run_id = 9_500_801;
+    let job_id = 9_500_802;
+    store
+        .apply_run_event(run_envelope(run_id, now))
+        .await
+        .expect("seed run");
+    store
+        .apply_job_event(job_envelope(
+            job_id,
+            run_id,
+            now - chrono::Duration::hours(72),
+        ))
+        .await
+        .expect("seed stale job");
+
+    // Seeding the run/job above already incremented notify_emitted{run,job}
+    // via the normal apply_*_event path (same as a real webhook) — reset
+    // here so the snapshot below isolates the sweep's own contribution.
+    common::reset_metrics();
+
+    let (jobs_swept, _) = store
+        .staleness_sweep_once()
+        .await
+        .expect("staleness_sweep_once");
+    assert_eq!(jobs_swept, 1);
+
+    let snapshot = common::snapshot_metrics();
+    assert_eq!(
+        common::counter_value(
+            &snapshot,
+            "atc_pg_notify_emitted_total",
+            &notify_attrs("job")
+        ),
+        1,
+        "atc_pg_notify_emitted_total{{kind=job}} must increment for a stale-swept job",
+    );
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
