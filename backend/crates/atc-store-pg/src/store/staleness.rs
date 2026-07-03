@@ -257,6 +257,14 @@ async fn sweep_stale_runs(
     // invisible stub into an invisible Stale stub — filtering it out here is
     // strictly cheaper and avoids ever flipping `placeholder` to `false` on a
     // stub run (which `upsert_run_in_txn` does unconditionally on any write).
+    //
+    // `jobs.run_attempt >= runs.run_attempt` mirrors `read_all_jobs`'s filter
+    // (reads.rs): a re-run's superseded lower-attempt jobs stay in the table
+    // forever and must not count as "live" for the CURRENT attempt. Without
+    // this, a zombie `Waiting` job left over from attempt 1 (jobs sweep never
+    // completes `Waiting` — see `sweep_stale_jobs`) would permanently shield
+    // attempt 2's run row from ever being swept, even once attempt 2 itself
+    // goes stale.
     let candidate_ids: Vec<i64> = sqlx::query_scalar!(
         r#"
         SELECT id FROM runs
@@ -264,7 +272,10 @@ async fn sweep_stale_runs(
            AND placeholder = false
            AND updated_at < $1
            AND NOT EXISTS (
-               SELECT 1 FROM jobs WHERE jobs.run_id = runs.id AND jobs.status != 'Completed'
+               SELECT 1 FROM jobs
+                WHERE jobs.run_id = runs.id
+                  AND jobs.status != 'Completed'
+                  AND jobs.run_attempt >= runs.run_attempt
            )
          ORDER BY id
          LIMIT $2
@@ -357,9 +368,19 @@ async fn sweep_one_run(
         return Ok(false);
     }
 
+    // `jobs.run_attempt >= runs.run_attempt` — see the candidate query's
+    // comment above for why prior-attempt jobs must not count as live.
     let has_non_terminal_jobs: bool = sqlx::query_scalar!(
-        r#"SELECT EXISTS (SELECT 1 FROM jobs WHERE jobs.run_id = $1 AND jobs.status != 'Completed') AS "exists!""#,
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM jobs
+             WHERE jobs.run_id = $1
+               AND jobs.status != 'Completed'
+               AND jobs.run_attempt >= $2
+        ) AS "exists!"
+        "#,
         run_id,
+        row.run_attempt,
     )
     .fetch_one(&mut tx.executor())
     .await

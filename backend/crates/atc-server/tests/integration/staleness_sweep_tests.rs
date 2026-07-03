@@ -300,6 +300,89 @@ async fn run_with_live_job_is_shielded() {
         .expect("shutdown");
 }
 
+/// A zombie `Waiting` job left over from a superseded lower attempt must not
+/// permanently shield the current attempt's run from the sweep. Regression
+/// test for the Codex finding: the non-terminal-jobs guard must filter by
+/// `run_attempt`, the same way `read_all_jobs` does for `/v1/state` — a
+/// `Waiting` job can never be swept (see `sweep_stale_jobs`), so without the
+/// attempt filter this run would never be sweepable again.
+#[tokio::test]
+#[serial]
+async fn stale_run_not_shielded_by_prior_attempt_zombie_job() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let now = fixed_test_timestamp();
+    let clock = Arc::new(TestClock::new(now));
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test_with_clock_and_staleness(
+        clock.clone(),
+        pool.clone(),
+        &db_url,
+        shutdown.clone(),
+        THRESHOLD,
+    )
+    .await;
+
+    let run_id = 9_500_901;
+    let job_id = 9_500_902;
+    store
+        .apply_run_event(run_envelope(run_id, now))
+        .await
+        .expect("seed attempt-1 run");
+    // Attempt 1's job gets stuck Waiting forever — never swept, never
+    // resolved (e.g. an abandoned deployment-approval gate).
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 1,
+            ..common::make_job_envelope(
+                JobId(job_id),
+                RunId(run_id),
+                JobEvent::Waiting {
+                    labels: vec!["ubuntu-latest".to_string()],
+                    steps: vec![],
+                },
+            )
+        })
+        .await
+        .expect("seed zombie waiting job at attempt 1");
+
+    // A re-run bumps the run to attempt 2 (no new jobs arrive for it), and
+    // attempt 2 itself goes stale.
+    store
+        .apply_run_event(RunEventEnvelope {
+            run_attempt: 2,
+            updated_at: now - chrono::Duration::hours(72),
+            ..common::make_run_envelope(RunId(run_id), RunEvent::Requested)
+        })
+        .await
+        .expect("seed attempt-2 re-run");
+
+    let (_, runs_swept) = store
+        .staleness_sweep_once()
+        .await
+        .expect("staleness_sweep_once");
+    assert_eq!(
+        runs_swept, 1,
+        "attempt 2 should be swept — the attempt-1 zombie Waiting job must not shield it"
+    );
+
+    let row = sqlx::query("SELECT status, conclusion, run_attempt FROM runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query run");
+    let status: String = row.get("status");
+    let conclusion: Option<String> = row.get("conclusion");
+    let run_attempt: i32 = row.get("run_attempt");
+    assert_eq!(status, "Completed");
+    assert_eq!(conclusion.as_deref(), Some("Stale"));
+    assert_eq!(run_attempt, 2);
+
+    shutdown.cancel();
+    timeout(Duration::from_secs(8), store.shutdown())
+        .await
+        .expect("shutdown");
+}
+
 /// A job that already reached a real terminal conclusion before the sweep
 /// runs is left untouched — the row-lock re-check observes `Completed` and
 /// skips it, so a genuine `Success` is never clobbered by `Stale`.

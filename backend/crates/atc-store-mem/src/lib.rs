@@ -91,15 +91,24 @@ impl StateData {
         }
     }
 
-    /// Whether `run_id` currently has at least one non-`Completed` job.
-    /// Shared by the staleness sweep's initial candidate filter and its
-    /// immediately-before-apply recheck (see `sweep_stale`).
-    fn run_has_non_terminal_jobs(&self, run_id: RunId) -> bool {
+    /// Whether `run_id` currently has at least one non-`Completed` job at
+    /// `run_attempt` or higher. Shared by the staleness sweep's initial
+    /// candidate filter and its immediately-before-apply recheck (see
+    /// `sweep_stale`).
+    ///
+    /// The `run_attempt` filter mirrors `read_snapshot_inner`'s
+    /// `j.run_attempt >= r.run_attempt` filter: a re-run's superseded
+    /// lower-attempt jobs stay in the map forever (nothing evicts a
+    /// non-`Completed` job) and must not count as "live" for the current
+    /// attempt. Without it, a job stuck `Waiting` from a stale attempt
+    /// (`sweep_stale`'s jobs pass never completes `Waiting` jobs) would
+    /// permanently shield the current attempt's run from ever being swept.
+    fn run_has_non_terminal_jobs(&self, run_id: RunId, run_attempt: i32) -> bool {
         self.jobs_by_run.get(&run_id).is_some_and(|ids| {
             ids.iter().any(|id| {
-                self.jobs
-                    .get(id)
-                    .is_some_and(|j| j.status != JobStatus::Completed)
+                self.jobs.get(id).is_some_and(|j| {
+                    j.status != JobStatus::Completed && j.run_attempt >= run_attempt
+                })
             })
         })
     }
@@ -506,7 +515,8 @@ impl InMemoryStore {
                 .runs
                 .values()
                 .filter(|r| {
-                    let has_non_terminal_jobs = state.run_has_non_terminal_jobs(r.id);
+                    let has_non_terminal_jobs =
+                        state.run_has_non_terminal_jobs(r.id, r.run_attempt);
                     atc_core::state_machine::is_stale_run(r, has_non_terminal_jobs, now, threshold)
                 })
                 .cloned()
@@ -523,7 +533,8 @@ impl InMemoryStore {
             let still_stale = {
                 let state = self.state.read().await;
                 state.runs.get(&run_id).is_some_and(|r| {
-                    let has_non_terminal_jobs = state.run_has_non_terminal_jobs(run_id);
+                    let has_non_terminal_jobs =
+                        state.run_has_non_terminal_jobs(run_id, r.run_attempt);
                     atc_core::state_machine::is_stale_run(r, has_non_terminal_jobs, now, threshold)
                 })
             };
