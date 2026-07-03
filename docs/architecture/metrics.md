@@ -357,6 +357,13 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Attributes:** none emitted; `pod`, `instance` (injected)
 - **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained.
 
+### `atc_staleness_swept_total`
+
+- **Name:** `atc_staleness_swept_total`
+- **Type:** counter
+- **Attributes:** `kind` (`"run"` | `"job"`) — reuses the same attribute vocabulary and precomputed `KeyValue` slices as `atc_pg_notify_emitted_total`; `pod`, `instance` (injected)
+- **Measures:** Non-terminal runs/jobs force-completed with conclusion `Stale` by this replica's staleness sweep. PG mode only — the in-memory store's `sweep_stale` has no metrics surface (dev/test only, no OTel-backed dashboards). See [ADR-0013](../architecture-decisions/0013-staleness-sweep-synthetic-completion.md).
+
 ## Span inventory
 
 Span names are stable identifiers — operators build dashboards and alerts that filter on them. Do not rename a span without coordinating with dashboard owners.
@@ -434,6 +441,7 @@ Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.
 | Span | Attributes |
 |---|---|
 | `eviction.sweep` — per-tick root span for `InMemoryStore::evict_expired`. Per-tick roots mean every sweep exports as one tidy trace on tick. | `jobs.evicted` (u64; recorded after the sweep), `runs.evicted` (u64), `elapsed.micros` (u64). Recorded on both the eviction and the no-op-sweep code paths. |
+| `staleness.sweep` — per-tick root span for `InMemoryStore::sweep_stale`. Runs inside the same tick as `eviction.sweep` (not a separate task). | `jobs.swept` (u64; late-bound), `runs.swept` (u64; late-bound). |
 
 ### Outbox retention path (PG mode only)
 
@@ -441,6 +449,12 @@ Inner transaction helpers carry explicit `name = "persist.…"` spans (`persist.
 |---|---|
 | `outbox.heartbeat.tick` — per-tick root span. The spawn site deliberately omits a task-lifetime parent. | `replica_id` (string; the `<hostname>-<uuid8>` identity bound to this `PgStore`), `broadcast_watermark` (i64; late-bound), `min_replica_watermark` (i64; late-bound — `-1` when no live replicas), `oldest_row_age_seconds` (i64; late-bound — `-1` when outbox is empty). |
 | `outbox.sweep.tick` — per-tick root span. Same no-task-lifetime-parent pattern. | `retention_seconds` (u64), `rows_deleted` (u64; late-bound), `watermarks_cleaned` (u64; late-bound). |
+
+### Staleness sweep path (PG mode only)
+
+| Span | Attributes |
+|---|---|
+| `staleness.sweep.tick` — per-tick root span, same no-task-lifetime-parent pattern as the outbox sweep. Not spawned at all when `staleness_threshold` is `None`. | `threshold_seconds` (u64), `jobs_swept` (u64; late-bound), `runs_swept` (u64; late-bound). |
 
 ### sqlx per-query spans (PG mode)
 
