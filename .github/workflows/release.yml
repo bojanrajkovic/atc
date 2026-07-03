@@ -188,7 +188,7 @@ jobs:
       - if: contains(matrix.target, 'linux-musl')
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # zizmor: ignore[superfluous-actions]
         with:
-          toolchain: 1.96.0
+          toolchain: 1.96.1
           # Explicitly install the matrix target via rustup so the build step
           # below can use `cargo build --target ...` directly. Without this,
           # upload-rust-binary-action's auto-detect chooses `cross` for
