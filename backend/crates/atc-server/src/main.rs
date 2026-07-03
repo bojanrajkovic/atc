@@ -194,6 +194,7 @@ async fn main() {
             pg_listener,
             shutdown.clone(),
             cfg.outbox_retention,
+            cfg.staleness_threshold,
         )
         .await
         .unwrap_or_else(|e| {
@@ -206,6 +207,7 @@ async fn main() {
             Arc::clone(&clock),
             Duration::from_hours(1),
             Duration::from_mins(1),
+            cfg.staleness_threshold,
             shutdown.clone(),
         )
     };

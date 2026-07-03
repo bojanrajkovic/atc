@@ -178,6 +178,23 @@ config:
   #
   # See docs/architecture-decisions/0009-display-vs-data-retention.md.
   displayTtl: "1h"
+  # -- Staleness sweep threshold (humantime: "48h", "3d"). Maps to
+  # ATC_STALENESS_THRESHOLD. Default 48 hours; minimum supported value is
+  # "6h" (below GitHub's hosted-job ceiling, sub-floor values would
+  # false-positive on legitimate long-running jobs — `Config::load` rejects
+  # them at startup).
+  #
+  # After this long with no observed webhook activity, a non-terminal run
+  # or job is force-completed with conclusion "Stale" through the normal
+  # outbox/NOTIFY write path. Restart-only, same reload posture as
+  # outboxRetention/displayTtl above. To disable the sweep entirely, mount
+  # a config file with `staleness_threshold: null` instead of using this
+  # value — figment's env layer always overrides the file, so a plain
+  # string here can't express "disabled" the way the YAML file's literal
+  # `null` can.
+  #
+  # See docs/architecture-decisions/0013-staleness-sweep-synthetic-completion.md.
+  stalenessThreshold: "48h"
   # -- GitHub configuration.
   github:
     # -- GitHub webhook secret used for HMAC-SHA256 signature validation.

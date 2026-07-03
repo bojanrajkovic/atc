@@ -36,6 +36,7 @@ async fn in_memory_start_subscribe_observes_apply() {
         Arc::new(SystemClock),
         Duration::from_hours(1),
         Duration::from_mins(1),
+        None,
         shutdown.clone(),
     );
 
@@ -89,6 +90,7 @@ async fn in_memory_shutdown_is_idempotent() {
         Arc::new(SystemClock),
         Duration::from_hours(1),
         Duration::from_mins(1),
+        None,
         shutdown.clone(),
     );
 
@@ -122,6 +124,7 @@ async fn pg_start_with_test_hooks_exposes_handles() {
         pg_listener,
         shutdown.clone(),
         Duration::from_secs(7 * 24 * 60 * 60),
+        None,
         Default::default(),
     )
     .await
@@ -181,6 +184,7 @@ async fn pg_shutdown_is_idempotent() {
         pg_listener,
         shutdown.clone(),
         Duration::from_secs(7 * 24 * 60 * 60),
+        None,
         Default::default(),
     )
     .await
@@ -212,6 +216,7 @@ async fn pg_shutdown_handles_aborted_drain_cleanly() {
         pg_listener,
         shutdown.clone(),
         Duration::from_secs(7 * 24 * 60 * 60),
+        None,
         Default::default(),
     )
     .await
@@ -243,6 +248,7 @@ async fn subscribe_via_trait_object() {
         Arc::new(SystemClock),
         Duration::from_hours(1),
         Duration::from_mins(1),
+        None,
         shutdown.clone(),
     );
 

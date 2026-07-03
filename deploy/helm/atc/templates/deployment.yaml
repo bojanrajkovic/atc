@@ -91,6 +91,8 @@ spec:
               value: {{ .Values.config.outboxRetention | quote }}
             - name: ATC_DISPLAY_TTL
               value: {{ .Values.config.displayTtl | quote }}
+            - name: ATC_STALENESS_THRESHOLD
+              value: {{ .Values.config.stalenessThreshold | quote }}
             {{- if and .Values.existingSecret.database.name .Values.existingSecret.database.urlKey }}
             - name: ATC_DATABASE_URL
               valueFrom:

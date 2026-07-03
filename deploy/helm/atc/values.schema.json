@@ -152,6 +152,11 @@
           "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
           "description": "Display TTL in humantime format (e.g. '1h', '30m', '2h'). Maps to ATC_DISPLAY_TTL. Default '1h'. Completed runs and jobs older than `now - displayTtl` are filtered out of /v1/state and aged out of the live UI; the underlying rows persist. Restart-only. Minimum supported is '60s' — sub-floor values fail process startup. See ADR 0009."
         },
+        "stalenessThreshold": {
+          "type": "string",
+          "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
+          "description": "Staleness sweep threshold in humantime format (e.g. '48h', '3d'). Maps to ATC_STALENESS_THRESHOLD. Default '48h'. After this long with no observed webhook activity, a non-terminal run or job is force-completed with conclusion 'Stale' through the normal outbox/NOTIFY write path. Restart-only. Minimum supported is '6h' — sub-floor values fail process startup (below GitHub's hosted-job ceiling, invites false positives). See ADR 0013."
+        },
         "github": {
           "type": "object",
           "additionalProperties": false,
