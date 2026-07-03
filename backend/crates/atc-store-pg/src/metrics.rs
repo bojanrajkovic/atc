@@ -115,6 +115,12 @@ pub struct PgMetrics {
     /// replica's sweep task. Counter; no attributes. See `metrics.md`
     /// § Outbox retention.
     pub outbox_rows_deleted: Counter<u64>,
+
+    /// `atc_staleness_swept_total` — non-terminal rows force-completed with
+    /// conclusion `Stale` by this replica's staleness sweep, attributed by
+    /// `kind` (`run` or `job`) — reuses `attrs_run` / `attrs_job` above
+    /// rather than a separate attribute vocabulary. See ADR-0013.
+    staleness_swept: Counter<u64>,
     // The two observable gauges below (`atc_pg_outbox_min_replica_watermark`,
     // `atc_pg_outbox_oldest_row_age_seconds`) have no field here because their
     // callbacks close over `Weak<AtomicI64>` references registered with the
@@ -260,6 +266,14 @@ impl PgMetrics {
             )
             .build();
 
+        let staleness_swept = meter
+            .u64_counter("atc_staleness_swept_total")
+            .with_description(
+                "Non-terminal runs/jobs force-completed with conclusion Stale by this \
+                 replica's staleness sweep, attributed by kind (run or job)",
+            )
+            .build();
+
         // Observable gauges read from the listener/drain-owned atomics on
         // every collection cycle. No call site needs to record() — updating
         // the AtomicI64 IS the metric update. The Weak upgrade short-circuits
@@ -364,6 +378,7 @@ impl PgMetrics {
             drain_startup,
             drain_shutdown_remaining_rows,
             outbox_rows_deleted,
+            staleness_swept,
         })
     }
 
@@ -385,5 +400,15 @@ impl PgMetrics {
     /// Increment `atc_pg_notify_emitted_total{kind="job"}`.
     pub fn notify_emitted_job(&self) {
         self.notify_emitted.add(1, &self.attrs_job);
+    }
+
+    /// Add `count` to `atc_staleness_swept_total{kind="run"}`.
+    pub fn staleness_swept_run(&self, count: u64) {
+        self.staleness_swept.add(count, &self.attrs_run);
+    }
+
+    /// Add `count` to `atc_staleness_swept_total{kind="job"}`.
+    pub fn staleness_swept_job(&self, count: u64) {
+        self.staleness_swept.add(count, &self.attrs_job);
     }
 }

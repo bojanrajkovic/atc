@@ -247,6 +247,7 @@ mod tests {
             Arc::new(SystemClock),
             Duration::from_secs(3600),
             Duration::from_secs(60),
+            None,
             shutdown,
         )
     }

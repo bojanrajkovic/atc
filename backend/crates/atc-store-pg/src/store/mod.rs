@@ -32,6 +32,7 @@ use crate::listener;
 use crate::metrics::PgMetrics;
 
 pub mod retention;
+pub mod staleness;
 pub mod writes;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -77,6 +78,11 @@ pub(crate) const OUTBOX_SWEEP_MAX_ROWS: i64 = 10_000;
 /// margin against false-positive cleanup of live replicas.
 pub(crate) const OUTBOX_WATERMARK_CLEANUP_WINDOW: Duration = Duration::from_secs(3600);
 
+/// Per-tick maximum candidate rows the staleness sweep considers, per entity
+/// (jobs and runs are capped independently). Bounds per-tick work under a
+/// large stale backlog; leftovers wait for the next tick.
+pub(crate) const STALENESS_SWEEP_BATCH_CAP: i64 = 500;
+
 // ---------------------------------------------------------------------------
 // Per-task shutdown timeouts (moved from atc-server::shutdown)
 // ---------------------------------------------------------------------------
@@ -93,7 +99,8 @@ pub const SHUTDOWN_TIMEOUT_OUTBOX_HEARTBEAT: Duration = Duration::from_secs(2);
 /// Join budget for the outbox sweep task during [`PgStore::shutdown`]. Same
 /// cooperative shape as the heartbeat. A sweep can run a multi-second
 /// statement under contention, so 2 s is the join budget for cooperative
-/// exit, not for the in-flight statement.
+/// exit, not for the in-flight statement. Also covers the staleness sweep,
+/// which now runs inside this same task (see `spawn_outbox_sweep`).
 pub const SHUTDOWN_TIMEOUT_OUTBOX_SWEEP: Duration = Duration::from_secs(2);
 
 // ---------------------------------------------------------------------------
@@ -296,6 +303,12 @@ pub struct PgStore {
     /// re-read after construction.
     #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub(crate) outbox_retention: Duration,
+    /// Configured staleness sweep threshold. `None` disables the sweep (no
+    /// task spawned). Production code reads this only at spawn time; the
+    /// `#[cfg(any(test, feature = "test-support"))] staleness_sweep_once()`
+    /// entry point reads it back off `self`.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
+    pub(crate) staleness_threshold: Option<Duration>,
     /// Atomic mirror of `MIN(broadcast_watermark)` across non-stale replicas.
     /// Refreshed by the heartbeat task on every tick; read by the
     /// `atc_pg_outbox_min_replica_watermark` observable gauge callback via a
@@ -320,6 +333,8 @@ pub(crate) struct PgStoreHandles {
     pub(crate) listener: JoinHandle<()>,
     pub(crate) drain: JoinHandle<()>,
     pub(crate) heartbeat: JoinHandle<()>,
+    /// Also drives the staleness sweep on the same tick — see
+    /// `retention::spawn_outbox_sweep`.
     pub(crate) sweep: Option<JoinHandle<()>>,
 }
 
@@ -339,6 +354,7 @@ impl PgStore {
         listener_conn: PgListener,
         shutdown: CancellationToken,
         outbox_retention: Duration,
+        staleness_threshold: Option<Duration>,
     ) -> Result<Arc<Self>, PgStoreStartError> {
         Self::start_inner(
             clock,
@@ -346,6 +362,7 @@ impl PgStore {
             listener_conn,
             shutdown,
             outbox_retention,
+            staleness_threshold,
             None,
             None,
             None,
@@ -364,6 +381,7 @@ impl PgStore {
         listener_conn: PgListener,
         shutdown: CancellationToken,
         outbox_retention: Duration,
+        staleness_threshold: Option<Duration>,
         received_counter: Option<Arc<AtomicU64>>,
         observed_passes: Option<Arc<AtomicU64>>,
         drain_started: Option<Arc<Notify>>,
@@ -492,11 +510,14 @@ impl PgStore {
         // unconditional first iteration — there's no urgency to sweep at
         // startup, and a quiet first-`OUTBOX_SWEEP_INTERVAL` warm-up gives
         // operators time to observe the new replica via dashboards before
-        // destructive work begins.
+        // destructive work begins. Also drives the staleness sweep
+        // (`staleness_threshold: None` skips just that pass each tick — see
+        // `spawn_outbox_sweep`'s doc comment).
         let sweep_handle = retention::spawn_outbox_sweep(
             Arc::clone(&clock),
             pool.clone(),
             outbox_retention,
+            staleness_threshold,
             Arc::clone(&pg_metrics),
             shutdown,
         );
@@ -521,6 +542,7 @@ impl PgStore {
             })),
             replica_id,
             outbox_retention,
+            staleness_threshold,
             min_replica_watermark_atomic,
             oldest_row_age_seconds_atomic,
         });

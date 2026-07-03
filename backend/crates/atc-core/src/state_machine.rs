@@ -5,6 +5,9 @@
 //! - [`apply_run_event`] — produces an updated [`WorkflowRun`] from an event envelope.
 //! - [`apply_job_event`] — produces an updated [`Job`] from an event envelope.
 //! - [`is_evictable`] — predicate for TTL eviction of completed jobs.
+//! - [`is_stale_job`] / [`is_stale_run`] — predicates for the staleness sweep
+//!   that force-completes non-terminal rows GitHub never sent a terminal
+//!   webhook for.
 //!
 //! All functions are synchronous and side-effect-free; locking, sequencing,
 //! indexing, and broadcasting are the responsibility of the caller (typically
@@ -16,6 +19,15 @@ use std::fmt;
 use crate::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use crate::job::{InvalidJobTransition, Job, JobStatus};
 use crate::run::{InvalidRunTransition, RunStatus, WorkflowRun};
+
+/// Return the last-observed-activity instant for a job.
+///
+/// `workflow_job` webhooks only fire on the four status transitions, so
+/// `GREATEST(created_at, started_at)` already captures the most recent
+/// activity without a dedicated `updated_at` column/migration.
+fn job_last_activity(job: &Job) -> chrono::DateTime<chrono::Utc> {
+    job.started_at.unwrap_or(job.created_at).max(job.created_at)
+}
 
 /// Errors that can occur during state machine operations.
 #[derive(Debug)]
@@ -227,6 +239,52 @@ pub fn is_evictable(
         && job
             .completed_at
             .is_some_and(|t| now.signed_duration_since(t) > ttl_delta)
+}
+
+/// Return whether a job is eligible for the staleness sweep.
+///
+/// A job is stale when it is not yet `Completed` and its last-observed
+/// activity (`GREATEST(created_at, started_at)` — see [`job_last_activity`])
+/// is older than `threshold`. The sweep force-completes stale jobs with
+/// conclusion `Stale`; see `atc-store-pg`'s staleness sweep and ADR-0013.
+///
+/// Excludes `Waiting`: `JobStatus::transition_to` has no `Waiting ->
+/// Completed` arm (only `Queued`/`InProgress` can reach `Completed`), so a
+/// `Waiting` job can never be force-completed — selecting one as a
+/// candidate would only fail the predicated UPSERT every tick. A job stuck
+/// `Waiting` (e.g. an unattended deployment-approval gate) surfaces
+/// indefinitely instead; see ADR-0013's failure-mode table.
+#[must_use]
+pub fn is_stale_job(
+    job: &Job,
+    now: chrono::DateTime<chrono::Utc>,
+    threshold: std::time::Duration,
+) -> bool {
+    let threshold_delta = chrono::TimeDelta::from_std(threshold).unwrap_or(chrono::TimeDelta::MAX);
+    matches!(job.status, JobStatus::Queued | JobStatus::InProgress)
+        && now.signed_duration_since(job_last_activity(job)) > threshold_delta
+}
+
+/// Return whether a run is eligible for the staleness sweep.
+///
+/// A run is stale when it is not yet `Completed`, has zero non-terminal
+/// jobs (`has_non_terminal_jobs = false` — a live job's parent run must
+/// never be swept out from under it), and its `updated_at` is older than
+/// `threshold`. `updated_at` only bumps on run-level webhooks, so the
+/// non-terminal-jobs guard is load-bearing: without it, a long-running
+/// self-hosted job's run would starve on its own `updated_at` signal and be
+/// falsely swept. See ADR-0013.
+#[must_use]
+pub fn is_stale_run(
+    run: &WorkflowRun,
+    has_non_terminal_jobs: bool,
+    now: chrono::DateTime<chrono::Utc>,
+    threshold: std::time::Duration,
+) -> bool {
+    let threshold_delta = chrono::TimeDelta::from_std(threshold).unwrap_or(chrono::TimeDelta::MAX);
+    run.status != RunStatus::Completed
+        && !has_non_terminal_jobs
+        && now.signed_duration_since(run.updated_at) > threshold_delta
 }
 
 #[cfg(test)]

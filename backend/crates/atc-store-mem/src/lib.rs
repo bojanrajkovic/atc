@@ -11,8 +11,8 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use atc_core::{
-    Clock, Job, JobId, PersistError, RunId, WorkflowRun,
-    event::{JobEventEnvelope, RunEventEnvelope},
+    Clock, Job, JobConclusion, JobId, PersistError, RunConclusion, RunId, WorkflowRun,
+    event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 use atc_github::WebhookEvent;
 use atc_persist::{LivenessError, PersistentStore};
@@ -90,6 +90,28 @@ impl StateData {
             jobs_by_repo: HashMap::new(),
         }
     }
+
+    /// Whether `run_id` currently has at least one non-`Completed` job at
+    /// `run_attempt` or higher. Shared by the staleness sweep's initial
+    /// candidate filter and its immediately-before-apply recheck (see
+    /// `sweep_stale`).
+    ///
+    /// The `run_attempt` filter mirrors `read_snapshot_inner`'s
+    /// `j.run_attempt >= r.run_attempt` filter: a re-run's superseded
+    /// lower-attempt jobs stay in the map forever (nothing evicts a
+    /// non-`Completed` job) and must not count as "live" for the current
+    /// attempt. Without it, a job stuck `Waiting` from a stale attempt
+    /// (`sweep_stale`'s jobs pass never completes `Waiting` jobs) would
+    /// permanently shield the current attempt's run from ever being swept.
+    fn run_has_non_terminal_jobs(&self, run_id: RunId, run_attempt: i32) -> bool {
+        self.jobs_by_run.get(&run_id).is_some_and(|ids| {
+            ids.iter().any(|id| {
+                self.jobs.get(id).is_some_and(|j| {
+                    j.status != JobStatus::Completed && j.run_attempt >= run_attempt
+                })
+            })
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +155,7 @@ impl InMemoryStore {
         clock: Arc<dyn Clock>,
         completed_ttl: Duration,
         eviction_period: Duration,
+        staleness_threshold: Option<Duration>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let (broadcast_tx, _sentinel) =
@@ -145,7 +168,8 @@ impl InMemoryStore {
             broadcast_tx,
             eviction_handle: StdMutex::new(None),
         });
-        let handle = Arc::clone(&store).spawn_eviction(eviction_period, shutdown);
+        let handle =
+            Arc::clone(&store).spawn_eviction(eviction_period, staleness_threshold, shutdown);
         *store
             .eviction_handle
             .lock()
@@ -154,23 +178,27 @@ impl InMemoryStore {
     }
 
     /// Spawn the supervised background task that periodically evicts expired
-    /// entries from this store.
+    /// entries and sweeps stale non-terminal entries from this store.
     ///
     /// Returns a [`JoinHandle`] that resolves when the task exits cooperatively
-    /// after `cancel` is cancelled. The first eviction runs after `interval`
+    /// after `cancel` is cancelled. The first tick runs after `interval`
     /// elapses (not immediately) — we consume the `tokio::time::interval`
     /// first tick to align the cadence. The `cancel` arm of the select is
     /// `biased;` first so cancellation is always honoured before the next
     /// tick fires, matching the issue #60 supervision pattern.
     ///
-    /// No `.instrument(...)` task-lifetime root: each `evict_expired` call's
-    /// `#[tracing::instrument(name = "eviction.sweep")]` becomes its own root
+    /// `staleness_threshold = None` skips the staleness sweep entirely (the
+    /// operator disabled it) — every tick still runs eviction. See ADR-0013.
+    ///
+    /// No `.instrument(...)` task-lifetime root: each `evict_expired` /
+    /// `sweep_stale` call's own `#[tracing::instrument]` becomes its own root
     /// span, so every sweep is one tidy trace that exports on tick rather
     /// than accumulating under a long-lived parent that only ends at process
     /// shutdown.
     fn spawn_eviction(
         self: Arc<Self>,
         interval: Duration,
+        staleness_threshold: Option<Duration>,
         cancel: CancellationToken,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -181,7 +209,12 @@ impl InMemoryStore {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => break,
-                    _ = ticker.tick() => self.evict_expired().await,
+                    _ = ticker.tick() => {
+                        self.evict_expired().await;
+                        if let Some(threshold) = staleness_threshold {
+                            self.sweep_stale(threshold).await;
+                        }
+                    }
                 }
             }
         })
@@ -379,6 +412,209 @@ impl InMemoryStore {
             "eviction sweep complete"
         );
     }
+
+    /// Force-complete stale non-terminal runs/jobs with conclusion `Stale`,
+    /// mirroring `atc-store-pg`'s staleness sweep (see ADR-0013).
+    ///
+    /// Jobs sweep first so a run's non-terminal-jobs guard reflects jobs
+    /// already swept this tick — same ordering rationale as the PG sweep.
+    /// Each candidate's staleness is re-checked and, if still stale, applied
+    /// in one atomic critical section (`sweep_one_job_if_stale` /
+    /// `sweep_one_run_if_stale`) — the same guarantee `atc-store-pg`'s row
+    /// lock gives, not merely a narrowed race window. This matters because
+    /// `Completed -> Completed` is an *admitted* idempotent replay (by
+    /// design, for real webhook redelivery), not a rejected transition: a
+    /// naive "recheck, then separately call `apply_job_event`" would let a
+    /// real completion landing in that gap get silently overwritten by the
+    /// synthetic `Stale` conclusion, with no self-heal (the real webhook
+    /// already fired and won't fire again).
+    #[tracing::instrument(
+        name = "staleness.sweep",
+        skip_all,
+        fields(jobs.swept = tracing::field::Empty, runs.swept = tracing::field::Empty),
+    )]
+    pub async fn sweep_stale(&self, threshold: Duration) {
+        let now = self.clock.now();
+
+        let candidate_job_ids: Vec<JobId> = {
+            let state = self.state.read().await;
+            state
+                .jobs
+                .values()
+                .filter(|j| atc_core::state_machine::is_stale_job(j, now, threshold))
+                .map(|j| j.id)
+                .collect()
+        };
+        let mut jobs_swept = 0u64;
+        for job_id in candidate_job_ids {
+            if self.sweep_one_job_if_stale(job_id, now, threshold).await {
+                jobs_swept += 1;
+            }
+        }
+
+        // Runs candidate list is gathered after the jobs pass completes, so
+        // the non-terminal-jobs guard reflects jobs already swept above.
+        let candidate_run_ids: Vec<RunId> = {
+            let state = self.state.read().await;
+            state
+                .runs
+                .values()
+                .filter(|r| {
+                    let has_non_terminal_jobs =
+                        state.run_has_non_terminal_jobs(r.id, r.run_attempt);
+                    atc_core::state_machine::is_stale_run(r, has_non_terminal_jobs, now, threshold)
+                })
+                .map(|r| r.id)
+                .collect()
+        };
+        let mut runs_swept = 0u64;
+        for run_id in candidate_run_ids {
+            if self.sweep_one_run_if_stale(run_id, now, threshold).await {
+                runs_swept += 1;
+            }
+        }
+
+        let span = tracing::Span::current();
+        span.record("jobs.swept", jobs_swept);
+        span.record("runs.swept", runs_swept);
+        if jobs_swept > 0 || runs_swept > 0 {
+            tracing::info!(jobs_swept, runs_swept, "staleness sweep complete");
+        }
+    }
+
+    /// Re-check `job_id`'s staleness and, if still stale, force-complete it
+    /// — all under one `state` write-lock acquisition shared with the
+    /// recheck, so no mutation can land in between. Returns `true` if swept.
+    ///
+    /// A job whose parent run row doesn't exist yet (job-before-run
+    /// delivery) is skipped — `JobEventEnvelope` requires org/repo and
+    /// there's no run row yet to source them from.
+    async fn sweep_one_job_if_stale(
+        &self,
+        job_id: JobId,
+        now: DateTime<Utc>,
+        threshold: Duration,
+    ) -> bool {
+        let mut seq_guard = self.seq.lock().await;
+        let mut state = self.state.write().await;
+
+        let Some(existing) = state.jobs.get(&job_id).cloned() else {
+            return false;
+        };
+        if !atc_core::state_machine::is_stale_job(&existing, now, threshold) {
+            return false;
+        }
+        let Some(parent) = state.runs.get(&existing.run_id) else {
+            return false;
+        };
+
+        let env = JobEventEnvelope {
+            job_id: existing.id,
+            run_id: existing.run_id,
+            org: parent.org.clone(),
+            repo: parent.repo.clone(),
+            name: existing.name,
+            created_at: existing.created_at,
+            started_at: existing.started_at,
+            completed_at: Some(now),
+            run_attempt: existing.run_attempt,
+            action: JobEvent::Completed {
+                conclusion: JobConclusion::Stale,
+                runner: existing.runner,
+                labels: existing.labels,
+                steps: existing.steps,
+            },
+        };
+
+        let result = self
+            .apply_job_event_locked(&mut seq_guard, &mut state, env.clone())
+            .await;
+        drop(state);
+
+        match result {
+            Ok(allocated) => {
+                let _ = self.broadcast_tx.send(CommittedEvent {
+                    seq: allocated,
+                    event: WebhookEvent::Job(env),
+                });
+                true
+            }
+            Err(e) => {
+                // Unreachable in practice — the fresh `is_stale_job` check
+                // above, taken under the same lock as the write, guarantees
+                // the transition is valid. Logged rather than unwrapped in
+                // case a future edge case proves otherwise.
+                tracing::debug!(job_id = job_id.0, error.message = ?e, "staleness sweep: job apply unexpectedly rejected");
+                false
+            }
+        }
+    }
+
+    /// Re-check `run_id`'s staleness (status, age, and the non-terminal-jobs
+    /// guard) and, if still stale, force-complete it — all under one
+    /// `state` write-lock acquisition shared with the recheck. Returns
+    /// `true` if swept.
+    async fn sweep_one_run_if_stale(
+        &self,
+        run_id: RunId,
+        now: DateTime<Utc>,
+        threshold: Duration,
+    ) -> bool {
+        let mut seq_guard = self.seq.lock().await;
+        let mut state = self.state.write().await;
+
+        let Some(existing) = state.runs.get(&run_id).cloned() else {
+            return false;
+        };
+        let has_non_terminal_jobs = state.run_has_non_terminal_jobs(run_id, existing.run_attempt);
+        if !atc_core::state_machine::is_stale_run(&existing, has_non_terminal_jobs, now, threshold)
+        {
+            return false;
+        }
+
+        let env = RunEventEnvelope {
+            run_id: existing.id,
+            org: existing.org,
+            repo: existing.repo,
+            workflow_name: existing.workflow_name,
+            workflow_path: existing.workflow_path,
+            branch: existing.branch,
+            head_sha: existing.head_sha,
+            commit_message: existing.commit_message,
+            trigger_event: existing.event,
+            display_title: existing.display_title,
+            html_url: existing.html_url,
+            created_at: existing.created_at,
+            run_started_at: existing.run_started_at,
+            updated_at: now,
+            completed_at: Some(now),
+            run_attempt: existing.run_attempt,
+            action: RunEvent::Completed {
+                conclusion: RunConclusion::Stale,
+            },
+        };
+
+        let result = self
+            .apply_run_event_locked(&mut seq_guard, &mut state, env.clone())
+            .await;
+        drop(state);
+
+        match result {
+            Ok(allocated) => {
+                let _ = self.broadcast_tx.send(CommittedEvent {
+                    seq: allocated,
+                    event: WebhookEvent::Run(env),
+                });
+                true
+            }
+            Err(e) => {
+                // Unreachable in practice — see the matching comment in
+                // `sweep_one_job_if_stale`.
+                tracing::debug!(run_id = run_id.0, error.message = ?e, "staleness sweep: run apply unexpectedly rejected");
+                false
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -449,7 +685,66 @@ impl PersistentStore for InMemoryStore {
     async fn apply_run_event(&self, env: RunEventEnvelope) -> Result<u64, PersistError> {
         let mut seq_guard = self.seq.lock().await;
         let mut state = self.state.write().await;
+        let allocated = self
+            .apply_run_event_locked(&mut seq_guard, &mut state, env.clone())
+            .await?;
+        drop(state);
 
+        tracing::Span::current().record("seq", allocated);
+        let _ = self.broadcast_tx.send(CommittedEvent {
+            seq: allocated,
+            event: WebhookEvent::Run(env),
+        });
+        Ok(allocated)
+    }
+
+    /// Apply a job event to the in-memory state and broadcast.
+    ///
+    /// Same locking semantics as [`apply_run_event`]. Invalid transitions return
+    /// `Err(PersistError::InvalidTransition)` without side effects.
+    /// Secondary indexes are updated on first sight.
+    #[tracing::instrument(
+        name = "persist.apply.job_event",
+        skip_all,
+        fields(run_id = env.run_id.0, job_id = env.job_id.0, seq = tracing::field::Empty),
+    )]
+    async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError> {
+        let mut seq_guard = self.seq.lock().await;
+        let mut state = self.state.write().await;
+        let allocated = self
+            .apply_job_event_locked(&mut seq_guard, &mut state, env.clone())
+            .await?;
+        drop(state);
+
+        tracing::Span::current().record("seq", allocated);
+        let _ = self.broadcast_tx.send(CommittedEvent {
+            seq: allocated,
+            event: WebhookEvent::Job(env),
+        });
+        Ok(allocated)
+    }
+}
+
+impl InMemoryStore {
+    /// Core of [`PersistentStore::apply_run_event`], factored out so the
+    /// staleness sweep (`sweep_one_run_if_stale`) can recheck a candidate's
+    /// staleness and apply the resulting envelope inside the SAME lock
+    /// acquisition as the recheck — genuinely atomic, not "recheck under one
+    /// lock, apply under a second lock a moment later". Both the public
+    /// trait method and the sweep call this identical mutation logic; the
+    /// only thing that differs between call sites is where the lock is
+    /// acquired and whether a staleness recheck happens before this runs.
+    ///
+    /// Callers own `seq_guard`/`state` and are responsible for dropping
+    /// `state` before broadcasting (this fn does not broadcast) — `seq_guard`
+    /// stays held through the broadcast so concurrent callers' broadcasts
+    /// stay in seq order.
+    async fn apply_run_event_locked(
+        &self,
+        seq_guard: &mut u64,
+        state: &mut StateData,
+        env: RunEventEnvelope,
+    ) -> Result<u64, PersistError> {
         let existing = state.runs.get(&env.run_id).cloned();
         // Reject a stale lower attempt outright — mirrors the PG predicate's
         // `EXCLUDED.run_attempt = runs.run_attempt` gate. A delayed event from a
@@ -474,7 +769,7 @@ impl PersistentStore for InMemoryStore {
             .unwrap_or(false);
         let run = atc_core::state_machine::apply_run_event(
             if is_new_attempt { None } else { existing },
-            env.clone(),
+            env,
         )
         .map_err(|e| {
             tracing::warn!(error.message = %e, "state machine rejected run transition");
@@ -486,31 +781,18 @@ impl PersistentStore for InMemoryStore {
         state.runs.insert(run.id, run);
 
         *seq_guard += 1;
-        let allocated = *seq_guard;
-        drop(state);
-
-        tracing::Span::current().record("seq", allocated);
-        let _ = self.broadcast_tx.send(CommittedEvent {
-            seq: allocated,
-            event: WebhookEvent::Run(env),
-        });
-        Ok(allocated)
+        Ok(*seq_guard)
     }
 
-    /// Apply a job event to the in-memory state and broadcast.
-    ///
-    /// Same locking semantics as [`apply_run_event`]. Invalid transitions return
-    /// `Err(PersistError::InvalidTransition)` without side effects.
-    /// Secondary indexes are updated on first sight.
-    #[tracing::instrument(
-        name = "persist.apply.job_event",
-        skip_all,
-        fields(run_id = env.run_id.0, job_id = env.job_id.0, seq = tracing::field::Empty),
-    )]
-    async fn apply_job_event(&self, env: JobEventEnvelope) -> Result<u64, PersistError> {
-        let mut seq_guard = self.seq.lock().await;
-        let mut state = self.state.write().await;
-
+    /// Core of [`PersistentStore::apply_job_event`] — see
+    /// [`Self::apply_run_event_locked`]'s doc comment for the shared-helper
+    /// rationale.
+    async fn apply_job_event_locked(
+        &self,
+        seq_guard: &mut u64,
+        state: &mut StateData,
+        env: JobEventEnvelope,
+    ) -> Result<u64, PersistError> {
         let job_id = env.job_id;
         let run_id = env.run_id;
         let org = env.org.clone();
@@ -518,7 +800,7 @@ impl PersistentStore for InMemoryStore {
         let is_new = !state.jobs.contains_key(&job_id);
         let existing = state.jobs.get(&job_id).cloned();
 
-        let job = atc_core::state_machine::apply_job_event(existing, env.clone()).map_err(|e| {
+        let job = atc_core::state_machine::apply_job_event(existing, env).map_err(|e| {
             tracing::warn!(error.message = %e, "state machine rejected job transition");
             atc_core::PersistError::from(e)
         })?;
@@ -539,14 +821,6 @@ impl PersistentStore for InMemoryStore {
         }
 
         *seq_guard += 1;
-        let allocated = *seq_guard;
-        drop(state);
-
-        tracing::Span::current().record("seq", allocated);
-        let _ = self.broadcast_tx.send(CommittedEvent {
-            seq: allocated,
-            event: WebhookEvent::Job(env),
-        });
-        Ok(allocated)
+        Ok(*seq_guard)
     }
 }

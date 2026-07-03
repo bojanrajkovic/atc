@@ -22,7 +22,7 @@ use tokio::sync::Notify;
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::{PgStore, PgStoreStartError, retention};
+use super::{PgStore, PgStoreStartError, retention, staleness};
 
 /// Test hooks for [`PgStore::start_with_test_hooks`]. Mirrors the optional
 /// instrumentation params on the existing `spawn_listener_task` /
@@ -61,6 +61,7 @@ impl PgStore {
         listener_conn: PgListener,
         shutdown: CancellationToken,
         outbox_retention: Duration,
+        staleness_threshold: Option<Duration>,
         hooks: PgStoreTestHooks,
     ) -> Result<(Arc<Self>, PgStoreTestHandles), PgStoreStartError> {
         let store = Self::start_inner(
@@ -69,6 +70,7 @@ impl PgStore {
             listener_conn,
             shutdown,
             outbox_retention,
+            staleness_threshold,
             hooks.received_counter,
             hooks.observed_passes,
             hooks.drain_started,
@@ -143,5 +145,20 @@ impl PgStore {
             self.metrics.as_ref(),
         )
         .await
+    }
+
+    /// Run one iteration of the staleness sweep synchronously, using the
+    /// store's configured `staleness_threshold`. Returns `(jobs_swept,
+    /// runs_swept)`. Exposed so integration tests can drive the sweep path
+    /// deterministically without waiting for the outbox sweep's tick
+    /// interval. Panics if the store was constructed with
+    /// `staleness_threshold: None` — tests exercising the disabled path
+    /// should assert on the absence of a spawned task instead.
+    pub async fn staleness_sweep_once(&self) -> Result<(u64, u64), atc_core::PersistError> {
+        let threshold = self
+            .staleness_threshold
+            .expect("staleness_sweep_once called on a store with staleness disabled");
+        staleness::staleness_sweep_tick(self.clock.as_ref(), &self.pool, threshold, &self.metrics)
+            .await
     }
 }

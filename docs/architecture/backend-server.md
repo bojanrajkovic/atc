@@ -217,6 +217,18 @@ An invalid URL scheme (`ATC_DATABASE_URL` set to a non-`postgres://` / `postgres
 
 Every `tracing::error!`/`warn!` call site across the workspace (including the ones above) follows the `error.message = %e` field-naming convention in [`metrics.md` § Span attribute conventions](metrics.md#span-attribute-conventions) — a literal `error` field collides with Honeycomb's derived boolean `error` column and silently drops the message.
 
+## Staleness sweep
+
+Both storage modes run a periodic sweep that force-completes non-terminal runs/jobs GitHub never sent a terminal webhook for, with conclusion `Stale`. See [ADR-0013](../architecture-decisions/0013-staleness-sweep-synthetic-completion.md) for the full design rationale — this section covers only the current shape.
+
+**Shared predicate.** `atc_core::state_machine::is_stale_job` / `is_stale_run` are pure predicates beside `is_evictable`. A job is stale when it's `Queued` or `InProgress` (never `Waiting` — the FSM has no `Waiting -> Completed` transition, so a `Waiting` job can never be force-completed and is excluded from candidacy entirely) and `now - GREATEST(created_at, started_at) > staleness_threshold`; a run is stale when non-terminal, `now - updated_at > staleness_threshold`, *and* it has zero non-terminal jobs — the non-terminal-jobs guard prevents a long-running self-hosted job from getting its parent run falsely swept, since `runs.updated_at` only bumps on run-level webhooks.
+
+**PG mode** (`atc-store-pg/src/store/staleness.rs`): rides the existing outbox sweep task (`retention::spawn_outbox_sweep`) rather than a separate task — both run on the identical 300s quiet-first-tick cadence, so the staleness pass is piggybacked onto the outbox sweep's tick the same way that task already piggybacks its watermark cleanup. Each tick sweeps jobs first, then runs, so a run's non-terminal-jobs guard reflects jobs already force-completed earlier in the same tick. Per candidate row: `SELECT ... FOR UPDATE SKIP LOCKED`, re-check the row is still non-terminal, build a synthetic `Completed { conclusion: Stale }` envelope from the locked row, and write it through the same `upsert_*_in_txn` + `insert_outbox_*_in_txn` + `notify_outbox_seq_in_txn` helpers the webhook handler uses. `SKIP LOCKED` means a second replica racing the same row gets `None` back immediately rather than blocking — no double-write is possible. `staleness_threshold: None` skips just the staleness pass each tick; the outbox sweep itself always runs.
+
+**In-memory mode** (`atc-store-mem/src/lib.rs`): wired into the existing eviction-tick task rather than a separate task — no row locks exist in this store, so the race against a real webhook is resolved by `apply_*_event`'s own forward-only transition check instead: whichever call lands first wins, and the loser gets `Err(InvalidTransition)`, logged at debug and ignored.
+
+**Config:** `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`), default 48h, floor 24h (GitHub's hosted queued-job wait ceiling — the longer of GitHub's two relevant hosted ceilings, since the sweep applies one threshold to both queued and running jobs), restart-only. See `docs/architecture/deployment.md` § "Staleness sweep" for the operator-facing knob.
+
 ## Supervision and shutdown
 
 ATC uses a single `CancellationToken` shared across all supervised surfaces. Each store owns its background-task lifecycle (see [ADR-0006](../architecture-decisions/0006-stores-own-background-task-lifecycle.md)); the orchestration function in `shutdown.rs` joins them in sequence before the process exits.

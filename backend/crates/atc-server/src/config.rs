@@ -39,6 +39,36 @@ const DISPLAY_TTL_FLOOR: Duration = Duration::from_secs(60);
 /// startup-time rejection with a clear message is operationally cheaper.
 const DISPLAY_TTL_CEILING: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
+/// Default staleness threshold: 48h. Covers every GitHub hosted-runner
+/// ceiling (6h job, 24h queue wait) with wide margin; only multi-day
+/// self-hosted jobs or long deployment-approval `Waiting` gates can
+/// false-positive, and those self-heal on the real webhook. See ADR-0013.
+fn default_staleness_threshold() -> Option<Duration> {
+    Some(Duration::from_secs(48 * 60 * 60))
+}
+
+/// Lower bound on `staleness_threshold`. GitHub has two relevant hosted
+/// ceilings — 6h for a running job, 24h for a job waiting in the queue — but
+/// `is_stale_job` applies one threshold to both `Queued` and `InProgress`
+/// jobs. The floor must cover the *longer* of the two, or a value between
+/// 6h and 24h would let a legitimately queued job be force-completed as
+/// `Stale` well before GitHub itself would consider it abandoned — and
+/// since `Completed -> InProgress` is a rejected transition, the dashboard
+/// would stay stuck on `Stale` if that job later started, until the job's
+/// own real terminal event eventually overwrites it. See ADR-0013.
+const STALENESS_THRESHOLD_FLOOR: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Upper bound on `staleness_threshold`, matching [`DISPLAY_TTL_CEILING`]'s
+/// rationale: well beyond any practical staleness need, and well within
+/// `chrono::Duration::from_std`'s representable range. Without this
+/// ceiling, an operator setting an oversized value (attempting to
+/// effectively disable the sweep without using `null`) would pass startup
+/// validation only to panic the shared outbox-sweep task on its first tick
+/// — which also performs outbox retention, so the panic would silently kill
+/// that too until the process restarts. A startup-time rejection with a
+/// clear message is operationally cheaper.
+const STALENESS_THRESHOLD_CEILING: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
 /// Environment variable that overrides the path of the YAML configuration file.
 const CONFIG_FILE_ENV: &str = "ATC_CONFIG_FILE";
 
@@ -108,6 +138,19 @@ pub struct Config {
     /// and apply on the next pod roll. See ADR-0009.
     #[serde(default = "default_display_ttl", with = "humantime_serde")]
     pub display_ttl: Duration,
+    /// Staleness sweep threshold. After this long with no observed webhook
+    /// activity, a non-terminal run or job is force-completed with
+    /// conclusion `Stale` through the normal outbox/NOTIFY write path. Set
+    /// via `ATC_STALENESS_THRESHOLD` (humantime: `48h`, `3d`, etc.).
+    /// `null` disables the sweep entirely. Default 48h; hard floor 24h (see
+    /// [`STALENESS_THRESHOLD_FLOOR`]), hard ceiling 365d (see
+    /// [`STALENESS_THRESHOLD_CEILING`]). Restart-only — same reload posture
+    /// as `outbox_retention` / `display_ttl`. See ADR-0013.
+    #[serde(
+        default = "default_staleness_threshold",
+        with = "humantime_serde::option"
+    )]
+    pub staleness_threshold: Option<Duration>,
 }
 
 impl Default for Config {
@@ -122,6 +165,7 @@ impl Default for Config {
             runner_pools: Vec::new(),
             outbox_retention: default_outbox_retention(),
             display_ttl: default_display_ttl(),
+            staleness_threshold: default_staleness_threshold(),
         }
     }
 }
@@ -181,6 +225,9 @@ impl Config {
         validate_display_ttl(config.display_ttl)
             .map_err(|msg| Box::new(figment::Error::from(msg)))?;
 
+        validate_staleness_threshold(config.staleness_threshold)
+            .map_err(|msg| Box::new(figment::Error::from(msg)))?;
+
         Ok(config)
     }
 }
@@ -202,6 +249,29 @@ fn validate_display_ttl(ttl: Duration) -> Result<(), String> {
         return Err(format!(
             "display_ttl: must be at most 365d (got {:?}); larger values exceed practical visibility needs and risk per-request conversion failures",
             ttl,
+        ));
+    }
+    Ok(())
+}
+
+/// Reject a `staleness_threshold` below [`STALENESS_THRESHOLD_FLOOR`].
+/// `None` (sweep disabled) always passes. See ADR-0013.
+fn validate_staleness_threshold(threshold: Option<Duration>) -> Result<(), String> {
+    let Some(t) = threshold else {
+        return Ok(());
+    };
+    if t < STALENESS_THRESHOLD_FLOOR {
+        return Err(format!(
+            "staleness_threshold: must be at least 24h (got {t:?}); shorter values fall below \
+             GitHub's hosted queued-job wait ceiling and would false-positive on legitimate \
+             queued or long-running jobs",
+        ));
+    }
+    if t > STALENESS_THRESHOLD_CEILING {
+        return Err(format!(
+            "staleness_threshold: must be at most 365d (got {t:?}); larger values exceed \
+             practical staleness needs and risk a startup-time chrono::Duration conversion \
+             failure — use `staleness_threshold: null` to disable the sweep instead",
         ));
     }
     Ok(())
@@ -363,6 +433,7 @@ pub struct ScalarSnapshot {
     pub log_format: LogFormat,
     pub outbox_retention: Duration,
     pub display_ttl: Duration,
+    pub staleness_threshold: Option<Duration>,
 }
 
 impl ScalarSnapshot {
@@ -376,6 +447,7 @@ impl ScalarSnapshot {
             log_format: cfg.log_format.clone(),
             outbox_retention: cfg.outbox_retention,
             display_ttl: cfg.display_ttl,
+            staleness_threshold: cfg.staleness_threshold,
         }
     }
 
@@ -403,6 +475,9 @@ impl ScalarSnapshot {
         }
         if self.display_ttl != other.display_ttl {
             changed.push("display_ttl");
+        }
+        if self.staleness_threshold != other.staleness_threshold {
+            changed.push("staleness_threshold");
         }
         changed
     }
@@ -902,6 +977,118 @@ runner_pools:
         };
         let config = Config::load().expect("exactly 365d should load");
         assert_eq!(config.display_ttl, Duration::from_secs(365 * 24 * 60 * 60));
+    }
+
+    #[test]
+    #[serial]
+    fn staleness_threshold_default_is_48h() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            )
+        };
+        let config = Config::load().expect("default should load");
+        assert_eq!(
+            config.staleness_threshold,
+            Some(Duration::from_secs(48 * 60 * 60))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn staleness_threshold_below_floor_is_rejected() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV, "ATC_STALENESS_THRESHOLD"]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+            std::env::set_var("ATC_STALENESS_THRESHOLD", "1h");
+        };
+        let err = Config::load().expect_err("1h staleness_threshold should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("staleness_threshold") && msg.contains("24h"),
+            "error should mention staleness_threshold and the 24h floor, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn staleness_threshold_above_ceiling_is_rejected() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV, "ATC_STALENESS_THRESHOLD"]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+            // 366 days — one day past the 365-day ceiling.
+            std::env::set_var("ATC_STALENESS_THRESHOLD", "366d");
+        };
+        let err = Config::load().expect_err("366d staleness_threshold should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("staleness_threshold") && msg.contains("365d"),
+            "error should mention staleness_threshold and the 365d ceiling, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn staleness_threshold_at_ceiling_is_accepted() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV, "ATC_STALENESS_THRESHOLD"]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+            std::env::set_var("ATC_STALENESS_THRESHOLD", "365d");
+        };
+        let config = Config::load().expect("exactly 365d should load");
+        assert_eq!(
+            config.staleness_threshold,
+            Some(Duration::from_secs(365 * 24 * 60 * 60))
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn staleness_threshold_null_disables_sweep() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV]);
+        let file = write_yaml("staleness_threshold: null\n");
+        unsafe { std::env::set_var(CONFIG_FILE_ENV, file.path()) };
+
+        let config = Config::load().expect("null staleness_threshold should load");
+        assert_eq!(config.staleness_threshold, None);
+    }
+
+    #[test]
+    #[serial]
+    fn staleness_threshold_override_applies() {
+        let _guard = EnvGuard::capture(&[CONFIG_FILE_ENV, "ATC_STALENESS_THRESHOLD"]);
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+            std::env::set_var("ATC_STALENESS_THRESHOLD", "72h");
+        };
+        let config = Config::load().expect("72h override should load");
+        assert_eq!(
+            config.staleness_threshold,
+            Some(Duration::from_secs(72 * 60 * 60))
+        );
+    }
+
+    #[test]
+    fn scalar_snapshot_diff_reports_staleness_threshold_drift() {
+        let cfg = Config::default();
+        let base = ScalarSnapshot::from_config(&cfg);
+        let mut other = base.clone();
+        other.staleness_threshold = None;
+        assert_eq!(base.diff(&other), vec!["staleness_threshold"]);
     }
 
     #[test]

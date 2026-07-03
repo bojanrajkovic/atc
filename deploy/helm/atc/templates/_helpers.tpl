@@ -6,6 +6,19 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Whether the runner-pool ConfigMap must be rendered and mounted: either
+operator-declared runner pools exist, or the staleness sweep is disabled
+(config.stalenessThreshold: null) and needs the config file to carry the
+explicit YAML `null` the env var can't express — ATC_STALENESS_THRESHOLD is
+always set from a non-null value, and figment's env layer always overrides
+the file, so a plain env string can never mean "disabled". See ADR-0013 and
+templates/configmap.yaml.
+*/}}
+{{- define "atc.needsRunnerConfigMap" -}}
+{{- if or (gt (len .Values.runnerPools) 0) (not .Values.config.stalenessThreshold) }}true{{- end -}}
+{{- end }}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.

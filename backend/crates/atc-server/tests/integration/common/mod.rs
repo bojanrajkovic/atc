@@ -715,6 +715,7 @@ async fn build_app_inner(
         pg_listener,
         shutdown.clone(),
         Duration::from_secs(7 * 24 * 60 * 60),
+        None,
         hooks,
     )
     .await
@@ -823,6 +824,34 @@ pub async fn start_pg_store_for_test_with_clock_and_retention(
         pg_listener,
         shutdown,
         outbox_retention,
+        None,
+        PgStoreTestHooks::default(),
+    )
+    .await
+    .expect("PgStore::start_with_test_hooks");
+    store
+}
+
+/// Like [`start_pg_store_for_test_with_clock`] but with a caller-supplied
+/// staleness threshold. Used by staleness-sweep tests that need to drive
+/// `staleness_sweep_once` deterministically via a `TestClock`.
+pub async fn start_pg_store_for_test_with_clock_and_staleness(
+    clock: Arc<dyn atc_core::Clock>,
+    pool: atc_store_pg::TracedPool,
+    db_url: &str,
+    shutdown: CancellationToken,
+    staleness_threshold: Duration,
+) -> Arc<atc_store_pg::PgStore> {
+    let pg_listener = listener::connect_listener(db_url)
+        .await
+        .expect("connect_listener failed");
+    let (store, _handles) = atc_store_pg::PgStore::start_with_test_hooks(
+        clock,
+        pool,
+        pg_listener,
+        shutdown,
+        Duration::from_secs(7 * 24 * 60 * 60),
+        Some(staleness_threshold),
         PgStoreTestHooks::default(),
     )
     .await

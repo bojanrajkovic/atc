@@ -146,6 +146,7 @@ async fn start_rejects_sub_floor_retention() {
         pg_listener,
         shutdown.clone(),
         Duration::from_secs(30 * 60), // 30m — well below the 1h floor
+        None,
         PgStoreTestHooks::default(),
     )
     .await;

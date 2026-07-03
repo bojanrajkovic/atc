@@ -143,6 +143,7 @@ async fn spawned_sweep_emits_root_span_with_no_parent() {
         clock.clone(),
         Duration::from_secs(60 * 60),
         Duration::from_millis(40),
+        None,
         shutdown.clone(),
     );
 

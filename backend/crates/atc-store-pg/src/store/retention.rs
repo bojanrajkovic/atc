@@ -183,10 +183,18 @@ pub(crate) async fn outbox_heartbeat_tick(
 /// No first-iter unconditional run: starts quiet for the first
 /// `OUTBOX_SWEEP_INTERVAL` so operators observe the new replica via
 /// dashboards before any destructive work fires.
+///
+/// Also drives the staleness sweep (ADR-0013) on the same tick when
+/// `staleness_threshold` is `Some` — both sweeps run on the identical 300s
+/// cadence, so this piggybacks the staleness pass onto the existing loop
+/// rather than spawning a second task, mirroring this same function's
+/// existing watermark-cleanup piggyback inside [`outbox_sweep_tick`].
+/// `None` skips the staleness pass entirely; the outbox sweep always runs.
 pub(crate) fn spawn_outbox_sweep(
     clock: Arc<dyn Clock>,
     pool: TracedPool,
     outbox_retention: Duration,
+    staleness_threshold: Option<Duration>,
     metrics: Arc<PgMetrics>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
@@ -201,6 +209,18 @@ pub(crate) fn spawn_outbox_sweep(
                 outbox_sweep_tick(clock.as_ref(), &pool, outbox_retention, metrics.as_ref()).await
             {
                 tracing::warn!(error.message = %e, "outbox sweep tick failed");
+            }
+
+            if let Some(threshold) = staleness_threshold
+                && let Err(e) = crate::store::staleness::staleness_sweep_tick(
+                    clock.as_ref(),
+                    &pool,
+                    threshold,
+                    metrics.as_ref(),
+                )
+                .await
+            {
+                tracing::warn!(error.message = ?e, "staleness sweep tick failed");
             }
         }
     })

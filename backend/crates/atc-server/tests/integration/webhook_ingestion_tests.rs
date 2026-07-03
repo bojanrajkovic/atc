@@ -457,6 +457,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         Arc::clone(&clock),
         Duration::from_hours(1),
         Duration::from_mins(1),
+        None,
         shutdown.clone(),
     );
     let mut subscriber = store.subscribe();
