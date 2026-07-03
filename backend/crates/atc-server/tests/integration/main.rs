@@ -42,6 +42,7 @@ mod restart_recovery;
 mod routes_tests;
 mod row_lock_serialization;
 mod shutdown_otel_flush_test;
+mod staleness_sweep_mem_tests;
 mod staleness_sweep_tests;
 mod state_pg_read;
 mod state_tests;
