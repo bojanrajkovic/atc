@@ -53,7 +53,7 @@ There is no row lock concept in the in-memory store, so the race against a concu
 
 ### Configuration
 
-One new knob, `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`, humantime), default 48h, floor 24h (rejected at startup). `null` disables the sweep — no task is spawned in either store. Restart-only, same reload posture as `outbox_retention` / `display_ttl` (ADR-0009's Decision 9 precedent); the config watcher already warn-logs changed scalars it won't apply live.
+One new knob, `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`, humantime), default 48h, floor 24h, ceiling 365d (both rejected at startup — the ceiling matches `display_ttl`'s existing precedent: an oversized value would otherwise panic the shared outbox-sweep task's `chrono::Duration` conversion on its first tick, silently killing outbox retention too). `null` disables the sweep — no task is spawned in either store. Restart-only, same reload posture as `outbox_retention` / `display_ttl` (ADR-0009's Decision 9 precedent); the config watcher already warn-logs changed scalars it won't apply live.
 
 Sweep interval (300s) and batch cap (500) are crate consts, not operator-tunable — matching the retention sweep's stance that cadence isn't an operator concern (ADR-0007).
 
