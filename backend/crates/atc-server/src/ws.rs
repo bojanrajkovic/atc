@@ -356,7 +356,7 @@ async fn handle_socket_inner(
                     None => break "connection dropped",
                     Some(Ok(_)) => {}
                     Some(Err(e)) => {
-                        tracing::warn!(error = %e, "WebSocket read error");
+                        tracing::warn!(error.message = %e, "WebSocket read error");
                         break "read error";
                     }
                 }
@@ -406,7 +406,7 @@ async fn send_frame(socket: &mut WebSocket, frame: &WireFrame) -> Result<(), &'s
     let json = match serde_json::to_string(frame) {
         Ok(j) => j,
         Err(e) => {
-            tracing::error!(error = %e, "failed to serialize WireFrame; skipping");
+            tracing::error!(error.message = %e, "failed to serialize WireFrame; skipping");
             return Ok(());
         }
     };

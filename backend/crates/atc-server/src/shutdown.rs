@@ -61,14 +61,14 @@ fn log_early_serve_exit(serve: &'static str, res: Result<io::Result<()>, JoinErr
         }
         Ok(Err(e)) => {
             tracing::error!(
-                serve, error = %e,
+                serve, error.message = %e,
                 "serve exited with error before shutdown signal; triggering shutdown"
             );
             true
         }
         Err(e) => {
             tracing::error!(
-                serve, error = %e,
+                serve, error.message = %e,
                 "serve task panicked or was cancelled before shutdown signal; triggering shutdown"
             );
             true
@@ -83,8 +83,8 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
     if let Some(handle) = handle {
         match handle.await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!(serve, error = %e, "serve ended with error"),
-            Err(e) => tracing::error!(serve, error = %e, "serve task ended with error"),
+            Ok(Err(e)) => tracing::error!(serve, error.message = %e, "serve ended with error"),
+            Err(e) => tracing::error!(serve, error.message = %e, "serve task ended with error"),
         }
     }
 }

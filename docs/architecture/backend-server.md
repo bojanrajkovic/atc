@@ -85,8 +85,8 @@ the lines are:
 | Invalid transition (rejected) | WARN | `transition invalid; rejecting` | `event_type`, `run_id`, `job_id` (jobs), `delivery_id` |
 | Missing signature header | WARN | `missing X-Hub-Signature-256 header` | `delivery_id` |
 | Signature verification failed | WARN | `HMAC verification failed` | `delivery_id` |
-| Parse failure | ERROR | `webhook parse error` | `error`, `event_type`, `delivery_id` |
-| Persistence write failed | ERROR | `persistence write failed` | `error`, `event_type`, `delivery_id` |
+| Parse failure | ERROR | `webhook parse error` | `error.message`, `event_type`, `delivery_id` |
+| Persistence write failed | ERROR | `persistence write failed` | `error.message`, `event_type`, `delivery_id` |
 
 `delivery_id` is the `X-GitHub-Delivery` header — GitHub's per-delivery
 correlation id, recorded on the `webhook.handler` span and carried on **every**
@@ -214,6 +214,8 @@ An invalid URL scheme (`ATC_DATABASE_URL` set to a non-`postgres://` / `postgres
 | Connect fails | `tracing::error!` + `process::exit(1)` |
 | Connect succeeds, migrations fail | `tracing::error!` + `process::exit(1)` |
 | DB lost at runtime | Process stays up; `/readyz` returns 503 |
+
+Every `tracing::error!`/`warn!` call site across the workspace (including the ones above) follows the `error.message = %e` field-naming convention in [`metrics.md` § Span attribute conventions](metrics.md#span-attribute-conventions) — a literal `error` field collides with Honeycomb's derived boolean `error` column and silently drops the message.
 
 ## Supervision and shutdown
 

@@ -45,7 +45,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.persist.liveness_check().await {
         Ok(()) => (StatusCode::OK, Json(HealthResponse { status: "ok" })).into_response(),
         Err(atc_persist::LivenessError::DbUnreachable(e)) => {
-            tracing::warn!(error = %e, "readyz: db check failed");
+            tracing::warn!(error.message = %e, "readyz: db check failed");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(HealthResponse {
@@ -125,7 +125,7 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 Json(snap).into_response()
             }
             Err(e) => {
-                tracing::error!(error = ?e, "state_handler: snapshot failed");
+                tracing::error!(error.message = ?e, "state_handler: snapshot failed");
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(serde_json::json!({"error": "snapshot failed"})),
@@ -264,7 +264,7 @@ async fn webhook_handler(
             let result = match parse_webhook(event_type, &body) {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::error!(error = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "webhook parse error");
+                    tracing::error!(error.message = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "webhook parse error");
                     break 'response (
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(serde_json::json!({"error": e.to_string()})),
@@ -340,7 +340,7 @@ async fn webhook_handler(
                             )
                         }
                         Err(PersistError::Backend(e)) => {
-                            tracing::error!(error = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "persistence write failed");
+                            tracing::error!(error.message = %e, event_type, delivery_id = delivery_id.unwrap_or_default(), "persistence write failed");
                             (
                                 StatusCode::SERVICE_UNAVAILABLE,
                                 Json(serde_json::json!({"status": "error"})),

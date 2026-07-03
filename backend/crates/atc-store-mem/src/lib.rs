@@ -477,7 +477,7 @@ impl PersistentStore for InMemoryStore {
             env.clone(),
         )
         .map_err(|e| {
-            tracing::warn!(error = %e, "state machine rejected run transition");
+            tracing::warn!(error.message = %e, "state machine rejected run transition");
             atc_core::PersistError::from(e)
         })?;
 
@@ -519,7 +519,7 @@ impl PersistentStore for InMemoryStore {
         let existing = state.jobs.get(&job_id).cloned();
 
         let job = atc_core::state_machine::apply_job_event(existing, env.clone()).map_err(|e| {
-            tracing::warn!(error = %e, "state machine rejected job transition");
+            tracing::warn!(error.message = %e, "state machine rejected job transition");
             atc_core::PersistError::from(e)
         })?;
 

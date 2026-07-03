@@ -69,7 +69,7 @@ pub(crate) fn spawn_outbox_heartbeat(
             .await
             {
                 tracing::warn!(
-                    error = %e,
+                    error.message = %e,
                     replica_id = %replica_id,
                     "outbox heartbeat tick failed",
                 );
@@ -200,7 +200,7 @@ pub(crate) fn spawn_outbox_sweep(
             if let Err(e) =
                 outbox_sweep_tick(clock.as_ref(), &pool, outbox_retention, metrics.as_ref()).await
             {
-                tracing::warn!(error = %e, "outbox sweep tick failed");
+                tracing::warn!(error.message = %e, "outbox sweep tick failed");
             }
         }
     })

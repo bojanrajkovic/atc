@@ -104,7 +104,7 @@ pub fn spawn_listener_task(
                     }
                     Err(e) => {
                         metrics.listener_recv_errors.add(1, &[]);
-                        tracing::warn!(error = %e, "pg listener recv error");
+                        tracing::warn!(error.message = %e, "pg listener recv error");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -150,7 +150,7 @@ fn handle_listener_notification(
         Err(e) => {
             tracing::warn!(
                 payload = notification.payload(),
-                error = %e,
+                error.message = %e,
                 "malformed NOTIFY payload (expected i64 seq)",
             );
         }
@@ -375,7 +375,7 @@ async fn record_shutdown_remaining(pool: &crate::TracedPool, watermark: i64, met
         }
         Ok(Err(e)) => {
             tracing::warn!(
-                error = %e,
+                error.message = %e,
                 watermark,
                 "drain shutdown remaining-rows query failed; skipping observation",
             );
@@ -442,7 +442,7 @@ async fn drain_pass(
         let rows = match rows {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(error = %e, "drain_pass query failed");
+                tracing::warn!(error.message = %e, "drain_pass query failed");
                 return false;
             }
         };
@@ -470,7 +470,7 @@ async fn drain_pass(
                     Err(e) => {
                         tracing::error!(
                             seq = row.seq,
-                            error = %e,
+                            error.message = %e,
                             "failed to decode run outbox payload",
                         );
                         continue;
@@ -481,7 +481,7 @@ async fn drain_pass(
                     Err(e) => {
                         tracing::error!(
                             seq = row.seq,
-                            error = %e,
+                            error.message = %e,
                             "failed to decode job outbox payload",
                         );
                         continue;
