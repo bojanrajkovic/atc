@@ -290,6 +290,151 @@ fn not_evictable_completed_job_without_completed_at() {
     );
 }
 
+// ===== is_stale_job =====
+
+/// A non-terminal job whose last activity predates the threshold is stale.
+#[test]
+fn stale_job_past_threshold() {
+    let now = fixed_test_timestamp();
+    let job = Job {
+        status: JobStatus::InProgress,
+        created_at: now - chrono::Duration::hours(72),
+        started_at: Some(now - chrono::Duration::hours(50)),
+        ..make_job()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        is_stale_job(&job, now, threshold),
+        "non-terminal job past the threshold should be stale"
+    );
+}
+
+/// A non-terminal job whose last activity is within the threshold is not stale.
+#[test]
+fn not_stale_job_within_threshold() {
+    let now = fixed_test_timestamp();
+    let job = Job {
+        status: JobStatus::InProgress,
+        created_at: now - chrono::Duration::hours(72),
+        started_at: Some(now - chrono::Duration::hours(1)),
+        ..make_job()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        !is_stale_job(&job, now, threshold),
+        "job with recent activity should not be stale"
+    );
+}
+
+/// A `Completed` job is never stale, regardless of age.
+#[test]
+fn not_stale_completed_job() {
+    let now = fixed_test_timestamp();
+    let job = build_completed_job(Some(now - chrono::Duration::hours(100)));
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        !is_stale_job(&job, now, threshold),
+        "completed job should never be stale"
+    );
+}
+
+/// `started_at` absent falls back to `created_at` for the activity signal.
+#[test]
+fn stale_job_uses_created_at_when_started_at_absent() {
+    let now = fixed_test_timestamp();
+    let job = Job {
+        status: JobStatus::Queued,
+        created_at: now - chrono::Duration::hours(72),
+        started_at: None,
+        ..make_job()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        is_stale_job(&job, now, threshold),
+        "queued job with no started_at should use created_at as the activity signal"
+    );
+}
+
+/// A `Waiting` job is never stale, however old — `JobStatus::transition_to`
+/// has no `Waiting -> Completed` arm, so it can never be force-completed.
+#[test]
+fn not_stale_waiting_job_regardless_of_age() {
+    let now = fixed_test_timestamp();
+    let job = Job {
+        status: JobStatus::Waiting,
+        created_at: now - chrono::Duration::hours(100),
+        started_at: None,
+        ..make_job()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        !is_stale_job(&job, now, threshold),
+        "a Waiting job can never transition to Completed and must never be a sweep candidate"
+    );
+}
+
+// ===== is_stale_run =====
+
+/// A non-terminal run past the threshold with no non-terminal jobs is stale.
+#[test]
+fn stale_run_past_threshold_no_live_jobs() {
+    let now = fixed_test_timestamp();
+    let run = WorkflowRun {
+        status: RunStatus::InProgress,
+        updated_at: now - chrono::Duration::hours(72),
+        ..make_workflow_run()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        is_stale_run(&run, false, now, threshold),
+        "non-terminal run past the threshold with no live jobs should be stale"
+    );
+}
+
+/// A run with a live non-terminal job is shielded even past the threshold —
+/// the `has_non_terminal_jobs` guard prevents falsely sweeping the parent of
+/// a legitimately long-running self-hosted job.
+#[test]
+fn not_stale_run_shielded_by_live_job() {
+    let now = fixed_test_timestamp();
+    let run = WorkflowRun {
+        status: RunStatus::InProgress,
+        updated_at: now - chrono::Duration::hours(72),
+        ..make_workflow_run()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        !is_stale_run(&run, true, now, threshold),
+        "run with a live non-terminal job should be shielded from the sweep"
+    );
+}
+
+/// A `Completed` run is never stale, regardless of age.
+#[test]
+fn not_stale_completed_run() {
+    let now = fixed_test_timestamp();
+    let run = WorkflowRun {
+        status: RunStatus::Completed,
+        conclusion: Some(RunConclusion::Success),
+        updated_at: now - chrono::Duration::hours(100),
+        completed_at: Some(now - chrono::Duration::hours(100)),
+        ..make_workflow_run()
+    };
+    let threshold = Duration::from_hours(48);
+
+    assert!(
+        !is_stale_run(&run, false, now, threshold),
+        "completed run should never be stale"
+    );
+}
+
 // ===== Helpers =====
 
 fn build_completed_job(completed_at: Option<chrono::DateTime<Utc>>) -> Job {
