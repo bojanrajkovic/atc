@@ -303,6 +303,143 @@ async fn already_completed_job_is_not_reswept() {
         .expect("shutdown");
 }
 
+/// A job seeded as a stale candidate, but which receives a real *progress*
+/// webhook (not a completion) before the sweep runs, is not swept. Checking
+/// only `status != Completed` under the row lock would still force-complete
+/// it — "not yet Completed" isn't the same claim as "still past the
+/// threshold" once a real event has moved its activity forward.
+#[tokio::test]
+#[serial]
+async fn job_with_fresh_progress_after_seeding_is_not_reswept() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let now = fixed_test_timestamp();
+    let clock = Arc::new(TestClock::new(now));
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test_with_clock_and_staleness(
+        clock.clone(),
+        pool.clone(),
+        &db_url,
+        shutdown.clone(),
+        THRESHOLD,
+    )
+    .await;
+
+    let run_id = 9_500_601;
+    let job_id = 9_500_602;
+    store
+        .apply_run_event(run_envelope(run_id, now))
+        .await
+        .expect("seed run");
+    store
+        .apply_job_event(job_envelope(
+            job_id,
+            run_id,
+            now - chrono::Duration::hours(72),
+        ))
+        .await
+        .expect("seed stale job");
+
+    // A real progress webhook lands: the job legitimately starts right now.
+    // Still non-terminal, but its activity is fresh.
+    store
+        .apply_job_event(JobEventEnvelope {
+            run_attempt: 1,
+            started_at: Some(now),
+            ..common::make_job_envelope(
+                JobId(job_id),
+                RunId(run_id),
+                JobEvent::InProgress {
+                    runner: None,
+                    labels: vec!["ubuntu-latest".to_string()],
+                    steps: vec![],
+                },
+            )
+        })
+        .await
+        .expect("real progress webhook");
+
+    let (jobs_swept, _) = store
+        .staleness_sweep_once()
+        .await
+        .expect("staleness_sweep_once");
+    assert_eq!(
+        jobs_swept, 0,
+        "a job with fresh activity must not be swept, even if it was a stale candidate a moment ago"
+    );
+
+    let row = sqlx::query("SELECT status, conclusion FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query job");
+    let status: String = row.get("status");
+    let conclusion: Option<String> = row.get("conclusion");
+    assert_eq!(status, "InProgress");
+    assert_eq!(conclusion, None, "must not have been force-completed");
+
+    shutdown.cancel();
+    timeout(Duration::from_secs(8), store.shutdown())
+        .await
+        .expect("shutdown");
+}
+
+/// Same regression, for runs: a run seeded as a stale candidate that
+/// receives a real (non-completing) update before the sweep runs is not
+/// swept — the age recheck observes the fresh `updated_at`.
+#[tokio::test]
+#[serial]
+async fn run_with_fresh_update_after_seeding_is_not_reswept() {
+    let (pool, _container, db_url) = common::start_pg().await;
+    let now = fixed_test_timestamp();
+    let clock = Arc::new(TestClock::new(now));
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test_with_clock_and_staleness(
+        clock.clone(),
+        pool.clone(),
+        &db_url,
+        shutdown.clone(),
+        THRESHOLD,
+    )
+    .await;
+
+    let run_id = 9_500_701;
+    store
+        .apply_run_event(run_envelope(run_id, now - chrono::Duration::hours(72)))
+        .await
+        .expect("seed stale run");
+
+    // A real run-level webhook lands, bumping updated_at without completing.
+    store
+        .apply_run_event(common::make_run_envelope(
+            RunId(run_id),
+            RunEvent::InProgress,
+        ))
+        .await
+        .expect("real run update");
+
+    let (_, runs_swept) = store
+        .staleness_sweep_once()
+        .await
+        .expect("staleness_sweep_once");
+    assert_eq!(
+        runs_swept, 0,
+        "a run with fresh activity must not be swept, even if it was a stale candidate a moment ago"
+    );
+
+    let row = sqlx::query("SELECT status FROM runs WHERE id = $1")
+        .bind(run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("query run");
+    let status: String = row.get("status");
+    assert_eq!(status, "InProgress", "must not have been force-completed");
+
+    shutdown.cancel();
+    timeout(Duration::from_secs(8), store.shutdown())
+        .await
+        .expect("shutdown");
+}
+
 /// Self-heal: once the sweep has force-completed a job as `Stale`, a
 /// subsequent real completion webhook overwrites the conclusion — the
 /// `Completed -> Completed` replay is admitted and the incoming `Some`

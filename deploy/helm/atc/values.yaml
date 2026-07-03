@@ -187,11 +187,14 @@ config:
   # After this long with no observed webhook activity, a non-terminal run
   # or job is force-completed with conclusion "Stale" through the normal
   # outbox/NOTIFY write path. Restart-only, same reload posture as
-  # outboxRetention/displayTtl above. To disable the sweep entirely, mount
-  # a config file with `staleness_threshold: null` instead of using this
-  # value — figment's env layer always overrides the file, so a plain
-  # string here can't express "disabled" the way the YAML file's literal
-  # `null` can.
+  # outboxRetention/displayTtl above.
+  #
+  # Set to `null` to disable the sweep entirely. Since ATC_STALENESS_THRESHOLD
+  # (an env var) always overrides the config file, a plain string here can
+  # never express "disabled" — so `null` instead renders
+  # `staleness_threshold: null` into the runner-pool-config ConfigMap
+  # (mounted even when runnerPools is empty) and omits the env var, letting
+  # the file layer's explicit null take effect.
   #
   # See docs/architecture-decisions/0013-staleness-sweep-synthetic-completion.md.
   stalenessThreshold: "48h"

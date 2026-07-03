@@ -91,8 +91,10 @@ spec:
               value: {{ .Values.config.outboxRetention | quote }}
             - name: ATC_DISPLAY_TTL
               value: {{ .Values.config.displayTtl | quote }}
+            {{- if .Values.config.stalenessThreshold }}
             - name: ATC_STALENESS_THRESHOLD
               value: {{ .Values.config.stalenessThreshold | quote }}
+            {{- end }}
             {{- if and .Values.existingSecret.database.name .Values.existingSecret.database.urlKey }}
             - name: ATC_DATABASE_URL
               valueFrom:
@@ -176,7 +178,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            {{- if gt (len .Values.runnerPools) 0 }}
+            {{- if include "atc.needsRunnerConfigMap" . }}
             # Directory mount (not `subPath`) so kubelet's ConfigMap update
             # propagation reaches the pod — `subPath` blocks the update path,
             # which would defeat the hot-reload watcher. See
@@ -188,7 +190,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-        {{- if gt (len .Values.runnerPools) 0 }}
+        {{- if include "atc.needsRunnerConfigMap" . }}
         - name: runner-pool-config
           configMap:
             name: {{ include "atc.fullname" . }}-config

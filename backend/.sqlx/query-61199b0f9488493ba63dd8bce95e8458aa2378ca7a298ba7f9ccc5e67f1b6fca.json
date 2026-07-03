@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,\n               commit_message, event, display_title, html_url, status,\n               created_at, run_started_at, run_attempt\n          FROM runs\n         WHERE id = $1\n         FOR UPDATE SKIP LOCKED\n        ",
+  "query": "\n        SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,\n               commit_message, event, display_title, html_url, status,\n               created_at, run_started_at, run_attempt, updated_at\n          FROM runs\n         WHERE id = $1\n         FOR UPDATE SKIP LOCKED\n        ",
   "describe": {
     "columns": [
       {
@@ -77,6 +77,11 @@
         "ordinal": 14,
         "name": "run_attempt",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 15,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -99,8 +104,9 @@
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "89c5b2d97db846539b19e3613a3c9be4c824a7b719bc7d17a123798aaed39600"
+  "hash": "61199b0f9488493ba63dd8bce95e8458aa2378ca7a298ba7f9ccc5e67f1b6fca"
 }

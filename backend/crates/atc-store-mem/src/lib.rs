@@ -90,6 +90,19 @@ impl StateData {
             jobs_by_repo: HashMap::new(),
         }
     }
+
+    /// Whether `run_id` currently has at least one non-`Completed` job.
+    /// Shared by the staleness sweep's initial candidate filter and its
+    /// immediately-before-apply recheck (see `sweep_stale`).
+    fn run_has_non_terminal_jobs(&self, run_id: RunId) -> bool {
+        self.jobs_by_run.get(&run_id).is_some_and(|ids| {
+            ids.iter().any(|id| {
+                self.jobs
+                    .get(id)
+                    .is_some_and(|j| j.status != JobStatus::Completed)
+            })
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +445,24 @@ impl InMemoryStore {
         let mut jobs_swept = 0u64;
         for (job, org, repo) in stale_jobs {
             let job_id = job.id;
+            // Re-check staleness against the current state immediately
+            // before applying — narrows (does not fully close, since
+            // `apply_job_event` below takes its own lock a moment later)
+            // the race against a real progress webhook (e.g. Queued ->
+            // InProgress) landing between the snapshot above and this
+            // check: "not yet Completed" alone doesn't mean "still past the
+            // threshold" once activity has moved forward. See ADR-0013 and
+            // `atc-store-pg::staleness::sweep_one_job`'s analogous recheck.
+            let still_stale = self
+                .state
+                .read()
+                .await
+                .jobs
+                .get(&job_id)
+                .is_some_and(|j| atc_core::state_machine::is_stale_job(j, now, threshold));
+            if !still_stale {
+                continue;
+            }
             let env = JobEventEnvelope {
                 job_id: job.id,
                 run_id: job.run_id,
@@ -460,12 +491,13 @@ impl InMemoryStore {
         }
 
         // Pass 2: runs. Re-read fresh state so the non-terminal-jobs guard
-        // reflects the jobs pass above. This snapshot is taken once before
-        // the loop below awaits each run's `apply_run_event` in turn, so a
-        // concurrent `apply_job_event` adding a fresh job for one of these
-        // runs between the snapshot and that run's own apply call isn't
-        // caught — narrows, not fully closes, the same race PG's row lock
-        // narrows. Self-heals the same way: the job's own terminal event
+        // reflects the jobs pass above. This initial snapshot is only the
+        // candidate list — each run is re-checked (status, age, and the
+        // non-terminal-jobs guard) against current state immediately before
+        // its own apply call below, narrowing (not fully closing — a
+        // mutation can still land between that recheck and
+        // `apply_run_event`'s own lock) the race against a concurrent
+        // webhook. Self-heals the same way: the job's own terminal event
         // (or the re-run's) later overwrites the synthetic conclusion. See
         // ADR-0013.
         let stale_runs: Vec<WorkflowRun> = {
@@ -474,14 +506,7 @@ impl InMemoryStore {
                 .runs
                 .values()
                 .filter(|r| {
-                    let has_non_terminal_jobs = state.jobs_by_run.get(&r.id).is_some_and(|ids| {
-                        ids.iter().any(|id| {
-                            state
-                                .jobs
-                                .get(id)
-                                .is_some_and(|j| j.status != JobStatus::Completed)
-                        })
-                    });
+                    let has_non_terminal_jobs = state.run_has_non_terminal_jobs(r.id);
                     atc_core::state_machine::is_stale_run(r, has_non_terminal_jobs, now, threshold)
                 })
                 .cloned()
@@ -491,6 +516,20 @@ impl InMemoryStore {
         let mut runs_swept = 0u64;
         for run in stale_runs {
             let run_id = run.id;
+            // Re-check immediately before applying — same rationale as the
+            // jobs pass above: narrows (does not fully close) the race
+            // against a real run-level webhook bumping updated_at, or a
+            // fresh job arriving, between the snapshot and this check.
+            let still_stale = {
+                let state = self.state.read().await;
+                state.runs.get(&run_id).is_some_and(|r| {
+                    let has_non_terminal_jobs = state.run_has_non_terminal_jobs(run_id);
+                    atc_core::state_machine::is_stale_run(r, has_non_terminal_jobs, now, threshold)
+                })
+            };
+            if !still_stale {
+                continue;
+            }
             let env = RunEventEnvelope {
                 run_id: run.id,
                 org: run.org,

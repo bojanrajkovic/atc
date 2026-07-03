@@ -99,7 +99,7 @@ async fn sweep_stale_jobs(
         // A per-row failure (e.g. a race this function doesn't anticipate)
         // must not abort the rest of the batch or the runs pass after it —
         // log and continue, mirroring `atc-store-mem`'s per-row resilience.
-        match sweep_one_job(now, job_id, pool).await {
+        match sweep_one_job(now, cutoff, job_id, pool).await {
             Ok(true) => swept += 1,
             Ok(false) => {}
             Err(e) => {
@@ -113,17 +113,28 @@ async fn sweep_stale_jobs(
     Ok(swept)
 }
 
-/// Lock, re-check, and (if still non-terminal) force-complete a single job
-/// with conclusion `Stale`. Returns `true` if the row was swept.
+/// Lock, re-check, and (if still non-terminal and still stale) force-complete
+/// a single job with conclusion `Stale`. Returns `true` if the row was swept.
 ///
 /// `FOR UPDATE OF j SKIP LOCKED` locks only the `jobs` row (not the joined
 /// `runs` row); if another replica already holds the lock, this returns
 /// `Ok(false)` without waiting — the other replica's transaction is the one
-/// that resolves the row. The status re-check after acquiring the lock
-/// closes the race against a real webhook: whichever transaction commits
-/// first wins, and the loser observes `Completed` and skips.
+/// that resolves the row. Two conditions are re-checked after acquiring the
+/// lock, both against data freshly read under it:
+///
+/// - **Status.** Closes the race against a real *completion* webhook:
+///   whichever transaction commits first wins, and the loser observes
+///   `Completed` and skips.
+/// - **Age (`GREATEST(created_at, started_at) < cutoff`).** Closes the race
+///   against a real *progress* webhook that doesn't complete the job but
+///   does move its activity forward — e.g. `Queued -> InProgress` bumping
+///   `started_at`. Without this recheck, a job that started moments ago
+///   would still be force-completed as `Stale`, because "not yet
+///   `Completed`" alone doesn't mean "still past the threshold": the row we
+///   just locked can be fresher than the snapshot that made it a candidate.
 async fn sweep_one_job(
     now: chrono::DateTime<chrono::Utc>,
+    cutoff: chrono::DateTime<chrono::Utc>,
     job_id: i64,
     pool: &TracedPool,
 ) -> Result<bool, PersistError> {
@@ -167,6 +178,16 @@ async fn sweep_one_job(
         // A real webhook won the race between candidate-select and this
         // lock. Nothing to do — the transaction has no writes, so COMMIT
         // and ROLLBACK are equivalent; COMMIT avoids an extra round trip.
+        tx.commit().await.map_err(backend)?;
+        return Ok(false);
+    }
+
+    let last_activity = row.started_at.unwrap_or(row.created_at).max(row.created_at);
+    if last_activity >= cutoff {
+        // A real progress webhook (e.g. Queued -> InProgress) landed between
+        // candidate-select and this lock, bumping started_at. The job is no
+        // longer stale — the candidate-select snapshot is out of date, and
+        // "not yet Completed" alone doesn't mean "still past the threshold".
         tx.commit().await.map_err(backend)?;
         return Ok(false);
     }
@@ -251,7 +272,7 @@ async fn sweep_stale_runs(
 
     let mut swept = 0u64;
     for run_id in candidate_ids {
-        match sweep_one_run(now, run_id, pool).await {
+        match sweep_one_run(now, cutoff, run_id, pool).await {
             Ok(true) => swept += 1,
             Ok(false) => {}
             Err(e) => {
@@ -265,23 +286,33 @@ async fn sweep_stale_runs(
     Ok(swept)
 }
 
-/// Lock, re-check, and (if still non-terminal with no live jobs) force-complete
-/// a single run with conclusion `Stale`. Returns `true` if the row was swept.
+/// Lock, re-check, and (if still non-terminal, still stale, and with no live
+/// jobs) force-complete a single run with conclusion `Stale`. Returns `true`
+/// if the row was swept.
 ///
-/// Both staleness conditions are re-checked after acquiring the row lock: the
-/// status (closes the race against a real completion webhook, same as
-/// [`sweep_one_job`]) and the non-terminal-jobs guard (shrinks, but cannot
-/// fully close, the race against a fresh job arriving — e.g. a queued
-/// re-run — after this check but before commit: `upsert_job_in_txn`'s
-/// FK-stub `INSERT ... ON CONFLICT` blocks on our `FOR UPDATE` lock, so the
-/// job row itself only commits after we do, but its presence is invisible to
-/// *our* already-taken `EXISTS` snapshot. The window is one transaction's
-/// duration, and it self-heals the same way a real race does: the job's own
-/// eventual completion (same attempt) or the re-run's terminal event (higher
-/// attempt) is accepted by `upsert_run_in_txn`'s predicate and overwrites the
-/// synthetic `Stale` conclusion — see ADR-0013.
+/// Three conditions are re-checked after acquiring the row lock, all against
+/// data freshly read under it:
+///
+/// - **Status** (closes the race against a real completion webhook, same as
+///   [`sweep_one_job`]).
+/// - **Age (`updated_at < cutoff`)** — closes the analogous race to
+///   `sweep_one_job`'s age recheck: a real run-level webhook (e.g. a
+///   `workflow_run` event that doesn't complete the run) can bump
+///   `updated_at` between candidate-select and this lock, and "not yet
+///   `Completed`" alone doesn't mean "still past the threshold".
+/// - **Non-terminal-jobs guard** (shrinks, but cannot fully close, the race
+///   against a fresh job arriving — e.g. a queued re-run — after this check
+///   but before commit: `upsert_job_in_txn`'s FK-stub `INSERT ... ON
+///   CONFLICT` blocks on our `FOR UPDATE` lock, so the job row itself only
+///   commits after we do, but its presence is invisible to *our*
+///   already-taken `EXISTS` snapshot. The window is one transaction's
+///   duration, and it self-heals the same way a real race does: the job's
+///   own eventual completion (same attempt) or the re-run's terminal event
+///   (higher attempt) is accepted by `upsert_run_in_txn`'s predicate and
+///   overwrites the synthetic `Stale` conclusion — see ADR-0013).
 async fn sweep_one_run(
     now: chrono::DateTime<chrono::Utc>,
+    cutoff: chrono::DateTime<chrono::Utc>,
     run_id: i64,
     pool: &TracedPool,
 ) -> Result<bool, PersistError> {
@@ -291,7 +322,7 @@ async fn sweep_one_run(
         r#"
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, html_url, status,
-               created_at, run_started_at, run_attempt
+               created_at, run_started_at, run_attempt, updated_at
           FROM runs
          WHERE id = $1
          FOR UPDATE SKIP LOCKED
@@ -307,6 +338,14 @@ async fn sweep_one_run(
     };
 
     if row.status == "Completed" {
+        tx.commit().await.map_err(backend)?;
+        return Ok(false);
+    }
+
+    if row.updated_at >= cutoff {
+        // A real run-level webhook landed between candidate-select and this
+        // lock, bumping updated_at without completing the run. No longer
+        // stale — the candidate-select snapshot is out of date.
         tx.commit().await.map_err(backend)?;
         return Ok(false);
     }

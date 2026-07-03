@@ -1,16 +1,20 @@
 {{- /*
-Operator-declared runner-pool capacities.
+Operator-declared runner-pool capacities, and (when disabling the staleness
+sweep) the explicit `staleness_threshold: null` the env var can't express.
 
-Rendered only when `runnerPools` is non-empty. The resulting ConfigMap is
-mounted read-only at /etc/atc/config.yaml inside the atc-server container
-(see deployment.yaml). atc-server's figment chain reads it at startup; the
-parsed `runner_pools` block populates `StateSnapshot.runnerPoolCapacities`
-on every /v1/state response so the frontend can render saturation per pool.
+Rendered when `runnerPools` is non-empty OR `config.stalenessThreshold` is
+null — see "atc.needsRunnerConfigMap" in _helpers.tpl. The resulting
+ConfigMap is mounted read-only at /etc/atc/config.yaml inside the atc-server
+container (see deployment.yaml). atc-server's figment chain reads it at
+startup; the parsed `runner_pools` block populates
+`StateSnapshot.runnerPoolCapacities` on every /v1/state response so the
+frontend can render saturation per pool.
 
-Empty list ⇒ no ConfigMap, no volume, no behavior change. The default keeps
-in-memory dev mode and existing single-replica deployments byte-identical.
+Neither condition met ⇒ no ConfigMap, no volume, no behavior change. The
+default keeps in-memory dev mode and existing single-replica deployments
+byte-identical.
 */}}
-{{- if gt (len .Values.runnerPools) 0 }}
+{{- if include "atc.needsRunnerConfigMap" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,6 +23,11 @@ metadata:
     {{- include "atc.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    {{- if gt (len .Values.runnerPools) 0 }}
     runner_pools:
 {{ toYaml .Values.runnerPools | indent 6 }}
+    {{- end }}
+    {{- if not .Values.config.stalenessThreshold }}
+    staleness_threshold: null
+    {{- end }}
 {{- end }}
