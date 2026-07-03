@@ -169,9 +169,9 @@ async fn main() {
     let persist: Arc<dyn PersistentStore> = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
             if matches!(e, DbInitError::Migrate(_)) {
-                tracing::error!(error = %e, "failed to run database migrations");
+                tracing::error!(error.message = %e, "failed to run database migrations");
             } else {
-                tracing::error!(error = %e, "failed to connect to PostgreSQL");
+                tracing::error!(error.message = %e, "failed to connect to PostgreSQL");
             }
             process::exit(1);
         });
@@ -184,7 +184,7 @@ async fn main() {
         let pg_listener = listener::connect_listener(&listener_url)
             .await
             .unwrap_or_else(|e| {
-                tracing::error!(error = %e, "failed to connect PG listener");
+                tracing::error!(error.message = %e, "failed to connect PG listener");
                 process::exit(1);
             });
 
@@ -197,7 +197,7 @@ async fn main() {
         )
         .await
         .unwrap_or_else(|e| {
-            tracing::error!(error = %e, "failed to start PgStore");
+            tracing::error!(error.message = %e, "failed to start PgStore");
             process::exit(1);
         })
     } else {

@@ -177,7 +177,7 @@ mod tests {
     }
 
     /// `Display` impls must mention the failure category — this is the string
-    /// `main.rs` logs under `error = %e`. The inner-error contents come through
+    /// `main.rs` logs under `error.message = %e`. The inner-error contents come through
     /// `source()`, not `Display`, so we only check the leading label here.
     #[test]
     fn display_includes_failure_category() {

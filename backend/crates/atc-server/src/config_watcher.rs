@@ -268,7 +268,7 @@ pub fn spawn_config_watcher(
         Ok(d) => d,
         Err(e) => {
             tracing::error!(
-                error = %e,
+                error.message = %e,
                 "config_watcher: failed to construct debouncer; hot-reload disabled",
             );
             return None;
@@ -276,7 +276,7 @@ pub fn spawn_config_watcher(
     };
     if let Err(e) = debouncer.watch(&parent, RecursiveMode::NonRecursive) {
         tracing::error!(
-            error = %e,
+            error.message = %e,
             parent = %parent.display(),
             "config_watcher: failed to watch parent directory; hot-reload disabled",
         );
@@ -394,7 +394,7 @@ async fn process_reload(
         Err(err) => {
             metrics.record_failure(err.category());
             tracing::error!(
-                error = %err,
+                error.message = %err,
                 category = err.category(),
                 "config_watcher: reload failed; keeping previous capacities",
             );

@@ -23,7 +23,7 @@ pub async fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration, name: 
             tracing::warn!(task = name, "task was cancelled before clean exit");
         }
         Ok(Err(e)) => {
-            tracing::error!(task = name, error = %e, "task ended with error");
+            tracing::error!(task = name, error.message = %e, "task ended with error");
         }
         Err(_elapsed) => {
             tracing::error!(

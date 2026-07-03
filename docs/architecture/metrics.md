@@ -91,6 +91,7 @@ ATC spans use a dotted hierarchy that names the boundary, not the implementation
 - Lowercase, dotted keys (e.g., `webhook.delivery_id`, `pass.rows_fetched`). Use OpenTelemetry semantic conventions where they apply (`http.route`, `http.request.method`, `http.response.status_code`).
 - Late-bound fields use `tracing::field::Empty` at span construction and `Span::current().record(...)` once the value is known.
 - Never put webhook bodies, signatures, secrets, or full URLs (with secrets in query strings) on a span. The webhook attributes capture identifiers (`delivery_id`, `event_type`, `action`) and presence flags (`signature.present`), not payloads.
+- Never name a field literally `error`. Honeycomb auto-derives a boolean `error` column from OTel span status; a same-named string attribute collides with it and is silently coerced away, dropping the message. Use `error.message = %e` (or `?e` for the `Debug` form) instead — this is the convention at every `tracing::error!`/`warn!` call site in the workspace.
 
 ### Boundary discipline
 

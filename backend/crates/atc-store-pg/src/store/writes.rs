@@ -67,7 +67,7 @@ impl PersistentStore for PgStore {
         let jobs = reads::read_all_jobs(&mut tx, cutoff).await?;
 
         if let Err(e) = tx.commit().await {
-            tracing::warn!(error = %e, "read_snapshot: pg commit failed");
+            tracing::warn!(error.message = %e, "read_snapshot: pg commit failed");
             // Reads succeeded; fall through and return them. A failed commit
             // on a read-only REPEATABLE READ tx is non-fatal for the response.
         }
