@@ -227,7 +227,7 @@ Both storage modes run a periodic sweep that force-completes non-terminal runs/j
 
 **In-memory mode** (`atc-store-mem/src/lib.rs`): wired into the existing eviction-tick task rather than a separate task — no row locks exist in this store, so the race against a real webhook is resolved by `apply_*_event`'s own forward-only transition check instead: whichever call lands first wins, and the loser gets `Err(InvalidTransition)`, logged at debug and ignored.
 
-**Config:** `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`), default 48h, floor 6h, restart-only. See `docs/architecture/deployment.md` § "Staleness sweep" for the operator-facing knob.
+**Config:** `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`), default 48h, floor 24h (GitHub's hosted queued-job wait ceiling — the longer of GitHub's two relevant hosted ceilings, since the sweep applies one threshold to both queued and running jobs), restart-only. See `docs/architecture/deployment.md` § "Staleness sweep" for the operator-facing knob.
 
 ## Supervision and shutdown
 

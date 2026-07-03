@@ -155,7 +155,7 @@
         "stalenessThreshold": {
           "type": ["string", "null"],
           "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
-          "description": "Staleness sweep threshold in humantime format (e.g. '48h', '3d'), or null to disable the sweep. Maps to ATC_STALENESS_THRESHOLD. Default '48h'. After this long with no observed webhook activity, a non-terminal run or job is force-completed with conclusion 'Stale' through the normal outbox/NOTIFY write path. Restart-only. Minimum supported is '6h' — sub-floor values fail process startup (below GitHub's hosted-job ceiling, invites false positives). null renders staleness_threshold: null into the runner-pool-config ConfigMap (mounted even with empty runnerPools) instead of the env var, since the env var always overrides the file. See ADR 0013."
+          "description": "Staleness sweep threshold in humantime format (e.g. '48h', '3d'), or null to disable the sweep. Maps to ATC_STALENESS_THRESHOLD. Default '48h'. After this long with no observed webhook activity, a non-terminal run or job is force-completed with conclusion 'Stale' through the normal outbox/NOTIFY write path. Restart-only. Minimum supported is '24h' — GitHub's hosted queued-job wait ceiling, the longer of GitHub's two relevant hosted ceilings since the sweep applies one threshold to both queued and running jobs; sub-floor values fail process startup and invite false positives. null renders staleness_threshold: null into the runner-pool-config ConfigMap (mounted even with empty runnerPools) instead of the env var, since the env var always overrides the file. See ADR 0013."
         },
         "github": {
           "type": "object",

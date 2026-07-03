@@ -53,11 +53,13 @@ There is no row lock concept in the in-memory store, so the race against a concu
 
 ### Configuration
 
-One new knob, `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`, humantime), default 48h, floor 6h (rejected at startup — below GitHub's own hosted-job ceiling, a shorter threshold would false-positive on every legitimate long-running hosted job). `null` disables the sweep — no task is spawned in either store. Restart-only, same reload posture as `outbox_retention` / `display_ttl` (ADR-0009's Decision 9 precedent); the config watcher already warn-logs changed scalars it won't apply live.
+One new knob, `staleness_threshold: Option<Duration>` (`ATC_STALENESS_THRESHOLD`, humantime), default 48h, floor 24h (rejected at startup). `null` disables the sweep — no task is spawned in either store. Restart-only, same reload posture as `outbox_retention` / `display_ttl` (ADR-0009's Decision 9 precedent); the config watcher already warn-logs changed scalars it won't apply live.
 
 Sweep interval (300s) and batch cap (500) are crate consts, not operator-tunable — matching the retention sweep's stance that cadence isn't an operator concern (ADR-0007).
 
 Threshold rationale: GitHub's own ceilings are 6h (hosted job), 24h (hosted queue wait), 5 days (self-hosted job), 35 days (run). 48h covers all hosted cases with wide margin; only multi-day self-hosted jobs can false-positive, and those self-heal on the real webhook. Operators with such workloads raise the threshold. A job stuck `Waiting` (e.g. an unattended deployment-approval gate) is never swept at all — see the jobs-pass exclusion above — so it surfaces indefinitely until a human resolves it or a real webhook advances it, matching GitHub's own "waiting" semantics rather than mislabeling human-pending work as `Stale`.
+
+**Floor rationale (24h, not 6h):** `is_stale_job` applies one threshold to both `Queued` and `InProgress` jobs, but GitHub's two hosted ceilings differ by status — 6h for a running job, 24h for one waiting in the queue. A floor at only 6h would accept a threshold that force-completes a legitimately *queued* job well before GitHub itself would consider it abandoned. That case is also worse than the ordinary self-heal story: `Completed -> InProgress` is a rejected transition, so if the job then actually starts, the dashboard stays stuck on `Stale` until the job's own real terminal event eventually overwrites it — the queued job's transition doesn't get lost the way a same-status replay would, it gets outright dropped. The floor must therefore cover the longer of GitHub's two relevant ceilings.
 
 ## Alternatives considered
 

@@ -180,9 +180,11 @@ config:
   displayTtl: "1h"
   # -- Staleness sweep threshold (humantime: "48h", "3d"). Maps to
   # ATC_STALENESS_THRESHOLD. Default 48 hours; minimum supported value is
-  # "6h" (below GitHub's hosted-job ceiling, sub-floor values would
-  # false-positive on legitimate long-running jobs — `Config::load` rejects
-  # them at startup).
+  # "24h" (GitHub's hosted queued-job wait ceiling — the longer of GitHub's
+  # two relevant hosted ceilings, since the sweep applies one threshold to
+  # both queued and running jobs; sub-floor values would false-positive on
+  # legitimate queued or long-running jobs — `Config::load` rejects them at
+  # startup).
   #
   # After this long with no observed webhook activity, a non-terminal run
   # or job is force-completed with conclusion "Stale" through the normal

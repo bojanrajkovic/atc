@@ -47,10 +47,16 @@ fn default_staleness_threshold() -> Option<Duration> {
     Some(Duration::from_secs(48 * 60 * 60))
 }
 
-/// Lower bound on `staleness_threshold`. Below GitHub's 6h hosted-job
-/// ceiling, a legitimate long-running hosted job would false-positive on
-/// every sweep tick until the real webhook arrives. See ADR-0013.
-const STALENESS_THRESHOLD_FLOOR: Duration = Duration::from_secs(6 * 60 * 60);
+/// Lower bound on `staleness_threshold`. GitHub has two relevant hosted
+/// ceilings — 6h for a running job, 24h for a job waiting in the queue — but
+/// `is_stale_job` applies one threshold to both `Queued` and `InProgress`
+/// jobs. The floor must cover the *longer* of the two, or a value between
+/// 6h and 24h would let a legitimately queued job be force-completed as
+/// `Stale` well before GitHub itself would consider it abandoned — and
+/// since `Completed -> InProgress` is a rejected transition, the dashboard
+/// would stay stuck on `Stale` if that job later started, until the job's
+/// own real terminal event eventually overwrites it. See ADR-0013.
+const STALENESS_THRESHOLD_FLOOR: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Environment variable that overrides the path of the YAML configuration file.
 const CONFIG_FILE_ENV: &str = "ATC_CONFIG_FILE";
@@ -125,7 +131,7 @@ pub struct Config {
     /// activity, a non-terminal run or job is force-completed with
     /// conclusion `Stale` through the normal outbox/NOTIFY write path. Set
     /// via `ATC_STALENESS_THRESHOLD` (humantime: `48h`, `3d`, etc.).
-    /// `null` disables the sweep entirely. Default 48h; hard floor 6h (see
+    /// `null` disables the sweep entirely. Default 48h; hard floor 24h (see
     /// [`STALENESS_THRESHOLD_FLOOR`]). Restart-only — same reload posture as
     /// `outbox_retention` / `display_ttl`. See ADR-0013.
     #[serde(
@@ -243,8 +249,9 @@ fn validate_staleness_threshold(threshold: Option<Duration>) -> Result<(), Strin
         && t < STALENESS_THRESHOLD_FLOOR
     {
         return Err(format!(
-            "staleness_threshold: must be at least 6h (got {t:?}); shorter values fall below \
-             GitHub's hosted-job ceiling and would false-positive on legitimate long-running jobs",
+            "staleness_threshold: must be at least 24h (got {t:?}); shorter values fall below \
+             GitHub's hosted queued-job wait ceiling and would false-positive on legitimate \
+             queued or long-running jobs",
         ));
     }
     Ok(())
@@ -983,8 +990,8 @@ runner_pools:
         let err = Config::load().expect_err("1h staleness_threshold should fail");
         let msg = format!("{err}");
         assert!(
-            msg.contains("staleness_threshold") && msg.contains("6h"),
-            "error should mention staleness_threshold and the 6h floor, got: {msg}"
+            msg.contains("staleness_threshold") && msg.contains("24h"),
+            "error should mention staleness_threshold and the 24h floor, got: {msg}"
         );
     }
 
