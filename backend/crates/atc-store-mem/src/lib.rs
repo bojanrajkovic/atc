@@ -11,8 +11,8 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use atc_core::{
-    Clock, Job, JobId, PersistError, RunId, WorkflowRun,
-    event::{JobEventEnvelope, RunEventEnvelope},
+    Clock, Job, JobConclusion, JobId, PersistError, RunConclusion, RunId, WorkflowRun,
+    event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 use atc_github::WebhookEvent;
 use atc_persist::{LivenessError, PersistentStore};
@@ -133,6 +133,7 @@ impl InMemoryStore {
         clock: Arc<dyn Clock>,
         completed_ttl: Duration,
         eviction_period: Duration,
+        staleness_threshold: Option<Duration>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         let (broadcast_tx, _sentinel) =
@@ -145,7 +146,8 @@ impl InMemoryStore {
             broadcast_tx,
             eviction_handle: StdMutex::new(None),
         });
-        let handle = Arc::clone(&store).spawn_eviction(eviction_period, shutdown);
+        let handle =
+            Arc::clone(&store).spawn_eviction(eviction_period, staleness_threshold, shutdown);
         *store
             .eviction_handle
             .lock()
@@ -154,23 +156,27 @@ impl InMemoryStore {
     }
 
     /// Spawn the supervised background task that periodically evicts expired
-    /// entries from this store.
+    /// entries and sweeps stale non-terminal entries from this store.
     ///
     /// Returns a [`JoinHandle`] that resolves when the task exits cooperatively
-    /// after `cancel` is cancelled. The first eviction runs after `interval`
+    /// after `cancel` is cancelled. The first tick runs after `interval`
     /// elapses (not immediately) — we consume the `tokio::time::interval`
     /// first tick to align the cadence. The `cancel` arm of the select is
     /// `biased;` first so cancellation is always honoured before the next
     /// tick fires, matching the issue #60 supervision pattern.
     ///
-    /// No `.instrument(...)` task-lifetime root: each `evict_expired` call's
-    /// `#[tracing::instrument(name = "eviction.sweep")]` becomes its own root
+    /// `staleness_threshold = None` skips the staleness sweep entirely (the
+    /// operator disabled it) — every tick still runs eviction. See ADR-0013.
+    ///
+    /// No `.instrument(...)` task-lifetime root: each `evict_expired` /
+    /// `sweep_stale` call's own `#[tracing::instrument]` becomes its own root
     /// span, so every sweep is one tidy trace that exports on tick rather
     /// than accumulating under a long-lived parent that only ends at process
     /// shutdown.
     fn spawn_eviction(
         self: Arc<Self>,
         interval: Duration,
+        staleness_threshold: Option<Duration>,
         cancel: CancellationToken,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -181,7 +187,12 @@ impl InMemoryStore {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => break,
-                    _ = ticker.tick() => self.evict_expired().await,
+                    _ = ticker.tick() => {
+                        self.evict_expired().await;
+                        if let Some(threshold) = staleness_threshold {
+                            self.sweep_stale(threshold).await;
+                        }
+                    }
                 }
             }
         })
@@ -378,6 +389,145 @@ impl InMemoryStore {
             elapsed_us,
             "eviction sweep complete"
         );
+    }
+
+    /// Force-complete stale non-terminal runs/jobs with conclusion `Stale`,
+    /// mirroring `atc-store-pg`'s staleness sweep (see ADR-0013).
+    ///
+    /// Jobs sweep first so a run's non-terminal-jobs guard reflects jobs
+    /// already swept this tick — same ordering rationale as the PG sweep.
+    /// Synthesizes `Completed { conclusion: Stale }` envelopes from the
+    /// current row and applies them through the normal `apply_*_event`
+    /// path so seq allocation, indexing, and broadcast all behave
+    /// identically to a real webhook. A concurrent real completion racing
+    /// this sweep is resolved by `apply_*_event`'s own forward-only
+    /// transition check: whichever call lands first wins, and the loser
+    /// gets `Err(InvalidTransition)`, logged at debug and ignored.
+    #[tracing::instrument(
+        name = "staleness.sweep",
+        skip_all,
+        fields(jobs.swept = tracing::field::Empty, runs.swept = tracing::field::Empty),
+    )]
+    pub async fn sweep_stale(&self, threshold: Duration) {
+        let now = self.clock.now();
+
+        // Pass 1: jobs. A job whose parent run row doesn't exist yet
+        // (job-before-run delivery) is skipped — `JobEventEnvelope` requires
+        // org/repo and there's no run row yet to source them from.
+        let stale_jobs: Vec<(Job, String, String)> = {
+            let state = self.state.read().await;
+            state
+                .jobs
+                .values()
+                .filter(|j| atc_core::state_machine::is_stale_job(j, now, threshold))
+                .filter_map(|j| {
+                    state
+                        .runs
+                        .get(&j.run_id)
+                        .map(|r| (j.clone(), r.org.clone(), r.repo.clone()))
+                })
+                .collect()
+        };
+
+        let mut jobs_swept = 0u64;
+        for (job, org, repo) in stale_jobs {
+            let job_id = job.id;
+            let env = JobEventEnvelope {
+                job_id: job.id,
+                run_id: job.run_id,
+                org,
+                repo,
+                name: job.name,
+                created_at: job.created_at,
+                started_at: job.started_at,
+                completed_at: Some(now),
+                run_attempt: job.run_attempt,
+                action: JobEvent::Completed {
+                    conclusion: JobConclusion::Stale,
+                    runner: job.runner,
+                    labels: job.labels,
+                    steps: job.steps,
+                },
+            };
+            match self.apply_job_event(env).await {
+                Ok(_) => jobs_swept += 1,
+                Err(e) => tracing::debug!(
+                    job_id = job_id.0,
+                    error.message = ?e,
+                    "staleness sweep: job apply skipped (raced a real event)"
+                ),
+            }
+        }
+
+        // Pass 2: runs. Re-read fresh state so the non-terminal-jobs guard
+        // reflects the jobs pass above. This snapshot is taken once before
+        // the loop below awaits each run's `apply_run_event` in turn, so a
+        // concurrent `apply_job_event` adding a fresh job for one of these
+        // runs between the snapshot and that run's own apply call isn't
+        // caught — narrows, not fully closes, the same race PG's row lock
+        // narrows. Self-heals the same way: the job's own terminal event
+        // (or the re-run's) later overwrites the synthetic conclusion. See
+        // ADR-0013.
+        let stale_runs: Vec<WorkflowRun> = {
+            let state = self.state.read().await;
+            state
+                .runs
+                .values()
+                .filter(|r| {
+                    let has_non_terminal_jobs = state.jobs_by_run.get(&r.id).is_some_and(|ids| {
+                        ids.iter().any(|id| {
+                            state
+                                .jobs
+                                .get(id)
+                                .is_some_and(|j| j.status != JobStatus::Completed)
+                        })
+                    });
+                    atc_core::state_machine::is_stale_run(r, has_non_terminal_jobs, now, threshold)
+                })
+                .cloned()
+                .collect()
+        };
+
+        let mut runs_swept = 0u64;
+        for run in stale_runs {
+            let run_id = run.id;
+            let env = RunEventEnvelope {
+                run_id: run.id,
+                org: run.org,
+                repo: run.repo,
+                workflow_name: run.workflow_name,
+                workflow_path: run.workflow_path,
+                branch: run.branch,
+                head_sha: run.head_sha,
+                commit_message: run.commit_message,
+                trigger_event: run.event,
+                display_title: run.display_title,
+                html_url: run.html_url,
+                created_at: run.created_at,
+                run_started_at: run.run_started_at,
+                updated_at: now,
+                completed_at: Some(now),
+                run_attempt: run.run_attempt,
+                action: RunEvent::Completed {
+                    conclusion: RunConclusion::Stale,
+                },
+            };
+            match self.apply_run_event(env).await {
+                Ok(_) => runs_swept += 1,
+                Err(e) => tracing::debug!(
+                    run_id = run_id.0,
+                    error.message = ?e,
+                    "staleness sweep: run apply skipped (raced a real event)"
+                ),
+            }
+        }
+
+        let span = tracing::Span::current();
+        span.record("jobs.swept", jobs_swept);
+        span.record("runs.swept", runs_swept);
+        if jobs_swept > 0 || runs_swept > 0 {
+            tracing::info!(jobs_swept, runs_swept, "staleness sweep complete");
+        }
     }
 }
 
