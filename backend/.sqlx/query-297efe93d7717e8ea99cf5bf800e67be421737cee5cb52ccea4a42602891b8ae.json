@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id FROM runs\n         WHERE status != 'Completed'\n           AND placeholder = false\n           AND updated_at < $1\n           AND NOT EXISTS (\n               SELECT 1 FROM jobs WHERE jobs.run_id = runs.id AND jobs.status != 'Completed'\n           )\n         ORDER BY id\n         LIMIT $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "297efe93d7717e8ea99cf5bf800e67be421737cee5cb52ccea4a42602891b8ae"
+}

@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT j.id              AS \"id!\",\n               j.run_id          AS \"run_id!\",\n               j.name            AS \"name!\",\n               j.status          AS \"status!\",\n               j.labels          AS \"labels!: Vec<String>\",\n               j.steps           AS \"steps!: serde_json::Value\",\n               j.runner_id       AS \"runner_id?\",\n               j.runner_name     AS \"runner_name?\",\n               j.runner_group_name AS \"runner_group_name?\",\n               j.created_at      AS \"created_at!\",\n               j.started_at      AS \"started_at?\",\n               j.run_attempt     AS \"run_attempt!\",\n               r.org             AS \"org!\",\n               r.repo            AS \"repo!\"\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n         WHERE j.id = $1\n         FOR UPDATE OF j SKIP LOCKED\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "name!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "labels!: Vec<String>",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 5,
+        "name": "steps!: serde_json::Value",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "runner_id?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "runner_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "runner_group_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "started_at?",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "run_attempt!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "org!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "repo!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "eb41badb1d0035ab70253b42af3f1079906968643f74c1f0fcff4e143ae8e4ab"
+}
