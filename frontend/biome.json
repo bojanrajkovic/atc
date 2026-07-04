@@ -78,6 +78,7 @@
       "!!**/node_modules",
       "!!**/dist",
       "!!**/pnpm-lock.yaml",
+      "!!**/.impeccable",
       "!!**/src/lib/types/generated",
       "!!**/test-results",
       "!!**/playwright-report",
