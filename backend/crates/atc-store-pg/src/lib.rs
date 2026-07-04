@@ -8,8 +8,13 @@
 //!
 //! The PG-side metrics surface (`PgMetrics`), the LISTEN/NOTIFY background tasks
 //! ([`listener`]), the snapshot-read helpers ([`reads`]), the pool init + the
-//! [`DbInitError`] wrapper ([`db`]), and the four embedded SQL migrations live
+//! [`DbInitError`] wrapper ([`db`]), and the ten embedded SQL migrations live
 //! here too — co-located with the only crate that depends on them.
+//!
+//! [`session`] holds [`SessionStore`] — `auth.github`'s session and pre-auth
+//! OAuth flow storage. It shares [`TracedPool`] with `PgStore` but is a
+//! separate concrete type with its own background sweep task lifecycle:
+//! sessions are not run-state, so they stay off the `PersistentStore` waist.
 //!
 //! [`PersistentStore`]: atc_persist::PersistentStore
 
@@ -17,6 +22,7 @@ pub mod db;
 pub mod listener;
 pub mod metrics;
 pub mod reads;
+pub mod session;
 pub mod store;
 pub(crate) mod traceparent;
 
@@ -24,6 +30,7 @@ pub(crate) mod traceparent;
 pub mod invariants;
 
 pub use db::{DbInitError, init_pool};
+pub use session::{Flow, Session, SessionStore};
 
 /// Tracing-instrumented Postgres pool used throughout `atc-store-pg`.
 ///

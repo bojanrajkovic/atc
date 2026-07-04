@@ -119,7 +119,18 @@ Boot validation for `mode = "github"` runs alongside the existing `display_ttl`/
 
 Like every other scalar field, `[auth]` is restart-only: an operator edit to a live config file is reported by the scalar-drift warn-log (`ScalarSnapshot` treats the whole section as one unit) but does not take effect until the next pod roll. `client_secret` (and the existing `github.webhook_secret`) never appear in `Debug` output — both config types have a manual `Debug` impl that redacts the secret field.
 
-Config parsing and boot validation are the full scope of this section; session storage, the OAuth endpoints, and request-time enforcement are separate, later pieces of the `auth.github` substrate (ADR-0014).
+Config parsing and boot validation are covered here; session storage is § "Session storage (`auth.github`)" below, and the OAuth endpoints and request-time enforcement are separate, later pieces of the `auth.github` substrate (ADR-0014).
+
+## Session storage (`auth.github`)
+
+`SessionStore` (in `atc-store-pg`) is a concrete struct over `auth_flows` and `auth_sessions` — deliberately not a `PersistentStore` implementation (ADR-0008): sessions are not run-state, and `auth.github` requires Postgres by locked decision, so exactly one implementation exists. It shares the same `TracedPool` as `PgStore` but owns its own background sweep task lifecycle (ADR-0006), independent of `PgStore`'s outbox retention tasks.
+
+No token columns exist anywhere in either table (ADR-0014): ATC derives the repo-authorization set at the OAuth callback and discards both the GitHub access and refresh token immediately.
+
+- **`auth_flows`** — a pre-auth OAuth round-trip bound to the browser that started it via the `flow_id` in a short-lived `__Host-atc_flow` cookie. Single-use: `consume_flow` deletes the row on read (`DELETE ... RETURNING`). Rows older than 10 minutes read as absent regardless of whether the sweep has reaped them yet.
+- **`auth_sessions`** — the post-login session. `id_hash` (the primary key) is the SHA-256 hex digest of the opaque session id carried in the `__Host-atc_session` cookie; the raw value is never persisted, so a database dump alone cannot forge a session cookie. `repos_refreshed_at` is the clock `repo_auth_ttl` staleness measures against; `expires_at` is the absolute `max_session_ttl` cutoff, independent of that staleness. A session is deleted on read once `expires_at` has passed (best-effort — a racing sweep tick may already have removed it).
+
+Every timestamp column (`created_at`, `expires_at`, `repos_refreshed_at`) is bound Rust-side from `Clock::now()`, never SQL `now()` — the same discipline `outbox_watermarks.updated_at` established, so `TestClock`-driven tests can advance time deterministically. `sweep_expired` deletes both expired flows and expired sessions in one call and reports counts; the task spawned by `SessionStore::start` calls it every 5 minutes (no cross-replica coordination needed, unlike the outbox sweep's `SKIP LOCKED` candidate selection — deleting an already-deleted row is simply a no-op).
 
 ## Postgres schema
 
@@ -131,6 +142,7 @@ Migrations live in `backend/crates/atc-store-pg/migrations/`, embedded in the bi
 - `runs.placeholder` column: FK-only stub rows created when a job event arrives before its parent run event. `/v1/state` reads `WHERE placeholder = false`. Stubs are promoted to real rows when the matching `workflow_run` webhook arrives.
 - `runs.completed_at` column (added in a later migration): used by the composite index for display-TTL snapshot filtering.
 - `runs.run_attempt` column (added in migration `0008`): GitHub's 1-based attempt counter, reused across re-runs. Drives the re-run reset path in the run UPSERT predicate — see § "GitHub re-runs and `run_attempt`".
+- `auth_flows` + `auth_sessions` tables (migration `0010`): `auth.github` session and pre-auth OAuth flow storage, owned by `SessionStore` rather than `PgStore` — see § "Session storage (`auth.github`)" above.
 
 **Placeholder note:** The `placeholder` mechanism provides out-of-order event tolerance at the storage layer. A job event always has a parent run to satisfy the FK constraint, even if the run event arrives later.
 
@@ -162,9 +174,28 @@ erDiagram
         bigint watermark
         timestamptz updated_at
     }
+    auth_flows {
+        text flow_id PK
+        text state
+        text pkce_verifier
+        text return_to
+        bool popup
+        timestamptz created_at
+    }
+    auth_sessions {
+        text id_hash PK
+        bigint github_user_id
+        text github_login
+        bigint_array repo_ids
+        timestamptz repos_refreshed_at
+        timestamptz created_at
+        timestamptz expires_at
+    }
 
     runs ||--o{ jobs : "parent of"
 ```
+
+`auth_flows` and `auth_sessions` have no FK relationship to `runs`/`jobs` — `SessionStore` is a separate concern from the run/job domain, sharing only the connection pool.
 
 ## GitHub re-runs and `run_attempt`
 
