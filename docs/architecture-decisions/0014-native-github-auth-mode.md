@@ -1,4 +1,4 @@
-# 0013 — Native GitHub auth mode (`auth.github`)
+# 0014 — Native GitHub auth mode (`auth.github`)
 
 Date: 2026-07-03
 Status: Accepted
