@@ -115,6 +115,11 @@ pub fn apply_run_event(
             // observation across idempotent replay.
             completed_at: envelope.completed_at.or(existing.completed_at),
             run_attempt: envelope.run_attempt,
+            // Self-heal: a legacy row's `None` promotes to `Some` the first
+            // time an envelope carries a repo id. Never regresses an
+            // already-known `Some` back to `None` (e.g. a staleness-sweep
+            // envelope with no repo id of its own must not erase it).
+            repo_id: envelope.repo_id.or(existing.repo_id),
             ..existing
         },
         None => WorkflowRun {
@@ -136,6 +141,7 @@ pub fn apply_run_event(
             updated_at: envelope.updated_at,
             completed_at: envelope.completed_at,
             run_attempt: envelope.run_attempt,
+            repo_id: envelope.repo_id,
         },
     };
 

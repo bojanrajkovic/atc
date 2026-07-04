@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::types::{RepoKey, RunId};
+use crate::types::{RepoId, RepoKey, RunId};
 
 /// Status of a workflow run in its lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -103,6 +103,18 @@ pub struct WorkflowRun {
     /// reusing the same `run_id`. The dashboard can display "attempt N" badges
     /// for runs with `run_attempt > 1`.
     pub run_attempt: i32,
+    /// GitHub's immutable numeric repository identifier — the authorization
+    /// key the native-auth initiative filters on. `None` for rows persisted
+    /// before this field existed; `apply_run_event` self-heals a `None` row
+    /// to `Some` on the next event that carries a repo id. Never regresses
+    /// `Some` back to `None`.
+    ///
+    /// `#[ts(optional)]` + `#[serde(skip_serializing_if = "Option::is_none")]`
+    /// mirror `completed_at` above for the same rolling-deploy-tolerant wire
+    /// shape.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repo_id: Option<RepoId>,
 }
 
 impl WorkflowRun {

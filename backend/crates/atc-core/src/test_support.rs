@@ -122,6 +122,7 @@ pub fn make_workflow_run() -> WorkflowRun {
         updated_at: now,
         completed_at: None,
         run_attempt: 1,
+        repo_id: Some(TEST_REPO_ID),
     }
 }
 
