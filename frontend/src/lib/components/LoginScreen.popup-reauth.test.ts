@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { withLocationHrefSpy } from '$lib/__tests__/location-spy'
@@ -6,9 +6,16 @@ import { connectionStore } from '$lib/stores/connection.svelte'
 import LoginScreen from './LoginScreen.svelte'
 
 // A minimal mutable stand-in for the Window returned by window.open — tests
-// flip `.closed` to simulate the user abandoning the popup.
-function mockPopup(): { closed: boolean } {
-  return { closed: false }
+// flip `.closed` to simulate the user abandoning the popup, and `cleanup()`
+// calls `.close()` on it directly.
+function mockPopup(): { closed: boolean; close: () => void } {
+  const popup = {
+    closed: false,
+    close: () => {
+      popup.closed = true
+    },
+  }
+  return popup
 }
 
 describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
@@ -75,7 +82,9 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
     render(LoginScreen)
 
     popup.closed = true
-    await vi.advanceTimersByTimeAsync(600)
+    // The poll notices at ~500ms and starts a 1s grace window (for a message
+    // that might already be in flight) before actually tearing down.
+    await vi.advanceTimersByTimeAsync(1600)
 
     expect(retrySpy).not.toHaveBeenCalled()
     // The manual control is still there — abandonment falls back to the
@@ -101,5 +110,58 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
     await tick()
 
     expect(openSpy).toHaveBeenCalledOnce()
+  })
+
+  it('still calls retry() if session-refreshed arrives just after the poll notices the popup closed', async () => {
+    vi.useFakeTimers()
+    const popup = mockPopup()
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const retrySpy = vi.spyOn(connectionStore, 'retry')
+
+    connectionStore.authReason = 'stale_authorization'
+    render(LoginScreen)
+
+    // The popup closes itself right as the poll checks (the realistic race:
+    // window.close() flips .closed just ahead of the async
+    // BroadcastChannel delivery of the message the same script already sent).
+    popup.closed = true
+    await vi.advanceTimersByTimeAsync(500)
+
+    const channel = new BroadcastChannel('atc-auth')
+    channel.postMessage('session-refreshed')
+    channel.close()
+    await vi.waitFor(() => expect(retrySpy).toHaveBeenCalledOnce())
+
+    vi.useRealTimers()
+  })
+
+  it('disables the manual link while a popup is in flight — the backend flow cookie is single-slot, not per-popup', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(mockPopup() as unknown as Window)
+
+    connectionStore.authReason = 'stale_authorization'
+    render(LoginScreen)
+    await tick()
+
+    const link = screen.getByRole('link', { name: /sign in with github/i })
+    expect(link.getAttribute('aria-disabled')).toBe('true')
+
+    const navigatedTo = await withLocationHrefSpy(() => fireEvent.click(link))
+    expect(navigatedTo).toBe(null)
+  })
+
+  it('falls back to a full-page redirect if window.open throws synchronously', async () => {
+    vi.spyOn(window, 'open').mockImplementation(() => {
+      throw new Error('blocked by sandboxed iframe')
+    })
+    window.history.replaceState(null, '', '/?q=stuck-runs')
+
+    connectionStore.authReason = 'stale_authorization'
+    const navigatedTo = await withLocationHrefSpy(() => {
+      render(LoginScreen)
+    })
+
+    expect(navigatedTo).toBe(
+      `/v1/auth/github/login?return_to=${encodeURIComponent('/?q=stuck-runs')}`,
+    )
   })
 })
