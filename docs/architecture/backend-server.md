@@ -1,6 +1,6 @@
 # Backend Server — Architecture
 
-Last verified: 2026-05-30
+Last verified: 2026-07-04
 
 `atc-server` is the single executable crate in the workspace. It wires the six library crates into a running Axum HTTP server: accepting GitHub webhook POST requests, verifying HMAC signatures, applying domain events to the active store, and delivering a real-time WebSocket stream plus a REST snapshot to the frontend. The persistence crate split is recorded in [ADR-0008](../architecture-decisions/0008-persistence-crate-split.md).
 
@@ -106,6 +106,16 @@ The `config_watcher` task watches the parent directory of `$ATC_CONFIG_FILE` usi
 A diagnostic scalar-drift check also runs on each reload: the watcher parses the full config and warns on any scalar field that changed but cannot be hot-reloaded (e.g., `http_addr`). This catches the "I edited it in YAML — why didn't it take effect" foot-gun without adding full hot-reload for scalars.
 
 **Kubernetes ConfigMap atomic-swap:** kubelet projects the ConfigMap via a `..data` symlink that is atomically renamed on update. The watcher's parent-dir watch sees the rename. The Helm chart must mount the ConfigMap as a directory (no `subPath`) — `subPath` mounts block kubelet propagation and break hot-reload. See `docs/architecture/deployment.md` § "File-based configuration".
+
+## Auth configuration (`auth.github`)
+
+`[auth]` is an opt-in section: `mode = "none"` (default) is byte-for-byte identical to today's behavior. `mode = "github"` enables the native GitHub OAuth web flow (see [ADR-0014](../architecture-decisions/0014-native-github-auth-mode.md)) and requires a fully populated `[auth.github]`: `client_id`, `client_secret` (env `ATC_AUTH__GITHUB__CLIENT_SECRET`), `public_origin`, plus `repo_auth_ttl` (default `1h`) and `max_session_ttl` (default `30d`).
+
+Boot validation for `mode = "github"` runs alongside the existing `display_ttl`/`staleness_threshold` checks in `Config::load`: it requires `database_url` (the in-memory store has no session storage) and each `[auth.github]` key, naming the exact missing key in the error rather than surfacing figment's generic deserialize failure. `public_origin` must parse as an absolute `http`/`https` URL with no path, query, or fragment — it doubles as the WS `Origin` allowlist and the OAuth redirect_uri base.
+
+Like every other scalar field, `[auth]` is restart-only: an operator edit to a live config file is reported by the scalar-drift warn-log (`ScalarSnapshot` treats the whole section as one unit) but does not take effect until the next pod roll. `client_secret` (and the existing `github.webhook_secret`) never appear in `Debug` output — both config types have a manual `Debug` impl that redacts the secret field.
+
+Config parsing and boot validation are the full scope of this section; session storage, the OAuth endpoints, and request-time enforcement are separate, later pieces of the `auth.github` substrate (ADR-0014).
 
 ## Postgres schema
 

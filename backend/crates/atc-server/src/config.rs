@@ -69,6 +69,19 @@ const STALENESS_THRESHOLD_FLOOR: Duration = Duration::from_secs(24 * 60 * 60);
 /// clear message is operationally cheaper.
 const STALENESS_THRESHOLD_CEILING: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 
+/// Default `auth.github.repo_auth_ttl`: 1 hour. Staleness window for the
+/// cached GitHub repo-authorization set; see the design doc's "Configuration
+/// surface" section.
+fn default_repo_auth_ttl() -> Duration {
+    Duration::from_secs(60 * 60)
+}
+
+/// Default `auth.github.max_session_ttl`: 30 days. Absolute session
+/// lifetime, independent of `repo_auth_ttl`.
+fn default_max_session_ttl() -> Duration {
+    Duration::from_secs(30 * 24 * 60 * 60)
+}
+
 /// Environment variable that overrides the path of the YAML configuration file.
 const CONFIG_FILE_ENV: &str = "ATC_CONFIG_FILE";
 
@@ -107,10 +120,83 @@ impl Default for LogFormat {
     }
 }
 
-#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct GitHubConfig {
     #[serde(default)]
     pub webhook_secret: Option<String>,
+}
+
+impl std::fmt::Debug for GitHubConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubConfig")
+            .field(
+                "webhook_secret",
+                &self.webhook_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
+/// Auth mode. `None` (default) preserves today's behavior byte-for-byte;
+/// `Github` opts into the native `auth.github` OAuth web flow. See the
+/// design doc's "Configuration surface" section.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    #[default]
+    None,
+    Github,
+}
+
+/// `[auth.github]` section. Fields are individually optional at the serde
+/// layer (`Section optional in serde; required-by-validation when
+/// mode=github` — see `validate_auth_config`) so that a missing key under
+/// `mode = "github"` produces a named-key boot error instead of an opaque
+/// figment deserialize failure.
+#[derive(Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct AuthGitHubConfig {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Env: `ATC_AUTH__GITHUB__CLIENT_SECRET`. Never logged — see the
+    /// `Debug` impl below.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// Compared against the WS `Origin` header and used as the redirect_uri
+    /// base. Must be an absolute `http(s)` URL with no path/query/fragment
+    /// (see `validate_public_origin`).
+    #[serde(default)]
+    pub public_origin: Option<String>,
+    /// Staleness window for the cached repo-authorization set. Default 1h.
+    #[serde(default = "default_repo_auth_ttl", with = "humantime_serde")]
+    pub repo_auth_ttl: Duration,
+    /// Absolute session lifetime. Default 30d.
+    #[serde(default = "default_max_session_ttl", with = "humantime_serde")]
+    pub max_session_ttl: Duration,
+}
+
+impl std::fmt::Debug for AuthGitHubConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthGitHubConfig")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("public_origin", &self.public_origin)
+            .field("repo_auth_ttl", &self.repo_auth_ttl)
+            .field("max_session_ttl", &self.max_session_ttl)
+            .finish()
+    }
+}
+
+/// `[auth]` section. Restart-only, like every other scalar (see
+/// `ScalarSnapshot`) — no hot-reload.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub mode: AuthMode,
+    #[serde(default)]
+    pub github: Option<AuthGitHubConfig>,
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -151,6 +237,11 @@ pub struct Config {
         with = "humantime_serde::option"
     )]
     pub staleness_threshold: Option<Duration>,
+    /// `[auth]` section — opt-in native GitHub OAuth mode. Default `mode =
+    /// "none"` preserves today's behavior exactly. Restart-only; see
+    /// `validate_auth_config` for `mode = "github"`'s boot requirements.
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 impl Default for Config {
@@ -166,6 +257,7 @@ impl Default for Config {
             outbox_retention: default_outbox_retention(),
             display_ttl: default_display_ttl(),
             staleness_threshold: default_staleness_threshold(),
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -228,6 +320,9 @@ impl Config {
         validate_staleness_threshold(config.staleness_threshold)
             .map_err(|msg| Box::new(figment::Error::from(msg)))?;
 
+        validate_auth_config(&config.auth, config.database_url.as_deref())
+            .map_err(|msg| Box::new(figment::Error::from(msg)))?;
+
         Ok(config)
     }
 }
@@ -274,6 +369,93 @@ fn validate_staleness_threshold(threshold: Option<Duration>) -> Result<(), Strin
              failure — use `staleness_threshold: null` to disable the sweep instead",
         ));
     }
+    Ok(())
+}
+
+/// Rejects a `public_origin` that isn't an absolute `http(s)` URL with no
+/// userinfo/path/query/fragment. `public_origin` is compared verbatim
+/// against the WS `Origin` header (which never carries userinfo, per RFC
+/// 6454) and used as the OAuth redirect_uri base, so any of those
+/// components would make the comparison or the redirect silently wrong
+/// rather than fail loudly at boot.
+fn validate_public_origin(origin: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(origin).map_err(|e| {
+        format!("auth.github.public_origin: must be an absolute http(s) URL (got {origin:?}): {e}")
+    })?;
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(format!(
+            "auth.github.public_origin: scheme must be http or https (got {:?})",
+            url.scheme()
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(
+            "auth.github.public_origin: must not include userinfo (username/password)".to_string(),
+        );
+    }
+    if !url.path().is_empty() && url.path() != "/" {
+        return Err(format!(
+            "auth.github.public_origin: must not include a path (got {:?})",
+            url.path()
+        ));
+    }
+    if url.query().is_some() {
+        return Err("auth.github.public_origin: must not include a query string".to_string());
+    }
+    if url.fragment().is_some() {
+        return Err("auth.github.public_origin: must not include a fragment".to_string());
+    }
+    Ok(())
+}
+
+/// Requires a non-empty `[auth.github]` string field, naming it in the
+/// error. Shared by every required key in `validate_auth_config` so a typo
+/// in the field name can't drift between the accessor and the error string.
+fn require_auth_github_field<'a>(name: &str, value: Option<&'a str>) -> Result<&'a str, String> {
+    match value {
+        Some(v) if !v.is_empty() => Ok(v),
+        _ => Err(format!(
+            "auth.github.{name}: required when auth.mode = \"github\""
+        )),
+    }
+}
+
+/// Boot validation for `[auth]`. `mode = "none"` (default) is always valid,
+/// preserving today's behavior exactly. `mode = "github"` requires Postgres
+/// (in-memory store has no session storage) and a fully populated
+/// `[auth.github]`, each missing/invalid key reported by name so an
+/// operator can fix it without cross-referencing the config schema.
+fn validate_auth_config(auth: &AuthConfig, database_url: Option<&str>) -> Result<(), String> {
+    if auth.mode != AuthMode::Github {
+        return Ok(());
+    }
+
+    if database_url.is_none_or(str::is_empty) {
+        return Err(
+            "auth.mode = \"github\" requires database_url (the in-memory store has no session storage)"
+                .to_string(),
+        );
+    }
+
+    let github = auth.github.as_ref();
+    require_auth_github_field("client_id", github.and_then(|g| g.client_id.as_deref()))?;
+    require_auth_github_field(
+        "client_secret",
+        github.and_then(|g| g.client_secret.as_deref()),
+    )?;
+    let public_origin = require_auth_github_field(
+        "public_origin",
+        github.and_then(|g| g.public_origin.as_deref()),
+    )?;
+    validate_public_origin(public_origin)?;
+
+    if github.is_some_and(|g| g.repo_auth_ttl.is_zero()) {
+        return Err("auth.github.repo_auth_ttl: must be greater than 0s".to_string());
+    }
+    if github.is_some_and(|g| g.max_session_ttl.is_zero()) {
+        return Err("auth.github.max_session_ttl: must be greater than 0s".to_string());
+    }
+
     Ok(())
 }
 
@@ -434,6 +616,12 @@ pub struct ScalarSnapshot {
     pub outbox_retention: Duration,
     pub display_ttl: Duration,
     pub staleness_threshold: Option<Duration>,
+    /// The whole `[auth]` section, compared as one unit rather than
+    /// decomposed into its own scalar fields — `AuthGitHubConfig`'s `Debug`
+    /// impl already redacts `client_secret`, so keeping it as a single field
+    /// here means that redaction covers this snapshot too instead of a
+    /// second copy needing its own.
+    pub auth: AuthConfig,
 }
 
 impl ScalarSnapshot {
@@ -448,6 +636,7 @@ impl ScalarSnapshot {
             outbox_retention: cfg.outbox_retention,
             display_ttl: cfg.display_ttl,
             staleness_threshold: cfg.staleness_threshold,
+            auth: cfg.auth.clone(),
         }
     }
 
@@ -478,6 +667,9 @@ impl ScalarSnapshot {
         }
         if self.staleness_threshold != other.staleness_threshold {
             changed.push("staleness_threshold");
+        }
+        if self.auth != other.auth {
+            changed.push("auth");
         }
         changed
     }
@@ -1114,5 +1306,291 @@ runner_pools:
             msg.contains("elastic"),
             "error should mention the unknown field, got: {msg}"
         );
+    }
+
+    const AUTH_ENV_VARS: &[&str] = &[
+        CONFIG_FILE_ENV,
+        "ATC_DATABASE_URL",
+        "ATC_AUTH__MODE",
+        "ATC_AUTH__GITHUB__CLIENT_ID",
+        "ATC_AUTH__GITHUB__CLIENT_SECRET",
+        "ATC_AUTH__GITHUB__PUBLIC_ORIGIN",
+        "ATC_AUTH__GITHUB__REPO_AUTH_TTL",
+        "ATC_AUTH__GITHUB__MAX_SESSION_TTL",
+    ];
+
+    /// Points `ATC_CONFIG_FILE` at a guaranteed-absent path so a developer
+    /// machine's real `/etc/atc/config.yaml` never bleeds into these tests.
+    fn no_config_file() {
+        unsafe {
+            std::env::set_var(
+                CONFIG_FILE_ENV,
+                "/tmp/atc-test-definitely-does-not-exist.yaml",
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn auth_mode_defaults_to_none_with_no_github_section() {
+        // mode=none deployments parse identically to today, even with no
+        // database_url and no [auth.github] section at all.
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        let config = Config::load().expect("default auth config should load");
+        assert_eq!(config.auth.mode, AuthMode::None);
+        assert!(config.auth.github.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_mode_requires_database_url() {
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe { std::env::set_var("ATC_AUTH__MODE", "github") };
+        let err = Config::load().expect_err("mode=github with no database_url should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("database_url"),
+            "error should name database_url, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_mode_rejects_empty_database_url() {
+        // A templated deployment (e.g. an unset Helm secret ref rendering
+        // as "") should be treated the same as an absent database_url, not
+        // silently accepted and left to fail later with an unrelated
+        // "must start with postgres://" error.
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe {
+            std::env::set_var("ATC_DATABASE_URL", "");
+            std::env::set_var("ATC_AUTH__MODE", "github");
+        };
+        let err = Config::load().expect_err("empty database_url should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("database_url"),
+            "error should name database_url, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_mode_requires_client_id() {
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe {
+            std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+            std::env::set_var("ATC_AUTH__MODE", "github");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_SECRET", "secret");
+            std::env::set_var("ATC_AUTH__GITHUB__PUBLIC_ORIGIN", "https://atc.example.com");
+        };
+        let err = Config::load().expect_err("missing client_id should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("auth.github.client_id"),
+            "error should name auth.github.client_id, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_mode_requires_client_secret() {
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe {
+            std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+            std::env::set_var("ATC_AUTH__MODE", "github");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_ID", "Iv1.abc123");
+            std::env::set_var("ATC_AUTH__GITHUB__PUBLIC_ORIGIN", "https://atc.example.com");
+        };
+        let err = Config::load().expect_err("missing client_secret should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("auth.github.client_secret"),
+            "error should name auth.github.client_secret, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_mode_requires_public_origin() {
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe {
+            std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+            std::env::set_var("ATC_AUTH__MODE", "github");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_ID", "Iv1.abc123");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_SECRET", "secret");
+        };
+        let err = Config::load().expect_err("missing public_origin should fail");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("auth.github.public_origin"),
+            "error should name auth.github.public_origin, got: {msg}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_public_origin_rejects_malformed_urls() {
+        let cases = [
+            ("ftp://atc.example.com", "scheme"),
+            ("https://user:pass@atc.example.com", "userinfo"),
+            ("https://atc.example.com/app", "path"),
+            ("https://atc.example.com?x=1", "query"),
+            ("https://atc.example.com#frag", "fragment"),
+        ];
+        for (origin, expect_substr) in cases {
+            let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+            no_config_file();
+            unsafe {
+                std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+                std::env::set_var("ATC_AUTH__MODE", "github");
+                std::env::set_var("ATC_AUTH__GITHUB__CLIENT_ID", "Iv1.abc123");
+                std::env::set_var("ATC_AUTH__GITHUB__CLIENT_SECRET", "secret");
+                std::env::set_var("ATC_AUTH__GITHUB__PUBLIC_ORIGIN", origin);
+            };
+            let err = Config::load().expect_err("malformed public_origin should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("public_origin") && msg.contains(expect_substr),
+                "error for {origin:?} should mention public_origin and {expect_substr:?}, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_mode_with_full_env_config_loads() {
+        // Env nesting for every auth.github key.
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe {
+            std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+            std::env::set_var("ATC_AUTH__MODE", "github");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_ID", "Iv1.abc123");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_SECRET", "secret");
+            std::env::set_var("ATC_AUTH__GITHUB__PUBLIC_ORIGIN", "https://atc.example.com");
+            std::env::set_var("ATC_AUTH__GITHUB__REPO_AUTH_TTL", "6h");
+            std::env::set_var("ATC_AUTH__GITHUB__MAX_SESSION_TTL", "7d");
+        };
+        let config = Config::load().expect("fully configured mode=github should load");
+        assert_eq!(config.auth.mode, AuthMode::Github);
+        let github = config
+            .auth
+            .github
+            .expect("github section should be populated");
+        assert_eq!(github.client_id.as_deref(), Some("Iv1.abc123"));
+        assert_eq!(github.client_secret.as_deref(), Some("secret"));
+        assert_eq!(
+            github.public_origin.as_deref(),
+            Some("https://atc.example.com")
+        );
+        assert_eq!(github.repo_auth_ttl, Duration::from_secs(6 * 60 * 60));
+        assert_eq!(
+            github.max_session_ttl,
+            Duration::from_secs(7 * 24 * 60 * 60)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_ttl_defaults_are_1h_and_30d() {
+        // Default TTLs, same humantime format as display_ttl/staleness_threshold.
+        let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+        no_config_file();
+        unsafe {
+            std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+            std::env::set_var("ATC_AUTH__MODE", "github");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_ID", "Iv1.abc123");
+            std::env::set_var("ATC_AUTH__GITHUB__CLIENT_SECRET", "secret");
+            std::env::set_var("ATC_AUTH__GITHUB__PUBLIC_ORIGIN", "https://atc.example.com");
+        };
+        let config = Config::load().expect("defaulted TTLs should load");
+        let github = config
+            .auth
+            .github
+            .expect("github section should be populated");
+        assert_eq!(github.repo_auth_ttl, Duration::from_secs(60 * 60));
+        assert_eq!(
+            github.max_session_ttl,
+            Duration::from_secs(30 * 24 * 60 * 60)
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn auth_github_zero_ttls_are_rejected() {
+        let cases = [
+            ("ATC_AUTH__GITHUB__REPO_AUTH_TTL", "repo_auth_ttl"),
+            ("ATC_AUTH__GITHUB__MAX_SESSION_TTL", "max_session_ttl"),
+        ];
+        for (env_var, field_name) in cases {
+            let _guard = EnvGuard::capture(AUTH_ENV_VARS);
+            no_config_file();
+            unsafe {
+                std::env::set_var("ATC_DATABASE_URL", "postgres://postgres@localhost/postgres");
+                std::env::set_var("ATC_AUTH__MODE", "github");
+                std::env::set_var("ATC_AUTH__GITHUB__CLIENT_ID", "Iv1.abc123");
+                std::env::set_var("ATC_AUTH__GITHUB__CLIENT_SECRET", "secret");
+                std::env::set_var("ATC_AUTH__GITHUB__PUBLIC_ORIGIN", "https://atc.example.com");
+                std::env::set_var(env_var, "0s");
+            };
+            let err = Config::load().expect_err("a zero TTL should fail");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains(field_name),
+                "error for {env_var} should name {field_name}, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_github_config_debug_redacts_client_secret() {
+        let github = AuthGitHubConfig {
+            client_id: Some("Iv1.abc123".to_string()),
+            client_secret: Some("super-secret-value".to_string()),
+            public_origin: Some("https://atc.example.com".to_string()),
+            repo_auth_ttl: default_repo_auth_ttl(),
+            max_session_ttl: default_max_session_ttl(),
+        };
+        let debug = format!("{github:?}");
+        assert!(
+            !debug.contains("super-secret-value"),
+            "Debug output must never contain the raw client_secret, got: {debug}"
+        );
+        assert!(
+            debug.contains("REDACTED"),
+            "Debug output should show a redaction marker, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn github_config_debug_redacts_webhook_secret() {
+        let github = GitHubConfig {
+            webhook_secret: Some("super-secret-webhook-value".to_string()),
+        };
+        let debug = format!("{github:?}");
+        assert!(
+            !debug.contains("super-secret-webhook-value"),
+            "Debug output must never contain the raw webhook_secret, got: {debug}"
+        );
+        assert!(
+            debug.contains("REDACTED"),
+            "Debug output should show a redaction marker, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn scalar_snapshot_diff_reports_auth_drift() {
+        let cfg = Config::default();
+        let base = ScalarSnapshot::from_config(&cfg);
+        let mut other = base.clone();
+        other.auth.mode = AuthMode::Github;
+        assert_eq!(base.diff(&other), vec!["auth"]);
     }
 }
