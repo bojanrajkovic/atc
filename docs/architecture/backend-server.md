@@ -42,7 +42,7 @@ Deterministic test fixtures for these types live in `atc-core`'s `test_support` 
 
 Both event envelopes carry `repo_id`, GitHub's immutable numeric repository identifier — the authorization key the native-auth initiative filters on (see [ADR-0014](../architecture-decisions/0014-native-github-auth-mode.md)). `atc-github` parses it from every webhook's `repository.id` and populates it unconditionally, but the envelope field itself is `Option`, not required: these envelopes are also the payload persisted to the Postgres outbox and replayed by the cross-replica drain, so a required field would fail to decode outbox rows written before this field existed. `None` on decode is the tolerated legacy shape, mirroring `run_attempt`'s and `completed_at`'s existing rolling-deploy defaults. The staleness sweep's synthesized completion events also carry `None` today, pending [#475](https://github.com/bojanrajkovic/atc/issues/475) — the sweep stores don't yet have a repo id to attach.
 
-`WorkflowRun.repo_id` carries the same identifier into domain state, populated on first-sight from the envelope and self-healed from `None` to `Some` on the next event that carries one — `apply_run_event` never regresses an already-known `Some` back to `None`, which is what keeps a staleness-sweep envelope's `repo_id: None` from erasing a run's real repo id. Postgres reads construct every run with `repo_id: None` until [#451](https://github.com/bojanrajkovic/atc/issues/451) adds the `runs.repo_id` column and its read path; `Job` stays repo-less by design and joins through its parent run.
+`WorkflowRun.repo_id` carries the same identifier into domain state, populated on first-sight from the envelope and self-healed from `None` to `Some` on the next event that carries one — `apply_run_event` never regresses an already-known `Some` back to `None`, which is what keeps a staleness-sweep envelope's `repo_id: None` from erasing a run's real repo id. The Postgres write path mirrors the same self-heal via `COALESCE(EXCLUDED.repo_id, runs.repo_id)` in the run UPSERT (and the job-before-run FK-stub insert), and the read path constructs `Some(repo_id)` for rows that have one, `None` for legacy rows predating the column. `Job` stays repo-less by design and joins through its parent run.
 
 ## Webhook → Outbox → Drain → Broadcast pipeline
 
@@ -143,6 +143,7 @@ Migrations live in `backend/crates/atc-store-pg/migrations/`, embedded in the bi
 - `runs.completed_at` column (added in a later migration): used by the composite index for display-TTL snapshot filtering.
 - `runs.run_attempt` column (added in migration `0008`): GitHub's 1-based attempt counter, reused across re-runs. Drives the re-run reset path in the run UPSERT predicate — see § "GitHub re-runs and `run_attempt`".
 - `auth_flows` + `auth_sessions` tables (migration `0010`): `auth.github` session and pre-auth OAuth flow storage, owned by `SessionStore` rather than `PgStore` — see § "Session storage (`auth.github`)" above.
+- `runs.repo_id` column (added in migration `0011`): nullable, no backfill, no index — per-repo filtering happens in-memory in the request handler, never in a SQL `WHERE` clause. Self-heals a legacy `NULL` the same way `workflow_name`/`workflow_path` do: `COALESCE(EXCLUDED.repo_id, runs.repo_id)`.
 
 **Placeholder note:** The `placeholder` mechanism provides out-of-order event tolerance at the storage layer. A job event always has a parent run to satisfy the FK constraint, even if the run event arrives later.
 
@@ -154,6 +155,7 @@ erDiagram
         text status
         timestamptz completed_at
         int run_attempt
+        bigint repo_id
     }
     jobs {
         bigint id PK

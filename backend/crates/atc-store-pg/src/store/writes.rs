@@ -292,16 +292,18 @@ pub(crate) async fn upsert_run_in_txn(
 
     let run_id = env.run_id.0;
 
+    let repo_id: Option<i64> = env.repo_id.map(|r| r.0);
+
     let result = sqlx::query!(
         r#"
         INSERT INTO runs (
             id, org, repo, workflow_name, workflow_path, branch, head_sha,
             commit_message, event, display_title, status, conclusion,
             html_url, created_at, run_started_at, updated_at, completed_at,
-            run_attempt
+            run_attempt, repo_id
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16, $17, $18
+            $13, $14, $15, $16, $17, $18, $19
         )
         ON CONFLICT (id) DO UPDATE SET
             workflow_name  = COALESCE(EXCLUDED.workflow_name, runs.workflow_name),
@@ -328,8 +330,12 @@ pub(crate) async fn upsert_run_in_txn(
                                ELSE COALESCE(EXCLUDED.completed_at, runs.completed_at)
                              END,
             run_attempt    = EXCLUDED.run_attempt,
+            -- Self-heal: a legacy NULL repo_id is promoted the next time an
+            -- envelope carries one; a NULL EXCLUDED.repo_id never overwrites
+            -- an already-known value (mirrors atc-core's `.or()` merge).
+            repo_id        = COALESCE(EXCLUDED.repo_id, runs.repo_id),
             placeholder    = false
-        WHERE (runs.status = ANY($19::text[]) AND EXCLUDED.run_attempt = runs.run_attempt)
+        WHERE (runs.status = ANY($20::text[]) AND EXCLUDED.run_attempt = runs.run_attempt)
            OR EXCLUDED.run_attempt > runs.run_attempt
         "#,
         run_id,
@@ -350,6 +356,7 @@ pub(crate) async fn upsert_run_in_txn(
         env.updated_at,
         env.completed_at,
         env.run_attempt,
+        repo_id,
         &preds_strs as &[&str],
     )
     .execute(&mut tx.executor())
@@ -411,16 +418,19 @@ pub(crate) async fn upsert_job_in_txn(
     // fields and leave placeholder = false (the column default), promoting it
     // to a real run row. This realigns PG /v1/state semantics with the
     // in-memory store, which never exposed FK-only stubs.
+    let job_repo_id: Option<i64> = env.repo_id.map(|r| r.0);
+
     sqlx::query!(
         r#"
-        INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at, placeholder, run_attempt)
-        VALUES ($1, $2, $3, '', '', '', '', 'Queued', $4, $4, true, 1)
+        INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at, placeholder, run_attempt, repo_id)
+        VALUES ($1, $2, $3, '', '', '', '', 'Queued', $4, $4, true, 1, $5)
         ON CONFLICT (id) DO NOTHING
         "#,
         run_id,
         env.org,
         env.repo,
         env.created_at,
+        job_repo_id,
     )
     .execute(&mut tx.executor())
     .await

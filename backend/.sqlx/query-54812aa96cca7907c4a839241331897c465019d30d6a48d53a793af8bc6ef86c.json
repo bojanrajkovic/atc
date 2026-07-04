@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO runs (id, org, repo, head_sha, event, display_title, html_url, status, created_at, updated_at, placeholder, run_attempt, repo_id)\n        VALUES ($1, $2, $3, '', '', '', '', 'Queued', $4, $4, true, 1, $5)\n        ON CONFLICT (id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "54812aa96cca7907c4a839241331897c465019d30d6a48d53a793af8bc6ef86c"
+}

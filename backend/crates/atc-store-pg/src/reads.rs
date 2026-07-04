@@ -5,7 +5,7 @@
 //! current `routes::state_handler` PG path (until that phase lands).
 
 use atc_core::{
-    Job, JobConclusion, JobId, JobStatus, PersistError, RunConclusion, RunId, RunStatus,
+    Job, JobConclusion, JobId, JobStatus, PersistError, RepoId, RunConclusion, RunId, RunStatus,
     RunnerInfo, Step, WorkflowRun,
 };
 use chrono::{DateTime, Utc};
@@ -101,7 +101,7 @@ pub(crate) async fn read_all_runs(
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, status, conclusion,
                html_url, created_at, run_started_at, updated_at, completed_at,
-               run_attempt
+               run_attempt, repo_id
           FROM runs
          WHERE placeholder = false
            AND ($1::timestamptz IS NULL
@@ -142,9 +142,7 @@ pub(crate) async fn read_all_runs(
             updated_at: row.updated_at,
             completed_at: row.completed_at,
             run_attempt: row.run_attempt,
-            // The `runs.repo_id` column and its read here are #451's job —
-            // this crate has no column to read yet.
-            repo_id: None,
+            repo_id: row.repo_id.map(RepoId),
         });
     }
     Ok(runs)
