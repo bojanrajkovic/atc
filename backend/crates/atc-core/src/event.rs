@@ -105,13 +105,15 @@ pub struct RunEventEnvelope {
     /// rolling deploy / backlog drain. Mirrors the webhook parser's default.
     #[serde(default = "default_run_attempt")]
     pub run_attempt: i32,
-    /// GitHub's immutable numeric repository identifier. `None` only for
-    /// persisted `outbox.payload` rows written before this field existed —
-    /// live webhook translation always populates `Some`. Optional (rather
-    /// than required) for the same rolling-deploy decode reason as
-    /// `completed_at` above: the PG drain decodes historical outbox rows
-    /// back into this type, and a required field with no default would fail
-    /// to deserialize and be silently dropped from the drain.
+    /// GitHub's immutable numeric repository identifier. Live webhook
+    /// translation always populates `Some`. `None` covers two cases: a
+    /// persisted `outbox.payload` row written before this field existed, and
+    /// a staleness-sweep-synthesized completion (the sweep stores don't yet
+    /// carry a repo id to attach — see issue #475). Optional (rather than
+    /// required) for the rolling-deploy decode reason: the PG drain decodes
+    /// historical outbox rows back into this type, and a required field with
+    /// no default would fail to deserialize and be silently dropped from the
+    /// drain.
     #[ts(optional)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub repo_id: Option<RepoId>,
