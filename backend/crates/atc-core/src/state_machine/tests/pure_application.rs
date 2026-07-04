@@ -133,6 +133,71 @@ fn run_completed_sets_completed_at_on_first_sight() {
     assert_eq!(run.completed_at, Some(now));
 }
 
+/// First-sight creation captures the envelope's `repo_id` directly.
+#[test]
+fn run_first_sight_populates_repo_id() {
+    let run_id = RunId(2001);
+    let envelope = make_run_event(run_id, RunEvent::Requested);
+
+    let run = apply_run_event(None, envelope.clone()).expect("first-sight should succeed");
+    assert_eq!(run.repo_id, envelope.repo_id);
+}
+
+/// A subsequent event carrying the same `repo_id` leaves it unchanged.
+#[test]
+fn run_repo_id_carried_forward_on_update() {
+    let run_id = RunId(2002);
+    let existing = apply_run_event(None, make_run_event(run_id, RunEvent::Requested))
+        .expect("first-sight should succeed");
+    assert!(existing.repo_id.is_some());
+
+    let updated = apply_run_event(
+        Some(existing.clone()),
+        make_run_event(run_id, RunEvent::InProgress),
+    )
+    .expect("update should succeed");
+    assert_eq!(updated.repo_id, existing.repo_id);
+}
+
+/// Self-heal: a legacy row with `repo_id: None` is promoted to `Some` the
+/// first time an update event carries a repo id.
+#[test]
+fn run_repo_id_self_heals_from_none() {
+    let run_id = RunId(2003);
+    let legacy_row = WorkflowRun {
+        id: run_id,
+        repo_id: None,
+        ..make_workflow_run()
+    };
+
+    let envelope = make_run_event(run_id, RunEvent::InProgress);
+    let repo_id = envelope.repo_id;
+    let updated = apply_run_event(Some(legacy_row), envelope).expect("update should succeed");
+
+    assert_eq!(updated.repo_id, repo_id);
+}
+
+/// An envelope with no `repo_id` of its own (e.g. a staleness-sweep-
+/// synthesized completion) must never erase an already-known `repo_id`.
+#[test]
+fn run_repo_id_never_regresses_to_none() {
+    let run_id = RunId(2004);
+    let known_repo_id = Some(crate::types::RepoId(555));
+    let existing = WorkflowRun {
+        id: run_id,
+        repo_id: known_repo_id,
+        ..make_workflow_run()
+    };
+
+    let envelope = RunEventEnvelope {
+        repo_id: None,
+        ..make_run_event(run_id, RunEvent::InProgress)
+    };
+    let updated = apply_run_event(Some(existing), envelope).expect("update should succeed");
+
+    assert_eq!(updated.repo_id, known_repo_id);
+}
+
 /// `envelope.completed_at.or(existing.completed_at)` preserves the existing
 /// timestamp when a subsequent event arrives with no `completed_at`. This is
 /// the protective shape against losing a recorded terminal moment when an

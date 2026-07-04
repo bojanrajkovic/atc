@@ -142,6 +142,9 @@ pub(crate) async fn read_all_runs(
             updated_at: row.updated_at,
             completed_at: row.completed_at,
             run_attempt: row.run_attempt,
+            // The `runs.repo_id` column and its read here are #451's job —
+            // this crate has no column to read yet.
+            repo_id: None,
         });
     }
     Ok(runs)

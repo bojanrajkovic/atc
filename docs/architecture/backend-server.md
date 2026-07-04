@@ -42,6 +42,8 @@ Deterministic test fixtures for these types live in `atc-core`'s `test_support` 
 
 Both event envelopes carry `repo_id`, GitHub's immutable numeric repository identifier — the authorization key the native-auth initiative filters on (see [ADR-0014](../architecture-decisions/0014-native-github-auth-mode.md)). `atc-github` parses it from every webhook's `repository.id` and populates it unconditionally, but the envelope field itself is `Option`, not required: these envelopes are also the payload persisted to the Postgres outbox and replayed by the cross-replica drain, so a required field would fail to decode outbox rows written before this field existed. `None` on decode is the tolerated legacy shape, mirroring `run_attempt`'s and `completed_at`'s existing rolling-deploy defaults. The staleness sweep's synthesized completion events also carry `None` today, pending [#475](https://github.com/bojanrajkovic/atc/issues/475) — the sweep stores don't yet have a repo id to attach.
 
+`WorkflowRun.repo_id` carries the same identifier into domain state, populated on first-sight from the envelope and self-healed from `None` to `Some` on the next event that carries one — `apply_run_event` never regresses an already-known `Some` back to `None`, which is what keeps a staleness-sweep envelope's `repo_id: None` from erasing a run's real repo id. Postgres reads construct every run with `repo_id: None` until [#451](https://github.com/bojanrajkovic/atc/issues/451) adds the `runs.repo_id` column and its read path; `Job` stays repo-less by design and joins through its parent run.
+
 ## Webhook → Outbox → Drain → Broadcast pipeline
 
 A single GitHub webhook traverses this path end to end:
