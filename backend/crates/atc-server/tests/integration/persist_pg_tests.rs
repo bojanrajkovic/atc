@@ -752,22 +752,15 @@ async fn pg_job_coalesce_preserves_runner() {
         .unwrap();
 
     // Second InProgress without runner (None) — should preserve from first
-    let env_no_runner = JobEventEnvelope {
-        job_id: JobId(5002),
-        run_id: RunId(4002),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        name: "test-job".to_string(),
-        created_at: ts(),
-        started_at: Some(ts()),
-        completed_at: None,
-        run_attempt: 1,
-        action: JobEvent::InProgress {
+    let env_no_runner = common::make_job_envelope(
+        JobId(5002),
+        RunId(4002),
+        JobEvent::InProgress {
             runner: None, // omit runner — should be preserved
             labels: vec!["ubuntu-latest".to_string()],
             steps: vec![],
         },
-    };
+    );
     store.apply_job_event(env_no_runner).await.unwrap();
 
     let row = sqlx::query!("SELECT runner_id, runner_name FROM jobs WHERE id = 5002")
@@ -806,17 +799,10 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
         .unwrap();
 
     // Second in_progress: same job, different runner — no group fields
-    let env_new_runner = JobEventEnvelope {
-        job_id: JobId(5010),
-        run_id: RunId(4010),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
-        name: "test-job".to_string(),
-        created_at: ts(),
-        started_at: Some(ts()),
-        completed_at: None,
-        run_attempt: 1,
-        action: JobEvent::InProgress {
+    let env_new_runner = common::make_job_envelope(
+        JobId(5010),
+        RunId(4010),
+        JobEvent::InProgress {
             runner: Some(atc_core::job::RunnerInfo {
                 id: 99,
                 name: "runner-2".to_string(),
@@ -825,7 +811,7 @@ async fn pg_job_runner_group_cleared_when_runner_changes() {
             labels: vec!["ubuntu-latest".to_string()],
             steps: vec![],
         },
-    };
+    );
     store.apply_job_event(env_new_runner).await.unwrap();
 
     let row =
@@ -869,19 +855,16 @@ async fn pg_job_coalesce_preserves_name_run_id_created_at() {
     // Update: attempt to clobber name (can't via the API since name is String, not Option, but
     // the UPSERT's SET clause locks it to jobs.name regardless)
     let env_update = JobEventEnvelope {
-        job_id: JobId(5003),
-        run_id: RunId(4003),
-        org: "test-org".to_string(),
-        repo: "test-repo".to_string(),
         name: "DIFFERENT-NAME".to_string(), // Envelope has a different name
         created_at: fixed_test_timestamp() + Duration::from_hours(1), // different created_at
-        started_at: None,
-        completed_at: None,
-        run_attempt: 1,
-        action: JobEvent::Queued {
-            labels: vec![],
-            steps: vec![],
-        },
+        ..common::make_job_envelope(
+            JobId(5003),
+            RunId(4003),
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        )
     };
     store.apply_job_event(env_update).await.unwrap();
 

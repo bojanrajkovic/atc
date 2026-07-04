@@ -165,6 +165,7 @@ pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, Parse
 mod tests {
     use super::*;
     use atc_core::event::{JobEvent, RunEvent};
+    use atc_core::types::RepoId;
 
     #[test]
     fn test_parse_workflow_run_requested() {
@@ -178,6 +179,7 @@ mod tests {
                     assert_eq!(envelope.org, "bojanrajkovic");
                     assert_eq!(envelope.repo, "atc");
                     assert_eq!(envelope.action, RunEvent::Requested);
+                    assert_eq!(envelope.repo_id, Some(RepoId(1_190_105_052)));
                 }
                 WebhookEvent::Job(_) => panic!("expected Run variant"),
             },
@@ -196,6 +198,7 @@ mod tests {
                 WebhookEvent::Job(ref envelope) => {
                     assert_eq!(envelope.org, "bojanrajkovic");
                     assert_eq!(envelope.repo, "atc");
+                    assert_eq!(envelope.repo_id, Some(RepoId(1_190_105_052)));
                     match envelope.action {
                         JobEvent::Queued { .. } => {}
                         _ => panic!("expected Queued action"),

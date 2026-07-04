@@ -217,6 +217,7 @@ async fn sweep_one_job(
         started_at: row.started_at,
         completed_at: Some(now),
         run_attempt: row.run_attempt,
+        repo_id: None,
         action: JobEvent::Completed {
             conclusion: JobConclusion::Stale,
             runner,
@@ -410,6 +411,7 @@ async fn sweep_one_run(
         updated_at: now,
         completed_at: Some(now),
         run_attempt: row.run_attempt,
+        repo_id: None,
         action: RunEvent::Completed {
             conclusion: RunConclusion::Stale,
         },

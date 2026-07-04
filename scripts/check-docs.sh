@@ -68,6 +68,9 @@ FLAT=$(YQ -r '
 # commits, not a source artifact whose changes propagate into an architecture
 # doc. Neither should drag an arch doc into the change set (a deleted
 # CHANGELOG.md would otherwise match a directory pattern like deploy/helm/atc/*).
+# frontend/src/lib/types/generated/ is the same class of artifact: ts-rs
+# mechanically mirrors backend struct field sets into these files on every
+# `just types` run, with no independent authorial content of its own.
 # The no-mapping-required allow-list comment in doc-mapping.yaml documents this.
 get_docs_for_file() {
     local file="$1"
@@ -75,6 +78,12 @@ get_docs_for_file() {
 
     case "$(basename "$file")" in
         CLAUDE.md|AGENTS.md|CHANGELOG.md)
+            return
+            ;;
+    esac
+
+    case "$file" in
+        frontend/src/lib/types/generated/*)
             return
             ;;
     esac

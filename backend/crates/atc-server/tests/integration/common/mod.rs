@@ -943,6 +943,7 @@ pub fn make_run_envelope(
         updated_at: now,
         completed_at,
         run_attempt: 1,
+        repo_id: Some(atc_core::types::RepoId(999_999_999)),
         action,
     }
 }
@@ -975,6 +976,7 @@ pub fn make_job_envelope(
         started_at,
         completed_at,
         run_attempt: 1,
+        repo_id: Some(atc_core::types::RepoId(999_999_999)),
         action,
     }
 }
