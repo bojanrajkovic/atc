@@ -4,6 +4,7 @@
   import Logo from './Logo.svelte'
   import RunnerBar from './RunnerBar.svelte'
   import ConnectionIndicator from './ConnectionIndicator.svelte'
+  import IdentityChip from './IdentityChip.svelte'
   import SettingsPopover from './SettingsPopover.svelte'
   import { connectionStore } from '$lib/stores/connection.svelte'
   import { runnerStore } from '$lib/stores/runners.svelte'
@@ -146,6 +147,11 @@
     <!-- Settings: pushed to end of row 2 at <md; at md+ order-5 (last) -->
     <div class="shrink-0 md:order-5">
       <SettingsPopover />
+    </div>
+
+    <!-- Identity chrome: renders nothing until /v1/auth/me resolves (see IdentityChip). -->
+    <div class="shrink-0 md:order-6">
+      <IdentityChip />
     </div>
   </div>
 

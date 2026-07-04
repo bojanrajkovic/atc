@@ -5,6 +5,7 @@
   import CommandPalette from '$lib/components/CommandPalette.svelte'
   import ConnectionManager from '$lib/components/ConnectionManager.svelte'
   import KanbanBoard from '$lib/components/KanbanBoard.svelte'
+  import LoginScreen from '$lib/components/LoginScreen.svelte'
   import RunDetailPanel from '$lib/components/RunDetailPanel.svelte'
   import RovingFocusProvider from '$lib/components/roving/RovingFocusProvider.svelte'
   import { connectionStore } from '$lib/stores/connection.svelte'
@@ -143,10 +144,14 @@
 
 <ConnectionManager />
 <AriaLiveRegion />
-<RovingFocusProvider>
-  <AppShell>
-    <KanbanBoard />
-  </AppShell>
-  <CommandPalette />
-  <RunDetailPanel />
-</RovingFocusProvider>
+{#if connectionStore.status === 'unauthenticated'}
+  <LoginScreen />
+{:else}
+  <RovingFocusProvider>
+    <AppShell>
+      <KanbanBoard />
+    </AppShell>
+    <CommandPalette />
+    <RunDetailPanel />
+  </RovingFocusProvider>
+{/if}

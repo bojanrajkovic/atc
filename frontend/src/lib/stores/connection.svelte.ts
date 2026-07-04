@@ -7,6 +7,14 @@ type ConnectionStatus =
 
 export type AuthReason = 'auth_required' | 'stale_authorization'
 
+/** GET /v1/auth/me response shape (atc-server auth.rs's WhoamiResponse). */
+export interface Identity {
+  login: string
+  repoCount: number
+  reposRefreshedAt: string
+  stale: boolean
+}
+
 const STALE_THRESHOLD_MS = 30_000
 const STALE_CHECK_INTERVAL_MS = 5_000
 const VERSION_MISMATCH_COUNTDOWN_MS = 30_000
@@ -23,6 +31,11 @@ class ConnectionStore {
   // #464) to decide between the login screen and the popup-first staleness
   // flow. Cleared by retry().
   authReason = $state<AuthReason | null>(null)
+
+  // Fetched once by IdentityChip on the first `connected` transition; null in
+  // mode=none (the endpoint isn't mounted, so the probe 404s) or before that
+  // first fetch resolves.
+  identity = $state<Identity | null>(null)
 
   // ServerHello session-reference state (issue #47). The first ServerHello
   // version observed in a tab session becomes the reference; any subsequent
@@ -85,6 +98,7 @@ class ConnectionStore {
   enterUnauthenticated(reason: AuthReason): void {
     this.status = 'unauthenticated'
     this.authReason = reason
+    this.identity = null
   }
 
   /**

@@ -40,5 +40,5 @@
     {/each}
   </div>
   <!-- Caption -->
-  <p class="text-base sm:text-lg">{message}</p>
+  <p class="text-base sm:text-lg text-center max-w-md px-4">{message}</p>
 </div>

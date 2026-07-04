@@ -38,8 +38,17 @@
     <p class="text-sm">Connecting&hellip;</p>
   </div>
 {:else if connectionStore.status === 'connected' && totalRuns === 0}
-  <!-- Empty state: connected but no workflow runs -->
-  <EmptyState />
+  {#if connectionStore.identity?.repoCount === 0}
+    <!-- Zero-repos empty state: authenticated, but the app∩user∩webhook
+         intersection is empty — distinct from "no runs right now" so the
+         user understands why nothing appears rather than assuming an outage. -->
+    <EmptyState
+      message="You're signed in, but no monitored repositories are visible to you. Visible = repos sending ATC webhooks ∩ repos where the auth app is installed ∩ repos you can access."
+    />
+  {:else}
+    <!-- Empty state: connected but no workflow runs -->
+    <EmptyState />
+  {/if}
 {:else}
   {#if uiStore.activePoolFilter !== null && activeFilterLabelText !== null}
     <header class="kanban-header">
