@@ -273,6 +273,12 @@ fn set_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
     })
 }
 
+/// Build a single `name=value` `Cookie` header pair — shared by every helper
+/// below that attaches a flow/session cookie to a request.
+fn cookie_header(name: &str, value: &str) -> String {
+    format!("{name}={value}")
+}
+
 async fn do_login(app: &axum::Router, query: &str) -> (StatusCode, HeaderMap) {
     let req = axum::http::Request::builder()
         .method("GET")
@@ -294,7 +300,7 @@ async fn do_callback(
         .method("GET")
         .uri(format!("/v1/auth/github/callback{query}"));
     if let Some(cookie) = flow_cookie {
-        builder = builder.header(header::COOKIE, format!("atc_flow={cookie}"));
+        builder = builder.header(header::COOKIE, cookie_header("atc_flow", cookie));
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
@@ -305,7 +311,7 @@ async fn do_logout(app: &axum::Router, session_cookie: Option<&str>) -> axum::re
         .method("POST")
         .uri("/v1/auth/github/logout");
     if let Some(cookie) = session_cookie {
-        builder = builder.header(header::COOKIE, format!("atc_session={cookie}"));
+        builder = builder.header(header::COOKIE, cookie_header("atc_session", cookie));
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
@@ -316,7 +322,7 @@ async fn do_whoami(app: &axum::Router, session_cookie: Option<&str>) -> axum::re
         .method("GET")
         .uri("/v1/auth/me");
     if let Some(cookie) = session_cookie {
-        builder = builder.header(header::COOKIE, format!("atc_session={cookie}"));
+        builder = builder.header(header::COOKIE, cookie_header("atc_session", cookie));
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
@@ -691,7 +697,11 @@ async fn existing_session_for_a_different_user_is_not_refreshed() {
         ))
         .header(
             header::COOKIE,
-            format!("atc_flow={flow_cookie_2}; atc_session={stale_session_cookie}"),
+            format!(
+                "{}; {}",
+                cookie_header("atc_flow", &flow_cookie_2),
+                cookie_header("atc_session", &stale_session_cookie)
+            ),
         )
         .body(axum::body::Body::empty())
         .unwrap();
@@ -891,7 +901,7 @@ async fn mode_none_leaves_auth_routes_unmounted() {
 fn parts(cookie: Option<(&str, &str)>) -> axum::http::request::Parts {
     let mut builder = axum::http::Request::builder().uri("/v1/auth/me");
     if let Some((name, value)) = cookie {
-        builder = builder.header(header::COOKIE, format!("{name}={value}"));
+        builder = builder.header(header::COOKIE, cookie_header(name, value));
     }
     builder.body(()).unwrap().into_parts().0
 }

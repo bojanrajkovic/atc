@@ -72,17 +72,18 @@ pub fn auth_routes() -> Router<Arc<AppState>> {
         .route("/v1/auth/me", get(whoami_handler))
 }
 
-/// Look up the session for the request's session cookie, if any — `None`
-/// covers both "no cookie" and "cookie present but unknown/expired". Kept
-/// as a plain function (not an extractor) so [`AuthContext::from_request_parts`]
-/// can wrap it rather than duplicate it.
+/// Look up the session for an already-resolved raw session cookie value, if
+/// any — `None` covers both "no cookie" and "cookie present but
+/// unknown/expired". Takes the raw value rather than `&HeaderMap` so
+/// [`AuthContext::from_request_parts`] (its sole caller) resolves the cookie
+/// exactly once instead of looking it up again to also determine whether a
+/// cookie was present at all.
 async fn session_from_cookie(
     auth: &AuthRuntime,
-    headers: &HeaderMap,
+    raw_cookie: Option<&str>,
 ) -> Result<Option<Session>, impl std::fmt::Display> {
-    let names = cookie_names(&auth.public_origin);
-    match get_cookie(headers, names.session) {
-        Some(raw) => auth.sessions.load_session(&raw).await,
+    match raw_cookie {
+        Some(raw) => auth.sessions.load_session(raw).await,
         None => Ok(None),
     }
 }
@@ -499,27 +500,25 @@ async fn logout_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) 
 /// **not** checked during extraction: `whoami_handler` below reports it as a
 /// `stale` body field rather than rejecting (the identity-chrome bootstrap
 /// depends on that shape — see issue #463), while the read rails call
-/// [`SessionIdentity::is_stale`] themselves and reject with
-/// [`AuthRejection::Stale`].
+/// [`AuthContext::require_fresh`] to reject with [`AuthRejection::Stale`]
+/// instead.
 #[derive(Debug)]
 pub enum AuthContext {
     Disabled,
     Session(SessionIdentity),
 }
 
-/// The identity + authorization set carried by a valid session.
-///
-/// `repo_ids` uses the `RepoId` newtype (#449) rather than the design doc's
-/// simplified `HashSet<i64>` sketch, since the enforcement handlers compare
-/// it directly against `WorkflowRun::repo_id`. `repos_refreshed_at` is
-/// likewise an addition beyond the sketch — the staleness check below needs
-/// it, and threading it through here avoids a second session lookup in
-/// callers that need it (`whoami_handler`, `/v1/state`, `/v1/ws`).
+/// The identity + authorization set carried by a valid session. `repo_ids`
+/// uses the `RepoId` newtype (#449), since the enforcement handlers compare
+/// it directly against `WorkflowRun::repo_id`. `repos_refreshed_at` and
+/// `repo_auth_ttl` are carried alongside it so [`SessionIdentity::is_stale`]
+/// needs no extra `AuthRuntime`/session lookup from its callers.
 #[derive(Debug)]
 pub struct SessionIdentity {
     pub github_login: String,
     pub repo_ids: HashSet<RepoId>,
     pub repos_refreshed_at: chrono::DateTime<chrono::Utc>,
+    pub repo_auth_ttl: Duration,
 }
 
 impl AuthContext {
@@ -533,6 +532,20 @@ impl AuthContext {
             Self::Session(s) => repo_id.is_some_and(|id| s.repo_ids.contains(&id)),
         }
     }
+
+    /// For the read rails (`/v1/state`, `/v1/ws` — #459/#460), which fail
+    /// closed on staleness rather than reporting it the way
+    /// `whoami_handler` does: `Disabled` passes through unchanged; a
+    /// `Session` is rejected with `AuthRejection::Stale` once
+    /// `repos_refreshed_at + repo_auth_ttl` has elapsed.
+    pub fn require_fresh(self, now: chrono::DateTime<chrono::Utc>) -> Result<Self, AuthRejection> {
+        if let Self::Session(identity) = &self
+            && identity.is_stale(now)
+        {
+            return Err(AuthRejection::Stale);
+        }
+        Ok(self)
+    }
 }
 
 impl SessionIdentity {
@@ -544,8 +557,8 @@ impl SessionIdentity {
     /// adding an out-of-range `Duration::MAX` to a `DateTime` panics on
     /// overflow (chrono's `Add` impl), which is exactly the panic this
     /// guards against.
-    pub fn is_stale(&self, repo_auth_ttl: Duration, now: chrono::DateTime<chrono::Utc>) -> bool {
-        let ttl = chrono::Duration::from_std(repo_auth_ttl).unwrap_or(chrono::Duration::MAX);
+    pub fn is_stale(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        let ttl = chrono::Duration::from_std(self.repo_auth_ttl).unwrap_or(chrono::Duration::MAX);
         now - self.repos_refreshed_at >= ttl
     }
 }
@@ -569,6 +582,16 @@ pub enum AuthRejection {
     StoreFailed,
 }
 
+/// Build a `401` with `{"reason": reason}` — the shared shape both
+/// [`AuthRejection`] 401 variants render.
+fn unauthorized(reason: &'static str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"reason": reason})),
+    )
+        .into_response()
+}
+
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> Response {
         match self {
@@ -578,11 +601,7 @@ impl IntoResponse for AuthRejection {
                     had_cookie,
                     "request rejected: no valid session"
                 );
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"reason": "auth_required"})),
-                )
-                    .into_response()
+                unauthorized("auth_required")
             }
             Self::Stale => {
                 tracing::debug!(
@@ -590,17 +609,14 @@ impl IntoResponse for AuthRejection {
                     had_cookie = true,
                     "request rejected: stale authorization"
                 );
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({"reason": "stale_authorization"})),
-                )
-                    .into_response()
+                unauthorized("stale_authorization")
             }
-            Self::StoreFailed => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "failed to load session"})),
-            )
-                .into_response(),
+            // Same shape as `session_store_failed`'s plain-text 500 (used
+            // by login/callback/logout) — `what` is always "load session"
+            // here, so the body is hardcoded rather than re-deriving it.
+            Self::StoreFailed => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "failed to load session").into_response()
+            }
         }
     }
 }
@@ -617,12 +633,18 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
         };
 
         let names = cookie_names(&auth.public_origin);
-        let had_cookie = get_cookie(&parts.headers, names.session).is_some();
+        let raw_cookie = get_cookie(&parts.headers, names.session);
+        let had_cookie = raw_cookie.is_some();
 
-        let session = session_from_cookie(auth, &parts.headers)
+        let session = session_from_cookie(auth, raw_cookie.as_deref())
             .await
             .map_err(|e| {
-                tracing::warn!(error.message = %e, "AuthContext: session store failed");
+                tracing::warn!(
+                    class = "session_error",
+                    error.message = %e,
+                    what = "load session",
+                    "auth: session store operation failed"
+                );
                 AuthRejection::StoreFailed
             })?
             .ok_or(AuthRejection::Required { had_cookie })?;
@@ -631,6 +653,7 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
             github_login: session.github_login,
             repo_ids: session.repo_ids.into_iter().map(RepoId).collect(),
             repos_refreshed_at: session.repos_refreshed_at,
+            repo_auth_ttl: auth.repo_auth_ttl,
         }))
     }
 }
@@ -657,14 +680,7 @@ async fn whoami_handler(ctx: AuthContext, State(state): State<Arc<AppState>>) ->
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    // `AuthContext::Session` implies `state.auth` is `Some` (both are gated
-    // on `auth.mode = "github"`).
-    let repo_auth_ttl = state
-        .auth
-        .as_ref()
-        .expect("AuthContext::Session implies auth.mode = github")
-        .repo_auth_ttl;
-    let stale = identity.is_stale(repo_auth_ttl, state.clock.now());
+    let stale = identity.is_stale(state.clock.now());
 
     Json(WhoamiResponse {
         login: identity.github_login,
@@ -761,11 +777,15 @@ mod tests {
         assert!(POPUP_CALLBACK_HTML.contains("window.close()"));
     }
 
-    fn test_identity(repos_refreshed_at: chrono::DateTime<chrono::Utc>) -> SessionIdentity {
+    fn test_identity(
+        repos_refreshed_at: chrono::DateTime<chrono::Utc>,
+        repo_auth_ttl: Duration,
+    ) -> SessionIdentity {
         SessionIdentity {
             github_login: "octocat".to_string(),
             repo_ids: HashSet::from([RepoId(1), RepoId(2)]),
             repos_refreshed_at,
+            repo_auth_ttl,
         }
     }
 
@@ -780,7 +800,7 @@ mod tests {
     #[test]
     fn can_see_session_checks_repo_id_membership() {
         let refreshed_at = chrono::DateTime::from_timestamp(0, 0).unwrap();
-        let ctx = AuthContext::Session(test_identity(refreshed_at));
+        let ctx = AuthContext::Session(test_identity(refreshed_at, Duration::from_secs(3600)));
         assert!(ctx.can_see(Some(RepoId(1))));
         assert!(!ctx.can_see(Some(RepoId(999))), "repo outside the set");
         assert!(
@@ -792,17 +812,17 @@ mod tests {
     #[test]
     fn is_stale_false_within_ttl() {
         let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
-        let identity = test_identity(refreshed_at);
+        let identity = test_identity(refreshed_at, Duration::from_secs(3600));
         let now = refreshed_at + chrono::Duration::seconds(30);
-        assert!(!identity.is_stale(Duration::from_secs(3600), now));
+        assert!(!identity.is_stale(now));
     }
 
     #[test]
     fn is_stale_true_once_ttl_elapsed() {
         let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
-        let identity = test_identity(refreshed_at);
+        let identity = test_identity(refreshed_at, Duration::from_secs(3600));
         let now = refreshed_at + chrono::Duration::hours(2);
-        assert!(identity.is_stale(Duration::from_secs(3600), now));
+        assert!(identity.is_stale(now));
     }
 
     /// Regression test: an operator config with a `repo_auth_ttl` past
@@ -814,8 +834,34 @@ mod tests {
     #[test]
     fn is_stale_absurd_ttl_never_stale_without_panicking() {
         let refreshed_at = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
-        let identity = test_identity(refreshed_at);
-        assert!(!identity.is_stale(Duration::from_secs(u64::MAX), refreshed_at));
+        let identity = test_identity(refreshed_at, Duration::from_secs(u64::MAX));
+        assert!(!identity.is_stale(refreshed_at));
+    }
+
+    #[test]
+    fn require_fresh_disabled_passes_through() {
+        let ctx = AuthContext::Disabled;
+        let now = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        assert!(matches!(ctx.require_fresh(now), Ok(AuthContext::Disabled)));
+    }
+
+    #[test]
+    fn require_fresh_fresh_session_passes_through() {
+        let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let ctx = AuthContext::Session(test_identity(refreshed_at, Duration::from_secs(3600)));
+        let now = refreshed_at + chrono::Duration::seconds(30);
+        assert!(matches!(
+            ctx.require_fresh(now),
+            Ok(AuthContext::Session(_))
+        ));
+    }
+
+    #[test]
+    fn require_fresh_stale_session_rejects() {
+        let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let ctx = AuthContext::Session(test_identity(refreshed_at, Duration::from_secs(3600)));
+        let now = refreshed_at + chrono::Duration::hours(2);
+        assert!(matches!(ctx.require_fresh(now), Err(AuthRejection::Stale)));
     }
 
     #[tokio::test]
@@ -838,5 +884,19 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json, serde_json::json!({"reason": "stale_authorization"}));
+    }
+
+    /// `StoreFailed` mirrors `session_store_failed`'s plain-text 500 shape
+    /// (used by login/callback/logout) rather than a distinct JSON body, so
+    /// there's exactly one 500-on-session-store-failure rendering
+    /// convention in this file.
+    #[tokio::test]
+    async fn auth_rejection_store_failed_matches_session_store_failed_shape() {
+        let resp = AuthRejection::StoreFailed.into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body, "failed to load session");
     }
 }
