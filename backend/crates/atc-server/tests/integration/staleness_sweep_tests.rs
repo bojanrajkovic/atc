@@ -117,6 +117,15 @@ async fn stale_job_is_force_completed_and_broadcast() {
         .expect("broadcast did not arrive within 5s")
         .expect("broadcast channel closed");
     assert!(event.seq >= 1);
+    // Issue #475: the synthesized completion must carry the run's real
+    // `repo_id`, not the hardcoded `None` a naive synthesis would use — this
+    // is what the WS per-connection filter (`ctx.can_see`) checks directly
+    // against, so a `None` here drops the broadcast for every authenticated
+    // session even though the row's repo is known.
+    assert_eq!(
+        event.event.repo_id(),
+        Some(atc_core::types::RepoId(999_999_999))
+    );
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
@@ -216,6 +225,7 @@ async fn stale_run_with_no_jobs_is_force_completed() {
         .await
         .expect("seed stale run");
 
+    let mut rx = store.subscribe();
     clock.advance(chrono::Duration::hours(49));
     let (jobs_swept, runs_swept) = store
         .staleness_sweep_once()
@@ -233,6 +243,17 @@ async fn stale_run_with_no_jobs_is_force_completed() {
     let conclusion: Option<String> = row.get("conclusion");
     assert_eq!(status, "Completed");
     assert_eq!(conclusion.as_deref(), Some("Stale"));
+
+    // Issue #475 — same rationale as the job-sweep broadcast assertion
+    // above: the synthesized envelope must carry the run's real `repo_id`.
+    let event = timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("broadcast did not arrive within 5s")
+        .expect("broadcast channel closed");
+    assert_eq!(
+        event.event.repo_id(),
+        Some(atc_core::types::RepoId(999_999_999))
+    );
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())

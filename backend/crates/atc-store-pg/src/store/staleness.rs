@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use atc_core::{
-    Clock, JobConclusion, JobId, PersistError, RunConclusion, RunId, RunnerInfo, Step,
+    Clock, JobConclusion, JobId, PersistError, RepoId, RunConclusion, RunId, RunnerInfo, Step,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 
@@ -156,7 +156,8 @@ async fn sweep_one_job(
                j.started_at      AS "started_at?",
                j.run_attempt     AS "run_attempt!",
                r.org             AS "org!",
-               r.repo            AS "repo!"
+               r.repo            AS "repo!",
+               r.repo_id         AS "repo_id?"
           FROM jobs j
           JOIN runs r ON r.id = j.run_id
          WHERE j.id = $1
@@ -217,7 +218,7 @@ async fn sweep_one_job(
         started_at: row.started_at,
         completed_at: Some(now),
         run_attempt: row.run_attempt,
-        repo_id: None,
+        repo_id: row.repo_id.map(RepoId),
         action: JobEvent::Completed {
             conclusion: JobConclusion::Stale,
             runner,
@@ -341,7 +342,7 @@ async fn sweep_one_run(
         r#"
         SELECT id, org, repo, workflow_name, workflow_path, branch, head_sha,
                commit_message, event, display_title, html_url, status,
-               created_at, run_started_at, run_attempt, updated_at
+               created_at, run_started_at, run_attempt, updated_at, repo_id
           FROM runs
          WHERE id = $1
          FOR UPDATE SKIP LOCKED
@@ -411,7 +412,7 @@ async fn sweep_one_run(
         updated_at: now,
         completed_at: Some(now),
         run_attempt: row.run_attempt,
-        repo_id: None,
+        repo_id: row.repo_id.map(RepoId),
         action: RunEvent::Completed {
             conclusion: RunConclusion::Stale,
         },

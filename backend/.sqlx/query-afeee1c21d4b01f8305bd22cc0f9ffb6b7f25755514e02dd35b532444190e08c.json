@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT j.id              AS \"id!\",\n               j.run_id          AS \"run_id!\",\n               j.name            AS \"name!\",\n               j.status          AS \"status!\",\n               j.labels          AS \"labels!: Vec<String>\",\n               j.steps           AS \"steps!: serde_json::Value\",\n               j.runner_id       AS \"runner_id?\",\n               j.runner_name     AS \"runner_name?\",\n               j.runner_group_name AS \"runner_group_name?\",\n               j.created_at      AS \"created_at!\",\n               j.started_at      AS \"started_at?\",\n               j.run_attempt     AS \"run_attempt!\",\n               r.org             AS \"org!\",\n               r.repo            AS \"repo!\"\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n         WHERE j.id = $1\n         FOR UPDATE OF j SKIP LOCKED\n        ",
+  "query": "\n        SELECT j.id              AS \"id!\",\n               j.run_id          AS \"run_id!\",\n               j.name            AS \"name!\",\n               j.status          AS \"status!\",\n               j.labels          AS \"labels!: Vec<String>\",\n               j.steps           AS \"steps!: serde_json::Value\",\n               j.runner_id       AS \"runner_id?\",\n               j.runner_name     AS \"runner_name?\",\n               j.runner_group_name AS \"runner_group_name?\",\n               j.created_at      AS \"created_at!\",\n               j.started_at      AS \"started_at?\",\n               j.run_attempt     AS \"run_attempt!\",\n               r.org             AS \"org!\",\n               r.repo            AS \"repo!\",\n               r.repo_id         AS \"repo_id?\"\n          FROM jobs j\n          JOIN runs r ON r.id = j.run_id\n         WHERE j.id = $1\n         FOR UPDATE OF j SKIP LOCKED\n        ",
   "describe": {
     "columns": [
       {
@@ -72,6 +72,11 @@
         "ordinal": 13,
         "name": "repo!",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "repo_id?",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -93,8 +98,9 @@
       true,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "eb41badb1d0035ab70253b42af3f1079906968643f74c1f0fcff4e143ae8e4ab"
+  "hash": "afeee1c21d4b01f8305bd22cc0f9ffb6b7f25755514e02dd35b532444190e08c"
 }
