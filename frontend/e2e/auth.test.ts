@@ -29,15 +29,24 @@ test.describe('Login screen and identity chrome', () => {
         body: JSON.stringify({ reason: 'auth_required' }),
       })
     })
+    // return_to is computed at click time (see LoginScreen.svelte), not baked
+    // into a static href — intercept the resulting navigation to verify it.
+    let loginRequestUrl: string | null = null
+    await page.route('**/v1/auth/github/login**', (route) => {
+      loginRequestUrl = route.request().url()
+      route.fulfill({ status: 200, contentType: 'text/html', body: 'ok' })
+    })
 
     await page.goto('/')
 
     const link = page.getByRole('link', { name: /sign in with github/i })
     await expect(link).toBeVisible()
-    await expect(link).toHaveAttribute('href', /^\/v1\/auth\/github\/login\?return_to=/)
 
     // The normal dashboard shell must not render behind/alongside the login screen.
     await expect(page.locator('[data-runner-bar]')).toHaveCount(0)
+
+    await link.click()
+    await expect.poll(() => loginRequestUrl).toMatch(/\/v1\/auth\/github\/login\?return_to=/)
   })
 
   test('shows identity chrome once /v1/auth/me resolves; logout posts to the logout endpoint', async ({

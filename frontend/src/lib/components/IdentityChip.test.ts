@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte'
-import { HttpResponse, http } from 'msw'
+import { delay, HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { withLocationHrefSpy } from '$lib/__tests__/location-spy'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import IdentityChip from './IdentityChip.svelte'
 
@@ -82,6 +83,25 @@ describe('IdentityChip', () => {
     expect(requestCount).toBe(1)
   })
 
+  it('does not resurrect identity if the session goes unauthenticated while the fetch is in flight', async () => {
+    server.use(
+      http.get('/v1/auth/me', async () => {
+        await delay(20)
+        return HttpResponse.json(testIdentity)
+      }),
+    )
+    render(IdentityChip)
+
+    // Simulate a 401 elsewhere (e.g. a reconnect's /v1/state) resolving
+    // before this component's own in-flight fetch does.
+    connectionStore.status = 'unauthenticated'
+    connectionStore.identity = null
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    expect(connectionStore.identity).toBe(null)
+  })
+
   it('logout posts to the logout endpoint then hard-reloads to /', async () => {
     server.use(http.get('/v1/auth/me', () => HttpResponse.json(testIdentity)))
     let logoutCalled = false
@@ -92,33 +112,16 @@ describe('IdentityChip', () => {
       }),
     )
 
-    // Observe the href write via a getter/setter pair — a setter alone
-    // shadows the real href with `undefined`, which breaks the identity
-    // fetch's relative /v1/auth/me URL resolution.
-    let hrefSet: string | null = null
-    const originalLocation = window.location
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: {
-        ...originalLocation,
-        get href() {
-          return hrefSet ?? originalLocation.href
-        },
-        set href(v: string) {
-          hrefSet = v
-        },
-      },
-    })
-
-    try {
+    const navigatedTo = await withLocationHrefSpy(async () => {
       render(IdentityChip)
       await waitFor(() => screen.getByRole('button', { name: /log out/i }))
       await fireEvent.click(screen.getByRole('button', { name: /log out/i }))
+      // Wait for the post-fetch navigation, not just the fetch itself —
+      // window.location.href = '/' runs after the awaited POST resolves.
+      await waitFor(() => expect(window.location.href).toBe('/'))
+    })
 
-      await waitFor(() => expect(logoutCalled).toBe(true))
-      await vi.waitFor(() => expect(hrefSet).toBe('/'))
-    } finally {
-      Object.defineProperty(window, 'location', { configurable: true, value: originalLocation })
-    }
+    expect(logoutCalled).toBe(true)
+    expect(navigatedTo).toBe('/')
   })
 })

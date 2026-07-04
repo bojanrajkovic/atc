@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button'
+  import { AUTH_PROBE_TIMEOUT_MS } from '$lib/connection'
   import { connectionStore } from '$lib/stores/connection.svelte'
 
   // One-shot: fires on the first `connected` transition, not on every
@@ -10,14 +11,20 @@
   $effect(() => {
     if (connectionStore.status !== 'connected' || fetched) return
     fetched = true
-    fetch('/v1/auth/me')
+    fetch('/v1/auth/me', { signal: AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS) })
       .then((res) => (res.ok ? res.json() : null))
       .then((identity) => {
-        if (identity) connectionStore.identity = identity
+        // A 401 elsewhere may have cleared connectionStore.identity (and
+        // moved to unauthenticated) while this fetch was still in flight —
+        // don't resurrect stale identity data on top of that.
+        if (identity && connectionStore.status !== 'unauthenticated') {
+          connectionStore.identity = identity
+        }
       })
       .catch(() => {
-        // Network hiccup on a one-shot probe isn't worth retry machinery —
-        // the chrome simply stays absent until the next full page load.
+        // Network hiccup (or a timeout) on a one-shot probe isn't worth
+        // retry machinery — the chrome simply stays absent until the next
+        // full page load.
       })
   })
 
