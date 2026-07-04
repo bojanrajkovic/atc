@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import { afterEach, describe, expect, it } from 'vitest'
 import { withLocationHrefSpy } from '$lib/__tests__/location-spy'
 import LoginScreen from './LoginScreen.svelte'
@@ -35,6 +35,30 @@ describe('LoginScreen', () => {
     )
 
     expect(navigatedTo).toBe(`/v1/auth/github/login?return_to=${encodeURIComponent('/')}`)
+  })
+
+  it('keeps the href attribute in sync on popstate (back/forward), for non-click interactions like copy-link', async () => {
+    window.history.replaceState(null, '', '/?q=stuck-runs')
+    render(LoginScreen)
+
+    const link = screen.getByRole('link', { name: /sign in with github/i })
+    await waitFor(() =>
+      expect(link.getAttribute('href')).toBe(
+        `/v1/auth/github/login?return_to=${encodeURIComponent('/?q=stuck-runs')}`,
+      ),
+    )
+
+    // Simulate a back-navigation: history changes, then the browser fires
+    // popstate (jsdom doesn't do this automatically for pushState/
+    // replaceState, so dispatch it explicitly).
+    window.history.pushState(null, '', '/')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    await waitFor(() =>
+      expect(link.getAttribute('href')).toBe(
+        `/v1/auth/github/login?return_to=${encodeURIComponent('/')}`,
+      ),
+    )
   })
 
   it('renders the ATC mark', () => {
