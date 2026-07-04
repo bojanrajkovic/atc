@@ -239,6 +239,7 @@ async fn build_auth_test_app(
         sessions,
         public_origin: TEST_PUBLIC_ORIGIN.to_string(),
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
+        repo_auth_ttl: Duration::from_secs(60 * 60),
     });
 
     let app_state = build_app_state(clock, shutdown, auth);
@@ -297,6 +298,41 @@ async fn do_callback(
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
+}
+
+async fn do_logout(app: &axum::Router, session_cookie: Option<&str>) -> axum::response::Response {
+    let mut builder = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/auth/github/logout");
+    if let Some(cookie) = session_cookie {
+        builder = builder.header(header::COOKIE, format!("atc_session={cookie}"));
+    }
+    let req = builder.body(axum::body::Body::empty()).unwrap();
+    app.clone().oneshot(req).await.unwrap()
+}
+
+async fn do_whoami(app: &axum::Router, session_cookie: Option<&str>) -> axum::response::Response {
+    let mut builder = axum::http::Request::builder()
+        .method("GET")
+        .uri("/v1/auth/me");
+    if let Some(cookie) = session_cookie {
+        builder = builder.header(header::COOKIE, format!("atc_session={cookie}"));
+    }
+    let req = builder.body(axum::body::Body::empty()).unwrap();
+    app.clone().oneshot(req).await.unwrap()
+}
+
+/// Complete a full real login flow and return the resulting session cookie.
+async fn login_and_get_session_cookie(app: &axum::Router) -> String {
+    let (flow_cookie, state) = start_real_flow(app, "").await;
+    let resp = do_callback(
+        app,
+        &format!("?code=good-code&state={state}"),
+        Some(&flow_cookie),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FOUND, "login should succeed");
+    set_cookie_value(resp.headers(), "atc_session").expect("login should set a session cookie")
 }
 
 /// Drive `/v1/auth/github/login` and extract the flow cookie + `state` query
@@ -683,6 +719,136 @@ async fn existing_session_for_a_different_user_is_not_refreshed() {
 }
 
 #[tokio::test]
+async fn logout_deletes_session_and_subsequent_whoami_is_401() {
+    let (_pool, _container, app) = setup_default().await;
+    let session_cookie = login_and_get_session_cookie(&app).await;
+
+    let whoami_before = do_whoami(&app, Some(&session_cookie)).await;
+    assert_eq!(
+        whoami_before.status(),
+        StatusCode::OK,
+        "session should be valid before logout"
+    );
+
+    let logout_resp = do_logout(&app, Some(&session_cookie)).await;
+    assert_eq!(logout_resp.status(), StatusCode::NO_CONTENT);
+    let cleared = set_cookie_value(logout_resp.headers(), "atc_session");
+    assert_eq!(
+        cleared,
+        Some(String::new()),
+        "logout should clear the session cookie value"
+    );
+    assert!(
+        logout_resp
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .any(|v| v.to_str().unwrap_or("").contains("Max-Age=0")),
+        "cleared cookie must carry Max-Age=0"
+    );
+
+    let whoami_after = do_whoami(&app, Some(&session_cookie)).await;
+    assert_eq!(
+        whoami_after.status(),
+        StatusCode::UNAUTHORIZED,
+        "session must be invalid immediately after logout"
+    );
+}
+
+#[tokio::test]
+async fn logout_is_idempotent_without_a_session_cookie() {
+    let (_pool, _container, app) = setup_default().await;
+
+    let resp = do_logout(&app, None).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "logout with no session cookie must still succeed"
+    );
+}
+
+#[tokio::test]
+async fn logout_is_idempotent_for_an_unknown_session_cookie() {
+    let (_pool, _container, app) = setup_default().await;
+
+    let resp = do_logout(&app, Some("not-a-real-session-id")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NO_CONTENT,
+        "logout for an unknown session must still succeed"
+    );
+}
+
+#[tokio::test]
+async fn whoami_without_session_returns_401_with_exact_reason() {
+    let (_pool, _container, app) = setup_default().await;
+
+    let resp = do_whoami(&app, None).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json,
+        json!({"reason": "auth_required"}),
+        "401 body must be exactly {{\"reason\": \"auth_required\"}}"
+    );
+}
+
+#[tokio::test]
+async fn whoami_with_fresh_session_returns_expected_shape() {
+    let (_pool, _container, app) = setup_default().await;
+    let session_cookie = login_and_get_session_cookie(&app).await;
+
+    let resp = do_whoami(&app, Some(&session_cookie)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["login"], "octocat");
+    assert_eq!(json["repoCount"], 1);
+    assert_eq!(
+        json["stale"], false,
+        "a just-created session must not be stale"
+    );
+    assert!(
+        json["reposRefreshedAt"].is_string(),
+        "reposRefreshedAt must be an ISO-8601 string"
+    );
+}
+
+#[tokio::test]
+async fn whoami_with_stale_session_reports_stale_true() {
+    let (pool, _container, app) = setup_default().await;
+    let session_cookie = login_and_get_session_cookie(&app).await;
+
+    // Backdate repos_refreshed_at past the fixture's 1-hour repo_auth_ttl
+    // (build_auth_test_app) directly via SQL — deterministic, no sleep.
+    // Scoped to this test's own session (github_user_id 42, the mock's
+    // default identity) rather than the whole table, so this stays correct
+    // if a future test in this fixture creates more than one session.
+    sqlx::query!(
+        "UPDATE auth_sessions SET repos_refreshed_at = now() - interval '2 hours' WHERE github_user_id = 42"
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = do_whoami(&app, Some(&session_cookie)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        json["stale"], true,
+        "repos_refreshed_at older than repo_auth_ttl must report stale"
+    );
+}
+
+#[tokio::test]
 async fn mode_none_leaves_auth_routes_unmounted() {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();
@@ -701,5 +867,19 @@ async fn mode_none_leaves_auth_routes_unmounted() {
         resp.status(),
         StatusCode::NOT_FOUND,
         "callback route must not be mounted when auth.mode = none"
+    );
+
+    let logout_resp = do_logout(&app, None).await;
+    assert_eq!(
+        logout_resp.status(),
+        StatusCode::NOT_FOUND,
+        "logout route must not be mounted when auth.mode = none"
+    );
+
+    let whoami_resp = do_whoami(&app, None).await;
+    assert_eq!(
+        whoami_resp.status(),
+        StatusCode::NOT_FOUND,
+        "whoami route must not be mounted when auth.mode = none"
     );
 }

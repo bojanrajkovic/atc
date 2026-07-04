@@ -259,6 +259,7 @@ async fn main() {
                 .clone()
                 .expect("validate_auth_config guarantees public_origin when mode = github"),
             max_session_ttl: github_cfg.max_session_ttl,
+            repo_auth_ttl: github_cfg.repo_auth_ttl,
         })
     } else {
         None
