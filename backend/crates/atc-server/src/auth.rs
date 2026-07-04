@@ -13,12 +13,14 @@
 //! these handlers; when auth is disabled, the routes simply don't exist in
 //! the router, so a request to them 404s the same way any unknown path does.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Query, State};
+use axum::extract::{FromRequestParts, Query, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -26,6 +28,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::{Digest, Sha256};
 
+use atc_core::RepoId;
 use atc_store_pg::{Session, SessionStore};
 
 use crate::github_client::{GitHubClient, GitHubClientError};
@@ -71,9 +74,8 @@ pub fn auth_routes() -> Router<Arc<AppState>> {
 
 /// Look up the session for the request's session cookie, if any — `None`
 /// covers both "no cookie" and "cookie present but unknown/expired". Kept
-/// as a plain function (not an extractor) so a future `AuthContext`
-/// extractor for the request-time enforcement handlers can wrap it rather
-/// than duplicate it.
+/// as a plain function (not an extractor) so [`AuthContext::from_request_parts`]
+/// can wrap it rather than duplicate it.
 async fn session_from_cookie(
     auth: &AuthRuntime,
     headers: &HeaderMap,
@@ -485,6 +487,155 @@ async fn logout_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) 
 }
 
 // ---------------------------------------------------------------------------
+// AuthContext extractor + 401 reason contract
+// ---------------------------------------------------------------------------
+
+/// Request-time identity, shared by every handler that needs to know who's
+/// asking (`/v1/auth/me` here; the read rails `/v1/state`/`/v1/ws` in
+/// #459/#460). `Disabled` short-circuits before touching the session store —
+/// `mode = "none"` deployments pay zero extra cost per request.
+///
+/// Staleness (`repos_refreshed_at + repo_auth_ttl` elapsed) is deliberately
+/// **not** checked during extraction: `whoami_handler` below reports it as a
+/// `stale` body field rather than rejecting (the identity-chrome bootstrap
+/// depends on that shape — see issue #463), while the read rails call
+/// [`SessionIdentity::is_stale`] themselves and reject with
+/// [`AuthRejection::Stale`].
+#[derive(Debug)]
+pub enum AuthContext {
+    Disabled,
+    Session(SessionIdentity),
+}
+
+/// The identity + authorization set carried by a valid session.
+///
+/// `repo_ids` uses the `RepoId` newtype (#449) rather than the design doc's
+/// simplified `HashSet<i64>` sketch, since the enforcement handlers compare
+/// it directly against `WorkflowRun::repo_id`. `repos_refreshed_at` is
+/// likewise an addition beyond the sketch — the staleness check below needs
+/// it, and threading it through here avoids a second session lookup in
+/// callers that need it (`whoami_handler`, `/v1/state`, `/v1/ws`).
+#[derive(Debug)]
+pub struct SessionIdentity {
+    pub github_login: String,
+    pub repo_ids: HashSet<RepoId>,
+    pub repos_refreshed_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl AuthContext {
+    /// `Disabled` sees everything (today's behavior, unfiltered). A
+    /// `Session` sees a repo only if it's in its authorized set — `None`
+    /// (no `repo_id`, e.g. a pre-migration row) is never visible to an
+    /// authenticated session.
+    pub fn can_see(&self, repo_id: Option<RepoId>) -> bool {
+        match self {
+            Self::Disabled => true,
+            Self::Session(s) => repo_id.is_some_and(|id| s.repo_ids.contains(&id)),
+        }
+    }
+}
+
+impl SessionIdentity {
+    /// An absurdly large configured `repo_auth_ttl` (well past chrono's
+    /// representable range) is treated as "never stale" rather than a panic
+    /// on a request path — a config-typo edge case, not a real deployment.
+    /// Compared as elapsed-vs-ttl (`DateTime - DateTime`, always in-range
+    /// since both are real timestamps), not `repos_refreshed_at + ttl` —
+    /// adding an out-of-range `Duration::MAX` to a `DateTime` panics on
+    /// overflow (chrono's `Add` impl), which is exactly the panic this
+    /// guards against.
+    pub fn is_stale(&self, repo_auth_ttl: Duration, now: chrono::DateTime<chrono::Utc>) -> bool {
+        let ttl = chrono::Duration::from_std(repo_auth_ttl).unwrap_or(chrono::Duration::MAX);
+        now - self.repos_refreshed_at >= ttl
+    }
+}
+
+/// The 401 reason contract, defined once so `/v1/auth/me` and the read
+/// rails (#459/#460) never diverge on the JSON shape. These two strings are
+/// the wire contract consumed by #462 — string-exact.
+///
+/// Tracing fires from [`IntoResponse::into_response`] rather than at each
+/// call site, so both the extractor's automatic `Required` rejection and a
+/// handler's manual `Stale` check (#459/#460) trace uniformly.
+#[derive(Debug)]
+pub enum AuthRejection {
+    /// No/invalid/expired session. `had_cookie` distinguishes "no cookie
+    /// sent" from "cookie sent but unknown/expired" for the trace event —
+    /// never reflected in the response body.
+    Required { had_cookie: bool },
+    /// Valid session, but `repos_refreshed_at + repo_auth_ttl` elapsed.
+    Stale,
+    /// `SessionStore` failure while loading the session.
+    StoreFailed,
+}
+
+impl IntoResponse for AuthRejection {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Required { had_cookie } => {
+                tracing::debug!(
+                    reason = "auth_required",
+                    had_cookie,
+                    "request rejected: no valid session"
+                );
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"reason": "auth_required"})),
+                )
+                    .into_response()
+            }
+            Self::Stale => {
+                tracing::debug!(
+                    reason = "stale_authorization",
+                    had_cookie = true,
+                    "request rejected: stale authorization"
+                );
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"reason": "stale_authorization"})),
+                )
+                    .into_response()
+            }
+            Self::StoreFailed => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "failed to load session"})),
+            )
+                .into_response(),
+        }
+    }
+}
+
+impl FromRequestParts<Arc<AppState>> for AuthContext {
+    type Rejection = AuthRejection;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(auth) = state.auth.as_ref() else {
+            return Ok(Self::Disabled);
+        };
+
+        let names = cookie_names(&auth.public_origin);
+        let had_cookie = get_cookie(&parts.headers, names.session).is_some();
+
+        let session = session_from_cookie(auth, &parts.headers)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error.message = %e, "AuthContext: session store failed");
+                AuthRejection::StoreFailed
+            })?
+            .ok_or(AuthRejection::Required { had_cookie })?;
+
+        Ok(Self::Session(SessionIdentity {
+            github_login: session.github_login,
+            repo_ids: session.repo_ids.into_iter().map(RepoId).collect(),
+            repos_refreshed_at: session.repos_refreshed_at,
+        }))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GET /v1/auth/me
 // ---------------------------------------------------------------------------
 
@@ -497,43 +648,28 @@ struct WhoamiResponse {
     stale: bool,
 }
 
-/// `{"reason": "auth_required"}` — the exact, string-locked 401 body shape
-/// a future `AuthContext` extractor (and its frontend/consumer code)
-/// depends on.
-fn auth_required() -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({"reason": "auth_required"})),
-    )
-        .into_response()
-}
-
-async fn whoami_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(auth) = state.auth.as_ref() else {
+async fn whoami_handler(ctx: AuthContext, State(state): State<Arc<AppState>>) -> Response {
+    let AuthContext::Session(identity) = ctx else {
+        // Unreachable in practice — this route is only mounted when
+        // `auth.mode = "github"` (see `routes::api_routes`), which is
+        // exactly when `AuthContext` never produces `Disabled`. Mirrors the
+        // defensive 404 the sibling handlers in this module use.
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let session = match session_from_cookie(auth, &headers).await {
-        Ok(Some(session)) => session,
-        Ok(None) => return auth_required(),
-        Err(e) => return session_store_failed(e, "load session"),
-    };
-
-    // An absurdly large configured `repo_auth_ttl` (well past chrono's
-    // representable range) is treated as "never stale" rather than a panic
-    // on a request path — a config-typo edge case, not a real deployment.
-    // Compared as elapsed-vs-ttl (DateTime - DateTime, always in-range since
-    // both are real timestamps), not repos_refreshed_at + ttl — adding an
-    // out-of-range `Duration::MAX` to a `DateTime` panics on overflow
-    // (`chrono`'s `Add` impl), which is exactly the panic this guards against.
-    let ttl = chrono::Duration::from_std(auth.repo_auth_ttl).unwrap_or(chrono::Duration::MAX);
-    let elapsed = state.clock.now() - session.repos_refreshed_at;
-    let stale = elapsed >= ttl;
+    // `AuthContext::Session` implies `state.auth` is `Some` (both are gated
+    // on `auth.mode = "github"`).
+    let repo_auth_ttl = state
+        .auth
+        .as_ref()
+        .expect("AuthContext::Session implies auth.mode = github")
+        .repo_auth_ttl;
+    let stale = identity.is_stale(repo_auth_ttl, state.clock.now());
 
     Json(WhoamiResponse {
-        login: session.github_login,
-        repo_count: session.repo_ids.len(),
-        repos_refreshed_at: session.repos_refreshed_at,
+        login: identity.github_login,
+        repo_count: identity.repo_ids.len(),
+        repos_refreshed_at: identity.repos_refreshed_at,
         stale,
     })
     .into_response()
@@ -625,22 +761,82 @@ mod tests {
         assert!(POPUP_CALLBACK_HTML.contains("window.close()"));
     }
 
-    /// Regression test for `whoami_handler`'s staleness check: an operator
-    /// config with a `repo_auth_ttl` past chrono's representable range must
-    /// report "never stale", not panic. `repos_refreshed_at + ttl` would
-    /// overflow chrono's `DateTime + Duration` (which panics rather than
-    /// saturating); computing `elapsed >= ttl` instead never adds an
-    /// out-of-range `Duration` to a `DateTime`.
+    fn test_identity(repos_refreshed_at: chrono::DateTime<chrono::Utc>) -> SessionIdentity {
+        SessionIdentity {
+            github_login: "octocat".to_string(),
+            repo_ids: HashSet::from([RepoId(1), RepoId(2)]),
+            repos_refreshed_at,
+        }
+    }
+
     #[test]
-    fn absurd_repo_auth_ttl_reports_never_stale_without_panicking() {
-        let repos_refreshed_at = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
-        let now = repos_refreshed_at;
-        let ttl = chrono::Duration::from_std(std::time::Duration::from_secs(u64::MAX))
-            .unwrap_or(chrono::Duration::MAX);
-        let elapsed = now - repos_refreshed_at;
+    fn can_see_disabled_sees_every_repo_including_none() {
+        let ctx = AuthContext::Disabled;
+        assert!(ctx.can_see(Some(RepoId(1))));
+        assert!(ctx.can_see(Some(RepoId(999))));
+        assert!(ctx.can_see(None));
+    }
+
+    #[test]
+    fn can_see_session_checks_repo_id_membership() {
+        let refreshed_at = chrono::DateTime::from_timestamp(0, 0).unwrap();
+        let ctx = AuthContext::Session(test_identity(refreshed_at));
+        assert!(ctx.can_see(Some(RepoId(1))));
+        assert!(!ctx.can_see(Some(RepoId(999))), "repo outside the set");
         assert!(
-            elapsed < ttl,
-            "an absurdly large repo_auth_ttl must never be considered stale"
+            !ctx.can_see(None),
+            "no repo_id (e.g. a pre-migration row) is never visible to an authenticated session"
         );
+    }
+
+    #[test]
+    fn is_stale_false_within_ttl() {
+        let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let identity = test_identity(refreshed_at);
+        let now = refreshed_at + chrono::Duration::seconds(30);
+        assert!(!identity.is_stale(Duration::from_secs(3600), now));
+    }
+
+    #[test]
+    fn is_stale_true_once_ttl_elapsed() {
+        let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
+        let identity = test_identity(refreshed_at);
+        let now = refreshed_at + chrono::Duration::hours(2);
+        assert!(identity.is_stale(Duration::from_secs(3600), now));
+    }
+
+    /// Regression test: an operator config with a `repo_auth_ttl` past
+    /// chrono's representable range must report "never stale", not panic.
+    /// `repos_refreshed_at + ttl` would overflow chrono's `DateTime +
+    /// Duration` (which panics rather than saturating); `is_stale` computes
+    /// `elapsed >= ttl` instead, which never adds an out-of-range `Duration`
+    /// to a `DateTime`.
+    #[test]
+    fn is_stale_absurd_ttl_never_stale_without_panicking() {
+        let refreshed_at = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
+        let identity = test_identity(refreshed_at);
+        assert!(!identity.is_stale(Duration::from_secs(u64::MAX), refreshed_at));
+    }
+
+    #[tokio::test]
+    async fn auth_rejection_required_body_is_exact() {
+        let resp = AuthRejection::Required { had_cookie: false }.into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json, serde_json::json!({"reason": "auth_required"}));
+    }
+
+    #[tokio::test]
+    async fn auth_rejection_stale_body_is_exact() {
+        let resp = AuthRejection::Stale.into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json, serde_json::json!({"reason": "stale_authorization"}));
     }
 }
