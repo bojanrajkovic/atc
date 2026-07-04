@@ -12,9 +12,7 @@ user is, not *which repositories* they may see. A design review on issue
 [#234](https://github.com/bojanrajkovic/atc/issues/234) worked through the
 session, credential, and identity-key tradeoffs for a first-party mode that
 can filter dashboard visibility by the user's actual GitHub repository
-access. This ADR records the five decisions from that review, synthesized
-into the design at [#234 — Native GitHub auth (auth.github): design &
-breakdown](https://outline.gaur-kardashev.ts.net/doc/234-native-github-auth-authgithub-design-breakdown-tFhANGAviI).
+access. This ADR records the five decisions from that review.
 
 ## Decision
 
@@ -97,8 +95,8 @@ design is a strict runtime subset of the refresh-token design: ATC never
 calls GitHub on the user's behalf after callback, because run/job data
 already arrives via webhooks independent of any user token. The
 refresh-token approach is preserved as an additive upgrade path, not
-discarded outright — see [Refresh-token upgrade path
-(deferred)](https://outline.gaur-kardashev.ts.net/doc/refresh-token-upgrade-path-deferred-xgdv4Ii2uA).
+discarded outright, and can be layered on later without revisiting this
+decision.
 
 ### 5. Opaque `__Host-` cookie sessions, hashed at rest in Postgres; `auth.github` requires Postgres
 
@@ -183,10 +181,6 @@ reconnect-to-any-replica cursor design that decision depends on.
 
 - Issue: [#234 — Native GitHub auth](https://github.com/bojanrajkovic/atc/issues/234)
   (the two issue comments this ADR synthesizes)
-- Design: [#234 — Native GitHub auth (auth.github): design &
-  breakdown](https://outline.gaur-kardashev.ts.net/doc/234-native-github-auth-authgithub-design-breakdown-tFhANGAviI)
-- Deferred: [Refresh-token upgrade path
-  (deferred)](https://outline.gaur-kardashev.ts.net/doc/refresh-token-upgrade-path-deferred-xgdv4Ii2uA)
 - [ADR 0003](0003-state-cursor-contract-and-operator-policy.md) — `seq`
   contiguity already out of contract, referenced by the accepted side
   channel above
