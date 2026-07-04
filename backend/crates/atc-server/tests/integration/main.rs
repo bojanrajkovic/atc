@@ -13,6 +13,7 @@
 
 mod common;
 
+mod auth_tests;
 mod config_tests;
 mod config_watcher_tests;
 mod db_readyz_tests;

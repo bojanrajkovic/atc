@@ -472,9 +472,10 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         shutdown,
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
 
-    let main_router = atc_server::routes::api_routes()
+    let main_router = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 

@@ -10,18 +10,20 @@ use std::time::Duration;
 
 use atc_core::{Clock, SystemClock};
 use atc_persist::PersistentStore;
+use atc_server::auth::AuthRuntime;
 use atc_server::config;
-use atc_server::config::ScalarSnapshot;
+use atc_server::config::{AuthMode, ScalarSnapshot};
 use atc_server::config_watcher;
 use atc_server::config_watcher::ConfigEvent;
 use atc_server::config_watcher::ConfigWatcherMetrics;
+use atc_server::github_client::GitHubClient;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
-use atc_store_pg::{DbInitError, PgStore, db, listener};
+use atc_store_pg::{DbInitError, PgStore, SessionStore, db, listener};
 use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -165,7 +167,13 @@ async fn main() {
 
     // Storage mode dispatch. Each store owns its own broadcast sender and
     // background tasks; main.rs only holds the resulting `Arc<dyn
-    // PersistentStore>`.
+    // PersistentStore>`. `auth_pool` is a second handle onto the same PG
+    // pool cloned off *before* `PgStore::start` consumes `pool` — cheap
+    // (`TracedPool` clones an Arc-backed connection pool, not a physical
+    // connection) and only populated when `auth.mode = "github"` (which
+    // `Config::load`'s `validate_auth_config` already guarantees implies
+    // `database_url` is set).
+    let mut auth_pool: Option<atc_store_pg::TracedPool> = None;
     let persist: Arc<dyn PersistentStore> = if let Some(ref db_url) = cfg.database_url {
         let pool = db::init_pool(db_url).await.unwrap_or_else(|e| {
             if matches!(e, DbInitError::Migrate(_)) {
@@ -176,6 +184,10 @@ async fn main() {
             process::exit(1);
         });
         tracing::info!("database connected and migrations applied");
+
+        if cfg.auth.mode == AuthMode::Github {
+            auth_pool = Some(pool.clone());
+        }
 
         let listener_url = cfg
             .database_listener_url
@@ -212,6 +224,46 @@ async fn main() {
         )
     };
 
+    // Construct the `auth.github` runtime. `validate_auth_config` guarantees
+    // that when `mode = "github"`, `client_id`/`client_secret`/`public_origin`
+    // are all `Some` and non-empty, and (via the branch above) `auth_pool`
+    // is populated — the `.expect()`s below encode that already-enforced
+    // invariant, not a new fallible path.
+    let auth_enabled = cfg.auth.mode == AuthMode::Github;
+    let auth_runtime = if auth_enabled {
+        let github_cfg = cfg
+            .auth
+            .github
+            .as_ref()
+            .expect("validate_auth_config guarantees [auth.github] when mode = github");
+        let sessions = SessionStore::start(
+            auth_pool.expect("validate_auth_config guarantees database_url when mode = github"),
+            Arc::clone(&clock),
+            shutdown.clone(),
+        );
+        let github = Arc::new(GitHubClient::new(
+            github_cfg
+                .client_id
+                .clone()
+                .expect("validate_auth_config guarantees client_id when mode = github"),
+            github_cfg
+                .client_secret
+                .clone()
+                .expect("validate_auth_config guarantees client_secret when mode = github"),
+        ));
+        Some(AuthRuntime {
+            github,
+            sessions,
+            public_origin: github_cfg
+                .public_origin
+                .clone()
+                .expect("validate_auth_config guarantees public_origin when mode = github"),
+            max_session_ttl: github_cfg.max_session_ttl,
+        })
+    } else {
+        None
+    };
+
     let ws_tracker = TaskTracker::new();
 
     // Build AppState. `Config::runner_pools` is already `Vec<RunnerPoolCapacity>`
@@ -231,6 +283,10 @@ async fn main() {
     // instrument-cache and one active-connection atomic.
     let ws_metrics = atc_server::ws::WsMetrics::register();
 
+    // Cloned out before `auth_runtime` moves into `AppState` — the shutdown
+    // orchestration below needs its own handle to join the sweep task.
+    let auth_sessions_for_shutdown = auth_runtime.as_ref().map(|a| Arc::clone(&a.sessions));
+
     let app_state = Arc::new(AppState {
         persist: Arc::clone(&persist),
         clock: Arc::clone(&clock),
@@ -241,6 +297,7 @@ async fn main() {
         shutdown: shutdown.clone(),
         ws_tracker: ws_tracker.clone(),
         ws_metrics,
+        auth: auth_runtime,
     });
 
     // Spawn the process-metrics observer (wraps `opentelemetry-system-metrics`).
@@ -271,7 +328,7 @@ async fn main() {
     // open through shutdown orchestration — WS handlers see
     // `shutdown.cancelled()` and send Close(1001) rather than racing against
     // a `RecvError::Closed` from a prematurely-dropped store.
-    let app = routes::api_routes()
+    let app = routes::api_routes(auth_enabled)
         .with_state(app_state.clone())
         .fallback(assets::fallback_handler());
 
@@ -305,6 +362,7 @@ async fn main() {
         ws_tracker,
         main_serve_task,
         persist,
+        auth_sessions_for_shutdown,
         metrics_handle,
         config_watcher_handle,
         otel_handles,

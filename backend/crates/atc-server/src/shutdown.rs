@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_persist::{PersistentStore, join_with_timeout};
+use atc_store_pg::SessionStore;
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -125,17 +126,21 @@ async fn await_optional_serve(serve: &'static str, handle: Option<JoinHandle<io:
 /// - `persist`: The active `PersistentStore`. Its `shutdown()` joins every
 ///   background task the store owns (listener + drain in PG mode; eviction in
 ///   in-memory mode).
+/// - `auth_sessions`: `Some` when `auth.mode = "github"`; its `shutdown()`
+///   joins the `SessionStore` sweep task. `None` when auth is disabled.
 /// - `metrics_handle`: Process metrics collector handle. `shutdown()` aborts
 ///   the underlying observer task and returns a `JoinHandle<()>` joined under
 ///   `SHUTDOWN_TIMEOUT_METRICS`.
 /// - `otel_handles`: `Some` when `init_otel` returned a configured pipeline
 ///   (i.e., `OTEL_EXPORTER_OTLP_ENDPOINT` was set); `None` when OTel is
 ///   disabled. Consumed so the providers cannot leak past the flush.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_shutdown_orchestration(
     shutdown: CancellationToken,
     ws_tracker: TaskTracker,
     main_serve_task: JoinHandle<io::Result<()>>,
     persist: Arc<dyn PersistentStore>,
+    auth_sessions: Option<Arc<SessionStore>>,
     metrics_handle: crate::metrics::ProcessCollectorHandle,
     config_watcher_handle: Option<JoinHandle<()>>,
     otel_handles: Option<OtelHandles>,
@@ -194,9 +199,13 @@ pub async fn run_shutdown_orchestration(
     // Step 4: Join the persistent store's background tasks. `persist.shutdown()`
     // joins listener + drain in PG mode, eviction in in-memory mode, each
     // bounded by its own per-task timeout constant (defined alongside the
-    // store implementation). Then join the config_watcher task (if armed),
-    // then the process metrics collector.
+    // store implementation). Then the `auth.github` session-store sweep task
+    // (if armed), then config_watcher (if armed), then the process metrics
+    // collector.
     persist.shutdown().await;
+    if let Some(sessions) = auth_sessions {
+        sessions.shutdown().await;
+    }
     if let Some(handle) = config_watcher_handle {
         join_with_timeout(handle, SHUTDOWN_TIMEOUT_CONFIG_WATCHER, "config_watcher").await;
     }
@@ -222,6 +231,12 @@ pub async fn run_shutdown_orchestration(
     //   4. config_watcher       (the file-watcher task — joined via the
     //      `config_watcher_handle` parameter, after `persist.shutdown()`
     //      and before `metrics_handle.shutdown()`)
+    //   5. auth.github session sweep (`SessionStore`'s own background task,
+    //      joined via `auth_sessions.shutdown()` above when `auth.mode =
+    //      "github"` — not yet an OTel emitter itself, no metrics/spans of
+    //      its own land until the dedicated observability ticket, but it
+    //      still must be joined here rather than left to the runtime's
+    //      abrupt process-exit teardown)
     // A new emitter category MUST be joined before this point and named here
     // so the "no live emitter" property holds for it too.
     if let Some(handles) = otel_handles {
@@ -308,6 +323,7 @@ mod tests {
                 ws_tracker,
                 main_serve_task,
                 persist,
+                None,
                 metrics_handle,
                 None,
                 None,
@@ -352,6 +368,7 @@ mod tests {
                 ws_tracker,
                 main_serve_task,
                 persist,
+                None,
                 metrics_handle,
                 None,
                 None,

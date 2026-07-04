@@ -83,7 +83,7 @@ fn install_test_otel() -> OtelTestHarness {
     // `tracing::info_span!` / `#[tracing::instrument]` route into the in-memory
     // span exporter. axum-otel-metrics reads from the global meter provider at
     // layer-build time, so the global meter provider must be set before the
-    // first call to `routes::api_routes()` in any test.
+    // first call to `routes::api_routes(false)` in any test.
     let tracer = tracer_provider.tracer("atc-test");
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     opentelemetry::global::set_meter_provider(meter_provider.clone());
@@ -344,8 +344,9 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
-    let app = atc_server::routes::api_routes()
+    let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state)
@@ -373,8 +374,9 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
-    let app = atc_server::routes::api_routes()
+    let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state)
@@ -418,8 +420,9 @@ pub async fn spawn_in_memory_server_with_capacity(
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
-    let router = atc_server::routes::api_routes()
+    let router = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -734,9 +737,10 @@ async fn build_app_inner(
         shutdown: shutdown.clone(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
 
-    let router = atc_server::routes::api_routes()
+    let router = atc_server::routes::api_routes(false)
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
@@ -892,8 +896,9 @@ pub async fn build_pg_app(
         shutdown,
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
-    let app = atc_server::routes::api_routes()
+    let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
     (app, app_state, rx)
