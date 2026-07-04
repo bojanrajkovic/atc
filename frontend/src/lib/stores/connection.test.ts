@@ -227,6 +227,29 @@ describe('ConnectionStore', () => {
     })
   })
 
+  describe('enterUnauthenticated / retry', () => {
+    afterEach(() => {
+      connectionStore.status = 'disconnected'
+      connectionStore.authReason = null
+    })
+
+    it('enterUnauthenticated sets status and reason', () => {
+      connectionStore.enterUnauthenticated('auth_required')
+      expect(connectionStore.status).toBe('unauthenticated')
+      expect(connectionStore.authReason).toBe('auth_required')
+    })
+
+    it('retry clears the reason and signals a reconnect', () => {
+      connectionStore.enterUnauthenticated('stale_authorization')
+      const initial = connectionStore.reconnectRequested
+
+      connectionStore.retry()
+
+      expect(connectionStore.authReason).toBe(null)
+      expect(connectionStore.reconnectRequested).toBe(initial + 1)
+    })
+  })
+
   describe('observeServerVersion — session-reference handshake (issue #47)', () => {
     beforeEach(() => {
       // Reset issue #47 fields between tests.

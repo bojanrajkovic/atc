@@ -1,4 +1,11 @@
-type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
+type ConnectionStatus =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'unauthenticated'
+
+export type AuthReason = 'auth_required' | 'stale_authorization'
 
 const STALE_THRESHOLD_MS = 30_000
 const STALE_CHECK_INTERVAL_MS = 5_000
@@ -10,6 +17,12 @@ class ConnectionStore {
   lastEventAt = $state<number | null>(null)
   reconnectAttempt = $state(0)
   reconnectRequested = $state(0)
+
+  // Set by ConnectionManager when a state fetch or WS rejection resolves to a
+  // 401 (see connection.ts). Read by the login screen / re-auth UI (#463,
+  // #464) to decide between the login screen and the popup-first staleness
+  // flow. Cleared by retry().
+  authReason = $state<AuthReason | null>(null)
 
   // ServerHello session-reference state (issue #47). The first ServerHello
   // version observed in a tab session becomes the reference; any subsequent
@@ -66,6 +79,23 @@ class ConnectionStore {
 
   requestReconnect(): void {
     this.reconnectRequested += 1
+  }
+
+  /** ConnectionManager calls this on a 401 (direct or probed) instead of scheduling backoff. */
+  enterUnauthenticated(reason: AuthReason): void {
+    this.status = 'unauthenticated'
+    this.authReason = reason
+  }
+
+  /**
+   * Re-enters the normal connect path after re-auth. Reuses the existing
+   * reconnectRequested signal — ConnectionManager.svelte's effect already
+   * calls manager.reconnect() (fresh WS + state fetch) off that counter, so
+   * no separate wiring is needed for the post-auth retry.
+   */
+  retry(): void {
+    this.authReason = null
+    this.requestReconnect()
   }
 
   /**
