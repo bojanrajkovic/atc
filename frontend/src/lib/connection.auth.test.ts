@@ -1,9 +1,14 @@
 import { HttpResponse, http } from 'msw'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MockWebSocket, setupConnectionTestServer } from '$lib/__tests__/connection-test-helpers'
+import {
+  MockWebSocket,
+  setupConnectionTestServer,
+  snapshotToJSON,
+} from '$lib/__tests__/connection-test-helpers'
 import { ConnectionManager } from '$lib/connection'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
+import { createMockRun } from '$lib/test-utils/factories'
 
 describe('ConnectionManager — 401-aware connection states', () => {
   const baseUrl = 'http://localhost:3000'
@@ -257,5 +262,40 @@ describe('ConnectionManager — 401-aware connection states', () => {
       parseAuthReasonSpy.mockRestore()
       manager.destroy()
     }, 10_000)
+  })
+
+  describe('entering unauthenticated clears cached run data', () => {
+    it('discards previously loaded runs so a revoked repo does not stay on screen', async () => {
+      const manager = new ConnectionManager(baseUrl)
+      let stateRequestCount = 0
+
+      server.use(
+        http.get('http://localhost:*/v1/state', () => {
+          stateRequestCount++
+          if (stateRequestCount === 1) {
+            return HttpResponse.json(
+              snapshotToJSON({
+                lastSeq: 5n,
+                runs: [createMockRun()],
+                jobs: [],
+                runnerPoolCapacities: [],
+                displayTtlSeconds: 0,
+              }),
+            )
+          }
+          return HttpResponse.json({ reason: 'stale_authorization' }, { status: 401 })
+        }),
+      )
+
+      await manager.connect()
+      expect(runStore.runs.size).toBe(1)
+
+      manager.reconnect()
+      await vi.waitFor(() => expect(connectionStore.status).toBe('unauthenticated'))
+
+      expect(runStore.runs.size).toBe(0)
+
+      manager.destroy()
+    })
   })
 })

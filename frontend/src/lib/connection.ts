@@ -210,7 +210,7 @@ export class ConnectionManager {
         // aborted cycle must not clobber the new cycle's WS or status).
         if (signal.aborted) return
         this.closeWs()
-        connectionStore.enterUnauthenticated(reason)
+        this.transitionToUnauthenticated(reason)
         return
       }
       if (!res.ok) throw new Error(`State fetch failed: ${res.status}`)
@@ -306,10 +306,21 @@ export class ConnectionManager {
     if (signal.aborted) return
     this.closeWs()
     if (reason !== null) {
-      connectionStore.enterUnauthenticated(reason)
+      this.transitionToUnauthenticated(reason)
       return
     }
     this.handleDisconnect()
+  }
+
+  /**
+   * Discards any cached run/job data before entering the unauthenticated
+   * state — the server has just said this session may not see it, and a
+   * revoked-mid-session repo (or a long-stale unauthenticated window before
+   * the user re-authenticates) must not leave it on screen.
+   */
+  private transitionToUnauthenticated(reason: AuthReason): void {
+    runStore.clear()
+    connectionStore.enterUnauthenticated(reason)
   }
 
   /** Returns the 401 reason if /v1/state is currently rejecting us, else null (covers non-401 responses and network failures alike — both fall back to normal backoff). */
