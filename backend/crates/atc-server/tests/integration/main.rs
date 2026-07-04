@@ -54,4 +54,5 @@ mod transactional_writes_tests;
 mod webhook_boundary_logging_test;
 mod webhook_hmac_tests;
 mod webhook_ingestion_tests;
+mod ws_auth_filter_tests;
 mod ws_tests;

@@ -11,6 +11,7 @@ mod verify;
 pub use verify::{VerifyError, verify_signature};
 
 use atc_core::event::{JobEventEnvelope, RunEventEnvelope};
+use atc_core::types::RepoId;
 
 /// Errors from webhook parsing and translation.
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +81,19 @@ pub enum WebhookEvent {
     Run(RunEventEnvelope),
     /// A `workflow_job` event translated to a job event envelope.
     Job(JobEventEnvelope),
+}
+
+impl WebhookEvent {
+    /// The wrapped envelope's `repo_id` — both variants carry one
+    /// (post-#449). `None` covers a pre-migration outbox row or a
+    /// staleness-sweep-synthesized completion that predates the field.
+    #[must_use]
+    pub fn repo_id(&self) -> Option<RepoId> {
+        match self {
+            Self::Run(env) => env.repo_id,
+            Self::Job(env) => env.repo_id,
+        }
+    }
 }
 
 /// Parse a GitHub webhook payload into a domain event.
@@ -165,7 +179,26 @@ pub fn parse_webhook(event_type: &str, body: &[u8]) -> Result<ParseResult, Parse
 mod tests {
     use super::*;
     use atc_core::event::{JobEvent, RunEvent};
-    use atc_core::types::RepoId;
+    use atc_core::test_support::{make_job_event, make_run_event};
+    use atc_core::types::{JobId, RepoId, RunId};
+
+    #[test]
+    fn repo_id_reads_through_either_variant() {
+        let run = WebhookEvent::Run(make_run_event(RunId(1), RunEvent::Requested));
+        assert_eq!(run.repo_id(), Some(RepoId(1_296_269)));
+
+        let job = WebhookEvent::Job(make_job_event(
+            JobId(1),
+            RunId(1),
+            "octocat",
+            "Hello-World",
+            JobEvent::Queued {
+                labels: vec![],
+                steps: vec![],
+            },
+        ));
+        assert_eq!(job.repo_id(), Some(RepoId(1_296_269)));
+    }
 
     #[test]
     fn test_parse_workflow_run_requested() {
