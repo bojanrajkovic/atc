@@ -24,5 +24,5 @@ pub use persist::PersistError;
 pub use run::{InvalidRunTransition, RunConclusion, RunStatus, WorkflowRun};
 pub use state_machine::StateMachineError;
 pub use types::{
-    JobId, LabelSet, RepoKey, RunId, RunnerPoolCapacity, RunnerPoolStats, RunnerPoolTotal,
+    JobId, LabelSet, RepoId, RepoKey, RunId, RunnerPoolCapacity, RunnerPoolStats, RunnerPoolTotal,
 };

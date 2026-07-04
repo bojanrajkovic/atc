@@ -13,7 +13,7 @@ use atc_core::{
     JobStatus, PersistError,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     fixed_test_timestamp,
-    types::{JobId, RunId},
+    types::{JobId, RepoId, RunId},
 };
 use atc_persist::PersistentStore;
 use chrono::{DateTime, Utc};
@@ -129,6 +129,98 @@ async fn pg_run_first_sight_creates_row() {
     assert_eq!(row.id, 1001i64);
     assert_eq!(row.status, "Queued");
     assert_eq!(row.workflow_name.as_deref(), Some("CI"));
+    shutdown.cancel();
+}
+
+/// A new run event's repo_id is persisted and round-trips through a snapshot read.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_repo_id_persisted_and_round_trips() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    let env = run_requested(1050);
+    let expected_repo_id = env.repo_id;
+    assert!(
+        expected_repo_id.is_some(),
+        "test envelope should carry a repo_id"
+    );
+    store.apply_run_event(env).await.unwrap();
+
+    let row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 1050")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.repo_id.map(RepoId), expected_repo_id);
+
+    let snapshot = store.read_snapshot(None).await.expect("snapshot");
+    let run = snapshot
+        .runs
+        .iter()
+        .find(|r| r.id == RunId(1050))
+        .expect("run present in snapshot");
+    assert_eq!(run.repo_id, expected_repo_id);
+    shutdown.cancel();
+}
+
+/// A row seeded with a NULL repo_id (simulating a pre-migration row) is
+/// promoted to Some on the next run-event UPSERT -- the self-heal path.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_repo_id_self_heals_from_null() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    let legacy_env = RunEventEnvelope {
+        repo_id: None,
+        ..run_requested(1051)
+    };
+    store.apply_run_event(legacy_env).await.unwrap();
+
+    let row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 1051")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.repo_id, None, "legacy row starts with NULL repo_id");
+
+    let healing_env = run_in_progress(1051);
+    let expected_repo_id = healing_env.repo_id;
+    store.apply_run_event(healing_env).await.unwrap();
+
+    let row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 1051")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.repo_id.map(RepoId), expected_repo_id);
+    shutdown.cancel();
+}
+
+/// A NULL EXCLUDED.repo_id (e.g. a staleness-sweep envelope) must never
+/// overwrite an already-known repo_id -- the COALESCE never regresses.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_run_repo_id_never_regresses_to_null() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    let env = run_requested(1052);
+    let known_repo_id = env.repo_id;
+    store.apply_run_event(env).await.unwrap();
+
+    let no_repo_id_env = RunEventEnvelope {
+        repo_id: None,
+        ..run_in_progress(1052)
+    };
+    store.apply_run_event(no_repo_id_env).await.unwrap();
+
+    let row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 1052")
+        .fetch_one(&pool)
+        .await
+        .expect("row not found");
+    assert_eq!(row.repo_id.map(RepoId), known_repo_id);
     shutdown.cancel();
 }
 
@@ -634,6 +726,72 @@ async fn pg_job_before_run_creates_stub_run() {
         .expect("job row not found");
     assert_eq!(job_row.run_id, 9001i64);
     assert_eq!(job_row.status, "Queued");
+    shutdown.cancel();
+}
+
+/// A job-before-run stub run carries the repo_id from the job envelope.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_before_run_stub_has_repo_id() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    let env = job_queued(8005, 9005);
+    let expected_repo_id = env.repo_id;
+    assert!(
+        expected_repo_id.is_some(),
+        "test envelope should carry a repo_id"
+    );
+    store.apply_job_event(env).await.unwrap();
+
+    let stub_row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 9005")
+        .fetch_one(&pool)
+        .await
+        .expect("stub run row not found");
+    assert_eq!(stub_row.repo_id.map(RepoId), expected_repo_id);
+    shutdown.cancel();
+}
+
+/// A job-before-run stub's repo_id is reconciled by the real run event that
+/// follows. The two envelopes here deliberately carry DIFFERENT repo_id
+/// values (rather than both defaulting to the shared test constant) so a
+/// source-of-truth swap -- binding the wrong envelope's repo_id -- would be
+/// caught instead of masked by both sides coincidentally matching.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_job_before_run_repo_id_reconciled_by_real_run_event() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    let job_env = JobEventEnvelope {
+        repo_id: Some(RepoId(111)),
+        ..job_queued(8006, 9006)
+    };
+    store.apply_job_event(job_env).await.unwrap();
+
+    let stub_row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 9006")
+        .fetch_one(&pool)
+        .await
+        .expect("stub run row not found");
+    assert_eq!(stub_row.repo_id, Some(111));
+
+    let run_env = RunEventEnvelope {
+        repo_id: Some(RepoId(222)),
+        ..run_requested(9006)
+    };
+    store.apply_run_event(run_env).await.unwrap();
+
+    let row = sqlx::query!("SELECT repo_id FROM runs WHERE id = 9006")
+        .fetch_one(&pool)
+        .await
+        .expect("run row not found");
+    assert_eq!(
+        row.repo_id,
+        Some(222),
+        "real run event's repo_id must win over the stub's"
+    );
     shutdown.cancel();
 }
 
