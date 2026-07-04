@@ -1,7 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:best-practices"
+    "config:best-practices",
+    "customManagers:dockerfileVersions"
   ],
   "timezone": "America/New_York",
   "prHourlyLimit": 3,
@@ -198,11 +199,17 @@
       "automerge": false
     },
     {
-      "description": "Cross-manager rust-toolchain group: mise rust pin + dockerfile ARG default. Manual review (toolchain upgrades).",
-      "matchManagers": ["mise", "dockerfile"],
+      "description": "Cross-manager rust-toolchain group: mise rust pin + Dockerfile ARG default. The ARG is tracked by the customManagers:dockerfileVersions regex preset (# renovate: comment), not the dockerfile manager — a partially interpolated tag like rust:${RUST_VERSION}-slim is invisible to it. Manual review (toolchain upgrades).",
+      "matchManagers": ["mise", "custom.regex"],
       "matchDepNames": ["rust"],
       "groupName": "rust-toolchain",
       "automerge": false
+    },
+    {
+      "description": "Cross-manager node-version group: mise node pin + Dockerfile ARG default (same customManagers:dockerfileVersions mechanism as rust-toolchain). Automerge inherits the generic rules: minor/patch automerged, major manual.",
+      "matchManagers": ["mise", "custom.regex"],
+      "matchDepNames": ["node"],
+      "groupName": "node-version"
     },
     {
       "description": "Cross-manager pnpm-version group: mise pnpm pin + npm packageManager field; minor/patch automerged. Renovate regenerates pnpm-lock.yaml as part of the PR.",
