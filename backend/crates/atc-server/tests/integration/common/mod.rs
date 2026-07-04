@@ -433,6 +433,65 @@ pub async fn spawn_in_memory_server_with_capacity(
     (addr, app_state)
 }
 
+/// Public origin every [`spawn_auth_server`] fixture uses — plain `http://`
+/// so cookies use the non-`__Host-` names, matching `auth_tests.rs`'s
+/// `TEST_PUBLIC_ORIGIN` convention.
+pub const AUTH_TEST_PUBLIC_ORIGIN: &str = "http://public.example.test";
+
+/// Like [`spawn_in_memory_server`], but `auth.mode = "github"` wired to a
+/// caller-supplied Postgres pool (`SessionStore` requires a real database).
+/// Real TCP + `axum::serve`, not `oneshot` — for tests that need a live
+/// WS/HTTP connection. The `GitHubClient` points at an unreachable base URL
+/// since these tests mint sessions directly via the returned `SessionStore`
+/// rather than driving the OAuth login/callback flow.
+pub async fn spawn_auth_server(
+    pool: atc_store_pg::TracedPool,
+) -> (SocketAddr, Arc<AppState>, Arc<atc_store_pg::SessionStore>) {
+    ensure_recorder_installed();
+    let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
+    let persist = InMemoryStore::new_for_test(
+        Arc::clone(&clock),
+        Duration::from_hours(1),
+        IN_MEMORY_TEST_BROADCAST_CAPACITY,
+    ) as Arc<dyn atc_persist::PersistentStore>;
+    let shutdown = CancellationToken::new();
+    let sessions = atc_store_pg::SessionStore::start(pool, Arc::clone(&clock), shutdown.clone());
+    let github = Arc::new(atc_server::github_client::GitHubClient::with_base_urls(
+        "unused-client-id".to_string(),
+        "unused-client-secret".to_string(),
+        "http://unused.invalid".to_string(),
+        "http://unused.invalid".to_string(),
+    ));
+    let auth = atc_server::auth::AuthRuntime {
+        github,
+        sessions: Arc::clone(&sessions),
+        public_origin: AUTH_TEST_PUBLIC_ORIGIN.to_string(),
+        max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
+        repo_auth_ttl: Duration::from_hours(1),
+    };
+    let app_state = Arc::new(AppState {
+        persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
+        webhook_secret: None,
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
+        shutdown,
+        ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: Some(auth),
+    });
+    let router = atc_server::routes::api_routes(true)
+        .with_state(app_state.clone())
+        .fallback(atc_server::assets::fallback_handler());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    (addr, app_state, sessions)
+}
+
 /// Read and validate the per-connection `ServerHello` text frame, returning its
 /// parsed JSON. Every fresh WS connection opens with a `WireFrame::ServerHello`
 /// (issue #47); tests that target later frames (Committed, ConfigUpdate,

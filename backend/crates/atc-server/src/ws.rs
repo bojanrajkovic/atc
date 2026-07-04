@@ -19,14 +19,16 @@ use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use atc_core::RunnerPoolCapacity;
+use atc_core::{RepoId, RunnerPoolCapacity};
+use atc_github::WebhookEvent;
 use atc_wire::CommittedEvent;
 use axum::{
     extract::{
         State,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
     },
-    response::IntoResponse,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Counter;
@@ -34,6 +36,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
+use crate::auth::AuthContext;
 use crate::config_watcher::ConfigEvent;
 use crate::state::AppState;
 
@@ -189,11 +192,74 @@ pub enum WireFrame {
     },
 }
 
+/// Parse both sides as origins and compare scheme + host + port (using each
+/// scheme's well-known default port when unspecified), rather than a raw
+/// string compare — an operator who writes `https://atc.example.com:443` in
+/// config would otherwise never match a real browser's `Origin` header,
+/// which omits the default port.
+fn origin_matches(origin: &str, public_origin: &str) -> bool {
+    let (Ok(a), Ok(b)) = (
+        reqwest::Url::parse(origin),
+        reqwest::Url::parse(public_origin),
+    ) else {
+        return false;
+    };
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 /// Axum handler: upgrade HTTP to WebSocket, subscribe to both event channels.
+///
+/// `auth.mode = "github"`: pre-upgrade, in order — `Origin` must match
+/// `auth.github.public_origin` exactly ([`origin_matches`]; missing Origin ⇒
+/// reject) and the session must be fresh (`AuthContext::require_fresh`,
+/// [`AuthContext::from_request_parts`] having already rejected a
+/// missing/expired session with `auth_required`). Non-browser clients that
+/// legitimately send no `Origin` header are out of scope for github mode —
+/// only browsers (the only clients that carry the ambient session cookie
+/// this mode authenticates) are expected to connect. The resolved
+/// `AuthContext` is snapshotted into the connection task once, here — mid-
+/// stream revocation/staleness is out of scope (connections re-evaluate on
+/// reconnect, per the design doc).
+///
+/// `mode = "none"`: no Origin check, no auth, no filtering — bit-for-bit
+/// today's path (`AuthContext::Disabled` never touches `SessionStore`).
 pub async fn ws_handler(
-    ws: WebSocketUpgrade,
+    ctx: AuthContext,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+    ws: WebSocketUpgrade,
+) -> Response {
+    if matches!(ctx, AuthContext::Session(_)) {
+        let auth = state
+            .auth
+            .as_ref()
+            .expect("AuthContext::Session implies auth.mode = github");
+        let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+        if !origin.is_some_and(|o| origin_matches(o, &auth.public_origin)) {
+            tracing::debug!(
+                cause = "origin_mismatch",
+                origin = ?origin,
+                "WS upgrade rejected pre-upgrade"
+            );
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    // `require_fresh` only ever fails with `AuthRejection::Stale` — a
+    // missing/expired session is already rejected with `auth_required` by
+    // `AuthContext`'s own extraction, before this handler body runs at all.
+    let ctx = match ctx.require_fresh(state.clock.now()) {
+        Ok(ctx) => ctx,
+        Err(rejection) => {
+            tracing::debug!(
+                cause = "stale_authorization",
+                "WS upgrade rejected pre-upgrade"
+            );
+            return rejection.into_response();
+        }
+    };
+
     let committed_rx = state.persist.subscribe();
     let config_rx = state.config_events_tx.subscribe();
     let shutdown = state.shutdown.clone();
@@ -205,6 +271,7 @@ pub async fn ws_handler(
             config_rx,
             shutdown,
             ws_metrics,
+            ctx,
         ))
     })
 }
@@ -243,6 +310,7 @@ async fn handle_socket(
     config_rx: broadcast::Receiver<ConfigEvent>,
     shutdown: CancellationToken,
     ws_metrics: Arc<WsMetrics>,
+    ctx: AuthContext,
 ) {
     // One info-span wraps the whole connection lifetime so the trace surfaces
     // close reason + lagged flag as late-bound fields once the loop returns.
@@ -253,9 +321,19 @@ async fn handle_socket(
         ws.close_reason = tracing::field::Empty,
         ws.lagged_channel = tracing::field::Empty,
     );
-    handle_socket_inner(socket, committed_rx, config_rx, shutdown, ws_metrics)
+    handle_socket_inner(socket, committed_rx, config_rx, shutdown, ws_metrics, ctx)
         .instrument(span)
         .await;
+}
+
+/// Extract the wrapped envelope's `repo_id` — `Run` and `Job` variants both
+/// carry one (post-#449). Used only by the per-connection filter below;
+/// `Disabled` connections (mode=none) never call this.
+fn event_repo_id(event: &WebhookEvent) -> Option<RepoId> {
+    match event {
+        WebhookEvent::Run(env) => env.repo_id,
+        WebhookEvent::Job(env) => env.repo_id,
+    }
 }
 
 async fn handle_socket_inner(
@@ -264,6 +342,7 @@ async fn handle_socket_inner(
     mut config_rx: broadcast::Receiver<ConfigEvent>,
     shutdown: CancellationToken,
     ws_metrics: Arc<WsMetrics>,
+    ctx: AuthContext,
 ) {
     ws_metrics.record_connection_started();
     // Decrement on every exit path via a drop guard. Inline because the only
@@ -365,6 +444,16 @@ async fn handle_socket_inner(
                 match result {
                     Ok(committed_event) => {
                         let seq = committed_event.seq;
+                        // `Disabled` (mode=none): `can_see` is always `true`,
+                        // so every event forwards — bit-for-bit today's
+                        // behavior. `Session`: dropping a filtered event is
+                        // safe (not a break/disconnect) — ADR-0003 places
+                        // seq contiguity out of contract, and the frontend
+                        // does no gap detection.
+                        if !ctx.can_see(event_repo_id(&committed_event.event)) {
+                            tracing::debug!(seq, "dropped committed event outside session repo set");
+                            continue;
+                        }
                         let frame = WireFrame::Committed(committed_event);
                         if let Err(reason) = send_frame(&mut socket, &frame).await {
                             break reason;
