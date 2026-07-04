@@ -1,0 +1,33 @@
+# Standalone Postgres for local auth.github development.
+#
+# `auth.github` mode requires Postgres (the in-memory store fails boot
+# validation). This compose file gives contributors a one-command Postgres
+# instance without needing the full test-container machinery `just test`
+# uses.
+#
+# Workflow:
+#   just pg-dev-up                                                    # start Postgres
+#   ATC_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres just dev
+#   just pg-dev-down                                                  # tear down
+#
+# Image tag matches the version pinned in the backend integration test suite
+# (testcontainers `Postgres::default().with_tag("17-alpine")` in
+# backend/crates/atc-server/tests/integration/common/mod.rs) for dev/test parity.
+services:
+  pg-dev:
+    image: postgres:17-alpine
+    container_name: atc-pg-dev
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - atc-pg-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  atc-pg-dev-data:

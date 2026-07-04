@@ -70,6 +70,10 @@ ATC exports traces and metrics over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT`
 
 `just dev` itself does not start the observability stack — it remains backend + frontend dev servers only, with no Docker dependency. The stack is opt-in via the dedicated recipe.
 
+## Local Postgres for `auth.github` Development
+
+`auth.github` mode requires Postgres — the in-memory store fails boot validation in that mode. `just pg-dev-up` starts a standalone Postgres via `compose.pg-dev.yaml` (same pattern as the OTel stack above); tear it down with `just pg-dev-down`. Point the dev server at it with `ATC_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres just dev`. `just dev`'s in-memory default is unchanged for everyone else.
+
 ## Updating SQL Queries
 
 SQL queries in `atc-store-pg` (and any other workspace crate that uses sqlx macros) use the `sqlx::query!` / `sqlx::query_as!` macros for compile-time type checking. The Cargo workspace root is `backend/`, and the offline query cache lives at `backend/.sqlx/` — committed to the repository so CI can build without a live database.
