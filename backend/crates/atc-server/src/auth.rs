@@ -1,4 +1,5 @@
-//! Native GitHub OAuth login + callback endpoints for `auth.mode = "github"`.
+//! Native GitHub OAuth login/callback/logout/whoami endpoints for
+//! `auth.mode = "github"`.
 //!
 //! **Tokens are used inside the callback handler and discarded — never
 //! stored, never logged** (locked decision, ADR-0014). The access token
@@ -15,16 +16,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use sha2::{Digest, Sha256};
 
-use atc_store_pg::SessionStore;
+use atc_store_pg::{Session, SessionStore};
 
 use crate::github_client::{GitHubClient, GitHubClientError};
 use crate::state::AppState;
@@ -51,14 +53,36 @@ pub struct AuthRuntime {
     /// OAuth `redirect_uri` base.
     pub public_origin: String,
     pub max_session_ttl: Duration,
+    /// Staleness window `GET /v1/auth/me` measures `repos_refreshed_at`
+    /// against — independent of `max_session_ttl` (the absolute session
+    /// lifetime).
+    pub repo_auth_ttl: Duration,
 }
 
-/// The two `auth.github` routes. Merged into the router only when
+/// The `auth.github` routes. Merged into the router only when
 /// `auth.mode = "github"` — see [`crate::routes::api_routes`].
 pub fn auth_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/auth/github/login", get(login_handler))
         .route("/v1/auth/github/callback", get(callback_handler))
+        .route("/v1/auth/github/logout", post(logout_handler))
+        .route("/v1/auth/me", get(whoami_handler))
+}
+
+/// Look up the session for the request's session cookie, if any — `None`
+/// covers both "no cookie" and "cookie present but unknown/expired". Kept
+/// as a plain function (not an extractor) so a future `AuthContext`
+/// extractor for the request-time enforcement handlers can wrap it rather
+/// than duplicate it.
+async fn session_from_cookie(
+    auth: &AuthRuntime,
+    headers: &HeaderMap,
+) -> Result<Option<Session>, impl std::fmt::Display> {
+    let names = cookie_names(&auth.public_origin);
+    match get_cookie(headers, names.session) {
+        Some(raw) => auth.sessions.load_session(&raw).await,
+        None => Ok(None),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +280,7 @@ fn github_call_failed(e: &GitHubClientError, what: &str) -> Response {
 /// operator filtering logs by failure class needs to tell a GitHub-side
 /// outage apart from a local Postgres blip; they need different remediation.
 fn session_store_failed(e: impl std::fmt::Display, what: &str) -> Response {
-    tracing::warn!(class = "session_error", error.message = %e, what, "auth.callback: session store operation failed");
+    tracing::warn!(class = "session_error", error.message = %e, what, "auth: session store operation failed");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("failed to {what}"),
@@ -433,6 +457,88 @@ window.close();
 </script></body></html>
 "#;
 
+// ---------------------------------------------------------------------------
+// POST /v1/auth/github/logout
+// ---------------------------------------------------------------------------
+
+/// No CSRF token in v1: a forged cross-site logout can only log the victim
+/// out (forcing a re-login), not escalate privilege or read/write anything
+/// — an accepted availability-only gap, not an oversight. See the design
+/// doc's "Locked decisions" table.
+async fn logout_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let Some(auth) = state.auth.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let names = cookie_names(&auth.public_origin);
+
+    // Idempotent: no cookie, or a cookie for an already-gone session, both
+    // still clear the cookie and return 204 — there's nothing to undo
+    // either way. Only a genuine SessionStore failure surfaces as an error.
+    if let Some(raw) = get_cookie(&headers, names.session)
+        && let Err(e) = auth.sessions.delete_session(&raw).await
+    {
+        return session_store_failed(e, "delete session");
+    }
+
+    let cleared_cookie = set_cookie_header(names.session, "", 0, names.secure);
+    with_set_cookie(StatusCode::NO_CONTENT.into_response(), &cleared_cookie)
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/auth/me
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhoamiResponse {
+    login: String,
+    repo_count: usize,
+    repos_refreshed_at: chrono::DateTime<chrono::Utc>,
+    stale: bool,
+}
+
+/// `{"reason": "auth_required"}` — the exact, string-locked 401 body shape
+/// a future `AuthContext` extractor (and its frontend/consumer code)
+/// depends on.
+fn auth_required() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"reason": "auth_required"})),
+    )
+        .into_response()
+}
+
+async fn whoami_handler(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let Some(auth) = state.auth.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let session = match session_from_cookie(auth, &headers).await {
+        Ok(Some(session)) => session,
+        Ok(None) => return auth_required(),
+        Err(e) => return session_store_failed(e, "load session"),
+    };
+
+    // An absurdly large configured `repo_auth_ttl` (well past chrono's
+    // representable range) is treated as "never stale" rather than a panic
+    // on a request path — a config-typo edge case, not a real deployment.
+    // Compared as elapsed-vs-ttl (DateTime - DateTime, always in-range since
+    // both are real timestamps), not repos_refreshed_at + ttl — adding an
+    // out-of-range `Duration::MAX` to a `DateTime` panics on overflow
+    // (`chrono`'s `Add` impl), which is exactly the panic this guards against.
+    let ttl = chrono::Duration::from_std(auth.repo_auth_ttl).unwrap_or(chrono::Duration::MAX);
+    let elapsed = state.clock.now() - session.repos_refreshed_at;
+    let stale = elapsed >= ttl;
+
+    Json(WhoamiResponse {
+        login: session.github_login,
+        repo_count: session.repo_ids.len(),
+        repos_refreshed_at: session.repos_refreshed_at,
+        stale,
+    })
+    .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,5 +623,24 @@ mod tests {
         assert!(POPUP_CALLBACK_HTML.contains("new BroadcastChannel('atc-auth')"));
         assert!(POPUP_CALLBACK_HTML.contains("postMessage('session-refreshed')"));
         assert!(POPUP_CALLBACK_HTML.contains("window.close()"));
+    }
+
+    /// Regression test for `whoami_handler`'s staleness check: an operator
+    /// config with a `repo_auth_ttl` past chrono's representable range must
+    /// report "never stale", not panic. `repos_refreshed_at + ttl` would
+    /// overflow chrono's `DateTime + Duration` (which panics rather than
+    /// saturating); computing `elapsed >= ttl` instead never adds an
+    /// out-of-range `Duration` to a `DateTime`.
+    #[test]
+    fn absurd_repo_auth_ttl_reports_never_stale_without_panicking() {
+        let repos_refreshed_at = chrono::DateTime::from_timestamp(0, 0).expect("valid timestamp");
+        let now = repos_refreshed_at;
+        let ttl = chrono::Duration::from_std(std::time::Duration::from_secs(u64::MAX))
+            .unwrap_or(chrono::Duration::MAX);
+        let elapsed = now - repos_refreshed_at;
+        assert!(
+            elapsed < ttl,
+            "an absurdly large repo_auth_ttl must never be considered stale"
+        );
     }
 }
