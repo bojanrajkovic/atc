@@ -23,7 +23,7 @@ http = "=1.4.2"
 humantime-serde = "=1.1.1"
 notify-debouncer-full = "=0.7.0"
 opentelemetry = { version = "=0.31.0", features = ["metrics", "trace"] }
-opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
+opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
 opentelemetry-otlp = { version = "=0.31.1", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "metrics", "trace"] }
 opentelemetry-http = "=0.31.0"
 opentelemetry-semantic-conventions = "=0.31.0"
@@ -53,7 +53,7 @@ chrono = { version = "=0.4.45", features = ["serde"] }
 const-hex = "=1.19.1"
 futures-util = "=0.3.32"
 hmac = "=0.13.0"
-opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
+opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
 serial_test = "=3.5.0"
 # sqlx remains a dev-dep for integration tests under tests/integration/ that
 # do ephemeral-DB CREATE/DROP and query helpers. Production sources no longer
