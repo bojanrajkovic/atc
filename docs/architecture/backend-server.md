@@ -119,7 +119,7 @@ Boot validation for `mode = "github"` runs alongside the existing `display_ttl`/
 
 Like every other scalar field, `[auth]` is restart-only: an operator edit to a live config file is reported by the scalar-drift warn-log (`ScalarSnapshot` treats the whole section as one unit) but does not take effect until the next pod roll. `client_secret` (and the existing `github.webhook_secret`) never appear in `Debug` output — both config types have a manual `Debug` impl that redacts the secret field.
 
-Config parsing and boot validation are covered here; session storage is § "Session storage (`auth.github`)" below, and the OAuth endpoints and request-time enforcement are separate, later pieces of the `auth.github` substrate (ADR-0014).
+Config parsing and boot validation are covered here; session storage is § "Session storage (`auth.github`)" and the OAuth endpoints are § "OAuth login and callback (`auth.github`)", both below. Request-time enforcement on `/v1/state` and `/v1/ws` is a separate, later piece of the `auth.github` substrate (ADR-0014).
 
 ## Session storage (`auth.github`)
 
@@ -131,6 +131,38 @@ No token columns exist anywhere in either table (ADR-0014): ATC derives the repo
 - **`auth_sessions`** — the post-login session. `id_hash` (the primary key) is the SHA-256 hex digest of the opaque session id carried in the `__Host-atc_session` cookie; the raw value is never persisted, so a database dump alone cannot forge a session cookie. `repos_refreshed_at` is the clock `repo_auth_ttl` staleness measures against; `expires_at` is the absolute `max_session_ttl` cutoff, independent of that staleness. A session is deleted on read once `expires_at` has passed (best-effort — a racing sweep tick may already have removed it).
 
 Every timestamp column (`created_at`, `expires_at`, `repos_refreshed_at`) is bound Rust-side from `Clock::now()`, never SQL `now()` — the same discipline `outbox_watermarks.updated_at` established, so `TestClock`-driven tests can advance time deterministically. `sweep_expired` deletes both expired flows and expired sessions in one call and reports counts; the task spawned by `SessionStore::start` calls it every 5 minutes (no cross-replica coordination needed, unlike the outbox sweep's `SKIP LOCKED` candidate selection — deleting an already-deleted row is simply a no-op).
+
+## OAuth login and callback (`auth.github`)
+
+`GET /v1/auth/github/login` and `GET /v1/auth/github/callback` (`auth.rs`) are merged into the router only when `auth.mode = "github"` — `routes::api_routes` takes an `auth_enabled` flag and conditionally `.merge()`s them, so a disabled mode 404s the same way any unmounted path does rather than via a runtime check inside the handlers.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant A as ATC
+    participant G as GitHub
+    B->>A: GET /v1/auth/github/login?return_to=...&popup=...
+    A->>A: generate state + PKCE verifier (32B random each)
+    A->>A: SessionStore::create_flow
+    A-->>B: 302 + __Host-atc_flow cookie (flow_id)
+    B->>G: authorize?client_id&state&code_challenge&code_challenge_method=S256
+    G-->>B: 302 callback?code&state
+    B->>A: GET /v1/auth/github/callback?code&state (flow cookie)
+    A->>A: consume_flow (single-use); verify state matches
+    A->>G: POST /login/oauth/access_token (code + verifier + secret)
+    G-->>A: access_token (200 OK even on failure — check body for `error`)
+    A->>G: GET /user, GET /user/installations (+ per-installation repositories, paginated)
+    A->>A: discard token; create_session or refresh_session_repos
+    A-->>B: 302 return_to (or, popup mode: 200 + BroadcastChannel HTML)
+```
+
+`GitHubClient` (`github_client.rs`) owns the GitHub-facing side: token exchange, `/user`, and the installations/repositories pagination (`Link: rel="next"`, `per_page=100`, capped at `MAX_PAGES` = 500 — a malformed or cycling `Link` header fails closed with `GitHubClientError::TooManyPages` instead of looping forever inside a request handler). Base URLs are constructor parameters so tests point it at a local mock instead of `github.com`/`api.github.com` — there's no `wiremock` (or equivalent) dependency in this workspace, so the test suite hand-rolls a small axum router for the mock rather than adding one. GitHub returns `200 OK` even for a rejected token exchange (the failure is an `error` field in the body, not an HTTP status) — `exchange_code` checks for that field regardless of status. The access token is used only within the callback handler's own scope to make the identity/repo-set calls that follow, then dropped; it is never returned to a caller beyond `github_client`, stored, or logged (ADR-0014). `TokenExchangeResponse`'s `Debug` impl redacts both token fields as defense in depth. The identity (`get_user`) and repo-authorization-set (`get_authorized_repo_ids`) calls are independent of each other, so the callback handler runs them concurrently via `tokio::try_join!` rather than as two sequential round trips.
+
+Cookies are hand-rolled `Set-Cookie` strings (`auth.rs`'s `set_cookie_header`), not a `cookie`/`axum-extra` dependency — the values are always ATC's own generated tokens (no user-controlled characters needing RFC 6265 escaping), so a ~10-line builder covers it. `cookie_names` switches between `__Host-atc_flow`/`__Host-atc_session` (https `public_origin`, `Secure` set) and plain `atc_flow`/`atc_session` (http, dev) — a `__Host-` cookie is browser-rejected without `Secure`. Every redirect in this flow is an explicit 302 (`redirect_302`, not `axum::response::Redirect::to`, which sends 303).
+
+`return_to` is validated as same-origin (`starts_with('/')`, not `starts_with("//")` — the scheme-relative open-redirect shape) before being bound into the flow row; anything else falls back to `/`. A GitHub `error` query param (user denied authorization) redirects to `/?auth_error=denied` regardless of `return_to` — there's nothing to resume. Structured logging: a successful callback emits one `info` event (`user`, `user_id`, `repo_count`); the full `repo_ids` list is `debug`-only (can be hundreds of entries); each failure class is `warn` with the class as a field — `missing_flow`, `state_mismatch`, `denied`, and `exchange_failed` (GitHub-side calls) are distinct from `session_error` (local `SessionStore` failures), so an operator filtering logs can tell a GitHub outage apart from a Postgres one. Token material never appears at any level.
+
+A session cookie present on the callback request is only ever refreshed (via `refresh_session_repos`) when it belongs to the SAME GitHub user who just completed this login (`existing.github_user_id == user.id`); a mismatch — a shared browser, or a stale cookie left over from a previous account — is treated the same as no existing session, and `create_session` mints a fresh one instead. `refresh_session_repos` only ever updates `repo_ids`/`repos_refreshed_at`, never `github_user_id`, so skipping this check would let a second user's login silently attribute their repo access to the first user's still-live session identity. Because `refresh_session_repos` also never extends `expires_at` (§ "Session storage" above — that clock is independent of repo staleness by design), the refreshed session's cookie `Max-Age` is set to the time remaining until the DB row's actual `expires_at`, not a fresh `max_session_ttl` — otherwise the browser would hold a cookie advertised as good for a full term the server will reject well before it's up.
 
 ## Postgres schema
 

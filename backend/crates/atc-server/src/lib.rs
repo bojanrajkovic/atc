@@ -1,6 +1,8 @@
 pub mod assets;
+pub mod auth;
 pub mod config;
 pub mod config_watcher;
+pub mod github_client;
 pub mod metrics;
 pub mod otel;
 pub mod routes;

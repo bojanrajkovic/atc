@@ -1,0 +1,521 @@
+//! Native GitHub OAuth login + callback endpoints for `auth.mode = "github"`.
+//!
+//! **Tokens are used inside the callback handler and discarded — never
+//! stored, never logged** (locked decision, ADR-0014). The access token
+//! obtained from the exchange lives only as long as the callback request
+//! takes to derive identity + the repo-authorization set; nothing
+//! GitHub-issued crosses this module's boundary into a log line, span, or
+//! the session row.
+//!
+//! Both routes are mounted only when `auth.mode = "github"` — see
+//! [`crate::routes::api_routes`]. There is no runtime mode check inside
+//! these handlers; when auth is disabled, the routes simply don't exist in
+//! the router, so a request to them 404s the same way any unknown path does.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::Router;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use sha2::{Digest, Sha256};
+
+use atc_store_pg::SessionStore;
+
+use crate::github_client::{GitHubClient, GitHubClientError};
+use crate::state::AppState;
+
+/// Random bytes in a `state`/PKCE-verifier token, before base64url encoding.
+/// Matches `atc-store-pg::session`'s token size (256 bits).
+const TOKEN_BYTES: usize = 32;
+
+/// `Max-Age` of the pre-auth flow cookie — matches `auth_flows`' 10-minute
+/// TTL (`atc-store-pg::session::FLOW_TTL`).
+const FLOW_COOKIE_MAX_AGE_SECS: u64 = 600;
+
+const PKCE_METHOD: &str = "S256";
+
+/// Everything the login/callback handlers need, threaded onto [`AppState`]
+/// as `Option<AuthRuntime>` — `None` when `auth.mode = "none"`. Constructed
+/// once in `main.rs` from the validated `[auth.github]` config (validation
+/// already guarantees these fields are present when mode = "github" — see
+/// `config::validate_auth_config`).
+pub struct AuthRuntime {
+    pub github: Arc<GitHubClient>,
+    pub sessions: Arc<SessionStore>,
+    /// Determines cookie naming/`Secure` (§ `cookie_names`) and is the
+    /// OAuth `redirect_uri` base.
+    pub public_origin: String,
+    pub max_session_ttl: Duration,
+}
+
+/// The two `auth.github` routes. Merged into the router only when
+/// `auth.mode = "github"` — see [`crate::routes::api_routes`].
+pub fn auth_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/auth/github/login", get(login_handler))
+        .route("/v1/auth/github/callback", get(callback_handler))
+}
+
+// ---------------------------------------------------------------------------
+// Cookies
+// ---------------------------------------------------------------------------
+
+struct CookieNames {
+    flow: &'static str,
+    session: &'static str,
+    /// Whether `public_origin` is https — both the `__Host-` prefix choice
+    /// below and the `Secure` attribute on every cookie this module sets
+    /// follow this same check, so callers read it off here instead of
+    /// recomputing `starts_with("https://")` themselves.
+    secure: bool,
+}
+
+/// `__Host-` prefixed names + `Secure` require an https origin (the prefix
+/// is browser-enforced: a `__Host-` cookie is rejected outright if `Secure`
+/// is missing). Dev origins (http, non-TLS) fall back to plain names
+/// without `Secure` so local development over plain HTTP still works.
+fn cookie_names(public_origin: &str) -> CookieNames {
+    if public_origin.starts_with("https://") {
+        CookieNames {
+            flow: "__Host-atc_flow",
+            session: "__Host-atc_session",
+            secure: true,
+        }
+    } else {
+        CookieNames {
+            flow: "atc_flow",
+            session: "atc_session",
+            secure: false,
+        }
+    }
+}
+
+/// Build a `Set-Cookie` header value. `secure` mirrors [`cookie_names`]'s
+/// https/http split — `__Host-` names require it, plain names omit it.
+fn set_cookie_header(name: &str, value: &str, max_age_secs: u64, secure: bool) -> String {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}{secure_attr}")
+}
+
+/// Parse the request's `Cookie` header for a named value. Cookies arrive as
+/// one `name1=value1; name2=value2` header, not one header per cookie.
+fn get_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
+    raw.split(';').find_map(|pair| {
+        let (k, v) = pair.trim().split_once('=')?;
+        (k == name).then(|| v.to_string())
+    })
+}
+
+/// 302 Found to `location`. `axum::response::Redirect::to` sends 303 See
+/// Other, which the design doc's flow diagrams don't call for — every
+/// redirect in this module is spec'd as a plain 302.
+fn redirect_302(location: &str) -> Response {
+    (StatusCode::FOUND, [(header::LOCATION, location)]).into_response()
+}
+
+/// Attach a `Set-Cookie` header to an already-built response.
+fn with_set_cookie(mut response: Response, cookie: &str) -> Response {
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        cookie.parse().expect("cookie header is valid"),
+    );
+    response
+}
+
+// ---------------------------------------------------------------------------
+// state / PKCE
+// ---------------------------------------------------------------------------
+
+/// Generate a token: [`TOKEN_BYTES`] of OS randomness, base64url, no
+/// padding. Used for both the OAuth `state` value and the PKCE verifier —
+/// same shape as `atc-store-pg::session`'s private `random_token`, which
+/// returns `sqlx::Error` (its callers' shared error type) rather than
+/// `getrandom::Error`; duplicated rather than unified because sharing one
+/// function would mean picking one crate's error type for the other to
+/// map into, for a 4-line body.
+fn random_token() -> Result<String, getrandom::Error> {
+    let mut bytes = [0u8; TOKEN_BYTES];
+    getrandom::fill(&mut bytes)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// Log + build a `500` for a failed [`random_token`] call. `what` names
+/// which token (`"state"`, `"PKCE verifier"`) for the log.
+fn random_token_failed(e: getrandom::Error, what: &str) -> Response {
+    tracing::warn!(error.message = %e, what, "auth.login: failed to generate token");
+    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+}
+
+/// PKCE S256 challenge: base64url(sha256(verifier)), no padding. GitHub
+/// only supports `S256`; `plain` is rejected — see the design doc's
+/// "Locked decisions" table.
+fn pkce_challenge(verifier: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(hasher.finalize())
+}
+
+/// Validate `return_to`: must be a same-origin relative path (starts with
+/// `/`, not `//` — a `//evil.example.com` value is scheme-relative and
+/// browsers treat it as an absolute redirect, the classic open-redirect
+/// shape). Anything else falls back to `/`.
+fn validate_return_to(return_to: Option<&str>) -> String {
+    match return_to {
+        Some(path) if path.starts_with('/') && !path.starts_with("//") => path.to_string(),
+        _ => "/".to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/auth/github/login
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct LoginQuery {
+    return_to: Option<String>,
+    popup: Option<String>,
+}
+
+async fn login_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<LoginQuery>,
+) -> Response {
+    let Some(auth) = state.auth.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let return_to = validate_return_to(query.return_to.as_deref());
+    let popup = query.popup.as_deref() == Some("1");
+
+    let oauth_state = match random_token() {
+        Ok(s) => s,
+        Err(e) => return random_token_failed(e, "state"),
+    };
+    let verifier = match random_token() {
+        Ok(v) => v,
+        Err(e) => return random_token_failed(e, "PKCE verifier"),
+    };
+    let challenge = pkce_challenge(&verifier);
+
+    let flow_id = match auth
+        .sessions
+        .create_flow(&oauth_state, &verifier, &return_to, popup)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(error.message = %e, "auth.login: failed to create flow");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let redirect_uri = format!("{}/v1/auth/github/callback", auth.public_origin);
+    let mut authorize_url = reqwest::Url::parse("https://github.com/login/oauth/authorize")
+        .expect("static URL is valid");
+    authorize_url
+        .query_pairs_mut()
+        .append_pair("client_id", auth.github.client_id())
+        .append_pair("state", &oauth_state)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", PKCE_METHOD)
+        .append_pair("redirect_uri", &redirect_uri);
+
+    let names = cookie_names(&auth.public_origin);
+    let flow_cookie =
+        set_cookie_header(names.flow, &flow_id, FLOW_COOKIE_MAX_AGE_SECS, names.secure);
+
+    with_set_cookie(redirect_302(authorize_url.as_str()), &flow_cookie)
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/auth/github/callback
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+/// Log + build a `502 Bad Gateway` for a failed GitHub-side call. `what`
+/// names the call (e.g. `"token exchange"`) for both the log and the body.
+fn github_call_failed(e: &GitHubClientError, what: &str) -> Response {
+    tracing::warn!(class = "exchange_failed", error.message = %e, what, "auth.callback: GitHub call failed");
+    (StatusCode::BAD_GATEWAY, format!("GitHub {what} failed")).into_response()
+}
+
+/// Log + build a `500` for a failed `SessionStore` operation. Kept as its
+/// own `class` (`session_error`), distinct from `exchange_failed` — an
+/// operator filtering logs by failure class needs to tell a GitHub-side
+/// outage apart from a local Postgres blip; they need different remediation.
+fn session_store_failed(e: impl std::fmt::Display, what: &str) -> Response {
+    tracing::warn!(class = "session_error", error.message = %e, what, "auth.callback: session store operation failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("failed to {what}"),
+    )
+        .into_response()
+}
+
+async fn callback_handler(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CallbackQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(auth) = state.auth.as_ref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let names = cookie_names(&auth.public_origin);
+
+    let Some(flow_cookie) = get_cookie(&headers, names.flow) else {
+        tracing::warn!(class = "missing_flow", "auth.callback: no flow cookie");
+        return (StatusCode::BAD_REQUEST, "missing or expired login attempt").into_response();
+    };
+
+    let flow = match auth.sessions.consume_flow(&flow_cookie).await {
+        Ok(Some(flow)) => flow,
+        Ok(None) => {
+            tracing::warn!(
+                class = "missing_flow",
+                "auth.callback: flow not found or expired"
+            );
+            return (StatusCode::BAD_REQUEST, "missing or expired login attempt").into_response();
+        }
+        Err(e) => return session_store_failed(e, "consume login attempt"),
+    };
+
+    // A denied authorization carries `error` (commonly `access_denied`) and
+    // no `code` — home, not the deep-linked `return_to`, since there's
+    // nothing to resume.
+    if query.error.is_some() {
+        tracing::warn!(class = "denied", "auth.callback: user denied authorization");
+        return redirect_302("/?auth_error=denied");
+    }
+
+    if query.state.as_deref() != Some(flow.state.as_str()) {
+        tracing::warn!(
+            class = "state_mismatch",
+            "auth.callback: state parameter mismatch"
+        );
+        return (StatusCode::BAD_REQUEST, "invalid login attempt").into_response();
+    }
+
+    let Some(code) = query.code.as_deref() else {
+        tracing::warn!(class = "missing_flow", "auth.callback: no code parameter");
+        return (StatusCode::BAD_REQUEST, "missing authorization code").into_response();
+    };
+
+    let redirect_uri = format!("{}/v1/auth/github/callback", auth.public_origin);
+    let access_token = match auth
+        .github
+        .exchange_code(code, &redirect_uri, &flow.pkce_verifier)
+        .await
+    {
+        Ok(token) => token,
+        Err(e) => return github_call_failed(&e, "token exchange"),
+    };
+
+    // Identity and the repo-authorization set are independent — neither
+    // depends on the other — so they run concurrently rather than as two
+    // sequential round trips.
+    let user_call = async {
+        auth.github
+            .get_user(&access_token)
+            .await
+            .map_err(|e| ("identity lookup", e))
+    };
+    let repos_call = async {
+        auth.github
+            .get_authorized_repo_ids(&access_token)
+            .await
+            .map_err(|e| ("repository lookup", e))
+    };
+    let (user, repo_ids) = match tokio::try_join!(user_call, repos_call) {
+        Ok((user, repo_ids)) => (user, repo_ids),
+        Err((what, e)) => return github_call_failed(&e, what),
+    };
+    // `access_token` and the token-exchange response are not referenced
+    // again past this point — nothing GitHub-issued survives this handler.
+
+    let now = state.clock.now();
+    let existing_raw_id = get_cookie(&headers, names.session);
+    let existing_session = match &existing_raw_id {
+        Some(raw) => match auth.sessions.load_session(raw).await {
+            Ok(session) => session,
+            Err(e) => return session_store_failed(e, "load existing session"),
+        },
+        None => None,
+    };
+    // A session cookie present on this request but belonging to a DIFFERENT
+    // GitHub user (e.g. a shared browser, or a stale cookie from a prior
+    // account) must not be refreshed with the new user's repo set under the
+    // old identity — `refresh_session_repos` only ever touches
+    // `repo_ids`/`repos_refreshed_at`, never `github_user_id`, so refreshing
+    // it here would silently attribute the new user's repo access to the
+    // old session's identity. Treat a mismatch the same as no existing
+    // session: fall through to `create_session` below.
+    let existing_session = existing_session.filter(|s| s.github_user_id == user.id);
+
+    let (session_cookie_value, cookie_max_age_secs) = match existing_session {
+        Some(existing) => {
+            if let Err(e) = auth
+                .sessions
+                .refresh_session_repos(&existing.id_hash, &repo_ids, now)
+                .await
+            {
+                return session_store_failed(e, "update session");
+            }
+            // `refresh_session_repos` never extends `expires_at` (it's the
+            // absolute session lifetime, independent of the repo-staleness
+            // clock it does update — see the design doc's "Data model"
+            // section) — so the cookie's Max-Age must reflect the time
+            // remaining until the DB row's real expiry, not a fresh
+            // `max_session_ttl`. Reissuing the full TTL here would tell the
+            // browser to keep a cookie alive well past when the server
+            // will actually reject it.
+            let remaining = (existing.expires_at - now).num_seconds().max(0);
+            let raw_id = existing_raw_id.expect("existing_session implies existing_raw_id is Some");
+            (raw_id, u64::try_from(remaining).unwrap_or(0))
+        }
+        None => match auth
+            .sessions
+            .create_session(user.id, &user.login, &repo_ids, now, auth.max_session_ttl)
+            .await
+        {
+            Ok(raw_id) => (raw_id, auth.max_session_ttl.as_secs()),
+            Err(e) => return session_store_failed(e, "create session"),
+        },
+    };
+
+    tracing::info!(
+        user = %user.login,
+        user_id = user.id,
+        repo_count = repo_ids.len(),
+        "auth.callback: login succeeded",
+    );
+    tracing::debug!(repo_ids = ?repo_ids, "auth.callback: authorized repo set");
+
+    let session_cookie = set_cookie_header(
+        names.session,
+        &session_cookie_value,
+        cookie_max_age_secs,
+        names.secure,
+    );
+
+    let response = if flow.popup {
+        (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            POPUP_CALLBACK_HTML,
+        )
+            .into_response()
+    } else {
+        redirect_302(&flow.return_to)
+    };
+    with_set_cookie(response, &session_cookie)
+}
+
+/// Popup-mode callback response. The `BroadcastChannel` name (`atc-auth`)
+/// and message (`session-refreshed`) are a fixed contract consumed by the
+/// frontend's silent re-auth flow (#464) — keep them exactly as written.
+const POPUP_CALLBACK_HTML: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>Signed in</title></head>
+<body><script>
+new BroadcastChannel('atc-auth').postMessage('session-refreshed');
+window.close();
+</script></body></html>
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookie_names_uses_host_prefix_for_https_origin() {
+        let names = cookie_names("https://atc.example.com");
+        assert_eq!(names.flow, "__Host-atc_flow");
+        assert_eq!(names.session, "__Host-atc_session");
+    }
+
+    #[test]
+    fn cookie_names_uses_plain_names_for_http_origin() {
+        let names = cookie_names("http://localhost:8080");
+        assert_eq!(names.flow, "atc_flow");
+        assert_eq!(names.session, "atc_session");
+    }
+
+    #[test]
+    fn set_cookie_header_includes_secure_when_requested() {
+        let cookie = set_cookie_header("atc_session", "abc123", 3600, true);
+        assert!(cookie.contains("Secure"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Lax"));
+        assert!(cookie.contains("Max-Age=3600"));
+    }
+
+    #[test]
+    fn set_cookie_header_omits_secure_for_dev() {
+        let cookie = set_cookie_header("atc_session", "abc123", 3600, false);
+        assert!(!cookie.contains("Secure"));
+    }
+
+    #[test]
+    fn get_cookie_finds_named_value_among_several() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, "a=1; atc_flow=xyz; b=2".parse().unwrap());
+        assert_eq!(get_cookie(&headers, "atc_flow"), Some("xyz".to_string()));
+    }
+
+    #[test]
+    fn get_cookie_returns_none_when_absent() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, "a=1; b=2".parse().unwrap());
+        assert_eq!(get_cookie(&headers, "atc_flow"), None);
+    }
+
+    #[test]
+    fn validate_return_to_accepts_relative_path() {
+        assert_eq!(validate_return_to(Some("/dashboard")), "/dashboard");
+    }
+
+    #[test]
+    fn validate_return_to_rejects_absolute_url() {
+        assert_eq!(validate_return_to(Some("https://evil.example.com")), "/");
+    }
+
+    #[test]
+    fn validate_return_to_rejects_scheme_relative_url() {
+        assert_eq!(validate_return_to(Some("//evil.example.com")), "/");
+    }
+
+    #[test]
+    fn validate_return_to_defaults_when_absent() {
+        assert_eq!(validate_return_to(None), "/");
+    }
+
+    #[test]
+    fn pkce_challenge_is_deterministic_and_url_safe() {
+        let challenge = pkce_challenge("some-verifier-value");
+        assert_eq!(challenge, pkce_challenge("some-verifier-value"));
+        assert!(!challenge.contains('='), "no base64 padding");
+        assert!(
+            challenge
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        );
+    }
+
+    #[test]
+    fn popup_callback_html_contains_exact_channel_contract() {
+        assert!(POPUP_CALLBACK_HTML.contains("new BroadcastChannel('atc-auth')"));
+        assert!(POPUP_CALLBACK_HTML.contains("postMessage('session-refreshed')"));
+        assert!(POPUP_CALLBACK_HTML.contains("window.close()"));
+    }
+}

@@ -151,11 +151,17 @@ async fn removed_endpoint_404() -> StatusCode {
 /// disabled the layer captures the SDK's no-op meter and emissions never reach
 /// an exporter — request handling itself is unaffected.
 ///
+/// `auth_enabled` mirrors `auth.mode = "github"` (see `AppState::auth`):
+/// when `false`, the two `/v1/auth/github/*` routes are never merged into
+/// the router — a request to them 404s the same way any unmounted path
+/// does, rather than being handled by a runtime mode check inside the
+/// handlers themselves.
+///
 /// Returns a `Router<Arc<AppState>>` that will be attached to application state
 /// in `main.rs` via `.with_state()`.
-pub fn api_routes() -> Router<Arc<AppState>> {
+pub fn api_routes(auth_enabled: bool) -> Router<Arc<AppState>> {
     let http_metrics = HttpMetricsLayerBuilder::new().build();
-    Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/v1/state", get(state_handler))
@@ -165,8 +171,11 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         // to the SPA fallback (which would serve index.html with status 200
         // and silently mislead scrapers that still hit these paths).
         .route("/health", get(removed_endpoint_404))
-        .route("/metrics", get(removed_endpoint_404))
-        .layer(http_metrics)
+        .route("/metrics", get(removed_endpoint_404));
+    if auth_enabled {
+        router = router.merge(crate::auth::auth_routes());
+    }
+    router.layer(http_metrics)
 }
 
 /// Handle incoming GitHub webhook payloads.

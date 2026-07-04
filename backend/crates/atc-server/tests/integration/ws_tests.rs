@@ -497,9 +497,10 @@ async fn config_channel_lagged_closes_socket() {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
 
-    let router = routes::api_routes()
+    let router = routes::api_routes(false)
         .with_state(state.clone())
         .fallback(atc_server::assets::fallback_handler());
 

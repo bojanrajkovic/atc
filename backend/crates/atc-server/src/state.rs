@@ -7,6 +7,7 @@ use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
+use crate::auth::AuthRuntime;
 use crate::config_watcher::ConfigEvent;
 use crate::ws::WsMetrics;
 
@@ -83,4 +84,8 @@ pub struct AppState {
     /// events (connection start/end, lagged-channel evictions). See
     /// `ws::WsMetrics` for the metric surface.
     pub ws_metrics: Arc<WsMetrics>,
+    /// `auth.github` runtime handles (GitHub client, session store, public
+    /// origin, session TTL) — `None` when `auth.mode = "none"`. Constructed
+    /// once in `main` from the validated `[auth.github]` config.
+    pub auth: Option<AuthRuntime>,
 }

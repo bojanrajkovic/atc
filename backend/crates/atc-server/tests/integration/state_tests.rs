@@ -81,9 +81,10 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
 
-    let app = atc_server::routes::api_routes()
+    let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
@@ -155,9 +156,10 @@ async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
         shutdown: CancellationToken::new(),
         ws_tracker: TaskTracker::new(),
         ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth: None,
     });
 
-    let app = atc_server::routes::api_routes()
+    let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
 
