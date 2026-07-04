@@ -7,6 +7,7 @@ import {
 } from '$lib/__tests__/connection-test-helpers'
 import { ConnectionManager } from '$lib/connection'
 import { connectionStore } from '$lib/stores/connection.svelte'
+import { paletteStore } from '$lib/stores/palette.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import { createMockRun } from '$lib/test-utils/factories'
 
@@ -34,6 +35,7 @@ describe('ConnectionManager — 401-aware connection states', () => {
     connectionStore.reconnectAttempt = 0
     connectionStore.lastEventAt = null
     connectionStore.authReason = null
+    paletteStore.close()
     MockWebSocket.clearAll()
   })
 
@@ -78,6 +80,24 @@ describe('ConnectionManager — 401-aware connection states', () => {
 
       expect(connectionStore.status).toBe('unauthenticated')
       expect(connectionStore.authReason).toBe(expectedReason)
+
+      manager.destroy()
+    })
+
+    it('closes the command palette — it unmounts with the dashboard but paletteOpen is a module singleton that would otherwise survive the round-trip', async () => {
+      paletteStore.open()
+      const manager = new ConnectionManager(baseUrl)
+
+      server.use(
+        http.get('http://localhost:*/v1/state', () =>
+          HttpResponse.json({ reason: 'auth_required' }, { status: 401 }),
+        ),
+      )
+
+      await manager.connect()
+
+      expect(connectionStore.status).toBe('unauthenticated')
+      expect(paletteStore.paletteOpen).toBe(false)
 
       manager.destroy()
     })

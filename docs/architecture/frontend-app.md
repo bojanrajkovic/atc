@@ -24,13 +24,14 @@ flowchart LR
 
 ## Component hierarchy
 
-ConnectionManager is a service component (no rendered DOM) that mounts and destroys the WebSocket client. RovingFocusProvider is a context-only wrapper that carries 2D arrow-key navigation state. CommandPalette and RunDetailPanel portal their overlay content to `document.body` — in the Svelte component tree they are siblings of AppShell under RovingFocusProvider, not children of it.
+ConnectionManager is a service component (no rendered DOM) that mounts and destroys the WebSocket client. RovingFocusProvider is a context-only wrapper that carries 2D arrow-key navigation state. CommandPalette and RunDetailPanel portal their overlay content to `document.body` — in the Svelte component tree they are siblings of AppShell under RovingFocusProvider, not children of it. App renders LoginScreen instead of the RovingFocusProvider subtree while `connectionStore.status === 'unauthenticated'`; ConnectionManager and AriaLiveRegion stay mounted either way.
 
 ```mermaid
 flowchart TD
     App --> ConnectionManager
     App --> AriaLiveRegion
-    App --> RovingFocusProvider
+    App -->|unauthenticated| LoginScreen
+    App -->|otherwise| RovingFocusProvider
     RovingFocusProvider --> AppShell
     RovingFocusProvider --> CommandPalette["CommandPalette<br/>(portals to body)"]
     RovingFocusProvider --> RunDetailPanel["RunDetailPanel<br/>(portals to body)"]
@@ -42,6 +43,7 @@ flowchart TD
     TopBar --> RunnerBar
     TopBar --> ConnectionIndicator
     TopBar --> SettingsPopover
+    TopBar --> IdentityChip
     KanbanBoard --> PoolFilterPill
     KanbanBoard --> KanbanColumn
     KanbanColumn --> ColumnHeader
@@ -111,11 +113,19 @@ stateDiagram-v2
 
 The Loading state covers the window between page mount and the first successful snapshot load. No kanban cards render in this state. Connected is the live steady state. Reconnecting introduces an exponential backoff delay before each re-attempt; the backoff counter resets to zero when a reconnect succeeds, so the operator can re-arm the loop indefinitely via the reconnect button. Unauthenticated is terminal until `retry()`: no backoff timer runs, and no further network attempts are made. WebSocket event instrumentation (latency histograms, connection lifecycle metrics) is cataloged in [metrics.md](metrics.md).
 
+## Login Screen and Identity Chrome
+
+App renders `LoginScreen` in place of the entire dashboard (AppShell, kanban, palette, detail panel) while `connectionStore.status === 'unauthenticated'` — the login prompt is quiet and minimal by design, not a banner layered over a half-populated shell. `ConnectionManager` and `AriaLiveRegion` stay mounted regardless, since `ConnectionManager` is what will detect a re-authenticated session and drive `retry()`. Entering unauthenticated also closes the command palette (`paletteStore.close()`, alongside `runStore.clear()`, in `ConnectionManager`'s `transitionToUnauthenticated`) — `paletteOpen` is a module-level singleton that `CommandPalette` binds to directly, so without this a palette toggled open while the login screen is showing would spring back open, unprompted, the moment the dashboard remounts after sign-in. `LoginScreen`'s "Sign in with GitHub" control computes `return_to` from `window.location` at click time, not at mount — the URL can change while the screen stays mounted (e.g. a stale `?run=` deep link stripped once its run is gone from the just-cleared `runStore`), and the redirect target should reflect wherever the user actually is when they click.
+
+`IdentityChip`, mounted in `TopBar`, fetches `GET /v1/auth/me` exactly once — on the first `connected` transition, guarded by a component-local flag so a later reconnect does not re-fetch, bounded by the same probe timeout `connection.ts` uses (`AUTH_PROBE_TIMEOUT_MS`) so a request that's accepted but never answered doesn't permanently suppress the chrome. A 200 populates `connectionStore.identity` (`{ login, repoCount, reposRefreshedAt, stale }`) — but only if the session hasn't since gone unauthenticated, since a revocation elsewhere in the app can resolve while this fetch is still in flight and would otherwise resurrect a stale identity moments after `enterUnauthenticated()` cleared it — and the chip renders the GitHub login name plus a logout control; any other response (401, or 404 when `auth.mode = "none"` — the endpoint isn't mounted) leaves `identity` null and the chip renders nothing. `enterUnauthenticated()` also clears `identity`, so a session that goes stale or gets revoked mid-visit doesn't leave a stale login name in the header. Logout `POST`s `/v1/auth/github/logout` then hard-reloads to `/`, landing back on `LoginScreen` once the cleared cookie takes effect.
+
+`KanbanBoard`'s ordinary "connected, zero runs" empty state distinguishes two causes via `identity`: `repoCount === 0` (signed in, but the app∩user∩webhook intersection is empty) gets its own message via `EmptyState`'s `message` prop; everything else (including `mode = "none"`, where `identity` is always null) falls through to the default "Watching for runs." caption.
+
 ## Store Architecture
 
 Five rune-class stores are module-level singletons. Five is the design ceiling; a sixth store requires justification at the same level of specificity that introduced the fifth.
 
-- **Connection store** — tracks connection status (disconnected, connecting, connected, reconnecting, unauthenticated), reconnect attempt count, last event timestamp, server version reference, mismatch flag, config reload error state, and — while unauthenticated — the parsed 401 reason (`auth_required` | `stale_authorization`) plus a `retry()` entry point. Does not manage the WebSocket lifecycle directly; that belongs to the ConnectionManager service component.
+- **Connection store** — tracks connection status (disconnected, connecting, connected, reconnecting, unauthenticated), reconnect attempt count, last event timestamp, server version reference, mismatch flag, config reload error state, the parsed 401 reason (`auth_required` | `stale_authorization`) plus a `retry()` entry point while unauthenticated, and the fetched `/v1/auth/me` identity (`{ login, repoCount, reposRefreshedAt, stale } | null`) once `IdentityChip` populates it. Does not manage the WebSocket lifecycle directly; that belongs to the ConnectionManager service component.
 
 - **Runs store** — holds the map of workflow runs and per-run job lists. Receives and applies run and job events from the dispatcher. Derives three sorted arrays (queued ascending by creation time, in-progress descending by start time, completed descending by update time, each with a run-id tiebreaker). Sorting uses direct lexical ISO-8601 string comparison — no date parsing, no precision loss. The completed array also applies a display-TTL filter driven by an operator-configured duration stamped on each snapshot; completed rows age out reactively as the clock advances, without a new event arriving. The per-run job derivations (`jobStatsByRun`, `jobsByRunId`, `jobs`) drop jobs whose `runAttempt` is *lower* than the parent run's — a GitHub re-run reuses the run ID with fresh job IDs at a higher attempt, so prior-attempt jobs are excluded from counts and views (mirroring the backend's `j.run_attempt >= r.run_attempt` read filter). The comparison keeps current-or-higher attempts: a queued re-run job can arrive at a higher attempt before the run row advances (GitHub emits no `requested` for a queued re-run), and must stay visible. On `applyRunEvent`, a higher attempt also resets the run's terminal fields. Operator-declared runner pool capacities from the snapshot are held here as well; the runner store's derived pool computation reads them. See [ADR-0003](../architecture-decisions/0003-lastseq-cursor.md) for the multi-replica reasoning behind snapshot-stamped TTL.
 

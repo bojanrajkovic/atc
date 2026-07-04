@@ -138,3 +138,38 @@ describe('KanbanBoard — jobStatsByRun integration', () => {
     expect(screen.getByText('Jobs 0 of 0')).toBeTruthy()
   })
 })
+
+describe('KanbanBoard — zero-repos empty state', () => {
+  const baseIdentity = {
+    login: 'octocat',
+    reposRefreshedAt: '2026-07-04T00:00:00Z',
+    stale: false,
+  }
+
+  beforeEach(() => {
+    runStore.clear()
+    connectionStore.status = 'connected'
+    connectionStore.identity = null
+  })
+
+  afterAll(() => {
+    uiStore.destroy()
+  })
+
+  it('shows the default empty state when identity has not been fetched (mode=none)', () => {
+    render(KanbanBoardHarness)
+    expect(screen.getByText('Watching for runs.')).toBeTruthy()
+  })
+
+  it('shows the default empty state when the user has visible repos', () => {
+    connectionStore.identity = { ...baseIdentity, repoCount: 3 }
+    render(KanbanBoardHarness)
+    expect(screen.getByText('Watching for runs.')).toBeTruthy()
+  })
+
+  it('shows the zero-repos message when authenticated with no visible repos', () => {
+    connectionStore.identity = { ...baseIdentity, repoCount: 0 }
+    render(KanbanBoardHarness)
+    expect(screen.getByText(/no monitored repositories are visible to you/i)).toBeTruthy()
+  })
+})

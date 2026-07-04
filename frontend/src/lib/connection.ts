@@ -2,6 +2,7 @@ import { liveRegion } from '$lib/aria/live-region.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
 import type { AuthReason } from '$lib/stores/connection.svelte'
 import { connectionStore } from '$lib/stores/connection.svelte'
+import { paletteStore } from '$lib/stores/palette.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
 import type { RunnerPoolCapacity } from '$lib/types/generated/RunnerPoolCapacity'
@@ -30,13 +31,13 @@ function isWireFrame(value: unknown): value is WireFrame {
 export const MAX_RECONNECT_ATTEMPTS = 10
 
 /**
- * Bounds the auth probe fired when a WS closes before opening (see
- * probeAuthReason). Without this, a request that's accepted but never
- * answered (a silent proxy/load balancer) would never resolve, leaving the
- * probe — and the connection store — stuck indefinitely instead of falling
- * through to the normal backoff path.
+ * Bounds any one-shot auth-related fetch (the WS-open-failure probe here,
+ * and IdentityChip's /v1/auth/me fetch) against a request that's accepted
+ * but never answered (a silent proxy/load balancer) — without it, such a
+ * request never resolves, leaving the caller stuck indefinitely instead of
+ * falling through to its fallback path.
  */
-const AUTH_PROBE_TIMEOUT_MS = 5_000
+export const AUTH_PROBE_TIMEOUT_MS = 5_000
 
 export class ConnectionManager {
   private ws: WebSocket | null = null
@@ -316,10 +317,15 @@ export class ConnectionManager {
    * Discards any cached run/job data before entering the unauthenticated
    * state — the server has just said this session may not see it, and a
    * revoked-mid-session repo (or a long-stale unauthenticated window before
-   * the user re-authenticates) must not leave it on screen.
+   * the user re-authenticates) must not leave it on screen. Also closes the
+   * command palette: it's unmounted along with the rest of the dashboard
+   * while unauthenticated, but paletteOpen is a module-level singleton that
+   * would otherwise survive the round-trip and reopen unprompted on the
+   * next successful connect.
    */
   private transitionToUnauthenticated(reason: AuthReason): void {
     runStore.clear()
+    paletteStore.close()
     connectionStore.enterUnauthenticated(reason)
   }
 
