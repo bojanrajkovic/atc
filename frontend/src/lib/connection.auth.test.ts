@@ -178,4 +178,62 @@ describe('ConnectionManager — 401-aware connection states', () => {
       manager.destroy()
     })
   })
+
+  describe('stale connect cycle vs. a fresh one', () => {
+    it('a slow-to-parse 401 body does not clobber a reconnect that already succeeded', async () => {
+      const manager = new ConnectionManager(baseUrl)
+      let stateRequestCount = 0
+
+      // Isolate the exact race window the fix guards: cycle A's fetch has
+      // already resolved with a 401 (so it's past the abort-cancels-fetch
+      // point) and is now awaiting the body parse when cycle B starts.
+      const originalParseAuthReason = (
+        manager as unknown as { parseAuthReason: (res: Response) => Promise<string> }
+      ).parseAuthReason.bind(manager)
+      const parseAuthReasonSpy = vi
+        .spyOn(
+          manager as unknown as { parseAuthReason: (res: Response) => Promise<string> },
+          'parseAuthReason',
+        )
+        .mockImplementation(async (res: Response) => {
+          if (res.status === 401) {
+            await new Promise((resolve) => setTimeout(resolve, 30))
+          }
+          return originalParseAuthReason(res)
+        })
+
+      server.use(
+        http.get('http://localhost:*/v1/state', () => {
+          stateRequestCount++
+          if (stateRequestCount === 1) {
+            return HttpResponse.json({ reason: 'auth_required' }, { status: 401 })
+          }
+          return HttpResponse.json({
+            lastSeq: 0,
+            runs: [],
+            jobs: [],
+            runnerPoolCapacities: [],
+            displayTtlSeconds: 0,
+          })
+        }),
+      )
+
+      const cycleA = manager.connect().catch(() => {})
+      // Give cycle A's fetch time to resolve with the 401 and enter the
+      // (now-delayed) parseAuthReason call before starting cycle B.
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      manager.reconnect() // cycle B: aborts cycle A's signal, opens a fresh WS
+
+      await vi.waitFor(() => expect(connectionStore.status).toBe('connected'), { timeout: 1000 })
+      await cycleA // let cycle A's delayed 401 continuation finish running
+
+      // Cycle A's aborted continuation must not have overwritten cycle B's
+      // successful connect, nor closed cycle B's WebSocket out from under it.
+      expect(connectionStore.status).toBe('connected')
+      expect(connectionStore.authReason).toBe(null)
+
+      parseAuthReasonSpy.mockRestore()
+      manager.destroy()
+    }, 10_000)
+  })
 })

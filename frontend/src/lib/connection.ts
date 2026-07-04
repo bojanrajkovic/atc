@@ -196,6 +196,10 @@ export class ConnectionManager {
       const res = await fetch(`${this.baseUrl}/v1/state`, { signal })
       if (res.status === 401) {
         const reason = await this.parseAuthReason(res)
+        // Bail if aborted (a fresh connect cycle may have started, e.g. via
+        // reconnect(), while this one was still awaiting the 401 body — the
+        // aborted cycle must not clobber the new cycle's WS or status).
+        if (signal.aborted) return
         this.closeWs()
         connectionStore.enterUnauthenticated(reason)
         return
@@ -291,7 +295,7 @@ export class ConnectionManager {
     if (signal.aborted) return
     const reason = await this.probeAuthReason(signal)
     if (signal.aborted) return
-    this.ws = null
+    this.closeWs()
     if (reason !== null) {
       connectionStore.enterUnauthenticated(reason)
       return
