@@ -5,6 +5,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { connectionStore } from '$lib/stores/connection.svelte'
 import IdentityChip from './IdentityChip.svelte'
 
+const testIdentity = {
+  login: 'octocat',
+  repoCount: 3,
+  reposRefreshedAt: '2026-07-04T00:00:00Z',
+  stale: false,
+}
+
 describe('IdentityChip', () => {
   const server = setupServer()
 
@@ -28,16 +35,7 @@ describe('IdentityChip', () => {
   })
 
   it('shows the login name and a logout control on a 200 response', async () => {
-    server.use(
-      http.get('/v1/auth/me', () =>
-        HttpResponse.json({
-          login: 'octocat',
-          repoCount: 3,
-          reposRefreshedAt: '2026-07-04T00:00:00Z',
-          stale: false,
-        }),
-      ),
-    )
+    server.use(http.get('/v1/auth/me', () => HttpResponse.json(testIdentity)))
     render(IdentityChip)
 
     await waitFor(() => screen.getByText('octocat'))
@@ -70,12 +68,7 @@ describe('IdentityChip', () => {
     server.use(
       http.get('/v1/auth/me', () => {
         requestCount++
-        return HttpResponse.json({
-          login: 'octocat',
-          repoCount: 3,
-          reposRefreshedAt: '2026-07-04T00:00:00Z',
-          stale: false,
-        })
+        return HttpResponse.json(testIdentity)
       }),
     )
     render(IdentityChip)
@@ -90,16 +83,7 @@ describe('IdentityChip', () => {
   })
 
   it('logout posts to the logout endpoint then hard-reloads to /', async () => {
-    server.use(
-      http.get('/v1/auth/me', () =>
-        HttpResponse.json({
-          login: 'octocat',
-          repoCount: 3,
-          reposRefreshedAt: '2026-07-04T00:00:00Z',
-          stale: false,
-        }),
-      ),
-    )
+    server.use(http.get('/v1/auth/me', () => HttpResponse.json(testIdentity)))
     let logoutCalled = false
     server.use(
       http.post('/v1/auth/github/logout', () => {
