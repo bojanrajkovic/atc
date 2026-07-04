@@ -194,11 +194,13 @@
             },
             "repoAuthTtl": {
               "type": "string",
-              "description": "Repo-authorization TTL in humantime format (e.g. '1h'). Maps to ATC_AUTH__GITHUB__REPO_AUTH_TTL. Empty lets the server default (1h) apply."
+              "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
+              "description": "Repo-authorization TTL in humantime format (e.g. '1h'). Maps to ATC_AUTH__GITHUB__REPO_AUTH_TTL. Default matches the server's own default. Rendered unconditionally (unlike the optional config.* durations above) — an empty or malformed override is rejected by this schema rather than reaching the server as an opaque deserialize error."
             },
             "maxSessionTtl": {
               "type": "string",
-              "description": "Maximum session TTL in humantime format (e.g. '30d'). Maps to ATC_AUTH__GITHUB__MAX_SESSION_TTL. Empty lets the server default (30d) apply."
+              "pattern": "^\\d+\\s*(ns|us|ms|s|m|h|d|w|y)(\\s+\\d+\\s*(ns|us|ms|s|m|h|d|w|y))*$",
+              "description": "Maximum session TTL in humantime format (e.g. '30d'). Maps to ATC_AUTH__GITHUB__MAX_SESSION_TTL. Default matches the server's own default. Same schema-enforced non-empty/valid-format guarantee as repoAuthTtl above."
             }
           }
         }

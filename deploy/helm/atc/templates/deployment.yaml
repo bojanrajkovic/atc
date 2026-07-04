@@ -41,6 +41,27 @@
 {{- if not .Values.auth.github.publicOrigin -}}
 {{- fail "auth.mode=github requires auth.github.publicOrigin." -}}
 {{- end -}}
+{{- /*
+   Mirrors atc-server's validate_public_origin (config.rs) so a malformed
+   origin fails at chart-render time instead of a pod crash-loop: absolute
+   http(s) URL, no userinfo, no path beyond ""/"/", no query, no fragment.
+*/ -}}
+{{- $origin := urlParse .Values.auth.github.publicOrigin -}}
+{{- if not (or (eq $origin.scheme "http") (eq $origin.scheme "https")) -}}
+{{- fail (printf "auth.github.publicOrigin must be an absolute http(s) URL; got %q (scheme %q)." .Values.auth.github.publicOrigin $origin.scheme) -}}
+{{- end -}}
+{{- if $origin.userinfo -}}
+{{- fail (printf "auth.github.publicOrigin must not include userinfo (username/password); got %q." .Values.auth.github.publicOrigin) -}}
+{{- end -}}
+{{- if and (ne $origin.path "") (ne $origin.path "/") -}}
+{{- fail (printf "auth.github.publicOrigin must not include a path; got %q." .Values.auth.github.publicOrigin) -}}
+{{- end -}}
+{{- if $origin.query -}}
+{{- fail (printf "auth.github.publicOrigin must not include a query string; got %q." .Values.auth.github.publicOrigin) -}}
+{{- end -}}
+{{- if $origin.fragment -}}
+{{- fail (printf "auth.github.publicOrigin must not include a fragment; got %q." .Values.auth.github.publicOrigin) -}}
+{{- end -}}
 {{- if not (and .Values.existingSecret.authGithubClientSecret.name .Values.existingSecret.authGithubClientSecret.secretKey) -}}
 {{- fail "auth.mode=github requires existingSecret.authGithubClientSecret.name and .secretKey — the OAuth client secret must come from an existing Secret, never inline." -}}
 {{- end -}}
@@ -151,14 +172,10 @@ spec:
                   key: {{ .Values.existingSecret.authGithubClientSecret.secretKey | quote }}
             - name: ATC_AUTH__GITHUB__PUBLIC_ORIGIN
               value: {{ .Values.auth.github.publicOrigin | quote }}
-            {{- if .Values.auth.github.repoAuthTtl }}
             - name: ATC_AUTH__GITHUB__REPO_AUTH_TTL
               value: {{ .Values.auth.github.repoAuthTtl | quote }}
-            {{- end }}
-            {{- if .Values.auth.github.maxSessionTtl }}
             - name: ATC_AUTH__GITHUB__MAX_SESSION_TTL
               value: {{ .Values.auth.github.maxSessionTtl | quote }}
-            {{- end }}
             {{- end }}
             {{- if .Values.otel.enabled }}
             - name: OTEL_K8S_POD_NAME

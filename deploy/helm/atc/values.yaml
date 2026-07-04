@@ -239,11 +239,11 @@ auth:
     # ATC_AUTH__GITHUB__PUBLIC_ORIGIN. Required when auth.mode=github.
     publicOrigin: ""
     # -- Repo-authorization TTL (humantime, e.g. "1h"). Maps to
-    # ATC_AUTH__GITHUB__REPO_AUTH_TTL. Empty lets the server default (1h) apply.
-    repoAuthTtl: ""
+    # ATC_AUTH__GITHUB__REPO_AUTH_TTL. Default matches the server's own default.
+    repoAuthTtl: "1h"
     # -- Maximum session TTL (humantime, e.g. "30d"). Maps to
-    # ATC_AUTH__GITHUB__MAX_SESSION_TTL. Empty lets the server default (30d) apply.
-    maxSessionTtl: ""
+    # ATC_AUTH__GITHUB__MAX_SESSION_TTL. Default matches the server's own default.
+    maxSessionTtl: "30d"
 
 # -- Per-credential references to existing Kubernetes Secrets. Each credential
 # can reference its own Secret independently, enabling the common homelab
