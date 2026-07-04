@@ -29,6 +29,15 @@ function isWireFrame(value: unknown): value is WireFrame {
  */
 export const MAX_RECONNECT_ATTEMPTS = 10
 
+/**
+ * Bounds the auth probe fired when a WS closes before opening (see
+ * probeAuthReason). Without this, a request that's accepted but never
+ * answered (a silent proxy/load balancer) would never resolve, leaving the
+ * probe — and the connection store — stuck indefinitely instead of falling
+ * through to the normal backoff path.
+ */
+const AUTH_PROBE_TIMEOUT_MS = 5_000
+
 export class ConnectionManager {
   private ws: WebSocket | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -306,7 +315,8 @@ export class ConnectionManager {
   /** Returns the 401 reason if /v1/state is currently rejecting us, else null (covers non-401 responses and network failures alike — both fall back to normal backoff). */
   private async probeAuthReason(signal: AbortSignal): Promise<AuthReason | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/v1/state`, { signal })
+      const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(AUTH_PROBE_TIMEOUT_MS)])
+      const res = await fetch(`${this.baseUrl}/v1/state`, { signal: boundedSignal })
       if (res.status !== 401) return null
       return await this.parseAuthReason(res)
     } catch {

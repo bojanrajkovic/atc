@@ -118,6 +118,28 @@ describe('ConnectionManager — 401-aware connection states', () => {
       manager.destroy()
       vi.useRealTimers()
     })
+
+    it('falls back to normal backoff when the probe hangs with no response', async () => {
+      const manager = new ConnectionManager(baseUrl)
+
+      server.use(
+        // Never resolves — simulates a proxy/load balancer that accepts the
+        // request but never answers. Without AUTH_PROBE_TIMEOUT_MS bounding
+        // the probe's fetch, this would leave the connection stuck at
+        // 'connecting' forever instead of falling through to backoff.
+        http.get('http://localhost:*/v1/state', () => new Promise(() => {})),
+      )
+
+      const connectPromise = manager.connect().catch(() => {})
+      const ws = MockWebSocket.getLastInstance()
+      ws?.close()
+      await connectPromise
+
+      await vi.waitFor(() => expect(connectionStore.status).toBe('reconnecting'), { timeout: 8000 })
+      expect(connectionStore.authReason).toBe(null)
+
+      manager.destroy()
+    }, 15_000)
   })
 
   describe('non-401 failures — regression', () => {
