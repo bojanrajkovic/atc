@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button'
+  import { connectionStore } from '$lib/stores/connection.svelte'
   import Logo from './Logo.svelte'
 
   function computeLoginHref(): string {
@@ -29,6 +30,58 @@
     event.preventDefault()
     window.location.href = computeLoginHref()
   }
+
+  // Popup-first silent re-auth for a staleness signal (not auth_required,
+  // which always needs the explicit click above — there's no prior GitHub
+  // session to silently refresh). window.open must be called synchronously
+  // in whatever context noticed the staleness to have any chance at
+  // transient user activation; called from an async continuation it would
+  // always be blocked. Most of the time there's no activation at all (an
+  // unattended dashboard reconnecting), and that's fine — the null-fallback
+  // below is what keeps it self-healing without a gesture.
+  let popupInFlight = false
+
+  $effect(() => {
+    if (connectionStore.authReason !== 'stale_authorization' || popupInFlight) return
+    popupInFlight = true
+
+    const popup = window.open(
+      '/v1/auth/github/login?popup=1',
+      'atc-auth',
+      'popup,width=640,height=760'
+    )
+
+    if (popup === null) {
+      popupInFlight = false
+      window.location.href = computeLoginHref()
+      return
+    }
+
+    const channel = new BroadcastChannel('atc-auth')
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+
+    const cleanup = () => {
+      if (pollTimer !== null) clearInterval(pollTimer)
+      channel.close()
+      popupInFlight = false
+    }
+
+    channel.onmessage = (event) => {
+      if (event.data !== 'session-refreshed') return
+      cleanup()
+      connectionStore.retry()
+    }
+
+    // The popup self-closes after posting session-refreshed (see auth.rs's
+    // POPUP_CALLBACK_HTML) — this only fires if the user closes it manually
+    // instead, abandoning the login. Degrade to the already-visible login
+    // screen rather than waiting forever.
+    pollTimer = setInterval(() => {
+      if (popup.closed) cleanup()
+    }, 500)
+
+    return cleanup
+  })
 </script>
 
 <main

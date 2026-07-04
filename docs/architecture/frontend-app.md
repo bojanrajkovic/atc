@@ -121,6 +121,21 @@ App renders `LoginScreen` in place of the entire dashboard (AppShell, kanban, pa
 
 `KanbanBoard`'s ordinary "connected, zero runs" empty state distinguishes two causes via `identity`: `repoCount === 0` (signed in, but the app∩user∩webhook intersection is empty) gets its own message via `EmptyState`'s `message` prop; everything else (including `mode = "none"`, where `identity` is always null) falls through to the default "Watching for runs." caption.
 
+## Popup-First Staleness Re-Auth
+
+`LoginScreen` auto-attempts a silent re-auth the moment `connectionStore.authReason` becomes `stale_authorization` — unlike `auth_required` (no prior GitHub session to refresh; always needs the explicit "Sign in with GitHub" click), staleness usually means the browser's own github.com session is still live and can re-derive the repo set with no visible interruption.
+
+```mermaid
+flowchart LR
+    S["authReason becomes\nstale_authorization"] --> O{"window.open(popup)\nsucceeds?"}
+    O -- yes --> W["BroadcastChannel('atc-auth')\nlistens for 'session-refreshed'"]
+    W -- message received --> R["retry()"]
+    W -- popup closed first\n(abandoned) --> D["degrade: ordinary\nlogin screen stays visible"]
+    O -- "no (no gesture)" --> F["location.href = login\nwith return_to"]
+```
+
+`window.open` is called synchronously inside the `$effect` that observes the reason change — calling it from an async continuation would already have lost any transient user activation, so there would be nothing to check. Most of the time there's no activation at all (an unattended dashboard reconnecting after a deploy), and `window.open` returns `null`; that's the expected common case, not a failure — the full-page redirect is what makes an unattended session self-heal. When a popup does open, the callback page (server-side, `POPUP_CALLBACK_HTML` in `auth.rs`) posts `'session-refreshed'` on a `BroadcastChannel` named `'atc-auth'` and self-closes; `LoginScreen` never sends anything back, it only listens and then calls `connectionStore.retry()`, which is what actually re-fetches the snapshot and reopens the WS — the popup round-trip never touches the main tab's connection. If the user closes the popup manually instead of completing the flow, a `setInterval` poll on `popup.closed` notices and tears down the channel/timer without retrying, leaving the ordinary login screen as the fallback rather than waiting forever. A component-local `popupInFlight` flag guards against opening a second popup while one is already open.
+
 ## Store Architecture
 
 Five rune-class stores are module-level singletons. Five is the design ceiling; a sixth store requires justification at the same level of specificity that introduced the fifth.
