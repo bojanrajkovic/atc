@@ -1,0 +1,259 @@
+suite: auth.github values, secret ref, and template-time guards (#466)
+
+templates:
+  - deployment.yaml
+
+tests:
+  - it: renders no ATC_AUTH__* env vars when auth.mode is the default (none)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__MODE
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__CLIENT_ID
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__CLIENT_SECRET
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__PUBLIC_ORIGIN
+
+  - it: renders all auth.github env vars and a secretKeyRef for the client secret on the happy path
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com"
+          repoAuthTtl: "2h"
+          maxSessionTtl: "14d"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__MODE
+            value: "github"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__CLIENT_ID
+            value: "Iv1.abc123"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: atc-github-auth
+                key: client_secret
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__PUBLIC_ORIGIN
+            value: "https://atc.example.com"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__REPO_AUTH_TTL
+            value: "2h"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__MAX_SESSION_TTL
+            value: "14d"
+
+  - it: renders the chart's default TTLs (1h/30d) when not explicitly overridden
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__REPO_AUTH_TTL
+            value: "1h"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__MAX_SESSION_TTL
+            value: "30d"
+
+  - it: fails when auth.mode=github has no Postgres connection configured
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com"
+      existingSecret:
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "requires a PostgreSQL connection string"
+
+  - it: fails when auth.mode=github is missing clientId
+    set:
+      auth:
+        mode: github
+        github:
+          publicOrigin: "https://atc.example.com"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "auth\\.github\\.clientId"
+
+  - it: fails when auth.mode=github is missing publicOrigin
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "auth\\.github\\.publicOrigin"
+
+  - it: fails when auth.github.publicOrigin has no scheme
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "atc.example.com"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "absolute http\\(s\\) URL"
+
+  - it: fails when auth.github.publicOrigin includes a path
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com/dashboard"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "must not include a path"
+
+  - it: fails when auth.github.publicOrigin includes userinfo
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://user:pass@atc.example.com"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "must not include userinfo"
+
+  - it: accepts auth.github.publicOrigin with a bare trailing slash
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com/"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: ATC_AUTH__GITHUB__PUBLIC_ORIGIN
+            value: "https://atc.example.com/"
+
+  - it: fails when auth.mode=github has no existingSecret.authGithubClientSecret configured
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com"
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+    asserts:
+      - failedTemplate:
+          errorPattern: "existingSecret\\.authGithubClientSecret"
+
+  - it: rejects an empty auth.github.repoAuthTtl via the values schema
+    set:
+      auth:
+        mode: github
+        github:
+          clientId: "Iv1.abc123"
+          publicOrigin: "https://atc.example.com"
+          repoAuthTtl: ""
+      existingSecret:
+        database:
+          name: atc-cluster-app
+          urlKey: uri
+        authGithubClientSecret:
+          name: atc-github-auth
+          secretKey: client_secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "repoAuthTtl"
