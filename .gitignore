@@ -29,6 +29,7 @@ mise.lock
 
 # Claude Code — track .claude/ config but ignore runtime state
 .remember/
+.mcp.json
 
 # Temporary / ephemeral
 tmp/

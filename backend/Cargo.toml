@@ -29,3 +29,14 @@ debug = "line-tables-only"
 
 [profile.test]
 debug = "line-tables-only"
+
+# Third-party crates are effectively never stepped into in a debugger, so drop
+# their debug info entirely — a strict superset of the line-tables-only savings
+# above, scoped to dependencies only. First-party backtraces (file:line) are
+# unaffected. This is what keeps the dev/test `target/` from accreting tens of
+# GB of dependency DWARF across toolchain and dependency-version churn.
+[profile.dev.package."*"]
+debug = false
+
+[profile.test.package."*"]
+debug = false

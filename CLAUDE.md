@@ -112,3 +112,18 @@ Conventional Commits required. See `CONTRIBUTING.md` section "Commit Conventions
 ## Pull Requests
 
 This repo uses **squash merges** — the PR description becomes the squashed commit body. PR body voice, test-plan placement, and title conventions are in `CONTRIBUTING.md` § "Pull Requests".
+
+## Designing, Building, and Shipping Changes
+
+When designing, building, and shipping a change here:
+
+0. **Start from current `main`, and re-sync before you push.** `git fetch` and rebase your work onto `origin/main` before grounding yourself below, so the steps that follow are reasoning about the latest tree, not a stale one.
+1. **Gather the task's context up front.** If the task is underspecified, ask clarifying questions until the deliverable is clear and you can proceed to pinning done and out of scope. Ask clarifying questions freely, and name your assumptions out loud. When scope, direction, or a preference is even slightly unclear, ask: a thorough `AskUserQuestion` pass beats a confident wrong guess. When you do have to assume, say so.
+2. **Ground yourself in the docs and code, and verify before you assert.** Read the relevant directory `CLAUDE.md`, `docs/architecture.md`, the ADRs, and the actual source before proposing. A section heading, your memory, or a subagent's framing is not evidence; grep or read to confirm a claim before you build on it. Pull what is already true in the codebase, the constraints, and the prior decisions into the planning context early, instead of rediscovering them mid-build.
+3. **Research, don't assume.** Research APIs of libraries you are using, codebases you are mining for information, etc. Research any assumption that seems like it might be load-bearing to the design thoroughly.
+4. **Pin "done" and "out of scope" before designing.** Name the deliverable, the success criteria, and what you are explicitly _not_ doing. This is the line between a plan and a brainstorm, and the thing that keeps a change from sprawling.
+5. **Brainstorm two or three alternatives: don't ship the first idea**, each with its hazards and its fit to what already exists. Hold two forces in tension: prefer the smallest change that fits the existing patterns (don't build a framework for a future that may never arrive), _and_ invest in the right abstraction when the repetition is real or clearly coming.
+6. **Be adversarial: attack your own proposal.** Hunt the failure mode, the edge case, the thing that breaks under concurrency, a hostile input, or a partial sync. A design no one tried to break is untested.
+7. **Update the docs as part of the change, not after.** The affected `docs/architecture.md`, the directory `CLAUDE.md` sharp edges, and any ADRs are part of "done": a change whose docs still describe the old world isn't finished.
+8. **Before you ship, review the diff with `/code-review`, scaled to the change.** When the change is code-complete (and rebased onto current `main` per step 0), run `/code-review` on the final diff and address what survives its verification pass. Scale the effort to the change's size and blast radius: `low`/`medium` for a small or localized change, `high` for a larger or cross-cutting one, `max` for a sweeping refactor or anything in the kernel / sync / auth core. This is the last check before the PR — complementary to the typecheck/test/lint the hooks already enforce, since it hunts the correctness and cleanup issues those can't see (a dropped guard, a now-inaccurate doc, a missed reuse).
+9. **Before you start working, walk through the design.** Show the APIs/interfaces, the types, walk the user through the design.
