@@ -9,7 +9,7 @@ use ts_rs::TS;
 
 use crate::job::{JobConclusion, RunnerInfo, Step};
 use crate::run::RunConclusion;
-use crate::types::{JobId, RunId};
+use crate::types::{JobId, RepoId, RunId};
 
 /// Action that occurred on a workflow run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -105,6 +105,16 @@ pub struct RunEventEnvelope {
     /// rolling deploy / backlog drain. Mirrors the webhook parser's default.
     #[serde(default = "default_run_attempt")]
     pub run_attempt: i32,
+    /// GitHub's immutable numeric repository identifier. `None` only for
+    /// persisted `outbox.payload` rows written before this field existed —
+    /// live webhook translation always populates `Some`. Optional (rather
+    /// than required) for the same rolling-deploy decode reason as
+    /// `completed_at` above: the PG drain decodes historical outbox rows
+    /// back into this type, and a required field with no default would fail
+    /// to deserialize and be silently dropped from the drain.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repo_id: Option<RepoId>,
     /// The action that occurred.
     pub action: RunEvent,
 }
@@ -204,6 +214,11 @@ pub struct JobEventEnvelope {
     /// `outbox.payload` rows that carry no `run_attempt`.
     #[serde(default = "default_run_attempt")]
     pub run_attempt: i32,
+    /// GitHub's immutable numeric repository identifier. See
+    /// [`RunEventEnvelope::repo_id`] for why this is `Option`, not required.
+    #[ts(optional)]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repo_id: Option<RepoId>,
     /// The action that occurred.
     pub action: JobEvent,
 }

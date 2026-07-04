@@ -145,6 +145,8 @@ pub(crate) struct StepData {
 /// Repository metadata from the webhook payload.
 #[derive(Debug, Deserialize)]
 pub(crate) struct RepositoryData {
+    /// GitHub's immutable numeric repository identifier.
+    pub id: i64,
     /// Repository owner (organization or user).
     pub owner: OwnerData,
     /// Repository name (without owner prefix).
@@ -179,6 +181,7 @@ mod tests {
         assert_eq!(payload.action, "requested");
         assert!(!payload.workflow_run.head_sha.is_empty());
         assert!(!payload.repository.name.is_empty());
+        assert_eq!(payload.repository.id, 1_190_105_052);
     }
 
     #[test]
@@ -211,6 +214,7 @@ mod tests {
 
         assert_eq!(payload.action, "queued");
         assert!(payload.workflow_job.run_id > 0);
+        assert_eq!(payload.repository.id, 1_190_105_052);
     }
 
     #[test]
@@ -276,6 +280,7 @@ mod tests {
             },
             "workflow": null,
             "repository": {
+                "id": 12345,
                 "owner": {"login": "test"},
                 "name": "repo"
             }
@@ -307,6 +312,7 @@ mod tests {
             },
             "workflow": null,
             "repository": {
+                "id": 12345,
                 "owner": {"login": "test"},
                 "name": "repo"
             }
@@ -349,6 +355,7 @@ mod tests {
             },
             "workflow": null,
             "repository": {
+                "id": 12345,
                 "owner": {"login": "test"},
                 "name": "repo"
             }

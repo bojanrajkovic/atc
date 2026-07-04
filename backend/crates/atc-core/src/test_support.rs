@@ -26,7 +26,11 @@ use crate::clock::fixed_test_timestamp;
 use crate::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use crate::job::{Job, JobStatus, RunnerInfo, Step, StepStatus};
 use crate::run::{RunStatus, WorkflowRun};
-use crate::types::{JobId, RunId};
+use crate::types::{JobId, RepoId, RunId};
+
+/// Test repository id for `octocat/Hello-World` — GitHub's own API-docs
+/// sample repository id, reused here so envelope/run fixtures look real.
+const TEST_REPO_ID: RepoId = RepoId(1_296_269);
 
 /// Build a [`RunEventEnvelope`] with sensible defaults for the given `run_id`
 /// and `action`.
@@ -57,6 +61,7 @@ pub fn make_run_event(run_id: RunId, action: RunEvent) -> RunEventEnvelope {
         updated_at: now,
         completed_at,
         run_attempt: 1,
+        repo_id: Some(TEST_REPO_ID),
         action,
     }
 }
@@ -86,6 +91,7 @@ pub fn make_job_event(
         started_at: None,
         completed_at: None,
         run_attempt: 1,
+        repo_id: Some(TEST_REPO_ID),
         action,
     }
 }

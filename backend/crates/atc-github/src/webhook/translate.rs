@@ -3,7 +3,7 @@
 use atc_core::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use atc_core::job::{JobConclusion, RunnerInfo, Step, StepStatus};
 use atc_core::run::RunConclusion;
-use atc_core::types::{JobId, RunId};
+use atc_core::types::{JobId, RepoId, RunId};
 
 use super::ParseError;
 use super::types::{WorkflowJobWebhook, WorkflowRunWebhook};
@@ -59,6 +59,7 @@ pub(crate) fn translate_run(webhook: WorkflowRunWebhook) -> Result<RunEventEnvel
         updated_at: webhook.workflow_run.updated_at,
         completed_at,
         run_attempt: webhook.workflow_run.run_attempt,
+        repo_id: Some(RepoId(webhook.repository.id)),
         action,
     })
 }
@@ -112,6 +113,7 @@ pub(crate) fn translate_job(webhook: WorkflowJobWebhook) -> Result<JobEventEnvel
         started_at: job.started_at,
         completed_at: job.completed_at,
         run_attempt: job.run_attempt,
+        repo_id: Some(RepoId(webhook.repository.id)),
         action,
     })
 }

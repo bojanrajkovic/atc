@@ -29,6 +29,21 @@ impl fmt::Display for JobId {
     }
 }
 
+/// GitHub's immutable numeric repository identifier.
+///
+/// Unlike `RepoKey` (an `org/repo` display pair), this identity survives
+/// repository renames and owner transfers — the authorization key for
+/// per-repo filtering must be this, not the string pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RepoId(pub i64);
+
+impl fmt::Display for RepoId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Repository identifier as an (org, repo) pair.
 ///
 /// Used as the primary filter key for access-controlled queries.
@@ -397,6 +412,36 @@ mod tests {
         let json = serde_json::to_string(&job_id).expect("serialize");
         let deserialized: JobId = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(job_id, deserialized);
+    }
+
+    #[test]
+    fn test_repo_id_self_equality() {
+        let repo_id = RepoId(1_190_105_052);
+        assert_eq!(repo_id, RepoId(1_190_105_052));
+        assert_ne!(repo_id, RepoId(1));
+    }
+
+    #[test]
+    fn test_repo_id_hashable() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        let repo_id = RepoId(1_190_105_052);
+        set.insert(repo_id);
+        assert!(set.contains(&RepoId(1_190_105_052)));
+    }
+
+    #[test]
+    fn test_repo_id_display() {
+        let repo_id = RepoId(1_190_105_052);
+        assert_eq!(format!("{repo_id}"), "1190105052");
+    }
+
+    #[test]
+    fn test_repo_id_serde() {
+        let repo_id = RepoId(1_190_105_052);
+        let json = serde_json::to_string(&repo_id).expect("serialize");
+        let deserialized: RepoId = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(repo_id, deserialized);
     }
 
     #[test]

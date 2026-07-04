@@ -37,6 +37,17 @@ fn default_run_data(conclusion: Option<&str>) -> WorkflowRunData {
     }
 }
 
+/// Baseline `RepositoryData` shared by every test webhook in this module.
+fn test_repository() -> RepositoryData {
+    RepositoryData {
+        id: 999_999_999,
+        owner: OwnerData {
+            login: "test-org".to_string(),
+        },
+        name: "test-repo".to_string(),
+    }
+}
+
 /// Create a minimal `WorkflowRunWebhook` with sensible defaults.
 fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> WorkflowRunWebhook {
     let workflow_run = default_run_data(conclusion);
@@ -48,12 +59,7 @@ fn make_workflow_run_webhook(action: &str, conclusion: Option<&str>) -> Workflow
             name: "CI Workflow".to_string(),
             path: ".github/workflows/ci.yml".to_string(),
         }),
-        repository: RepositoryData {
-            owner: OwnerData {
-                login: "test-org".to_string(),
-            },
-            name: "test-repo".to_string(),
-        },
+        repository: test_repository(),
     }
 }
 
@@ -91,12 +97,7 @@ fn make_workflow_job_webhook(
     WorkflowJobWebhook {
         action: action.to_string(),
         workflow_job,
-        repository: RepositoryData {
-            owner: OwnerData {
-                login: "test-org".to_string(),
-            },
-            name: "test-repo".to_string(),
-        },
+        repository: test_repository(),
     }
 }
 
@@ -328,12 +329,7 @@ fn test_translate_job_with_steps() {
     let webhook = WorkflowJobWebhook {
         action: "in_progress".to_string(),
         workflow_job: webhook_job,
-        repository: RepositoryData {
-            owner: OwnerData {
-                login: "test-org".to_string(),
-            },
-            name: "test-repo".to_string(),
-        },
+        repository: test_repository(),
     };
 
     let result = translate_job(webhook).expect("should translate");
@@ -467,12 +463,7 @@ fn test_unknown_step_status() {
     let webhook = WorkflowJobWebhook {
         action: "in_progress".to_string(),
         workflow_job: webhook_job,
-        repository: RepositoryData {
-            owner: OwnerData {
-                login: "test-org".to_string(),
-            },
-            name: "test-repo".to_string(),
-        },
+        repository: test_repository(),
     };
 
     let err = translate_job(webhook).expect_err("should error");
