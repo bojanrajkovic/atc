@@ -170,6 +170,40 @@
         }
       }
     },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Authentication configuration. See docs/architecture/deployment.md § Authentication.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["none", "github"],
+          "description": "Authentication mode (ATC_AUTH__MODE). 'none' (default) is today's no-built-in-auth behavior. 'github' requires an external PostgreSQL connection and auth.github.clientId/publicOrigin plus existingSecret.authGithubClientSecret — enforced at chart render time."
+        },
+        "github": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "clientId": {
+              "type": "string",
+              "description": "GitHub App OAuth client ID (ATC_AUTH__GITHUB__CLIENT_ID). Required when auth.mode=github."
+            },
+            "publicOrigin": {
+              "type": "string",
+              "description": "Public origin ATC is reached at, e.g. 'https://atc.example.com' (no path/query/fragment). Maps to ATC_AUTH__GITHUB__PUBLIC_ORIGIN. Required when auth.mode=github."
+            },
+            "repoAuthTtl": {
+              "type": "string",
+              "description": "Repo-authorization TTL in humantime format (e.g. '1h'). Maps to ATC_AUTH__GITHUB__REPO_AUTH_TTL. Empty lets the server default (1h) apply."
+            },
+            "maxSessionTtl": {
+              "type": "string",
+              "description": "Maximum session TTL in humantime format (e.g. '30d'). Maps to ATC_AUTH__GITHUB__MAX_SESSION_TTL. Empty lets the server default (30d) apply."
+            }
+          }
+        }
+      }
+    },
     "existingSecret": {
       "type": "object",
       "additionalProperties": false,
@@ -206,6 +240,21 @@
             "secretKey": {
               "type": "string",
               "description": "Key inside the Secret whose value is the GitHub webhook secret."
+            }
+          }
+        },
+        "authGithubClientSecret": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Existing-Secret reference for the GitHub OAuth App client secret (auth.github mode only). No inline-value alternative — the client secret must always come from an existing Secret.",
+          "properties": {
+            "name": {
+              "type": ["string", "null"],
+              "description": "Name of the Kubernetes Secret containing the OAuth client secret. Required when auth.mode=github."
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "Key inside the Secret whose value is the OAuth client secret."
             }
           }
         }

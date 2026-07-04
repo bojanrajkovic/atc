@@ -219,6 +219,32 @@ config:
     # that path wins over this inline value when both are configured.
     webhookSecret: null
 
+# -- Authentication configuration. All values map to ATC_AUTH_* environment
+# variables. See docs/architecture/deployment.md § Authentication.
+auth:
+  # -- Authentication mode: "none" (default — no built-in auth, ATC accepts
+  # the surrounding deployment's identity model) or "github" (first-party
+  # GitHub OAuth login with per-repository session filtering). Maps to
+  # ATC_AUTH__MODE. mode=github requires an external PostgreSQL connection
+  # (config.databaseUrl or existingSecret.database) — enforced at chart
+  # render time via a {{ fail }} guard, mirroring the multi-replica guard.
+  mode: none
+  github:
+    # -- GitHub App OAuth client ID. Maps to ATC_AUTH__GITHUB__CLIENT_ID.
+    # Required when auth.mode=github.
+    clientId: ""
+    # -- Public origin ATC is reached at, e.g. "https://atc.example.com"
+    # (no path/query/fragment). Compared against the WS Origin header and
+    # used as the OAuth redirect_uri base. Maps to
+    # ATC_AUTH__GITHUB__PUBLIC_ORIGIN. Required when auth.mode=github.
+    publicOrigin: ""
+    # -- Repo-authorization TTL (humantime, e.g. "1h"). Maps to
+    # ATC_AUTH__GITHUB__REPO_AUTH_TTL. Empty lets the server default (1h) apply.
+    repoAuthTtl: ""
+    # -- Maximum session TTL (humantime, e.g. "30d"). Maps to
+    # ATC_AUTH__GITHUB__MAX_SESSION_TTL. Empty lets the server default (30d) apply.
+    maxSessionTtl: ""
+
 # -- Per-credential references to existing Kubernetes Secrets. Each credential
 # can reference its own Secret independently, enabling the common homelab
 # pattern where the database URL lives in a CNPG-managed Secret that cannot be
@@ -245,6 +271,15 @@ existingSecret:
     name: null
     # -- Key inside the Secret whose value is the GitHub webhook secret.
     secretKey: "webhook_secret"
+  # -- Existing-Secret reference for the GitHub OAuth App client secret
+  # (auth.github mode only). No inline-value alternative is offered — the
+  # OAuth client secret must always come from an existing Secret.
+  authGithubClientSecret:
+    # -- Name of the Kubernetes Secret containing the OAuth client secret.
+    # Required when auth.mode=github.
+    name: null
+    # -- Key inside the Secret whose value is the OAuth client secret.
+    secretKey: "client_secret"
 
 otel:
   # -- Enable OpenTelemetry export. When false, no OTEL_* env vars are injected
