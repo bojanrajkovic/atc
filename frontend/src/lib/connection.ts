@@ -196,11 +196,7 @@ export class ConnectionManager {
       const res = await fetch(`${this.baseUrl}/v1/state`, { signal })
       if (res.status === 401) {
         const reason = await this.parseAuthReason(res)
-        if (this.ws) {
-          this.ws.onclose = null
-          this.ws.close()
-          this.ws = null
-        }
+        this.closeWs()
         connectionStore.enterUnauthenticated(reason)
         return
       }
@@ -271,12 +267,17 @@ export class ConnectionManager {
       if (signal.aborted) return
 
       // State fetch failed — close WS and trigger reconnect
-      if (this.ws) {
-        this.ws.onclose = null
-        this.ws.close()
-        this.ws = null
-      }
+      this.closeWs()
       this.handleDisconnect()
+    }
+  }
+
+  /** Closes and detaches the current WS, if any, without triggering its onclose handler. */
+  private closeWs(): void {
+    if (this.ws) {
+      this.ws.onclose = null
+      this.ws.close()
+      this.ws = null
     }
   }
 

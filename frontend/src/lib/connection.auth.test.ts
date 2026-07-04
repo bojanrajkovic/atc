@@ -59,36 +59,20 @@ describe('ConnectionManager — 401-aware connection states', () => {
       vi.useRealTimers()
     })
 
-    it('transitions to unauthenticated with stale_authorization', async () => {
+    it.each([
+      [{ reason: 'stale_authorization' }, 'stale_authorization'],
+      [{}, 'auth_required'], // malformed body falls back to the conservative reason
+    ] as const)('parses 401 body %o into reason %s', async (body, expectedReason) => {
       const manager = new ConnectionManager(baseUrl)
 
       server.use(
-        http.get('http://localhost:*/v1/state', () => {
-          return HttpResponse.json({ reason: 'stale_authorization' }, { status: 401 })
-        }),
+        http.get('http://localhost:*/v1/state', () => HttpResponse.json(body, { status: 401 })),
       )
 
       await manager.connect()
 
       expect(connectionStore.status).toBe('unauthenticated')
-      expect(connectionStore.authReason).toBe('stale_authorization')
-
-      manager.destroy()
-    })
-
-    it('falls back to auth_required on a malformed 401 body', async () => {
-      const manager = new ConnectionManager(baseUrl)
-
-      server.use(
-        http.get('http://localhost:*/v1/state', () => {
-          return HttpResponse.json({}, { status: 401 })
-        }),
-      )
-
-      await manager.connect()
-
-      expect(connectionStore.status).toBe('unauthenticated')
-      expect(connectionStore.authReason).toBe('auth_required')
+      expect(connectionStore.authReason).toBe(expectedReason)
 
       manager.destroy()
     })
