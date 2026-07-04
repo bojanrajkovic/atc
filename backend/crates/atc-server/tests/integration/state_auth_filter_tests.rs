@@ -105,6 +105,19 @@ fn run_event(run_id: i64, org: &str, repo: &str, repo_id: Option<RepoId>) -> Run
     }
 }
 
+fn job_event(job_id: i64, run_id: i64, org: &str, repo: &str) -> atc_core::JobEventEnvelope {
+    atc_core::test_support::make_job_event(
+        JobId(job_id),
+        RunId(run_id),
+        org,
+        repo,
+        JobEvent::Queued {
+            labels: vec![],
+            steps: vec![],
+        },
+    )
+}
+
 async fn get_state_response(
     app: &axum::Router,
     session_cookie: Option<&str>,
@@ -160,16 +173,7 @@ async fn sessions_with_disjoint_repo_sets_see_disjoint_runs_and_jobs() {
         .await
         .unwrap();
     persist
-        .apply_job_event(atc_core::test_support::make_job_event(
-            JobId(1),
-            RunId(1),
-            "acme",
-            "app-a",
-            JobEvent::Queued {
-                labels: vec![],
-                steps: vec![],
-            },
-        ))
+        .apply_job_event(job_event(1, 1, "acme", "app-a"))
         .await
         .unwrap();
     persist
@@ -177,16 +181,7 @@ async fn sessions_with_disjoint_repo_sets_see_disjoint_runs_and_jobs() {
         .await
         .unwrap();
     persist
-        .apply_job_event(atc_core::test_support::make_job_event(
-            JobId(2),
-            RunId(2),
-            "acme",
-            "app-b",
-            JobEvent::Queued {
-                labels: vec![],
-                steps: vec![],
-            },
-        ))
+        .apply_job_event(job_event(2, 2, "acme", "app-b"))
         .await
         .unwrap();
 
@@ -265,6 +260,70 @@ async fn none_repo_id_run_invisible_to_session_but_visible_under_mode_none() {
     assert_eq!(
         filtered["displayTtlSeconds"],
         unfiltered["displayTtlSeconds"]
+    );
+}
+
+/// A job-before-run race (GitHub's `workflow_job` webhook can arrive before
+/// `workflow_run`) leaves a job with no matching entry in `snap.runs` — both
+/// stores still surface it under mode=none (an "orphan" job), but its
+/// repo_id is only ever knowable through the run it has no visible parent
+/// for. This asserts the auth-filtered path fails closed on it rather than
+/// leaking it to a session that can't be verified as authorized.
+#[tokio::test]
+async fn job_arriving_before_its_run_is_invisible_to_a_session_but_visible_under_mode_none() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let (none_app, auth_app, sessions, persist) = build_shared_persist_apps(pool).await;
+
+    // No apply_run_event at all — the job event alone.
+    persist
+        .apply_job_event(job_event(1, 1, "acme", "app-a"))
+        .await
+        .unwrap();
+
+    let now = SystemClock.now();
+    let session = sessions
+        .create_session(1, "user-a", &[1000], now, Duration::from_secs(3600))
+        .await
+        .unwrap();
+
+    let filtered = get_state(&auth_app, Some(&session)).await;
+    assert_eq!(
+        job_ids(&filtered),
+        Vec::<i64>::new(),
+        "an orphan job (parent run not yet arrived) must fail closed for an authenticated session"
+    );
+
+    let unfiltered = get_state(&none_app, None).await;
+    assert_eq!(
+        job_ids(&unfiltered),
+        vec![1],
+        "the orphan job remains visible under mode=none, matching today's behavior"
+    );
+}
+
+#[tokio::test]
+async fn session_filtered_response_is_marked_uncacheable_but_mode_none_is_not() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let (none_app, auth_app, sessions, _persist) = build_shared_persist_apps(pool).await;
+
+    let now = SystemClock.now();
+    let session = sessions
+        .create_session(1, "user-a", &[1000], now, Duration::from_secs(3600))
+        .await
+        .unwrap();
+
+    let filtered_resp = get_state_response(&auth_app, Some(&session)).await;
+    assert_eq!(
+        filtered_resp.headers().get(header::CACHE_CONTROL),
+        Some(&axum::http::HeaderValue::from_static("private, no-store")),
+        "a session-filtered response must never be cached by an intermediary"
+    );
+
+    let unfiltered_resp = get_state_response(&none_app, None).await;
+    assert_eq!(
+        unfiltered_resp.headers().get(header::CACHE_CONTROL),
+        None,
+        "mode=none must remain byte-for-byte unaffected — no new header"
     );
 }
 
