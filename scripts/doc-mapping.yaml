@@ -38,6 +38,11 @@
 #                                        commits, not a hand-authored source
 #                                        (enforced via the basename bypass in
 #                                        check-docs.sh)
+#   - frontend/src/lib/types/generated/* — ts-rs mechanically mirrors backend
+#                                        struct field sets on every `just types`
+#                                        run; no independent authorial content
+#                                        (enforced via the path-prefix bypass
+#                                        in check-docs.sh)
 #   - directory-level CLAUDE.md / AGENTS.md files under backend/crates/*/,
 #     frontend/, deploy/helm/atc/, .github/ — they're derived from the
 #     architecture docs they point at
