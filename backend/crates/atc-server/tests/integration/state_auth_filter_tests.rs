@@ -301,6 +301,66 @@ async fn job_arriving_before_its_run_is_invisible_to_a_session_but_visible_under
     );
 }
 
+/// The same "job visible without its run in `snap.runs`" shape, via a
+/// different route: a re-run's job arrives at a higher `run_attempt` than
+/// its parent run row, whose prior attempt has already aged past
+/// `display_ttl` and is excluded from `snap.runs` by the cutoff. Both stores
+/// deliberately keep such a job visible under mode=none rather than gating
+/// a fresh re-run's queued job on its stale predecessor's cutoff — the same
+/// fail-closed tradeoff as the job-before-run case above applies here too.
+#[tokio::test]
+async fn rerun_job_past_parents_cutoff_is_invisible_to_a_session_but_visible_under_mode_none() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let (none_app, auth_app, sessions, persist) = build_shared_persist_apps(pool).await;
+
+    let now = SystemClock.now();
+    // Attempt 1: completed long enough ago to fall past the fixture's
+    // 1-hour display_ttl cutoff.
+    persist
+        .apply_run_event(RunEventEnvelope {
+            org: "acme".to_string(),
+            repo: "app-a".to_string(),
+            repo_id: Some(RepoId(1000)),
+            completed_at: Some(now - chrono::Duration::hours(2)),
+            ..make_run_event(
+                RunId(1),
+                RunEvent::Completed {
+                    conclusion: atc_core::RunConclusion::Success,
+                },
+            )
+        })
+        .await
+        .unwrap();
+    // Attempt 2's job arrives before the run event that would advance the
+    // parent row's run_attempt.
+    persist
+        .apply_job_event(atc_core::JobEventEnvelope {
+            run_attempt: 2,
+            ..job_event(1, 1, "acme", "app-a")
+        })
+        .await
+        .unwrap();
+
+    let session = sessions
+        .create_session(1, "user-a", &[1000], now, Duration::from_secs(3600))
+        .await
+        .unwrap();
+
+    let filtered = get_state(&auth_app, Some(&session)).await;
+    assert_eq!(
+        job_ids(&filtered),
+        Vec::<i64>::new(),
+        "a re-run job past its stale predecessor's cutoff must fail closed for a session"
+    );
+
+    let unfiltered = get_state(&none_app, None).await;
+    assert_eq!(
+        job_ids(&unfiltered),
+        vec![1],
+        "the re-run job remains visible under mode=none, matching today's behavior"
+    );
+}
+
 #[tokio::test]
 async fn session_filtered_response_is_marked_uncacheable_but_mode_none_is_not() {
     let (pool, _container, _db_url) = common::start_pg().await;

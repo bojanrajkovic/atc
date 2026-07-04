@@ -141,15 +141,19 @@ async fn state_handler(ctx: AuthContext, State(state): State<Arc<AppState>>) -> 
                 // are left untouched — global operator data, visible
                 // regardless of the session's repo set.
                 //
-                // Edge case: a job whose parent run hasn't arrived yet
-                // (webhook job-before-run race) has no entry in `snap.runs`
-                // — both stores hide the FK-stub/placeholder run row but
-                // still surface the job under mode=none (see
-                // `atc-store-pg::reads::read_all_jobs`'s doc comment). Its
-                // repo_id is only knowable through that hidden run, so this
-                // retain fails closed on it in auth mode — consistent with
-                // "NULL repo_id invisible in auth mode" — and self-heals the
-                // moment the run event lands and promotes the row.
+                // Edge case (two flavors, same root cause): a job can be
+                // legitimately visible under mode=none with no matching
+                // entry in `snap.runs` — (1) its parent run hasn't arrived
+                // yet (webhook job-before-run race; both stores hide the
+                // FK-stub/placeholder row but keep the job), or (2) it's a
+                // re-run's job at a higher `run_attempt` than its parent
+                // row, whose prior attempt already aged past `display_ttl`
+                // and was cut off (see `atc-store-pg::reads::read_all_jobs`'s
+                // doc comment for both). Either way the job's `repo_id` is
+                // only knowable through a run this retain can't see, so it
+                // fails closed in auth mode — consistent with "NULL repo_id
+                // invisible in auth mode" — and self-heals the moment the
+                // run event lands and promotes/advances the row.
                 let is_session = matches!(ctx, AuthContext::Session(_));
                 if is_session {
                     snap.runs.retain(|r| ctx.can_see(r.repo_id));
