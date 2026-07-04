@@ -13,6 +13,13 @@ use reqwest::header::{ACCEPT, LINK};
 
 const API_VERSION: &str = "2022-11-28";
 
+/// GitHub's REST API rejects any request with no `User-Agent` header (403
+/// Forbidden) — see
+/// <https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#user-agent-required>.
+/// `reqwest::Client::new()` sends none by default, so it must be set
+/// explicitly on the shared client rather than per-call.
+const USER_AGENT: &str = concat!("atc-server/", env!("CARGO_PKG_VERSION"));
+
 /// Hard ceiling on pages [`GitHubClient::fetch_all_pages`] will follow.
 /// GitHub's real pagination always terminates, but a malformed or
 /// misbehaving response (a `Link: rel="next"` that cycles back to an
@@ -143,7 +150,10 @@ impl GitHubClient {
         api_base: String,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .build()
+                .expect("reqwest client builder should not fail for a static user agent"),
             client_id,
             client_secret,
             oauth_base,
