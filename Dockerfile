@@ -1,8 +1,12 @@
 # Build args — .mise.toml is the version authority. CI passes these from mise;
-# defaults here allow standalone `docker build` without extra flags.
-# IMPORTANT: Keep defaults in sync with .mise.toml when tool versions change.
-ARG RUST_VERSION=1.94
-ARG NODE_VERSION=25
+# defaults here allow standalone `docker build` without extra flags. The
+# `# renovate:` markers let Renovate's customManagers:dockerfileVersions preset
+# keep the defaults in sync with the .mise.toml pins (grouped per-tool in
+# renovate.json).
+# renovate: datasource=docker depName=rust
+ARG RUST_VERSION=1.96.1
+# renovate: datasource=docker depName=node
+ARG NODE_VERSION=25.9.0
 
 # ---- Stage 1: Frontend ----
 # Build Svelte SPA with Vite. Output: /app/frontend/dist/
