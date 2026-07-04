@@ -9,12 +9,12 @@
 //! `GitHubClient` makes real socket connections, so the mock has to be a
 //! real server, not an in-process `Service`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -27,8 +27,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
-use atc_core::{Clock, SystemClock};
-use atc_server::auth::AuthRuntime;
+use atc_core::{Clock, RepoId, SystemClock};
+use atc_server::auth::{AuthContext, AuthRuntime};
 use atc_server::github_client::GitHubClient;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
@@ -273,6 +273,12 @@ fn set_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
     })
 }
 
+/// Build a single `name=value` `Cookie` header pair — shared by every helper
+/// below that attaches a flow/session cookie to a request.
+fn cookie_header(name: &str, value: &str) -> String {
+    format!("{name}={value}")
+}
+
 async fn do_login(app: &axum::Router, query: &str) -> (StatusCode, HeaderMap) {
     let req = axum::http::Request::builder()
         .method("GET")
@@ -294,7 +300,7 @@ async fn do_callback(
         .method("GET")
         .uri(format!("/v1/auth/github/callback{query}"));
     if let Some(cookie) = flow_cookie {
-        builder = builder.header(header::COOKIE, format!("atc_flow={cookie}"));
+        builder = builder.header(header::COOKIE, cookie_header("atc_flow", cookie));
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
@@ -305,7 +311,7 @@ async fn do_logout(app: &axum::Router, session_cookie: Option<&str>) -> axum::re
         .method("POST")
         .uri("/v1/auth/github/logout");
     if let Some(cookie) = session_cookie {
-        builder = builder.header(header::COOKIE, format!("atc_session={cookie}"));
+        builder = builder.header(header::COOKIE, cookie_header("atc_session", cookie));
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
@@ -316,7 +322,7 @@ async fn do_whoami(app: &axum::Router, session_cookie: Option<&str>) -> axum::re
         .method("GET")
         .uri("/v1/auth/me");
     if let Some(cookie) = session_cookie {
-        builder = builder.header(header::COOKIE, format!("atc_session={cookie}"));
+        builder = builder.header(header::COOKIE, cookie_header("atc_session", cookie));
     }
     let req = builder.body(axum::body::Body::empty()).unwrap();
     app.clone().oneshot(req).await.unwrap()
@@ -691,7 +697,11 @@ async fn existing_session_for_a_different_user_is_not_refreshed() {
         ))
         .header(
             header::COOKIE,
-            format!("atc_flow={flow_cookie_2}; atc_session={stale_session_cookie}"),
+            format!(
+                "{}; {}",
+                cookie_header("atc_flow", &flow_cookie_2),
+                cookie_header("atc_session", &stale_session_cookie)
+            ),
         )
         .body(axum::body::Body::empty())
         .unwrap();
@@ -882,4 +892,88 @@ async fn mode_none_leaves_auth_routes_unmounted() {
         StatusCode::NOT_FOUND,
         "whoami route must not be mounted when auth.mode = none"
     );
+}
+
+// ---------------------------------------------------------------------------
+// AuthContext extractor
+// ---------------------------------------------------------------------------
+
+fn parts(cookie: Option<(&str, &str)>) -> axum::http::request::Parts {
+    let mut builder = axum::http::Request::builder().uri("/v1/auth/me");
+    if let Some((name, value)) = cookie {
+        builder = builder.header(header::COOKIE, cookie_header(name, value));
+    }
+    builder.body(()).unwrap().into_parts().0
+}
+
+#[tokio::test]
+async fn auth_context_disabled_mode_short_circuits_without_touching_store() {
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let shutdown = CancellationToken::new();
+    // `auth: None` — there is no SessionStore to touch, so a successful
+    // `Disabled` extraction here proves the mode=none path never attempts
+    // one.
+    let app_state = build_app_state(clock, shutdown, None);
+
+    let mut parts = parts(None);
+    let ctx = AuthContext::from_request_parts(&mut parts, &app_state)
+        .await
+        .expect("mode=none never rejects");
+    assert!(matches!(ctx, AuthContext::Disabled));
+}
+
+#[tokio::test]
+async fn auth_context_missing_cookie_rejects_with_auth_required() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let mock_base = spawn_mock_github(default_mock_config()).await;
+    let (_app, app_state) = build_auth_test_app(pool, mock_base).await;
+
+    let mut parts = parts(None);
+    let err = AuthContext::from_request_parts(&mut parts, &app_state)
+        .await
+        .expect_err("no cookie must be rejected");
+    let resp = err.into_response();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json, json!({"reason": "auth_required"}));
+}
+
+#[tokio::test]
+async fn auth_context_unknown_session_cookie_rejects_with_auth_required() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let mock_base = spawn_mock_github(default_mock_config()).await;
+    let (_app, app_state) = build_auth_test_app(pool, mock_base).await;
+
+    let mut parts = parts(Some(("atc_session", "not-a-real-session-id")));
+    let err = AuthContext::from_request_parts(&mut parts, &app_state)
+        .await
+        .expect_err("an unknown session cookie must be rejected");
+    let resp = err.into_response();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json, json!({"reason": "auth_required"}));
+}
+
+#[tokio::test]
+async fn auth_context_valid_session_extracts_identity_and_repo_ids() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let mock_base = spawn_mock_github(default_mock_config()).await;
+    let (app, app_state) = build_auth_test_app(pool, mock_base).await;
+    let session_cookie = login_and_get_session_cookie(&app).await;
+
+    let mut parts = parts(Some(("atc_session", &session_cookie)));
+    let ctx = AuthContext::from_request_parts(&mut parts, &app_state)
+        .await
+        .expect("a valid session cookie must extract");
+    let AuthContext::Session(identity) = ctx else {
+        panic!("expected AuthContext::Session, got Disabled");
+    };
+    assert_eq!(identity.github_login, "octocat");
+    assert_eq!(identity.repo_ids, HashSet::from([RepoId(1001)]));
 }
