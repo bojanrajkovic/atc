@@ -5,6 +5,12 @@ import { withLocationHrefSpy } from '$lib/__tests__/location-spy'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import LoginScreen from './LoginScreen.svelte'
 
+// A minimal mutable stand-in for the Window returned by window.open — tests
+// flip `.closed` to simulate the user abandoning the popup.
+function mockPopup(): { closed: boolean } {
+  return { closed: false }
+}
+
 describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
   afterEach(() => {
     window.history.replaceState(null, '', '/')
@@ -21,8 +27,7 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
   })
 
   it('opens a popup and calls retry() on session-refreshed, without navigating', async () => {
-    const popup = { closed: false } as unknown as Window
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup)
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(mockPopup() as unknown as Window)
     const retrySpy = vi.spyOn(connectionStore, 'retry')
 
     connectionStore.authReason = 'stale_authorization'
@@ -62,7 +67,7 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
 
   it('degrades to the login screen (no retry, no hang) when the popup is closed without a message', async () => {
     vi.useFakeTimers()
-    const popup = { closed: false } as unknown as { closed: boolean }
+    const popup = mockPopup()
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
     const retrySpy = vi.spyOn(connectionStore, 'retry')
 
@@ -81,8 +86,7 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
   })
 
   it('opens at most one popup even if a second stale signal arrives while one is in flight', async () => {
-    const popup = { closed: false } as unknown as Window
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup)
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(mockPopup() as unknown as Window)
 
     connectionStore.enterUnauthenticated('stale_authorization')
     render(LoginScreen)
