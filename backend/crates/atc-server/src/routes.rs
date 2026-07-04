@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::{
@@ -5,7 +6,7 @@ use axum::{
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use axum_otel_metrics::HttpMetricsLayerBuilder;
@@ -14,9 +15,10 @@ use serde::Serialize;
 use tracing::{Instrument, Span, field, info_span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use atc_core::PersistError;
+use atc_core::{PersistError, RunId};
 use atc_github::{ParseResult, parse_webhook, verify_signature};
 
+use crate::auth::AuthContext;
 use crate::state::AppState;
 use crate::ws;
 
@@ -80,7 +82,13 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 ///
 /// For `InMemoryStore`: locks seq across snapshot + seq read so the cursor
 /// matches snapshot content.
-async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+///
+/// `auth.mode = "github"`: fails closed on a stale session (`AuthContext::require_fresh`)
+/// before the read, then filters `runs`/`jobs` in-memory, post-read, to the
+/// session's authorized repo set — never in SQL (locked; keeps the read path
+/// and store trait untouched). `mode = "none"` is unaffected — see
+/// `AuthContext::can_see`.
+async fn state_handler(ctx: AuthContext, State(state): State<Arc<AppState>>) -> Response {
     let span = info_span!(
         "state.snapshot",
         http.route = "/v1/state",
@@ -89,6 +97,15 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         snapshot.last_seq = field::Empty,
     );
     async move {
+        // Fail closed on a missing/expired session before touching the
+        // store at all; `Disabled` (mode=none) passes through unchanged.
+        // `auth_required` is already handled by the `AuthContext` extractor
+        // itself — this only ever surfaces `stale_authorization`.
+        let ctx = match ctx.require_fresh(state.clock.now()) {
+            Ok(ctx) => ctx,
+            Err(rejection) => return rejection.into_response(),
+        };
+
         // Compute the display-TTL cutoff once per request. The 60s startup
         // floor and the use of `std::time::Duration` make this conversion
         // infallible for any realistic configured value — chrono's
@@ -112,6 +129,20 @@ async fn state_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
                 // seconds (~136 years).
                 snap.display_ttl_seconds =
                     u32::try_from(state.display_ttl.as_secs()).unwrap_or(u32::MAX);
+                // `Disabled` (mode=none): `can_see` is always `true`, so this
+                // retain is a byte-for-byte no-op — `AuthContext::Session`
+                // filters `runs` to the session's authorized repo set (a run
+                // with no `repo_id`, e.g. a pre-migration row, is never
+                // visible to an authenticated session) and `jobs` through
+                // their parent run, since jobs carry no repo identity of
+                // their own. `lastSeq`, pool capacities, and `displayTtlSeconds`
+                // are left untouched — global operator data, visible
+                // regardless of the session's repo set.
+                if matches!(ctx, AuthContext::Session(_)) {
+                    snap.runs.retain(|r| ctx.can_see(r.repo_id));
+                    let kept_run_ids: HashSet<RunId> = snap.runs.iter().map(|r| r.id).collect();
+                    snap.jobs.retain(|j| kept_run_ids.contains(&j.run_id));
+                }
                 let current = tracing::Span::current();
                 current.record("snapshot.runs_count", snap.runs.len());
                 current.record("snapshot.jobs_count", snap.jobs.len());
