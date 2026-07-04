@@ -45,6 +45,7 @@ mod row_lock_serialization;
 mod shutdown_otel_flush_test;
 mod staleness_sweep_mem_tests;
 mod staleness_sweep_tests;
+mod state_auth_filter_tests;
 mod state_pg_read;
 mod state_tests;
 mod store_lifecycle_tests;
