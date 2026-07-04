@@ -518,7 +518,7 @@ impl InMemoryStore {
             started_at: existing.started_at,
             completed_at: Some(now),
             run_attempt: existing.run_attempt,
-            repo_id: None,
+            repo_id: parent.repo_id,
             action: JobEvent::Completed {
                 conclusion: JobConclusion::Stale,
                 runner: existing.runner,
@@ -590,7 +590,7 @@ impl InMemoryStore {
             updated_at: now,
             completed_at: Some(now),
             run_attempt: existing.run_attempt,
-            repo_id: None,
+            repo_id: existing.repo_id,
             action: RunEvent::Completed {
                 conclusion: RunConclusion::Stale,
             },

@@ -56,6 +56,7 @@ async fn stale_job_is_swept() {
         .await
         .expect("seed stale job");
 
+    let mut rx = store.subscribe();
     store.sweep_stale(THRESHOLD).await;
 
     let job = store
@@ -64,6 +65,16 @@ async fn stale_job_is_swept() {
         .expect("job should still exist");
     assert_eq!(job.status, atc_core::JobStatus::Completed);
     assert_eq!(job.conclusion, Some(JobConclusion::Stale));
+
+    // Issue #475: `Job` carries no `repo_id` of its own (it's resolved
+    // through the parent run), so the read-state assertions above can't see
+    // this bug — only the broadcast envelope `WebhookEvent::repo_id()` reads
+    // and the WS per-connection filter checks directly can.
+    let event = rx.try_recv().expect("sweep should have broadcast an event");
+    assert_eq!(
+        event.event.repo_id(),
+        Some(atc_core::types::RepoId(1_296_269))
+    );
 }
 
 /// A job that already reached a real terminal conclusion *before*
@@ -156,6 +167,7 @@ async fn stale_run_is_swept() {
         .await
         .expect("seed stale run");
 
+    let mut rx = store.subscribe();
     store.sweep_stale(THRESHOLD).await;
 
     let run = store
@@ -164,4 +176,12 @@ async fn stale_run_is_swept() {
         .expect("run should still exist");
     assert_eq!(run.status, atc_core::RunStatus::Completed);
     assert_eq!(run.conclusion, Some(atc_core::RunConclusion::Stale));
+
+    // Issue #475 — same rationale as the job-sweep broadcast assertion
+    // above.
+    let event = rx.try_recv().expect("sweep should have broadcast an event");
+    assert_eq!(
+        event.event.repo_id(),
+        Some(atc_core::types::RepoId(1_296_269))
+    );
 }

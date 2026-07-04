@@ -15,7 +15,7 @@ use std::time::Duration;
 use atc_core::clock::TestClock;
 use atc_core::event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope};
 use atc_core::types::{JobId, RunId};
-use atc_core::{JobConclusion, fixed_test_timestamp};
+use atc_core::{JobConclusion, RunConclusion, fixed_test_timestamp};
 use atc_persist::PersistentStore;
 use opentelemetry::KeyValue;
 use serial_test::serial;
@@ -112,11 +112,42 @@ async fn stale_job_is_force_completed_and_broadcast() {
     assert_eq!(status, "Completed");
     assert_eq!(conclusion.as_deref(), Some("Stale"));
 
-    let event = timeout(Duration::from_secs(5), rx.recv())
-        .await
-        .expect("broadcast did not arrive within 5s")
-        .expect("broadcast channel closed");
+    // The write path returns as soon as its transaction commits — broadcast
+    // to subscribers happens later, asynchronously, via the LISTEN/NOTIFY
+    // drain task. `subscribe()` above can race that drain: the seed run/job
+    // events committed before it may still be in flight, so a single
+    // `rx.recv()` isn't guaranteed to be the sweep's synthetic completion.
+    // Drain until we see the swept job's own `Stale` completion rather than
+    // trusting the first event to arrive.
+    let event = timeout(Duration::from_secs(5), async {
+        loop {
+            let event = rx.recv().await.expect("broadcast channel closed");
+            if let atc_github::WebhookEvent::Job(env) = &event.event
+                && env.job_id == JobId(job_id)
+                && matches!(
+                    env.action,
+                    JobEvent::Completed {
+                        conclusion: JobConclusion::Stale,
+                        ..
+                    }
+                )
+            {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("swept job's broadcast did not arrive within 5s");
     assert!(event.seq >= 1);
+    // Issue #475: the synthesized completion must carry the run's real
+    // `repo_id`, not the hardcoded `None` a naive synthesis would use — this
+    // is what the WS per-connection filter (`ctx.can_see`) checks directly
+    // against, so a `None` here drops the broadcast for every authenticated
+    // session even though the row's repo is known.
+    assert_eq!(
+        event.event.repo_id(),
+        Some(atc_core::types::RepoId(999_999_999))
+    );
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
@@ -216,6 +247,7 @@ async fn stale_run_with_no_jobs_is_force_completed() {
         .await
         .expect("seed stale run");
 
+    let mut rx = store.subscribe();
     clock.advance(chrono::Duration::hours(49));
     let (jobs_swept, runs_swept) = store
         .staleness_sweep_once()
@@ -233,6 +265,34 @@ async fn stale_run_with_no_jobs_is_force_completed() {
     let conclusion: Option<String> = row.get("conclusion");
     assert_eq!(status, "Completed");
     assert_eq!(conclusion.as_deref(), Some("Stale"));
+
+    // Issue #475 — same rationale as the job-sweep broadcast assertion
+    // above: the synthesized envelope must carry the run's real `repo_id`,
+    // and the same subscribe-vs-drain race means we must drain until we see
+    // the swept run's own `Stale` completion rather than trusting the first
+    // event to arrive.
+    let event = timeout(Duration::from_secs(5), async {
+        loop {
+            let event = rx.recv().await.expect("broadcast channel closed");
+            if let atc_github::WebhookEvent::Run(env) = &event.event
+                && env.run_id == RunId(run_id)
+                && matches!(
+                    env.action,
+                    RunEvent::Completed {
+                        conclusion: RunConclusion::Stale
+                    }
+                )
+            {
+                return event;
+            }
+        }
+    })
+    .await
+    .expect("swept run's broadcast did not arrive within 5s");
+    assert_eq!(
+        event.event.repo_id(),
+        Some(atc_core::types::RepoId(999_999_999))
+    );
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())
