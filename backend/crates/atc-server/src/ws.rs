@@ -19,8 +19,7 @@ use std::sync::Arc;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use atc_core::{RepoId, RunnerPoolCapacity};
-use atc_github::WebhookEvent;
+use atc_core::RunnerPoolCapacity;
 use atc_wire::CommittedEvent;
 use axum::{
     extract::{
@@ -219,9 +218,12 @@ fn origin_matches(origin: &str, public_origin: &str) -> bool {
 /// legitimately send no `Origin` header are out of scope for github mode —
 /// only browsers (the only clients that carry the ambient session cookie
 /// this mode authenticates) are expected to connect. The resolved
-/// `AuthContext` is snapshotted into the connection task once, here — mid-
-/// stream revocation/staleness is out of scope (connections re-evaluate on
-/// reconnect, per the design doc).
+/// `AuthContext` is snapshotted into the connection task once, here, and
+/// never re-checked for the life of the connection — mid-stream
+/// revocation/staleness is explicitly out of scope (locked decision; a
+/// revoked or newly-stale session keeps streaming until the connection
+/// ends for an unrelated reason — lag eviction, config reload, shutdown, or
+/// a client-initiated reconnect — not on any bounded cadence).
 ///
 /// `mode = "none"`: no Origin check, no auth, no filtering — bit-for-bit
 /// today's path (`AuthContext::Disabled` never touches `SessionStore`).
@@ -249,15 +251,12 @@ pub async fn ws_handler(
     // `require_fresh` only ever fails with `AuthRejection::Stale` — a
     // missing/expired session is already rejected with `auth_required` by
     // `AuthContext`'s own extraction, before this handler body runs at all.
+    // `AuthRejection::into_response` already traces this rejection (`reason
+    // = "stale_authorization"`); no separate log here avoids double-logging
+    // the same event.
     let ctx = match ctx.require_fresh(state.clock.now()) {
         Ok(ctx) => ctx,
-        Err(rejection) => {
-            tracing::debug!(
-                cause = "stale_authorization",
-                "WS upgrade rejected pre-upgrade"
-            );
-            return rejection.into_response();
-        }
+        Err(rejection) => return rejection.into_response(),
     };
 
     let committed_rx = state.persist.subscribe();
@@ -324,16 +323,6 @@ async fn handle_socket(
     handle_socket_inner(socket, committed_rx, config_rx, shutdown, ws_metrics, ctx)
         .instrument(span)
         .await;
-}
-
-/// Extract the wrapped envelope's `repo_id` — `Run` and `Job` variants both
-/// carry one (post-#449). Used only by the per-connection filter below;
-/// `Disabled` connections (mode=none) never call this.
-fn event_repo_id(event: &WebhookEvent) -> Option<RepoId> {
-    match event {
-        WebhookEvent::Run(env) => env.repo_id,
-        WebhookEvent::Job(env) => env.repo_id,
-    }
 }
 
 async fn handle_socket_inner(
@@ -450,7 +439,7 @@ async fn handle_socket_inner(
                         // safe (not a break/disconnect) — ADR-0003 places
                         // seq contiguity out of contract, and the frontend
                         // does no gap detection.
-                        if !ctx.can_see(event_repo_id(&committed_event.event)) {
+                        if !ctx.can_see(committed_event.event.repo_id()) {
                             tracing::debug!(seq, "dropped committed event outside session repo set");
                             continue;
                         }

@@ -49,24 +49,15 @@ fn ws_request(
     request
 }
 
-/// [`tokio_tungstenite::connect_async`]'s return type, named so
-/// [`expect_http_rejection`]'s signature doesn't trip
-/// `clippy::type_complexity`.
-type ConnectResult = Result<
-    (
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        tokio_tungstenite::tungstenite::http::Response<Option<Vec<u8>>>,
-    ),
-    tokio_tungstenite::tungstenite::Error,
->;
-
 /// Assert `connect_async` failed with an HTTP (pre-upgrade) rejection and
 /// return its status code — the shape every pre-upgrade check in this file
 /// rejects with, distinct from a successful upgrade or a transport-level
-/// error.
-fn expect_http_rejection(result: ConnectResult) -> StatusCode {
+/// error. Generic over the `Ok` payload (never inspected — the `Ok` arm
+/// always panics) so the signature doesn't need to name `connect_async`'s
+/// concrete stream/response types.
+fn expect_http_rejection<T>(
+    result: Result<T, tokio_tungstenite::tungstenite::Error>,
+) -> StatusCode {
     match result {
         Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
             StatusCode::from_u16(response.status().as_u16()).unwrap()

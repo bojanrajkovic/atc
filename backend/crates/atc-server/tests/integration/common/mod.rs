@@ -397,6 +397,39 @@ pub async fn spawn_in_memory_server() -> (SocketAddr, Arc<AppState>) {
     spawn_in_memory_server_with_capacity(IN_MEMORY_TEST_BROADCAST_CAPACITY).await
 }
 
+/// Shared `AppState` construction for the real-server fixtures below, so a
+/// field added to `AppState` only needs updating in one place.
+fn build_test_app_state(
+    persist: Arc<dyn atc_persist::PersistentStore>,
+    clock: Arc<dyn atc_core::Clock>,
+    shutdown: CancellationToken,
+    auth: Option<atc_server::auth::AuthRuntime>,
+) -> Arc<AppState> {
+    Arc::new(AppState {
+        persist,
+        clock,
+        display_ttl: Duration::from_hours(1),
+        webhook_secret: None,
+        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
+        config_events_tx: tokio::sync::broadcast::channel(16).0,
+        shutdown,
+        ws_tracker: TaskTracker::new(),
+        ws_metrics: atc_server::ws::WsMetrics::register(),
+        auth,
+    })
+}
+
+/// Bind `router` to an ephemeral localhost port and serve it in a spawned
+/// task, returning the bound address.
+async fn spawn_router(router: axum::Router) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    addr
+}
+
 /// [`spawn_in_memory_server`] with a caller-chosen broadcast capacity. The
 /// lagging-client WS test passes a capacity smaller than the number of events
 /// it sends to force `RecvError::Lagged`.
@@ -410,26 +443,11 @@ pub async fn spawn_in_memory_server_with_capacity(
         Duration::from_hours(1),
         broadcast_capacity,
     ) as Arc<dyn atc_persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let app_state = build_test_app_state(persist, clock, CancellationToken::new(), None);
     let router = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let addr = spawn_router(router).await;
     (addr, app_state)
 }
 
@@ -469,26 +487,11 @@ pub async fn spawn_auth_server(
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
         repo_auth_ttl: Duration::from_hours(1),
     };
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown,
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: Some(auth),
-    });
+    let app_state = build_test_app_state(persist, clock, shutdown, Some(auth));
     let router = atc_server::routes::api_routes(true)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
+    let addr = spawn_router(router).await;
     (addr, app_state, sessions)
 }
 
