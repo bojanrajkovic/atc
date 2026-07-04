@@ -1,12 +1,12 @@
 # CLAUDE.md — atc-store-pg
 
-Last verified: 2026-05-30
+Last verified: 2026-07-04
 
-> Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence § PG mode, § Drain pipeline, § NOTIFY emission) and `docs/architecture/metrics.md` (PG-mode emit sites). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture docs.
+> Canonical documentation lives in `docs/architecture/backend-server.md` (Persistence § PG mode, § Drain pipeline, § NOTIFY emission, § Session storage) and `docs/architecture/metrics.md` (PG-mode emit sites). This file provides crate-specific guidance for agents working here. Do not duplicate content from the architecture docs.
 
 ## Purpose
 
-PostgreSQL-backed `PersistentStore` implementation. Owns pool initialization, embedded migrations, and the connection between incoming webhook events and the WebSocket fan-out. All production state lives in Postgres; in-memory state inside the store is ephemeral coordination (watermarks, heartbeat atomics, broadcast sender).
+This crate has two concerns. First, `PgStore`: a PostgreSQL-backed `PersistentStore` implementation. Owns pool initialization, embedded migrations, and the connection between incoming webhook events and the WebSocket fan-out. All production state lives in Postgres; in-memory state inside the store is ephemeral coordination (watermarks, heartbeat atomics, broadcast sender). Second, `SessionStore` (`session.rs`): `auth.github`'s session and pre-auth OAuth flow storage — a sibling type, not a part of `PgStore` or `PersistentStore` (see Sharp edges).
 
 ## Conceptual groupings
 
@@ -28,6 +28,10 @@ PostgreSQL-backed `PersistentStore` implementation. Owns pool initialization, em
 
 **The LISTEN connection requires session-mode pooling.** `LISTEN` state is session-scoped in Postgres. A transaction-mode or statement-mode pooler (e.g. PgBouncer in transaction mode) drops the subscription on each connection hand-back. The listener task must use a dedicated connection acquired outside the shared pool, not a pooled connection.
 
+**Migration numbers can collide across parallel branches.** `sqlx::migrate!` orders migrations by filename, so two branches picking the same next-available number (e.g. both adding `0010_*.sql`) will conflict on merge even though neither branch's CI ever saw the other's file. Re-check `git ls-tree origin/main -- backend/crates/atc-store-pg/migrations/` immediately before merging (not just at branch-start) and renumber if a sibling branch landed a same-numbered migration first.
+
+**`SessionStore` intentionally does not live inside `PgStore`.** It shares `PgStore`'s `TracedPool` type but is a separate struct with its own `start`/`shutdown` and its own background sweep task — not a field on `PgStore`, not behind `PersistentStore`. Sessions are not run-state (ADR-0008); routing session operations through the `PersistentStore` trait, or spawning the session sweep from inside `PgStore`'s existing sweep task, would recouple the two concerns this split exists to keep apart.
+
 **Test hooks are gated behind the `test-support` feature.** The test-only types and methods are compiled only under `#[cfg(any(test, feature = "test-support"))]`. The feature is activated by the crate's self-ref dev-dep (for unit tests) and by `atc-server`'s cross-crate dev-dep (for integration tests). Production builds never see these symbols; do not activate the feature in a production dependency.
 
 ## Key References
@@ -37,3 +41,4 @@ PostgreSQL-backed `PersistentStore` implementation. Owns pool initialization, em
 - ADR-0006 (stores own background task lifecycle)
 - ADR-0007 (clock-bound retention semantics; retention floor rationale)
 - ADR-0008: `docs/architecture-decisions/0008-persistence-crate-split.md`
+- ADR-0014: `docs/architecture-decisions/0014-native-github-auth-mode.md` (no GitHub tokens stored — `SessionStore`'s core invariant)

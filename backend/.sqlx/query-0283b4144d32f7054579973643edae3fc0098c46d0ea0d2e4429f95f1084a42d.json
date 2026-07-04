@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE auth_sessions\n               SET repo_ids = $2, repos_refreshed_at = $3\n             WHERE id_hash = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8Array",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0283b4144d32f7054579973643edae3fc0098c46d0ea0d2e4429f95f1084a42d"
+}
