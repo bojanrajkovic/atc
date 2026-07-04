@@ -170,6 +170,16 @@ otel-dev-stack:
 otel-dev-stack-stop:
 	docker compose -f compose.otel-dev.yaml down
 
+# Start a standalone Postgres for auth.github development (in-memory store rejects auth.github at boot).
+# Run alongside `just dev`:
+#   ATC_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres just dev
+pg-dev-up:
+	docker compose -f compose.pg-dev.yaml up -d --wait
+
+# Stop and remove the pg-dev container (data volume persists across restarts).
+pg-dev-down:
+	docker compose -f compose.pg-dev.yaml down
+
 # Audit dependencies for vulnerabilities and license compliance (parallel)
 audit:
 	#!/usr/bin/env bash
