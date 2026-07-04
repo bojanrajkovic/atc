@@ -91,26 +91,31 @@ Two reconciliation guarantees follow from this protocol: no gaps (every event af
 
 On connection loss, the client reconnects with exponential backoff. After the maximum attempt count is exhausted the manager gives up: the connection store transitions to a terminal disconnected state, and the connection indicator promotes from a status chip to a button the user can click to re-arm the loop. Reconnect re-fetches the full snapshot — there is no incremental sync. Rolling-update behavior affecting reconnect UX (the operator-toggleable preStop sleep, EndpointSlice drain) is documented in [deployment.md](deployment.md).
 
+A 401 is an authentication outcome, not an outage, and does not enter the backoff loop. On the state fetch, a 401 body's `reason` (`auth_required` or `stale_authorization`) is parsed directly. A WS that fails before it opens carries no such body — browsers do not surface a failed upgrade's HTTP status — so the manager probes `/v1/state` once to tell an auth rejection apart from a real outage; a non-401 probe result (or a probe that itself fails) falls through to the ordinary backoff path unchanged. Either path moves the connection store to `unauthenticated` with the parsed reason. `retry()` clears the reason and re-enters the normal connect sequence (fresh WS + snapshot fetch) via the existing reconnect signal — the entry point auth-flow completion (login popup / redirect) calls once a session is re-established.
+
 ## App Lifecycle State Machine
 
 ```mermaid
 stateDiagram-v2
     [*] --> Loading: page mounted, WS opening
     Loading --> Connected: snapshot applied, buffered events drained
+    Loading --> Unauthenticated: 401 (direct or probed)
     Connected --> Reconnecting: connection lost
     Reconnecting --> Connected: snapshot re-fetched
+    Reconnecting --> Unauthenticated: 401 (direct or probed)
     Reconnecting --> Disconnected: max attempts reached
     Disconnected --> Reconnecting: user requests reconnect
+    Unauthenticated --> Reconnecting: retry()
     Connected --> [*]: page unloaded
 ```
 
-The Loading state covers the window between page mount and the first successful snapshot load. No kanban cards render in this state. Connected is the live steady state. Reconnecting introduces an exponential backoff delay before each re-attempt; the backoff counter resets to zero when a reconnect succeeds, so the operator can re-arm the loop indefinitely via the reconnect button. WebSocket event instrumentation (latency histograms, connection lifecycle metrics) is cataloged in [metrics.md](metrics.md).
+The Loading state covers the window between page mount and the first successful snapshot load. No kanban cards render in this state. Connected is the live steady state. Reconnecting introduces an exponential backoff delay before each re-attempt; the backoff counter resets to zero when a reconnect succeeds, so the operator can re-arm the loop indefinitely via the reconnect button. Unauthenticated is terminal until `retry()`: no backoff timer runs, and no further network attempts are made. WebSocket event instrumentation (latency histograms, connection lifecycle metrics) is cataloged in [metrics.md](metrics.md).
 
 ## Store Architecture
 
 Five rune-class stores are module-level singletons. Five is the design ceiling; a sixth store requires justification at the same level of specificity that introduced the fifth.
 
-- **Connection store** — tracks connection status (disconnected, connecting, connected, reconnecting), reconnect attempt count, last event timestamp, server version reference, mismatch flag, and config reload error state. Does not manage the WebSocket lifecycle directly; that belongs to the ConnectionManager service component.
+- **Connection store** — tracks connection status (disconnected, connecting, connected, reconnecting, unauthenticated), reconnect attempt count, last event timestamp, server version reference, mismatch flag, config reload error state, and — while unauthenticated — the parsed 401 reason (`auth_required` | `stale_authorization`) plus a `retry()` entry point. Does not manage the WebSocket lifecycle directly; that belongs to the ConnectionManager service component.
 
 - **Runs store** — holds the map of workflow runs and per-run job lists. Receives and applies run and job events from the dispatcher. Derives three sorted arrays (queued ascending by creation time, in-progress descending by start time, completed descending by update time, each with a run-id tiebreaker). Sorting uses direct lexical ISO-8601 string comparison — no date parsing, no precision loss. The completed array also applies a display-TTL filter driven by an operator-configured duration stamped on each snapshot; completed rows age out reactively as the clock advances, without a new event arriving. The per-run job derivations (`jobStatsByRun`, `jobsByRunId`, `jobs`) drop jobs whose `runAttempt` is *lower* than the parent run's — a GitHub re-run reuses the run ID with fresh job IDs at a higher attempt, so prior-attempt jobs are excluded from counts and views (mirroring the backend's `j.run_attempt >= r.run_attempt` read filter). The comparison keeps current-or-higher attempts: a queued re-run job can arrive at a higher attempt before the run row advances (GitHub emits no `requested` for a queued re-run), and must stay visible. On `applyRunEvent`, a higher attempt also resets the run's terminal fields. Operator-declared runner pool capacities from the snapshot are held here as well; the runner store's derived pool computation reads them. See [ADR-0003](../architecture-decisions/0003-lastseq-cursor.md) for the multi-replica reasoning behind snapshot-stamped TTL.
 

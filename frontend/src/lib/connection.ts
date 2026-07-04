@@ -1,5 +1,6 @@
 import { liveRegion } from '$lib/aria/live-region.svelte'
 import { eventDispatcher } from '$lib/dispatcher'
+import type { AuthReason } from '$lib/stores/connection.svelte'
 import { connectionStore } from '$lib/stores/connection.svelte'
 import { runStore } from '$lib/stores/runs.svelte'
 import type { CommittedEvent } from '$lib/types/generated/CommittedEvent'
@@ -155,6 +156,13 @@ export class ConnectionManager {
     // before close()-ing the socket, so the rejector below cannot fire, and a
     // real browser will not fire onopen on a closed socket either. Without the
     // abort listener the Promise stranded, leaking the async frame.
+    //
+    // wsOpened distinguishes a close before vs. after this open — the onclose
+    // handler assigned here stays wired for the rest of the connection's life
+    // (nothing re-assigns it after resolve()), so it also fires on later,
+    // ordinary disconnects. Only a pre-open close needs the auth probe below;
+    // a post-open close goes straight to handleDisconnect(), same as before.
+    let wsOpened = false
     await new Promise<void>((resolve, reject) => {
       if (!this.ws) return reject(new Error('No WebSocket'))
       if (signal.aborted) return reject(new DOMException('Aborted', 'AbortError'))
@@ -162,12 +170,21 @@ export class ConnectionManager {
       const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
       signal.addEventListener('abort', onAbort, { once: true })
 
-      this.ws.onopen = () => resolve()
-      const originalOnclose = this.ws.onclose
-      const ws = this.ws
-      this.ws.onclose = (e) => {
+      this.ws.onopen = () => {
+        wsOpened = true
+        resolve()
+      }
+      this.ws.onclose = () => {
         reject(new Error('WebSocket closed before open'))
-        if (originalOnclose) originalOnclose.call(ws, e)
+        if (wsOpened) {
+          this.handleDisconnect()
+          return
+        }
+        // Browsers never surface the handshake's HTTP status for a failed WS
+        // upgrade, so a pre-upgrade 401 (see atc-server ws.rs) looks
+        // identical to a real outage here. Probe /v1/state to tell them
+        // apart instead of assuming outage and going straight to backoff.
+        this.handleWsOpenFailure(signal).catch(() => {})
       }
     })
 
@@ -177,6 +194,16 @@ export class ConnectionManager {
     // Step 3: Fetch state snapshot
     try {
       const res = await fetch(`${this.baseUrl}/v1/state`, { signal })
+      if (res.status === 401) {
+        const reason = await this.parseAuthReason(res)
+        if (this.ws) {
+          this.ws.onclose = null
+          this.ws.close()
+          this.ws = null
+        }
+        connectionStore.enterUnauthenticated(reason)
+        return
+      }
       if (!res.ok) throw new Error(`State fetch failed: ${res.status}`)
       const text = await res.text()
       const snapshot: StateSnapshot = JSON.parse(text, (key, value) => this.jsonReviver(key, value))
@@ -251,6 +278,53 @@ export class ConnectionManager {
       }
       this.handleDisconnect()
     }
+  }
+
+  /**
+   * Runs when the WS closes before it opens. Distinguishes a pre-upgrade 401
+   * (see atc-server ws.rs) from a genuine outage via a state-fetch probe,
+   * since the WebSocket API surfaces neither case with anything more
+   * specific than a close event.
+   */
+  private async handleWsOpenFailure(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return
+    const reason = await this.probeAuthReason(signal)
+    if (signal.aborted) return
+    this.ws = null
+    if (reason !== null) {
+      connectionStore.enterUnauthenticated(reason)
+      return
+    }
+    this.handleDisconnect()
+  }
+
+  /** Returns the 401 reason if /v1/state is currently rejecting us, else null (covers non-401 responses and network failures alike — both fall back to normal backoff). */
+  private async probeAuthReason(signal: AbortSignal): Promise<AuthReason | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/state`, { signal })
+      if (res.status !== 401) return null
+      return await this.parseAuthReason(res)
+    } catch {
+      return null
+    }
+  }
+
+  /** Parses the `{"reason": ...}` body of a 401 response. Falls back to the more conservative `auth_required` (full login screen, not a silent popup retry) if the body doesn't match the contract. */
+  private async parseAuthReason(res: Response): Promise<AuthReason> {
+    try {
+      const body: unknown = await res.json()
+      if (
+        typeof body === 'object' &&
+        body !== null &&
+        'reason' in body &&
+        (body.reason === 'auth_required' || body.reason === 'stale_authorization')
+      ) {
+        return body.reason
+      }
+    } catch {
+      // fall through to default
+    }
+    return 'auth_required'
   }
 
   private handleDisconnect(): void {
