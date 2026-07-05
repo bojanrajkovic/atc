@@ -18,19 +18,37 @@ function mockPopup(): { closed: boolean; close: () => void } {
   return popup
 }
 
-describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
+describe('LoginScreen — popup-first re-auth', () => {
   afterEach(() => {
     window.history.replaceState(null, '', '/')
     connectionStore.authReason = null
     vi.restoreAllMocks()
   })
 
-  it('does not attempt a popup for auth_required — there is no prior session to silently refresh', () => {
-    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+  it('attempts a popup for auth_required too — an active SPA session getting revoked may still have live user activation', () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(mockPopup() as unknown as Window)
     connectionStore.authReason = 'auth_required'
     render(LoginScreen)
 
-    expect(openSpy).not.toHaveBeenCalled()
+    expect(openSpy).toHaveBeenCalledWith(
+      '/v1/auth/github/login?popup=1',
+      'atc-auth',
+      'popup,width=640,height=760',
+    )
+  })
+
+  it('does not auto-redirect for auth_required when window.open is blocked — a cold visitor should never be silently navigated to a GitHub consent screen', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    window.history.replaceState(null, '', '/?q=stuck-runs')
+
+    connectionStore.authReason = 'auth_required'
+    const navigatedTo = await withLocationHrefSpy(() => {
+      render(LoginScreen)
+    })
+
+    expect(openSpy).toHaveBeenCalledOnce()
+    expect(navigatedTo).toBe(null)
+    expect(screen.getByRole('link', { name: /sign in with github/i })).toBeTruthy()
   })
 
   it('opens a popup and calls retry() on session-refreshed, without navigating', async () => {
@@ -57,7 +75,7 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
     expect(navigatedTo).toBe(null)
   })
 
-  it('falls back to a full-page redirect when window.open returns null (no user activation)', async () => {
+  it('falls back to a full-page redirect for stale_authorization when window.open returns null (no user activation)', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
     window.history.replaceState(null, '', '/?q=stuck-runs')
 
@@ -135,18 +153,50 @@ describe('LoginScreen — popup-first re-auth on stale_authorization', () => {
     vi.useRealTimers()
   })
 
-  it('disables the manual link while a popup is in flight — the backend flow cookie is single-slot, not per-popup', async () => {
+  it('never disables the manual link, even while a popup is in flight', async () => {
     vi.spyOn(window, 'open').mockReturnValue(mockPopup() as unknown as Window)
 
-    connectionStore.authReason = 'stale_authorization'
+    connectionStore.authReason = 'auth_required'
     render(LoginScreen)
     await tick()
 
     const link = screen.getByRole('link', { name: /sign in with github/i })
-    expect(link.getAttribute('aria-disabled')).toBe('true')
+    expect(link.getAttribute('aria-disabled')).not.toBe('true')
+    expect(link.getAttribute('tabindex')).not.toBe('-1')
+  })
 
+  it('a manual click cancels an in-flight popup (closing it) rather than racing it for the single-slot flow cookie', async () => {
+    const popup = mockPopup()
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    window.history.replaceState(null, '', '/?q=stuck-runs')
+
+    connectionStore.authReason = 'auth_required'
+    render(LoginScreen)
+    await tick()
+
+    const link = screen.getByRole('link', { name: /sign in with github/i })
     const navigatedTo = await withLocationHrefSpy(() => fireEvent.click(link))
-    expect(navigatedTo).toBe(null)
+
+    expect(popup.closed).toBe(true)
+    expect(navigatedTo).toBe(
+      `/v1/auth/github/login?return_to=${encodeURIComponent('/?q=stuck-runs')}`,
+    )
+  })
+
+  it('a manual click before any popup attempt (or after one already resolved) is a harmless no-op cancel', async () => {
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    window.history.replaceState(null, '', '/?q=stuck-runs')
+
+    connectionStore.authReason = 'auth_required'
+    render(LoginScreen)
+    await tick()
+
+    const link = screen.getByRole('link', { name: /sign in with github/i })
+    const navigatedTo = await withLocationHrefSpy(() => fireEvent.click(link))
+
+    expect(navigatedTo).toBe(
+      `/v1/auth/github/login?return_to=${encodeURIComponent('/?q=stuck-runs')}`,
+    )
   })
 
   it('falls back to a full-page redirect if window.open throws synchronously', async () => {

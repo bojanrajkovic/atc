@@ -23,20 +23,27 @@
     return () => window.removeEventListener('popstate', onPopstate)
   })
 
-  // Popup-first silent re-auth for a staleness signal (not auth_required,
-  // which always needs the explicit click below — there's no prior GitHub
-  // session to silently refresh). window.open must be called synchronously
-  // in whatever context noticed the staleness to have any chance at
-  // transient user activation; called from an async continuation it would
-  // always be blocked. Most of the time there's no activation at all (an
-  // unattended dashboard reconnecting), and that's fine — the null-fallback
-  // below is what keeps it self-healing without a gesture.
-  //
-  // Also drives the manual link's disabled state below: the backend's OAuth
-  // flow cookie is a single slot per browser, not scoped per popup/tab, so a
-  // manual click while this popup is mid-flow would overwrite it and fail
-  // one of the two flows with a state mismatch.
+  // Popup-first for both auth reasons — window.open must be called
+  // synchronously in whatever context noticed the reason to have any chance
+  // at transient user activation; called from an async continuation it
+  // would always be blocked. A fresh cold visit (typed URL, bookmark) can
+  // still carry activation into window.open in some browser/automation
+  // contexts (verified empirically — do not assume it's always blocked), so
+  // treat "popup succeeds" as a real, reachable case for auth_required too,
+  // not just for an existing SPA session getting revoked mid-use.
   let popupInFlight = $state(false)
+
+  // Cancels whatever popup-flow cleanup is currently registered, if any —
+  // set by the effect below while a popup is open, cleared (null) once it
+  // isn't. The manual click always wins over a competing background popup:
+  // the backend's OAuth flow cookie is a single slot per browser, not scoped
+  // per popup/tab, so leaving both alive would let one clobber the other's
+  // cookie and fail with a state mismatch. Canceling first — rather than
+  // just disabling the button until the popup resolves — means the button
+  // never gets stuck: a popup that silently never completes (blocked by
+  // browser chrome our code can't see, or simply ignored) would otherwise
+  // leave the user looking at a disabled button with no way forward.
+  let cancelPopup: (() => void) | null = null
 
   // Recomputed at click time too: a same-tick history.replaceState (e.g.
   // App.svelte's popstate handler stripping a stale ?run= once its run isn't
@@ -44,7 +51,7 @@
   // href above can still lag a half-step behind for a normal left-click.
   function login(event: MouseEvent): void {
     event.preventDefault()
-    if (popupInFlight) return
+    cancelPopup?.()
     window.location.href = computeLoginHref()
   }
 
@@ -54,9 +61,8 @@
     // tracked dependency of an effect that writes it is exactly the
     // read-your-own-write cycle Svelte's effect_update_depth_exceeded guards
     // against. connectionStore.authReason is the only real trigger.
-    if (connectionStore.authReason !== 'stale_authorization' || untrack(() => popupInFlight)) {
-      return
-    }
+    const reason = connectionStore.authReason
+    if (reason === null || untrack(() => popupInFlight)) return
     popupInFlight = true
 
     let popup: Window | null
@@ -70,7 +76,14 @@
 
     if (popup === null) {
       popupInFlight = false
-      window.location.href = computeLoginHref()
+      // stale_authorization: the tab already has a working session and this
+      // is often an unattended reconnect with nobody watching — auto-redirect
+      // so it self-heals. auth_required: could be a genuinely fresh visitor
+      // who's never seen this app's GitHub consent screen; auto-navigating
+      // them into it with zero warning is the back-button-trap UX this
+      // screen exists to avoid (see docs/architecture/frontend-app.md). Leave
+      // the button as the only path there.
+      if (reason === 'stale_authorization') window.location.href = computeLoginHref()
       return
     }
 
@@ -84,7 +97,9 @@
       channel.close()
       if (!popup.closed) popup.close()
       popupInFlight = false
+      cancelPopup = null
     }
+    cancelPopup = cleanup
 
     channel.onmessage = (event) => {
       if (event.data !== 'session-refreshed') return
@@ -117,7 +132,5 @@
   <p class="text-sm text-center max-w-sm" style="color: var(--text-dim);">
     Sign in with GitHub to see the workflow runs you're authorized to monitor.
   </p>
-  <Button href={loginHref} onclick={login} disabled={popupInFlight} size="lg">
-    Sign in with GitHub
-  </Button>
+  <Button href={loginHref} onclick={login} size="lg">Sign in with GitHub</Button>
 </main>
