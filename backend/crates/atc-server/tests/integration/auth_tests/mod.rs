@@ -17,6 +17,7 @@
 mod auth_context;
 mod login_callback;
 mod logout;
+mod public_repos;
 mod session_lifecycle;
 mod whoami;
 
@@ -27,7 +28,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::json;
 use testcontainers::ContainerAsync;
@@ -37,8 +38,10 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 use atc_core::{Clock, SystemClock};
+use atc_persist::PersistentStore;
 use atc_server::auth::AuthRuntime;
 use atc_server::github_client::GitHubClient;
+use atc_server::public_repo_cache::PublicRepoCache;
 use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
 use atc_store_pg::SessionStore;
@@ -58,6 +61,10 @@ struct MockGitHubConfig {
     /// pointing at itself, regardless of the `page` param — simulates a
     /// malformed/cycling pagination response for the page-cap test.
     cycle_pagination: bool,
+    /// Repo IDs `GET /repositories/{id}` reports as `visibility: "public"`.
+    /// Anything else 404s, matching GitHub's real behavior for a private or
+    /// nonexistent repo.
+    public_repo_ids: Vec<i64>,
 }
 
 async fn spawn_mock_github(config: MockGitHubConfig) -> String {
@@ -79,6 +86,7 @@ async fn spawn_mock_github(config: MockGitHubConfig) -> String {
             "/user/installations/{id}/repositories",
             get(mock_get_repositories),
         )
+        .route("/repositories/{id}", get(mock_get_repository_visibility))
         .with_state(config);
 
     tokio::spawn(async move {
@@ -90,13 +98,14 @@ async fn spawn_mock_github(config: MockGitHubConfig) -> String {
     base_url
 }
 
-/// The common case: no pagination, no forced failures.
+/// The common case: no pagination, no forced failures, no known public repos.
 fn default_mock_config() -> MockGitHubConfig {
     MockGitHubConfig {
         base_url: String::new(), // filled in by spawn_mock_github
         paginate_installations: false,
         deny_token_exchange: false,
         cycle_pagination: false,
+        public_repo_ids: Vec::new(),
     }
 }
 
@@ -185,6 +194,17 @@ async fn mock_get_repositories(Path(installation_id): Path<i64>) -> impl IntoRes
     }))
 }
 
+async fn mock_get_repository_visibility(
+    State(config): State<MockGitHubConfig>,
+    Path(repo_id): Path<i64>,
+) -> Response {
+    if config.public_repo_ids.contains(&repo_id) {
+        Json(json!({"id": repo_id, "visibility": "public"})).into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // App-under-test fixture
 // ---------------------------------------------------------------------------
@@ -194,21 +214,30 @@ async fn mock_get_repositories(Path(installation_id): Path<i64>) -> impl IntoRes
 /// `Set-Cookie` simple without needing a TLS test harness.
 const TEST_PUBLIC_ORIGIN: &str = "http://public.example.test";
 
-/// Shared `AppState` construction for both the auth-enabled and
-/// auth-disabled (`mode = "none"`) fixtures below, so a field added to
-/// `AppState` only needs updating in one place.
-fn build_app_state(
-    clock: Arc<dyn Clock>,
-    shutdown: CancellationToken,
-    auth: Option<AuthRuntime>,
-) -> Arc<AppState> {
-    let persist = InMemoryStore::start(
-        Arc::clone(&clock),
+/// The standard `InMemoryStore` every fixture below shares. Pulled out so
+/// callers that need a `public_repos` cache can hold onto the same `Arc`
+/// `build_app_state` ultimately wraps into `AppState` — the cache and
+/// `AppState.persist` must be the same store instance, not two independent
+/// ones, or a test-seeded run would be invisible to one of them.
+fn test_persist(clock: &Arc<dyn Clock>, shutdown: &CancellationToken) -> Arc<dyn PersistentStore> {
+    InMemoryStore::start(
+        Arc::clone(clock),
         Duration::from_secs(60 * 60),
         Duration::from_secs(60),
         None,
         shutdown.clone(),
-    );
+    )
+}
+
+/// Shared `AppState` construction for both the auth-enabled and
+/// auth-disabled (`mode = "none"`) fixtures below, so a field added to
+/// `AppState` only needs updating in one place.
+fn build_app_state(
+    persist: Arc<dyn PersistentStore>,
+    clock: Arc<dyn Clock>,
+    shutdown: CancellationToken,
+    auth: Option<AuthRuntime>,
+) -> Arc<AppState> {
     common::TestAppState::new(persist, clock)
         .with_shutdown(shutdown)
         .with_auth(auth)
@@ -228,6 +257,7 @@ async fn build_auth_test_app(
     common::ensure_recorder_installed();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();
+    let persist = test_persist(&clock, &shutdown);
     let sessions = SessionStore::start(pool, Arc::clone(&clock), shutdown.clone());
     let github = Arc::new(GitHubClient::with_base_urls(
         "test-client-id".to_string(),
@@ -235,15 +265,21 @@ async fn build_auth_test_app(
         mock_base_url.clone(),
         mock_base_url,
     ));
+    let public_repos = Arc::new(PublicRepoCache::new(
+        Arc::clone(&persist),
+        Arc::clone(&github),
+        Duration::from_secs(60 * 60),
+    ));
     let auth = Some(AuthRuntime {
         github,
         sessions,
         public_origin: TEST_PUBLIC_ORIGIN.to_string(),
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
         repo_auth_ttl: Duration::from_secs(60 * 60),
+        public_repos,
     });
 
-    let app_state = build_app_state(clock, shutdown, auth);
+    let app_state = build_app_state(persist, clock, shutdown, auth);
     let app = atc_server::routes::api_routes(true).with_state(app_state.clone());
     (app, app_state)
 }

@@ -15,10 +15,11 @@ use super::*;
 async fn auth_context_disabled_mode_short_circuits_without_touching_store() {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();
+    let persist = test_persist(&clock, &shutdown);
     // `auth: None` — there is no SessionStore to touch, so a successful
     // `Disabled` extraction here proves the mode=none path never attempts
     // one.
-    let app_state = build_app_state(clock, shutdown, None);
+    let app_state = build_app_state(persist, clock, shutdown, None);
 
     let mut parts = parts(None);
     let ctx = AuthContext::from_request_parts(&mut parts, &app_state)

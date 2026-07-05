@@ -53,7 +53,30 @@ repositories send webhooks.
 The practical consequence of the split is a two-surface coverage rule:
 a repository is visible to a given user only if it (a) sends ATC webhooks,
 (b) has the login app installed, and (c) is accessible to that user on
-GitHub. All three conditions must hold.
+GitHub. All three conditions must hold — **except for a publicly-visible
+repository**, which is visible to every session once (a) and (b) hold,
+regardless of (c). A public repository is readable by anyone on GitHub
+regardless of collaborator access, so gating it on the logging-in user's own
+access was a missed requirement, not a deliberate restriction: `GET
+/repositories/{id}` (GitHub's `visibility` field, not `private` — see below)
+answers "is this repo public" without needing a user token at all. ATC
+checks this directly for every repo it already has run data for (condition
+(a) already bounds that set — a repo with no webhook has no run data
+regardless of visibility) and unions the public subset into every session's
+`repo_ids` at callback, using Basic auth with the login app's own
+`client_id`/`client_secret` (already held for the OAuth flow) for the
+higher, 5,000/hr OAuth-app rate ceiling rather than the 60/hr unauthenticated
+one. The result is cached app-wide with the same `repo_auth_ttl` staleness
+window already governing per-user authorization, so a repository that flips
+public/private stays visible/hidden for at most one `repo_auth_ttl` window
+after the flip — an in-process, per-replica cache, not a shared one:
+replicas can disagree on the public set for up to that window, the same
+accepted-staleness posture already covering per-user authorization.
+
+`visibility`, not `private`, is the field this check reads: GitHub
+Enterprise "internal" repositories (visible to all org members, not the
+public internet) report `private: true`, so `private == false` would
+incorrectly include them.
 
 ### 3. Authorization keyed by immutable `repository.id`, never `org/repo` strings
 
@@ -148,10 +171,21 @@ reconnect-to-any-replica cursor design that decision depends on.
 
 ### Negative
 
-- **Two-surface coverage is an operator-legible but real gap.** A
-  repository visible via webhooks but missing the login app installation
-  (or vice versa) produces a confusing partial-visibility state that
-  operator documentation must explain clearly.
+- **Two-surface coverage is an operator-legible but real gap for
+  non-public repositories.** A repository visible via webhooks but missing
+  the login app installation (or vice versa) produces a confusing
+  partial-visibility state that operator documentation must explain
+  clearly. Public repositories are exempt from this gap (see decision 2's
+  public-repo exception): (b) and (c) are independently verifiable via
+  GitHub's own visibility model, without needing the requesting user to be
+  a collaborator.
+- **Public-repo visibility widens the blast radius of decision (c)
+  deliberately.** Any authenticated ATC session can now see run/job data
+  for any repository ATC ingests webhooks from and GitHub reports as
+  public, regardless of whether that session's user has any GitHub access
+  to it at all. This is the intended behavior — public means public — but
+  is a real widening from "collaborator access implies visibility" to
+  "GitHub-public implies visibility to every ATC user."
 - **No stored refresh token means authorization can only stay fresh as long
   as the user's own GitHub browser session is alive.** A session whose
   `repo_auth_ttl` has lapsed while the user's GitHub session has also

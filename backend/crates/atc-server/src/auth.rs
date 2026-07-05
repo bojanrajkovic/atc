@@ -32,6 +32,7 @@ use atc_core::RepoId;
 use atc_store_pg::{Session, SessionStore};
 
 use crate::github_client::{GitHubClient, GitHubClientError};
+use crate::public_repo_cache::PublicRepoCache;
 use crate::state::AppState;
 
 /// Random bytes in a `state`/PKCE-verifier token, before base64url encoding.
@@ -60,6 +61,9 @@ pub struct AuthRuntime {
     /// against — independent of `max_session_ttl` (the absolute session
     /// lifetime).
     pub repo_auth_ttl: Duration,
+    /// App-wide cache of publicly-visible repo IDs, unioned into every
+    /// session's `repo_ids` at callback (ADR-0014, amended decision 2).
+    pub public_repos: Arc<PublicRepoCache>,
 }
 
 /// The `auth.github` routes. Merged into the router only when
@@ -372,6 +376,18 @@ async fn callback_handler(
     // again past this point — nothing GitHub-issued survives this handler.
 
     let now = state.clock.now();
+
+    // Deliberately outside the `try_join!` above: a public-repo lookup
+    // failure (`PublicRepoCache::get` never errors — see its doc comment)
+    // must never block login the way a real `repos_call` failure does.
+    let public_repo_ids = auth.public_repos.get(now).await;
+    let repo_ids: Vec<i64> = repo_ids
+        .into_iter()
+        .chain(public_repo_ids.iter().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
     let existing_raw_id = get_cookie(&headers, names.session);
     let existing_session = match &existing_raw_id {
         Some(raw) => match auth.sessions.load_session(raw).await {

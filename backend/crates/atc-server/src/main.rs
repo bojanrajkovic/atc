@@ -19,6 +19,7 @@ use atc_server::config_watcher::ConfigWatcherMetrics;
 use atc_server::github_client::GitHubClient;
 use atc_server::metrics;
 use atc_server::otel::{self, OtelHandles};
+use atc_server::public_repo_cache::PublicRepoCache;
 use atc_server::routes;
 use atc_server::shutdown::run_shutdown_orchestration;
 use atc_server::state::AppState;
@@ -251,6 +252,15 @@ async fn main() {
                 .clone()
                 .expect("validate_auth_config guarantees client_secret when mode = github"),
         ));
+        // Shares `repo_auth_ttl` rather than a second config knob — same
+        // staleness philosophy (bounds how long a repo that flipped
+        // public/private stays stale), different blast radius (app-wide,
+        // not per-user).
+        let public_repos = Arc::new(PublicRepoCache::new(
+            Arc::clone(&persist),
+            Arc::clone(&github),
+            github_cfg.repo_auth_ttl,
+        ));
         Some(AuthRuntime {
             github,
             sessions,
@@ -260,6 +270,7 @@ async fn main() {
                 .expect("validate_auth_config guarantees public_origin when mode = github"),
             max_session_ttl: github_cfg.max_session_ttl,
             repo_auth_ttl: github_cfg.repo_auth_ttl,
+            public_repos,
         })
     } else {
         None

@@ -313,7 +313,8 @@ async fn return_to_rejects_scheme_relative_url() {
 async fn mode_none_leaves_auth_routes_unmounted() {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();
-    let app_state = build_app_state(clock, shutdown, None);
+    let persist = test_persist(&clock, &shutdown);
+    let app_state = build_app_state(persist, clock, shutdown, None);
     let app = atc_server::routes::api_routes(false).with_state(app_state);
 
     let (status, _headers) = do_login(&app, "").await;

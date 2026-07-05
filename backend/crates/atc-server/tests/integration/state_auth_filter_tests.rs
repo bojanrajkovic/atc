@@ -60,12 +60,18 @@ async fn build_shared_persist_apps(
         "http://unused.invalid".to_string(),
         "http://unused.invalid".to_string(),
     ));
+    let public_repos = Arc::new(atc_server::public_repo_cache::PublicRepoCache::new(
+        Arc::clone(&persist),
+        Arc::clone(&github),
+        Duration::from_secs(60 * 60),
+    ));
     let auth_runtime = AuthRuntime {
         github,
         sessions: Arc::clone(&sessions),
         public_origin: TEST_PUBLIC_ORIGIN.to_string(),
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
         repo_auth_ttl: Duration::from_secs(60 * 60),
+        public_repos,
     };
     let auth_state = common::TestAppState::new(Arc::clone(&persist), clock)
         .with_shutdown(shutdown)

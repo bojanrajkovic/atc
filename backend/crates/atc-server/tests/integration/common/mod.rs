@@ -525,12 +525,18 @@ pub async fn spawn_auth_server(
         "http://unused.invalid".to_string(),
         "http://unused.invalid".to_string(),
     ));
+    let public_repos = Arc::new(atc_server::public_repo_cache::PublicRepoCache::new(
+        Arc::clone(&persist),
+        Arc::clone(&github),
+        Duration::from_hours(1),
+    ));
     let auth = atc_server::auth::AuthRuntime {
         github,
         sessions: Arc::clone(&sessions),
         public_origin: AUTH_TEST_PUBLIC_ORIGIN.to_string(),
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
         repo_auth_ttl: Duration::from_hours(1),
+        public_repos,
     };
     let app_state = TestAppState::new(persist, clock)
         .with_shutdown(shutdown)
