@@ -121,6 +121,25 @@ App renders `LoginScreen` in place of the entire dashboard (AppShell, kanban, pa
 
 `KanbanBoard`'s ordinary "connected, zero runs" empty state distinguishes two causes via `identity`: `repoCount === 0` (signed in, but the app∩user∩webhook intersection is empty) gets its own message via `EmptyState`'s `message` prop; everything else (including `mode = "none"`, where `identity` is always null) falls through to the default "Watching for runs." caption.
 
+## Popup-First Staleness Re-Auth
+
+`LoginScreen` auto-attempts a silent re-auth the moment `connectionStore.authReason` becomes `stale_authorization` — unlike `auth_required` (no prior GitHub session to refresh; always needs the explicit "Sign in with GitHub" click), staleness usually means the browser's own github.com session is still live and can re-derive the repo set with no visible interruption.
+
+```mermaid
+flowchart LR
+    S["authReason becomes\nstale_authorization"] --> O{"window.open(popup)\nsucceeds?"}
+    O -- yes --> W["BroadcastChannel('atc-auth')\nlistens for 'session-refreshed'"]
+    W -- message received --> R["retry()"]
+    W -- popup closed first\n(abandoned) --> D["degrade: ordinary\nlogin screen stays visible"]
+    O -- "no (no gesture)" --> F["location.href = login\nwith return_to"]
+```
+
+`window.open` is called synchronously inside the `$effect` that observes the reason change (wrapped in a `try`/`catch` — a sandboxed embedding without `allow-popups` can throw rather than return `null`) — calling it from an async continuation would already have lost any transient user activation, so there would be nothing to check. Most of the time there's no activation at all (an unattended dashboard reconnecting after a deploy), and `window.open` returns `null`; that's the expected common case, not a failure — the full-page redirect is what makes an unattended session self-heal. When a popup does open, the callback page (server-side, `POPUP_CALLBACK_HTML` in `auth.rs`) posts `'session-refreshed'` on a `BroadcastChannel` named `'atc-auth'` and self-closes; `LoginScreen` never sends anything back, it only listens and then calls `connectionStore.retry()`, which is what actually re-fetches the snapshot and reopens the WS — the popup round-trip never touches the main tab's connection.
+
+If the user closes the popup manually instead of completing the flow, a `setInterval` poll on `popup.closed` notices. Detecting `closed` doesn't immediately tear down the channel: `window.close()` in the callback page runs right after `postMessage`, and BroadcastChannel delivery is asynchronous, so the poll can observe the popup as closed a moment before an already-sent `'session-refreshed'` message actually arrives. The poll stops immediately but gives the channel a one-second grace window before closing it, so a message already in flight still lands instead of being silently discarded — only after that window with no message does it degrade to the ordinary login screen.
+
+`popupInFlight` (a `$state` field, read `untrack`'d inside the effect's own guard check to avoid a read-your-own-write dependency cycle) serves two purposes: it guards against opening a second popup while one is already open, and — since the backend's OAuth flow cookie is a single slot per browser, not scoped per popup/tab — it disables the manual "Sign in with GitHub" link while a popup is in flight, so a concurrent click can't overwrite the popup's flow and fail both with a state mismatch. `cleanup()` also closes the popup window itself (not just the channel/timers), so a session refreshed through some other path doesn't leave the popup orphaned mid-flow.
+
 ## Store Architecture
 
 Five rune-class stores are module-level singletons. Five is the design ceiling; a sixth store requires justification at the same level of specificity that introduced the fifth.
