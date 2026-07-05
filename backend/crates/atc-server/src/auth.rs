@@ -32,27 +32,12 @@ use sha2::{Digest, Sha256};
 use tracing::{Instrument, field, info_span};
 
 use atc_core::RepoId;
+use atc_store_pg::metrics::METER_SCOPE;
 use atc_store_pg::{Session, SessionStore};
 
 use crate::github_client::{GitHubClient, GitHubClientError};
 use crate::public_repo_cache::PublicRepoCache;
 use crate::state::AppState;
-
-/// Meter scope shared with [`crate::ws::WsMetrics`] and
-/// `atc_store_pg::metrics::PgMetrics`.
-const METER_SCOPE: &str = "atc";
-
-/// Which mounted route rejected the request — the label distinguishing
-/// otherwise-identical `auth_required`/`stale_authorization` rejections
-/// across `/v1/state`, `/v1/ws`, and `/v1/auth/me`.
-fn surface_for_path(path: &str) -> &'static str {
-    match path {
-        "/v1/state" => "state",
-        "/v1/ws" => "ws",
-        "/v1/auth/me" => "me",
-        _ => "unknown",
-    }
-}
 
 /// OTel instrumentation for `auth.github`: login outcomes, request
 /// rejections, and callback GitHub round-trip duration.
@@ -473,20 +458,24 @@ async fn callback_handler(
 
         let redirect_uri = format!("{}/v1/auth/github/callback", auth.public_origin);
         let exchange_start = std::time::Instant::now();
-        let access_token = match auth
+        let exchange_result = auth
             .github
             .exchange_code(code, &redirect_uri, &flow.pkce_verifier)
-            .await
-        {
+            .await;
+        // Recorded before the outcome check, on both the Ok and Err arms — a
+        // slow-then-failing exchange (e.g. GitHub degraded) is exactly the
+        // case an operator needs this histogram to surface, not just the
+        // successful calls.
+        state
+            .auth_metrics
+            .record_callback_duration("exchange", exchange_start.elapsed().as_secs_f64());
+        let access_token = match exchange_result {
             Ok(token) => token,
             Err(e) => {
                 record_outcome("exchange_failed");
                 return github_call_failed(&e, "token exchange");
             }
         };
-        state
-            .auth_metrics
-            .record_callback_duration("exchange", exchange_start.elapsed().as_secs_f64());
 
         // Identity and the repo-authorization set are independent — neither
         // depends on the other — so they run concurrently rather than as two
@@ -504,16 +493,17 @@ async fn callback_handler(
                 .await
                 .map_err(|e| ("repository lookup", e))
         };
-        let (user, repo_ids) = match tokio::try_join!(user_call, repos_call) {
+        let repos_result = tokio::try_join!(user_call, repos_call);
+        state
+            .auth_metrics
+            .record_callback_duration("repos", repos_start.elapsed().as_secs_f64());
+        let (user, repo_ids) = match repos_result {
             Ok((user, repo_ids)) => (user, repo_ids),
             Err((what, e)) => {
                 record_outcome("exchange_failed");
                 return github_call_failed(&e, what);
             }
         };
-        state
-            .auth_metrics
-            .record_callback_duration("repos", repos_start.elapsed().as_secs_f64());
         // `access_token` and the token-exchange response are not referenced
         // again past this point — nothing GitHub-issued survives this handler.
 
@@ -816,7 +806,15 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
         let Some(auth) = state.auth.as_ref() else {
             return Ok(Self::Disabled);
         };
-        let surface = surface_for_path(parts.uri.path());
+        // Which mounted route rejected — distinguishes otherwise-identical
+        // `auth_required`/`stale_authorization` rejections across
+        // `/v1/state`, `/v1/ws`, and `/v1/auth/me` for the trace/metric.
+        let surface = match parts.uri.path() {
+            "/v1/state" => "state",
+            "/v1/ws" => "ws",
+            "/v1/auth/me" => "me",
+            _ => "unknown",
+        };
 
         let names = cookie_names(&auth.public_origin);
         let raw_cookie = get_cookie(&parts.headers, names.session);

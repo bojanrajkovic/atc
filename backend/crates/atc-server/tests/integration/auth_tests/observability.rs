@@ -1,32 +1,16 @@
-//! `auth.callback`'s span tree and `atc_auth_logins_total` outcome counter
-//! (#469). WS/state/me rejection-metric coverage and the session-sweep
-//! metric live alongside the tests they extend (`ws_auth_filter_tests.rs`,
-//! `state_auth_filter_tests.rs`, `auth_context.rs`, `atc-store-pg`'s
-//! `session_store_tests.rs`) rather than duplicated here.
+//! `auth.callback`'s span tree, `atc_auth_logins_total` outcome counter, and
+//! the session-sweep metric (#469). WS/state/me rejection-metric coverage
+//! lives alongside the tests it extends (`ws_auth_filter_tests.rs`,
+//! `state_auth_filter_tests.rs`, `auth_context.rs`) rather than duplicated
+//! here. The session-sweep metric test lives here, not in `atc-store-pg`'s
+//! `session_store_tests.rs`, because only this crate's integration harness
+//! installs the in-memory OTel meter provider `SessionMetrics` registers
+//! against.
 
 use opentelemetry_sdk::trace::SpanData;
 
 use super::*;
-
-fn span_named<'a>(spans: &'a [SpanData], name: &str) -> Option<&'a SpanData> {
-    spans.iter().find(|s| s.name.as_ref() == name)
-}
-
-fn parent_of<'a>(spans: &'a [SpanData], child: &SpanData) -> Option<&'a SpanData> {
-    if !child.parent_span_id.to_bytes().iter().any(|b| *b != 0) {
-        return None;
-    }
-    spans
-        .iter()
-        .find(|s| s.span_context.span_id() == child.parent_span_id)
-}
-
-fn attribute_str(span: &SpanData, key: &str) -> Option<String> {
-    span.attributes
-        .iter()
-        .find(|kv| kv.key.as_str() == key)
-        .map(|kv| kv.value.to_string())
-}
+use crate::common::{attribute_str, parent_of, span_named};
 
 /// No attribute on any captured span may contain a token-shaped substring —
 /// mirrors `login_callback.rs`'s `schema_has_no_token_columns`-style

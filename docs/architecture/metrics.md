@@ -111,7 +111,9 @@ For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc
 
 Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics.
 
-The mechanical guard: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new instrument built anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if genuinely new, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
+The mechanical guard for PG-mode instruments specifically: the only sites that build `atc_pg_*` OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new `atc_pg_*` instrument built anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if genuinely new, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
+
+Non-PG surfaces follow the same cached-handle convention but register their own instruments in their own module, each holding a small dedicated struct rather than sharing `PgMetrics`: `ws::WsMetrics`, `auth::AuthMetrics` (both `atc-server`), and `session::SessionMetrics` (`atc-store-pg`, deliberately separate from `PgMetrics` — see that crate's `CLAUDE.md`, "`SessionStore` intentionally does not live inside `PgStore`"). A new metric on one of these surfaces is added to its owning struct's `register()`, not to `PgMetrics`.
 
 ### W3C trace context propagation
 
@@ -400,6 +402,9 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Type:** counter
 - **Attributes:** `kind` (`"flow"` | `"session"`) — mirrors `atc_staleness_swept_total`'s `kind` vocabulary; `pod`, `instance` (injected)
 - **Measures:** Expired `auth_flows`/`auth_sessions` rows deleted by this replica's session-sweep task (`SessionStore`, `atc-store-pg`). Registered and owned independently of `PgMetrics` — `SessionStore` is not part of `PgStore` (see `atc-store-pg`'s `CLAUDE.md` "Sharp edges").
+- **Per-replica vs cluster scope:** Per-replica (no cross-replica coordination — an already-deleted row is a no-op for a second replica's sweep).
+- **Aggregation guidance:** `sum by (kind)` across replicas — every replica sweeps independently on the same interval.
+- **Example PromQL:** `sum by (kind) (rate(atc_auth_swept_total[30m]))`
 
 ## Span inventory
 

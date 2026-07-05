@@ -38,6 +38,11 @@ async fn build_shared_persist_apps(
     Arc<SessionStore>,
     Arc<dyn PersistentStore>,
 ) {
+    // `SessionStore::start` registers OTel counters against the global
+    // meter provider — must run after the harness installs it, mirroring
+    // `common::spawn_auth_server` and `auth_tests::build_auth_test_app`'s
+    // same call at the top of every fixture that constructs a `SessionStore`.
+    common::ensure_recorder_installed();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();
     let persist: Arc<dyn PersistentStore> = InMemoryStore::start(

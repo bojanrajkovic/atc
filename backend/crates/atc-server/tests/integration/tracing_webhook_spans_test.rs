@@ -9,38 +9,14 @@
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use opentelemetry_sdk::trace::SpanData;
 use serial_test::serial;
 use tokio::time::timeout;
 
 use crate::common;
+use crate::common::{attribute_str, parent_of, span_named, spans_named};
 
 const TRACEPARENT_TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
 const TRACEPARENT_HEADER: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-
-fn span_named<'a>(spans: &'a [SpanData], name: &str) -> Option<&'a SpanData> {
-    spans.iter().find(|s| s.name.as_ref() == name)
-}
-
-fn spans_named<'a>(spans: &'a [SpanData], name: &str) -> Vec<&'a SpanData> {
-    spans.iter().filter(|s| s.name.as_ref() == name).collect()
-}
-
-fn parent_of<'a>(spans: &'a [SpanData], child: &SpanData) -> Option<&'a SpanData> {
-    if !child.parent_span_id.to_bytes().iter().any(|b| *b != 0) {
-        return None;
-    }
-    spans
-        .iter()
-        .find(|s| s.span_context.span_id() == child.parent_span_id)
-}
-
-fn attribute_str(span: &SpanData, key: &str) -> Option<String> {
-    span.attributes
-        .iter()
-        .find(|kv| kv.key.as_str() == key)
-        .map(|kv| kv.value.to_string())
-}
 
 #[tokio::test]
 #[serial]
