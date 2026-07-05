@@ -1,3 +1,5 @@
+import type { WhoamiResponse as Identity } from '$lib/types/generated/WhoamiResponse'
+
 type ConnectionStatus =
   | 'connecting'
   | 'connected'
@@ -6,14 +8,7 @@ type ConnectionStatus =
   | 'unauthenticated'
 
 export type AuthReason = 'auth_required' | 'stale_authorization'
-
-/** GET /v1/auth/me response shape (atc-server auth.rs's WhoamiResponse). */
-export interface Identity {
-  login: string
-  repoCount: number
-  reposRefreshedAt: string
-  stale: boolean
-}
+export type { Identity }
 
 const STALE_THRESHOLD_MS = 30_000
 const STALE_CHECK_INTERVAL_MS = 5_000
