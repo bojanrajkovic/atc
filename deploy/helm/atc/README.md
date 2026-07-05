@@ -8,7 +8,7 @@ ATC (Actions Traffic Control) is a real-time GitHub Actions dashboard. This Helm
 
 For architecture details and design decisions, see [`docs/architecture/deployment.md`](../../../docs/architecture/deployment.md).
 
-> **No built-in authentication.** ATC does not gate the SPA, `/v1/state`, or `/v1/ws`. Deploy the chart behind a trusted network surface (private VPC, VPN, Tailscale) or an authenticating reverse proxy. See [`docs/operator/authentication.md`](../../../docs/operator/authentication.md) for per-proxy recipes (Pomerium recommended; oauth2-proxy, Authelia, and Cloudflare Access all work for the full SPA + REST + WS surface) and the webhook-endpoint split.
+> **Authentication is opt-in.** By default (`auth.mode: none`) ATC does not gate the SPA, `/v1/state`, or `/v1/ws` — deploy behind a trusted network surface (private VPC, VPN, Tailscale) or an authenticating reverse proxy. Set `auth.mode: github` for first-party GitHub OAuth login with per-repository authorization instead. See [`docs/operator/authentication.md`](../../../docs/operator/authentication.md) for per-proxy recipes (Pomerium recommended; oauth2-proxy, Authelia, and Cloudflare Access all work for the full SPA + REST + WS surface), the `auth.mode: github` setup guide, and the webhook-endpoint split.
 
 > **Pre-1.0 stability.** The chart is still on the `0.x` line; minor version bumps may carry breaking changes to values keys. Check `CHANGELOG.md` before upgrading.
 

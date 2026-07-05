@@ -1,27 +1,94 @@
 # Authentication
 
-Last verified: 2026-05-18
+Last verified: 2026-07-05
 
-> Operator runbook. Architectural rationale lives in [`docs/architecture/deployment.md`](../architecture/deployment.md#authentication). This document holds the per-proxy recipes.
+> Operator runbook. Architectural rationale lives in [`docs/architecture/deployment.md`](../architecture/deployment.md#authentication) (chart values) and [`docs/architecture/backend-server.md`](../architecture/backend-server.md) (`auth.rs`/`ws.rs` sections). This document holds the setup guide and per-proxy recipes.
 
 ## What ATC ships
 
-**No built-in authentication.** The SPA, `GET /v1/state`, and `GET /v1/ws` are open to anyone who can reach the HTTP port. The webhook endpoint at `POST /v1/webhooks/github` validates HMAC-SHA256 signatures when `ATC_GITHUB__WEBHOOK_SECRET` is configured; nothing else is gated.
+Two independent auth postures — composing them in one deployment is out of scope today:
 
-This is a deliberate scope decision. ATC accepts the surrounding deployment's identity model rather than ship its own OIDC / SAML / session-store subsystem.
+- **`auth.mode = "none"` (default).** No built-in authentication. The SPA, `GET /v1/state`, and `GET /v1/ws` are open to anyone who can reach the HTTP port. `POST /v1/webhooks/github` validates HMAC-SHA256 signatures when `ATC_GITHUB__WEBHOOK_SECRET` is configured; nothing else is gated. ATC accepts the surrounding deployment's identity model rather than ship its own — see § "`auth.mode = none`" below for the private-network / reverse-proxy / ingress-annotation patterns.
+- **`auth.mode = "github"`.** First-party GitHub OAuth login ([ADR-0014](../architecture-decisions/0014-native-github-auth-mode.md)): users sign in with GitHub, ATC derives which repositories they can see directly from GitHub, and `GET /v1/state` + `GET /v1/ws` filter to that set. See § "`auth.mode = github`" below.
 
-## Supported patterns
+## Choosing a mode
+
+- **Per-repository authorization** (different users should see different subsets of the monitored repos) → `auth.mode = "github"`.
+- **Org-wide SSO gate** (any authenticated org member sees the whole dashboard, no per-repo distinction) → `auth.mode = "none"` behind a reverse proxy — the recipes below.
+- Composing both (an SSO gate *and* per-repo filtering in the same deployment) is out of scope — pick one.
+
+## `auth.mode = "github"`
+
+### GitHub setup guide
+
+**Exactly one GitHub App exists in this design.** Ingestion (the webhooks ATC has always consumed) and login are two independent surfaces — don't conflate them, and don't create a second app for either:
+
+1. **Webhook ingestion — unchanged.** ATC still receives org- or repo-configured webhooks at `POST /v1/webhooks/github`, gated by `ATC_GITHUB__WEBHOOK_SECRET` (HMAC-SHA256). Nothing about this changes when `auth.mode = "github"` is enabled; this initiative added zero ingestion work. If you haven't set up webhook delivery yet, do that first — it's independent of everything below.
+2. **Auth app — new, metadata-only.** Register a GitHub App for login:
+   - **Permissions:** `Metadata: Read-only` and nothing else. The app never reads repo contents, Actions runs, or any other resource — it exists solely to answer "which repos can this user see."
+   - **User-to-server token expiration:** leave it **enabled** (the default for new Apps — tokens expire after 8h) — ATC discards the access token within the same request regardless, but a shorter GitHub-side lifetime is defense in depth.
+   - **Callback URL:** `<public_origin>/v1/auth/github/callback`, where `public_origin` is the same value configured in `[auth.github].public_origin` / `ATC_AUTH__GITHUB__PUBLIC_ORIGIN`.
+   - **Webhook:** leave disabled. This app subscribes to nothing — the ingestion webhooks above are a completely separate GitHub-side configuration (possibly on a different, org-owned app or plain repo/org webhooks) and are untouched by this app's settings.
+   - **Installation:** install the app on every repository you want covered by login-based filtering. This can be a superset, subset, or exact match of the repos sending ingestion webhooks — see the coverage rule below for what that means in practice.
+   - Record the app's Client ID and generate a Client Secret; these become `client_id` / `client_secret` (§ Config reference below).
+
+### Coverage rule
+
+A repository is visible to a logged-in session only when **all three** are true:
+
+```
+visible = (repos sending ATC webhooks) ∩ (repos the auth app is installed on) ∩ (repos the user can access)
+```
+
+- Not sending webhooks → ATC has no data for it regardless of who's logged in.
+- Webhooks flowing but the auth app isn't installed on it → invisible to every session (it never enters any user's authorized repo set).
+- Auth app installed but the user has no GitHub access to it → invisible to that user specifically.
+
+In practice: install the auth app everywhere you already have webhooks configured, and coverage reduces to "the repos a given user can already see on GitHub."
+
+### Config reference
+
+```toml
+[auth]
+mode = "github"                             # "none" (default)
+
+[auth.github]
+client_id     = "Iv1.abc123"
+client_secret = "..."                       # env: ATC_AUTH__GITHUB__CLIENT_SECRET
+public_origin = "https://atc.example.com"   # WS Origin allowlist + OAuth redirect_uri base
+repo_auth_ttl   = "1h"                      # optional; server default 1h
+max_session_ttl = "30d"                     # optional; server default 30d
+```
+
+All five keys are restart-only (the existing scalar-drift rule). `auth.mode = "github"` requires an external Postgres connection — the in-memory store has no session storage and boot validation fails without `database_url`. `client_secret` never appears in `Debug` output.
+
+Helm values (`auth.mode`, `auth.github.*`, the `existingSecret` client-secret reference, and the render-time `{{ fail }}` guards) are documented in [`docs/architecture/deployment.md`](../architecture/deployment.md#configuration-surface) — this doc only lists the config keys; the chart-value ↔ env-var mapping and guard behavior live there, not duplicated here.
+
+### Session model
+
+- **Opaque cookie, no GitHub tokens.** `__Host-atc_session` (plain `atc_session` over a non-HTTPS dev origin), `HttpOnly`, `SameSite=Lax`. The GitHub access and refresh tokens obtained at login are used only long enough to derive the authorized repo set, then discarded — nothing GitHub-issued is ever persisted or logged.
+- **Staleness (`repo_auth_ttl`, default 1h).** Once a session's authorized repo set is older than this, `GET /v1/state` and `GET /v1/ws` fail closed with a 401 (`stale_authorization`) rather than serving a possibly-outdated repo set. The SPA re-derives it automatically: a popup-first silent re-auth (`window.open` + a same-origin `BroadcastChannel` announcing completion) that never navigates the main tab or drops the WebSocket, falling back to a full-page redirect only when the popup can't open (no transient user activation — e.g. an unattended dashboard reconnecting after a deploy). As long as the user's own github.com browser session is alive, this is invisible — no login prompt appears. A login prompt only reappears once *that* session has also lapsed.
+- **Absolute lifetime (`max_session_ttl`, default 30d).** Independent of the staleness clock above; the session expires outright once this elapses regardless of activity.
+- **Logout.** `POST /v1/auth/github/logout` deletes the session and clears the cookie. Idempotent — logging out twice, or with no session, both return `204`.
+
+### WS `Origin` validation (native, `github` mode only)
+
+In `auth.mode = "github"`, ATC validates the WebSocket upgrade's `Origin` header against `public_origin` itself, before accepting the upgrade — no proxy-side `Origin` rule is needed for this mode. This is the one exception to the "ATC gates nothing itself" posture elsewhere in this document: it exists because a real session cookie exists to protect in this mode, unlike `auth.mode = "none"`. The proxy-side `Origin` guidance in § Cross-cutting gotchas below applies only to `auth.mode = "none"` deployments — see that section for why `mode = "none"` needs an explicit proxy rule while `github` mode does not.
+
+## `auth.mode = "none"`
+
+### Supported patterns
 
 - **Private network.** Deploy into a VPC, a homelab subnet, a Tailscale tailnet — any network where the access-control answer is "you have to already be inside." Pair with the chart's NetworkPolicy (hardened `from` list scoped to ingress controllers + VPN endpoints) when CNI enforcement is available.
 - **Authenticating reverse proxy.** Front the Service with a proxy that runs an OIDC / OAuth2 flow against an upstream IdP and forwards the authenticated session to ATC. Recipes for the common proxies are below.
 - **Ingress annotations.** The chart's Ingress (`templates/ingress.yaml`) passes `ingress.annotations` through, so operators can wire any ingress-class-specific auth filter (nginx `auth_request`, Traefik middleware chains, etc.) without modifying the chart.
 - **Gateway API attachment.** The chart's `HTTPRoute` (`templates/httproute.yaml`) does not currently expose `annotations` through chart values. Gateway API auth attaches via the API's native mechanisms instead — Envoy Gateway's `SecurityPolicy` resource keyed by `targetRef` on the HTTPRoute, an HTTPRoute `filters` entry with `type: ExtensionRef`, or whatever the operator's Gateway implementation supports. Operators who want chart-managed `HTTPRoute` annotations should open an issue — it's a small, additive chart change.
 
-## Recipes
+### Recipes
 
 Every recipe below splits the route surface into two policies: **webhook bypass** for `POST /v1/webhooks/github` (HMAC does the gating) and **authenticated** for everything else (SPA + `GET /v1/state` + `GET /v1/ws`). The WebSocket upgrade always inherits the SPA's session cookie because they're same-origin; the only thing the proxy must do is forward the `Upgrade` and `Connection` headers and not impose a short idle timeout on the upgraded connection.
 
-### Pomerium (recommended)
+#### Pomerium (recommended)
 
 Pomerium is the most mature fit. Per-route policy is first-class; `allow_public_unauthenticated_access: true` covers the webhook bypass and `allow_websockets: true` covers the WS upgrade. JWT claims are forwarded to the upstream via `X-Pomerium-Jwt`, so a future ATC version could pick them up for audit logging without changing proxy config.
 
@@ -48,7 +115,7 @@ routes:
 
 Source: [Pomerium Public Access](https://www.pomerium.com/docs/reference/routes/public-access), [WebSocket support](https://www.pomerium.com/docs/capabilities/routing).
 
-### oauth2-proxy
+#### oauth2-proxy
 
 The current canonical bypass flag is `--skip-auth-route`, with syntax `method=path_regex`. The older `--skip-auth-regex` is deprecated. WebSocket proxying is on by default (`--proxy-websockets`).
 
@@ -83,7 +150,7 @@ If you don't run oauth2-proxy behind a reverse proxy (single-node bare-metal, di
 
 Source: [oauth2-proxy Configuration Overview](https://oauth2-proxy.github.io/oauth2-proxy/configuration/overview), [GHSA-7x63-xv5r-3p2x](https://github.com/oauth2-proxy/oauth2-proxy/security/advisories/GHSA-7x63-xv5r-3p2x).
 
-### Authelia + nginx
+#### Authelia + nginx
 
 Authelia provides the auth decision; nginx routes traffic, runs the `auth_request` subrequest for gated paths, and skips it for the webhook. Two snippets are required: the standard `authelia-authrequest.conf` and an explicit `websocket.conf` block that forwards `Upgrade` / `Connection` headers.
 
@@ -135,7 +202,7 @@ server {
 
 Sources: [Authelia Access Control](https://www.authelia.com/configuration/security/access-control/), [Authelia nginx Integration](https://www.authelia.com/integration/proxies/nginx/), [nginx WebSocket Proxying](https://nginx.org/en/docs/http/websocket.html).
 
-### Authelia + Caddy
+#### Authelia + Caddy
 
 Caddy's `forward_auth` is the equivalent of `auth_request`. The Caddyfile keeps webhook traffic on a route that doesn't invoke `forward_auth`. The WS upgrade is handled automatically by `reverse_proxy`.
 
@@ -163,7 +230,7 @@ Caddy's `reverse_proxy` passes WebSocket upgrades through transparently and appl
 
 Sources: [Caddy `forward_auth`](https://caddyserver.com/docs/caddyfile/directives/forward_auth), [Caddy `reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy), [Authelia Caddy integration](https://www.authelia.com/integration/proxies/caddy/).
 
-### Cloudflare Access
+#### Cloudflare Access
 
 A single Cloudflare Access Application fronting `atc.example.com/*` works for the full SPA + REST + WS surface in the standard browser flow. The Access cookie is set when the user authenticates against the SPA load; subsequent requests — including the WebSocket upgrade — carry the cookie on the same origin, and Access validates the upgrade as the HTTP request the WS connection counts as. No split-proxy required.
 
@@ -174,7 +241,7 @@ For the webhook bypass, add a second Access Application keyed on a more specific
 | `atc-webhook` | `atc.example.com/v1/webhooks/github*` | Bypass (Everyone) — HMAC gates inside ATC |
 | `atc-app` | `atc.example.com/*` | Allow with IdP rules — gates SPA + REST + WS |
 
-**Do NOT add a `Bypass` policy for `/v1/ws`.** Cloudflare documents `Bypass` as disabling Access enforcement entirely with no identity checks. ATC has no server-side session validation to backstop, so a Bypass on `/v1/ws` would make the live event stream — which carries the same workflow / job / runner-pool data the rest of the surface is gated on — fully public. The WS route belongs under the authenticated `atc-app` Application, not under a Bypass.
+**Do NOT add a `Bypass` policy for `/v1/ws`.** Cloudflare documents `Bypass` as disabling Access enforcement entirely with no identity checks. ATC has no server-side session validation to backstop in this mode, so a Bypass on `/v1/ws` would make the live event stream — which carries the same workflow / job / runner-pool data the rest of the surface is gated on — fully public. The WS route belongs under the authenticated `atc-app` Application, not under a Bypass.
 
 **Known limitations.**
 
@@ -183,7 +250,7 @@ For the webhook bypass, add a second Access Application keyed on a more specific
 
 Source: [Cloudflare Access Policies](https://developers.cloudflare.com/cloudflare-one/policies/access/).
 
-### Traefik / Envoy Gateway / Istio (brief)
+#### Traefik / Envoy Gateway / Istio (brief)
 
 The pattern generalizes — every per-route proxy supports the same shape:
 
@@ -195,7 +262,9 @@ Forward `Upgrade` / `Connection` in all three (Traefik does this automatically; 
 
 ## Cross-cutting gotchas
 
-### `Origin` is not validated by ATC
+These apply to `auth.mode = "none"` deployments run behind a reverse proxy, unless a note says otherwise.
+
+### `Origin` is not validated by ATC in `mode = "none"`
 
 None of the proxies above validate the `Origin` header on the WS upgrade either, which leaves a CSRF surface: a malicious page loaded under the same authenticated session could open `/v1/ws` and read the event stream. For deployments where this matters:
 
@@ -204,7 +273,7 @@ None of the proxies above validate the `Origin` header on the WS upgrade either,
 - **Pomerium:** add a PPL rule on the WS route asserting `request.headers.Origin == "https://atc.example.com"`.
 - **Envoy:** `header_match` filter on `Origin`.
 
-Adding native `Origin` validation in `atc-server` is on the table — file an issue if you need it.
+`auth.mode = "github"` does not need any of the above — ATC validates `Origin` against `public_origin` natively for that mode. See § "`auth.mode = github`" → "WS `Origin` validation" above.
 
 ### Cookie `SameSite`
 
@@ -229,20 +298,23 @@ ATC does not log frontend reads today. If you want IP audit trail on the reverse
 
 ## Webhook endpoint — why the split
 
-`POST /v1/webhooks/github` should NOT sit behind the same auth flow as the SPA. GitHub does not authenticate to OIDC providers, and forcing it to would either drop every delivery or require GitHub to acquire a token per-call (it cannot). The endpoint is gated independently by HMAC-SHA256 verification of the `X-Hub-Signature-256` header against the configured `ATC_GITHUB__WEBHOOK_SECRET`.
+`POST /v1/webhooks/github` should NOT sit behind either mode's auth flow. GitHub does not authenticate to OIDC providers or carry a session cookie, and forcing it to would either drop every delivery or require GitHub to acquire a token per-call (it cannot). The endpoint is gated independently by HMAC-SHA256 verification of the `X-Hub-Signature-256` header against the configured `ATC_GITHUB__WEBHOOK_SECRET` — the same mechanism regardless of `auth.mode`.
 
-Two layouts work:
+Two layouts work for `auth.mode = "none"` behind a reverse proxy:
 
 1. **Same proxy, path-bypass.** What the recipes above do — declare `/v1/webhooks/github` as a public route on the same proxy that gates the rest. Simplest operationally; one Ingress, one cert, one DNS record.
 2. **Separate Ingress / HTTPRoute.** If your auth proxy can't be configured for per-path policy (rare), expose the webhook endpoint on a sibling Ingress with no auth attached, pointed at the same Service. Both Ingresses can share a hostname (`atc.example.com`); routing precedence handles which Ingress wins per-path.
 
-**Always configure `ATC_GITHUB__WEBHOOK_SECRET`** before exposing the webhook endpoint publicly. Without it, HMAC verification is skipped (`webhook_secret: None`) and anyone who knows the URL can forge events into the state machine.
+`auth.mode = "github"` needs no such split — the webhook route was never behind the login flow to begin with (§ "`auth.mode = github`" → "GitHub setup guide" above).
+
+**Always configure `ATC_GITHUB__WEBHOOK_SECRET`** before exposing the webhook endpoint publicly, regardless of `auth.mode`. Without it, HMAC verification is skipped (`webhook_secret: None`) and anyone who knows the URL can forge events into the state machine.
 
 ## Not supported (today)
 
-- **First-class OIDC inside `atc-server`.** No per-request token validation, no session store.
-- **Per-repository or per-org access control.** The webhook firehose is per-deployment; partition by running separate deployments per access boundary.
-- **Audit logging of frontend reads.** Reverse-proxy access logs are the workaround.
-- **Native `Origin` allowlist on the WS endpoint.** See § Cross-cutting gotchas for the proxy-side mitigations.
+- **General OIDC/SAML SSO for any identity provider.** `auth.mode = "github"` is GitHub-specific by design; an org using a different IdP still routes through a reverse proxy (`auth.mode = "none"`).
+- **Per-repository filtering in `auth.mode = "none"`.** Only `auth.mode = "github"` filters by repository; proxy mode is an all-or-nothing gate.
+- **Composing both modes in one deployment.** Pick one per § Choosing a mode above.
+- **Audit logging of frontend reads.** Reverse-proxy access logs (mode=none) are the workaround; `auth.mode = "github"` logs login/rejection outcomes (see `docs/architecture/metrics.md`) but not per-request reads.
+- **Refresh-token custody in `auth.mode = "github"`.** No GitHub token is ever stored; session sustain depends entirely on the user's own github.com browser session staying alive (see § Session model above). An additive upgrade path exists if this ever needs to change, but it is not built.
 
 If any of these matter for your deployment, open a GitHub issue describing the operator surface you'd want.
