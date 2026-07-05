@@ -8,9 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::http::{StatusCode, header};
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 use tower::ServiceExt;
 
 use atc_core::test_support::make_run_event;
@@ -18,7 +16,6 @@ use atc_core::{Clock, JobEvent, JobId, RepoId, RunEvent, RunEventEnvelope, RunId
 use atc_persist::PersistentStore;
 use atc_server::auth::AuthRuntime;
 use atc_server::github_client::GitHubClient;
-use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
 use atc_store_pg::SessionStore;
 
@@ -51,18 +48,9 @@ async fn build_shared_persist_apps(
         shutdown.clone(),
     );
 
-    let none_state = Arc::new(AppState {
-        persist: Arc::clone(&persist),
-        clock: Arc::clone(&clock),
-        display_ttl: Duration::from_secs(60 * 60),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: broadcast::channel(16).0,
-        shutdown: shutdown.clone(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let none_state = common::TestAppState::new(Arc::clone(&persist), Arc::clone(&clock))
+        .with_shutdown(shutdown.clone())
+        .build();
     let none_app = atc_server::routes::api_routes(false).with_state(none_state);
 
     let sessions = SessionStore::start(pool, Arc::clone(&clock), shutdown.clone());
@@ -79,18 +67,10 @@ async fn build_shared_persist_apps(
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
         repo_auth_ttl: Duration::from_secs(60 * 60),
     };
-    let auth_state = Arc::new(AppState {
-        persist: Arc::clone(&persist),
-        clock,
-        display_ttl: Duration::from_secs(60 * 60),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: broadcast::channel(16).0,
-        shutdown,
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: Some(auth_runtime),
-    });
+    let auth_state = common::TestAppState::new(Arc::clone(&persist), clock)
+        .with_shutdown(shutdown)
+        .with_auth(Some(auth_runtime))
+        .build();
     let auth_app = atc_server::routes::api_routes(true).with_state(auth_state);
 
     (none_app, auth_app, sessions, persist)

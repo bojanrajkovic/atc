@@ -44,10 +44,7 @@ async fn test_empty_state() {
 #[serial_test::serial]
 async fn snapshot_carries_runner_pool_capacities_from_app_state() {
     use atc_core::{LabelSet, RunnerPoolCapacity};
-    use atc_server::state::AppState;
     use std::time::Duration;
-    use tokio_util::sync::CancellationToken;
-    use tokio_util::task::TaskTracker;
 
     common::ensure_recorder_installed();
 
@@ -62,12 +59,8 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
     // the same shape to exercise the route-layer composition without going
     // through file IO. The unbounded entry (`capacity: None`) exercises the
     // `capacity: null` rail end-to-end through serialization.
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_secs(3600),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(vec![
+    let app_state = common::TestAppState::new(persist, clock)
+        .with_runner_pool_capacities(vec![
             RunnerPoolCapacity {
                 labels: LabelSet::new(["self-hosted", "linux", "x64"]),
                 capacity: Some(10),
@@ -76,13 +69,8 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
                 labels: LabelSet::new(["ubuntu-latest"]),
                 capacity: None,
             },
-        ]),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+        ])
+        .build();
 
     let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
@@ -132,10 +120,7 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
 #[serial_test::serial]
 async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
     use atc_core::{LabelSet, RunnerPoolCapacity};
-    use atc_server::state::AppState;
     use std::time::Duration;
-    use tokio_util::sync::CancellationToken;
-    use tokio_util::task::TaskTracker;
 
     common::ensure_recorder_installed();
 
@@ -146,18 +131,7 @@ async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
         256,
     ) as Arc<dyn atc_persist::PersistentStore>;
 
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_secs(3600),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let app_state = common::TestAppState::new(persist, clock).build();
 
     let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())

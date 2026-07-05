@@ -662,8 +662,9 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
 // GET /v1/auth/me
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
 struct WhoamiResponse {
     login: String,
     repo_count: usize,

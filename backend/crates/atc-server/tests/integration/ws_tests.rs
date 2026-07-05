@@ -13,11 +13,8 @@ use std::time::Duration;
 use atc_core::SystemClock;
 use atc_server::config_watcher::ConfigEvent;
 use atc_server::routes;
-use atc_server::state::AppState;
 use atc_store_mem::InMemoryStore;
 use atc_wire::CommittedEvent;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 use futures_util::stream::StreamExt;
 use tokio::net::TcpListener;
@@ -487,18 +484,9 @@ async fn config_channel_lagged_closes_socket() {
     let persist = InMemoryStore::new_for_test(Arc::clone(&clock), Duration::from_hours(1), 256)
         as Arc<dyn atc_persist::PersistentStore>;
     let (config_tx, _) = tokio::sync::broadcast::channel::<ConfigEvent>(2);
-    let state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: config_tx.clone(),
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let state = common::TestAppState::new(persist, clock)
+        .with_config_events_tx(config_tx.clone())
+        .build();
 
     let router = routes::api_routes(false)
         .with_state(state.clone())

@@ -34,7 +34,6 @@ use atc_server::shutdown::{
     SHUTDOWN_TIMEOUT_METRICS, SHUTDOWN_TIMEOUT_SERVES, SHUTDOWN_TIMEOUT_WS,
     run_shutdown_orchestration,
 };
-use atc_server::state::AppState;
 use atc_store_mem::EVICTION_SHUTDOWN_TIMEOUT;
 use atc_store_pg::store::{SHUTDOWN_TIMEOUT_DRAIN, SHUTDOWN_TIMEOUT_LISTENER};
 
@@ -55,18 +54,10 @@ async fn start_full_server(pool: atc_store_pg::TracedPool, db_url: String) -> Fu
     let persist = Arc::clone(&store) as Arc<dyn atc_persist::PersistentStore>;
 
     let clock: Arc<dyn atc_core::Clock> = Arc::new(atc_core::SystemClock);
-    let state = Arc::new(AppState {
-        persist: Arc::clone(&persist),
-        clock,
-        display_ttl: std::time::Duration::from_secs(60 * 60),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: shutdown.clone(),
-        ws_tracker: ws_tracker.clone(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let state = common::TestAppState::new(Arc::clone(&persist), clock)
+        .with_shutdown(shutdown.clone())
+        .with_ws_tracker(ws_tracker.clone())
+        .build();
 
     let metrics_handle = metrics::spawn_process_collector(shutdown.clone());
 

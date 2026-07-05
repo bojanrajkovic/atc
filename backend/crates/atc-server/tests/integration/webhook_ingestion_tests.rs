@@ -444,12 +444,10 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     // we can assert the seq on the emitted CommittedEvent.
     use atc_core::SystemClock;
     use atc_persist::PersistentStore;
-    use atc_server::state::AppState;
     use atc_store_mem::InMemoryStore;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
-    use tokio_util::task::TaskTracker;
 
     let shutdown = CancellationToken::new();
     let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
@@ -462,18 +460,9 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
     );
     let mut subscriber = store.subscribe();
     let persist = store as Arc<dyn PersistentStore>;
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown,
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let app_state = common::TestAppState::new(persist, clock)
+        .with_shutdown(shutdown)
+        .build();
 
     let main_router = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
