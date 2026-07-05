@@ -9,6 +9,8 @@
 //! the same request and then dropped — never persisted, logged, or placed
 //! in a trace/error context (ADR-0014).
 
+use std::collections::HashSet;
+
 use reqwest::header::{ACCEPT, LINK};
 
 const API_VERSION: &str = "2022-11-28";
@@ -122,6 +124,20 @@ struct RepositoryItem {
     id: i64,
 }
 
+/// `GET /repositories/{id}` response — only the field
+/// [`GitHubClient::is_repo_public`] needs. `visibility` is `"public"`,
+/// `"private"`, or `"internal"` (GitHub Enterprise org-wide, not the public
+/// internet) — deliberately not the `private: bool` field, which is `true`
+/// for both `"private"` and `"internal"`.
+#[derive(serde::Deserialize)]
+struct RepoVisibilityResponse {
+    visibility: String,
+}
+
+/// Cheaply cloneable — `reqwest::Client` is `Arc`-backed internally, and the
+/// remaining fields are small strings — so [`GitHubClient::fetch_public_repo_ids`]
+/// can hand each spawned check task its own owned copy.
+#[derive(Clone)]
 pub struct GitHubClient {
     http: reqwest::Client,
     client_id: String,
@@ -252,6 +268,84 @@ impl GitHubClient {
         Ok(repo_ids)
     }
 
+    /// The subset of `repo_ids` that are publicly-visible GitHub repositories
+    /// (`visibility == "public"`, not merely `private == false` — GitHub
+    /// Enterprise "internal" repos report `private: true`, so `visibility`
+    /// is the only field that actually distinguishes public from
+    /// org-internal). Checked directly against GitHub rather than inferred
+    /// from login-app installation: a public repository is readable by
+    /// anyone regardless of whether the login app is installed on its owner
+    /// (ADR-0014, decision 2).
+    ///
+    /// Best-effort per repo: a failed check (network error, unexpected
+    /// status) is logged and excluded from the result rather than failing
+    /// the whole batch — one flaky repo must not suppress every other
+    /// repo's already-known public status this cycle. Checks run fully
+    /// concurrently — bounded only by how many repos ATC has run data for,
+    /// which is realistically dozens, not the scale where GitHub's
+    /// abuse-detection would care about burst size.
+    pub async fn fetch_public_repo_ids(&self, repo_ids: &[i64]) -> HashSet<i64> {
+        let mut handles = Vec::with_capacity(repo_ids.len());
+        for &repo_id in repo_ids {
+            let client = self.clone();
+            handles.push(tokio::spawn(async move {
+                (repo_id, client.is_repo_public(repo_id).await)
+            }));
+        }
+
+        let mut public = HashSet::new();
+        for handle in handles {
+            match handle.await {
+                Ok((repo_id, Ok(true))) => {
+                    public.insert(repo_id);
+                }
+                Ok((_, Ok(false))) => {}
+                Ok((repo_id, Err(e))) => {
+                    tracing::warn!(
+                        repo_id,
+                        error.message = %e,
+                        "public-repo visibility check failed; excluding from this cycle"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error.message = %e,
+                        "public-repo visibility check task panicked"
+                    );
+                }
+            }
+        }
+        public
+    }
+
+    /// `GET /repositories/{repo_id}` using Basic auth (`client_id`/`client_secret`)
+    /// for the OAuth-app rate ceiling (5,000/hr) instead of the unauthenticated
+    /// 60/hr limit GitHub applies per source IP — see
+    /// <https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authenticating-to-the-rest-api-with-an-oauth-app>.
+    /// No user or installation token is involved. `Ok(false)` on 404 — GitHub
+    /// returns 404 (never 403) for both a private repo and one that no
+    /// longer exists, and the caller only needs "is it public", not which.
+    async fn is_repo_public(&self, repo_id: i64) -> Result<bool, GitHubClientError> {
+        let resp = self
+            .http
+            .get(format!("{}/repositories/{}", self.api_base, repo_id))
+            .basic_auth(&self.client_id, Some(&self.client_secret))
+            .header(ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .send()
+            .await
+            .map_err(GitHubClientError::Http)?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        if !resp.status().is_success() {
+            return Err(GitHubClientError::UnexpectedStatus(resp.status()));
+        }
+        let body: RepoVisibilityResponse = resp.json().await.map_err(GitHubClientError::Http)?;
+        Ok(body.visibility == "public")
+    }
+
     async fn rest_get(
         &self,
         url: &str,
@@ -363,5 +457,29 @@ mod tests {
         let debug = format!("{resp:?}");
         assert!(!debug.contains("ghu_supersecretvalue"));
         assert!(debug.contains("REDACTED"));
+    }
+
+    // `fetch_public_repo_ids`'s HTTP-level behavior (public vs. 404,
+    // multi-repo batches, Basic auth) is covered by
+    // `auth_tests::public_repos` against the full auth flow's existing
+    // hand-rolled mock GitHub server — matching this crate's established
+    // convention of exercising `GitHubClient`'s HTTP behavior only through
+    // that mock, not a second one here (see `next_page_url` and
+    // `token_exchange_response_debug_redacts_access_token` above, the only
+    // other tests in this module, which test pure functions with no HTTP
+    // involved). Only the empty-input short-circuit is worth a unit test:
+    // it doesn't touch HTTP at all, so it doesn't need that mock.
+    #[tokio::test]
+    async fn fetch_public_repo_ids_empty_input_makes_no_calls() {
+        let client = GitHubClient::with_base_urls(
+            "client-id".to_string(),
+            "client-secret".to_string(),
+            "http://unused.invalid".to_string(),
+            "http://unused.invalid".to_string(),
+        );
+
+        let public = client.fetch_public_repo_ids(&[]).await;
+
+        assert!(public.is_empty());
     }
 }

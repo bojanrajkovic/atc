@@ -22,6 +22,8 @@ The only executable crate in the backend workspace. Wires the six library crates
 
 **`init_otel` runs before the tracing subscriber is initialized.** Any log or trace macro fired inside `init_otel` dispatches to the no-op global subscriber and silently disappears. Use `eprintln!` for pre-init diagnostics.
 
+**`PublicRepoCache` is deliberately in-process and per-replica, not shared via Postgres.** Two replicas disagreeing on the public-repo set for up to one `repo_auth_ttl` window after a flip is an accepted tradeoff (ADR-0014), not a bug — don't "fix" it by adding a shared cache table without revisiting that decision.
+
 ## Key References
 
 - Architecture: `docs/architecture/backend-server.md`

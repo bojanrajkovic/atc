@@ -5,6 +5,7 @@ pub mod config_watcher;
 pub mod github_client;
 pub mod metrics;
 pub mod otel;
+pub mod public_repo_cache;
 pub mod routes;
 pub mod shutdown;
 pub mod state;
