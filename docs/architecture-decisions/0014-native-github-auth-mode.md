@@ -211,6 +211,32 @@ reconnect-to-any-replica cursor design that decision depends on.
   authentication" — that sweep is owned by the ticket that ships the
   behavior described, not by this ADR.
 
+## Amendment (2026-07-05) — public-repo check drops Basic auth entirely
+
+Decision 2 described checking `GET /repositories/{id}` using Basic auth with
+the login app's own `client_id`/`client_secret`, for the higher 5,000/hr
+OAuth-app rate ceiling instead of the 60/hr unauthenticated one. In
+production this failed with a 401 on every single repo checked: that
+Basic-auth rate-limit mechanism is documented as exclusive to classic OAuth
+Apps, and the login app here is a GitHub App (the two-surface split in
+decision 2 requires a scoped, installable app; its `client_id` uses the
+GitHub-App-specific ID format). GitHub has no equivalent Basic-auth
+mechanism for GitHub Apps — a syntactically valid `client_id`/`client_secret`
+pair is simply not a credential GitHub recognizes on this call. The OAuth
+code-exchange call (`POST /login/oauth/access_token`) still succeeds with
+the same two values because it is a different, shared flow (the standard
+user-to-server token exchange), unrelated to the Basic-auth rate-limit
+boost.
+
+Minting a JWT with the app's private key to obtain a per-installation access
+token was considered and rejected: it authenticates correctly, but only for
+repos the login app is installed on — which defeats the purpose of this
+specific check, since decision 2 exists precisely to catch public repos the
+app is *not* installed on. `GitHubClient::is_repo_public` now makes a fully
+unauthenticated call, accepting the 60/hr-per-source-IP ceiling — acceptable
+at the realistic scale of "repos ATC has run data for" (dozens, refreshed
+once per `repo_auth_ttl`, not per request).
+
 ## Related
 
 - Issue: [#234 — Native GitHub auth](https://github.com/bojanrajkovic/atc/issues/234)
