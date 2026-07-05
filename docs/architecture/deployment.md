@@ -58,6 +58,8 @@ The operator-facing `ATC_*` variables wired by the chart:
 
 Per-credential secrets are independent: `existingSecret.githubWebhook.name` and `existingSecret.database.name` reference separate Secrets (e.g. a CNPG-managed `atc-cluster-app` for database credentials and an operator-managed `atc-webhook-secret` for the webhook secret) — no duplication required.
 
+`values.schema.json` declares a permissive `global` property (`additionalProperties: true`, unread by any template) so the chart can be listed as a dependency of an umbrella chart — Helm injects `.Values.global` into every subchart regardless of whether that chart declares it, and the root schema's `additionalProperties: false` would otherwise reject it at render time.
+
 ## Runner-pool ConfigMap and hot-reload
 
 The chart renders a `ConfigMap` and a read-only `volumeMount` at `/etc/atc` only when `runnerPools` is non-empty. The values shape:
