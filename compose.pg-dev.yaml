@@ -11,7 +11,7 @@
 #   just pg-dev-down                                                  # tear down
 #
 # Image tag matches the version pinned in the backend integration test suite
-# (testcontainers `Postgres::default().with_tag("17-alpine")` in
+# (testcontainers `Postgres::default().with_tag("18-alpine")` in
 # backend/crates/atc-server/tests/integration/common/mod.rs) for dev/test parity.
 services:
   pg-dev:
@@ -22,7 +22,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - atc-pg-dev-data:/var/lib/postgresql/data
+      - atc-pg-dev-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s

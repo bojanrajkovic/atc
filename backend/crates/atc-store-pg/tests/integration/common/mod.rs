@@ -30,7 +30,7 @@ pub async fn start_pg() -> (
     let mut container_delay_ms: u64 = 50;
     let container = loop {
         match Postgres::default()
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             // Distinct name from atc-server's own "atc-test-pg" reused
             // container — sharing one container across two crates' test
             // binaries would double the concurrent connection load on a
