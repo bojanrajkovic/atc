@@ -6,6 +6,7 @@
 use super::*;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn happy_path_creates_session_with_identity_and_repo_ids_no_token_material() {
     let (pool, _container, app) = setup_default().await;
 
@@ -55,6 +56,7 @@ async fn happy_path_creates_session_with_identity_and_repo_ids_no_token_material
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn pagination_across_two_pages_collects_every_installation() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(MockGitHubConfig {
@@ -88,6 +90,7 @@ async fn pagination_across_two_pages_collects_every_installation() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn cycling_pagination_is_bounded_not_infinite() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(MockGitHubConfig {
@@ -127,6 +130,7 @@ async fn cycling_pagination_is_bounded_not_infinite() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn state_mismatch_is_rejected_without_a_session() {
     let (pool, _container, app) = setup_default().await;
 
@@ -147,6 +151,7 @@ async fn state_mismatch_is_rejected_without_a_session() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn missing_flow_cookie_is_rejected() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -155,6 +160,7 @@ async fn missing_flow_cookie_is_rejected() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn reused_flow_cookie_is_rejected_on_second_use() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -185,6 +191,7 @@ async fn reused_flow_cookie_is_rejected_on_second_use() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn denied_authorization_redirects_home_with_auth_error() {
     let (pool, _container, app) = setup_default().await;
 
@@ -213,6 +220,7 @@ async fn denied_authorization_redirects_home_with_auth_error() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn popup_mode_returns_html_with_exact_broadcast_channel_contract() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -240,6 +248,7 @@ async fn popup_mode_returns_html_with_exact_broadcast_channel_contract() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn token_exchange_failure_is_surfaced_without_a_session() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(MockGitHubConfig {
@@ -266,6 +275,7 @@ async fn token_exchange_failure_is_surfaced_without_a_session() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn return_to_rejects_absolute_url() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -288,6 +298,7 @@ async fn return_to_rejects_absolute_url() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn return_to_rejects_scheme_relative_url() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -310,6 +321,7 @@ async fn return_to_rejects_scheme_relative_url() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn mode_none_leaves_auth_routes_unmounted() {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();

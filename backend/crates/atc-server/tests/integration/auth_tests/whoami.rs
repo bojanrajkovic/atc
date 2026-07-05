@@ -3,6 +3,7 @@
 use super::*;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn whoami_without_session_returns_401_with_exact_reason() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -20,6 +21,7 @@ async fn whoami_without_session_returns_401_with_exact_reason() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn whoami_with_fresh_session_returns_expected_shape() {
     let (_pool, _container, app) = setup_default().await;
     let session_cookie = login_and_get_session_cookie(&app).await;
@@ -43,6 +45,7 @@ async fn whoami_with_fresh_session_returns_expected_shape() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn whoami_with_stale_session_reports_stale_true() {
     let (pool, _container, app) = setup_default().await;
     let session_cookie = login_and_get_session_cookie(&app).await;

@@ -3,6 +3,7 @@
 use super::*;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn logout_deletes_session_and_subsequent_whoami_is_401() {
     let (_pool, _container, app) = setup_default().await;
     let session_cookie = login_and_get_session_cookie(&app).await;
@@ -40,6 +41,7 @@ async fn logout_deletes_session_and_subsequent_whoami_is_401() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn logout_is_idempotent_without_a_session_cookie() {
     let (_pool, _container, app) = setup_default().await;
 
@@ -52,6 +54,7 @@ async fn logout_is_idempotent_without_a_session_cookie() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn logout_is_idempotent_for_an_unknown_session_cookie() {
     let (_pool, _container, app) = setup_default().await;
 

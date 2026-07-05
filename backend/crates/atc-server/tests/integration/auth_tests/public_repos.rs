@@ -23,6 +23,7 @@ fn run_event_for(run_id: i64, repo_id: i64) -> RunEventEnvelope {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn public_repo_with_run_history_is_unioned_into_session_repo_ids() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(MockGitHubConfig {
@@ -55,6 +56,7 @@ async fn public_repo_with_run_history_is_unioned_into_session_repo_ids() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn a_multi_repo_known_set_keeps_only_the_public_ones() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(MockGitHubConfig {
@@ -93,6 +95,7 @@ async fn a_multi_repo_known_set_keeps_only_the_public_ones() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn known_repo_that_github_reports_as_not_public_is_not_unioned_in() {
     let (pool, _container, _db_url) = common::start_pg().await;
     // No `public_repo_ids` configured — the mock's `GET /repositories/{id}`
