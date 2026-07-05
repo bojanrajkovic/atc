@@ -334,18 +334,9 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
         Duration::from_hours(1),
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: Some(secret.to_string()),
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let app_state = TestAppState::new(persist, clock)
+        .with_webhook_secret(secret)
+        .build();
     let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
@@ -364,18 +355,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         Duration::from_hours(1),
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_persist::PersistentStore>;
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let app_state = TestAppState::new(persist, clock).build();
     let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
@@ -397,26 +377,91 @@ pub async fn spawn_in_memory_server() -> (SocketAddr, Arc<AppState>) {
     spawn_in_memory_server_with_capacity(IN_MEMORY_TEST_BROADCAST_CAPACITY).await
 }
 
-/// Shared `AppState` construction for the real-server fixtures below, so a
-/// field added to `AppState` only needs updating in one place.
-fn build_test_app_state(
+/// Shared `AppState` construction for every integration-test fixture in this
+/// crate, so a field added to `AppState` only needs updating here. `persist`
+/// and `clock` have no sensible fixture default and are required up front;
+/// every other field carries a common-case default and is overridden via the
+/// `with_*` setters only by the tests that actually vary it.
+pub struct TestAppState {
     persist: Arc<dyn atc_persist::PersistentStore>,
     clock: Arc<dyn atc_core::Clock>,
+    display_ttl: Duration,
+    webhook_secret: Option<String>,
+    runner_pool_capacities: Vec<atc_core::RunnerPoolCapacity>,
+    config_events_tx: tokio::sync::broadcast::Sender<atc_server::config_watcher::ConfigEvent>,
     shutdown: CancellationToken,
+    ws_tracker: TaskTracker,
     auth: Option<atc_server::auth::AuthRuntime>,
-) -> Arc<AppState> {
-    Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown,
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth,
-    })
+}
+
+impl TestAppState {
+    pub fn new(
+        persist: Arc<dyn atc_persist::PersistentStore>,
+        clock: Arc<dyn atc_core::Clock>,
+    ) -> Self {
+        Self {
+            persist,
+            clock,
+            display_ttl: Duration::from_hours(1),
+            webhook_secret: None,
+            runner_pool_capacities: Vec::new(),
+            config_events_tx: tokio::sync::broadcast::channel(16).0,
+            shutdown: CancellationToken::new(),
+            ws_tracker: TaskTracker::new(),
+            auth: None,
+        }
+    }
+
+    pub fn with_webhook_secret(mut self, secret: impl Into<String>) -> Self {
+        self.webhook_secret = Some(secret.into());
+        self
+    }
+
+    pub fn with_runner_pool_capacities(
+        mut self,
+        capacities: Vec<atc_core::RunnerPoolCapacity>,
+    ) -> Self {
+        self.runner_pool_capacities = capacities;
+        self
+    }
+
+    pub fn with_config_events_tx(
+        mut self,
+        tx: tokio::sync::broadcast::Sender<atc_server::config_watcher::ConfigEvent>,
+    ) -> Self {
+        self.config_events_tx = tx;
+        self
+    }
+
+    pub fn with_shutdown(mut self, shutdown: CancellationToken) -> Self {
+        self.shutdown = shutdown;
+        self
+    }
+
+    pub fn with_ws_tracker(mut self, ws_tracker: TaskTracker) -> Self {
+        self.ws_tracker = ws_tracker;
+        self
+    }
+
+    pub fn with_auth(mut self, auth: Option<atc_server::auth::AuthRuntime>) -> Self {
+        self.auth = auth;
+        self
+    }
+
+    pub fn build(self) -> Arc<AppState> {
+        Arc::new(AppState {
+            persist: self.persist,
+            clock: self.clock,
+            display_ttl: self.display_ttl,
+            webhook_secret: self.webhook_secret,
+            runner_pool_capacities: tokio::sync::RwLock::new(self.runner_pool_capacities),
+            config_events_tx: self.config_events_tx,
+            shutdown: self.shutdown,
+            ws_tracker: self.ws_tracker,
+            ws_metrics: atc_server::ws::WsMetrics::register(),
+            auth: self.auth,
+        })
+    }
 }
 
 /// Bind `router` to an ephemeral localhost port and serve it in a spawned
@@ -443,7 +488,7 @@ pub async fn spawn_in_memory_server_with_capacity(
         Duration::from_hours(1),
         broadcast_capacity,
     ) as Arc<dyn atc_persist::PersistentStore>;
-    let app_state = build_test_app_state(persist, clock, CancellationToken::new(), None);
+    let app_state = TestAppState::new(persist, clock).build();
     let router = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
@@ -487,7 +532,10 @@ pub async fn spawn_auth_server(
         max_session_ttl: Duration::from_secs(30 * 24 * 60 * 60),
         repo_auth_ttl: Duration::from_hours(1),
     };
-    let app_state = build_test_app_state(persist, clock, shutdown, Some(auth));
+    let app_state = TestAppState::new(persist, clock)
+        .with_shutdown(shutdown)
+        .with_auth(Some(auth))
+        .build();
     let router = atc_server::routes::api_routes(true)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());
@@ -595,10 +643,15 @@ pub async fn start_pg() -> (
     // can both pass the inspect, then one wins `docker create` while the
     // others get a 409 Conflict. On retry, the existence check passes
     // and we attach to the now-created container.
+    //
+    // `with_reuse(Always)` also means a bump of `with_tag(...)` here
+    // silently reattaches to whatever image is still running under the
+    // `atc-test-pg` name from a prior run — `docker rm -f atc-test-pg`
+    // before the first test run after changing the tag.
     let mut container_delay_ms: u64 = 50;
     let container = loop {
         match Postgres::default()
-            .with_tag("17-alpine")
+            .with_tag("18-alpine")
             .with_container_name("atc-test-pg")
             .with_reuse(ReuseDirective::Always)
             .start()
@@ -789,18 +842,9 @@ async fn build_app_inner(
     let broadcast_rx = pg_store.subscribe();
     let persist = pg_store as Arc<dyn atc_persist::PersistentStore>;
 
-    let state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown: shutdown.clone(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let state = TestAppState::new(persist, clock)
+        .with_shutdown(shutdown.clone())
+        .build();
 
     let router = atc_server::routes::api_routes(false)
         .with_state(state.clone())
@@ -948,18 +992,9 @@ pub async fn build_pg_app(
     let rx = store.subscribe();
     let persist = store as Arc<dyn atc_persist::PersistentStore>;
     let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
-    let app_state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_hours(1),
-        webhook_secret: None,
-        runner_pool_capacities: tokio::sync::RwLock::new(Vec::new()),
-        config_events_tx: tokio::sync::broadcast::channel(16).0,
-        shutdown,
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let app_state = TestAppState::new(persist, clock)
+        .with_shutdown(shutdown)
+        .build();
     let app = atc_server::routes::api_routes(false)
         .with_state(app_state.clone())
         .fallback(atc_server::assets::fallback_handler());

@@ -15,9 +15,8 @@ use atc_persist::PersistentStore;
 use atc_server::config::ScalarSnapshot;
 use atc_server::config_watcher::{ConfigEvent, ConfigWatcherMetrics, spawn_config_watcher};
 use atc_server::state::AppState;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tokio_util::task::TaskTracker;
 
 use crate::common;
 
@@ -38,18 +37,9 @@ fn build_app_state() -> (Arc<AppState>, broadcast::Sender<ConfigEvent>) {
 
     let (tx, _) = broadcast::channel::<ConfigEvent>(16);
 
-    let state = Arc::new(AppState {
-        persist,
-        clock,
-        display_ttl: Duration::from_secs(3600),
-        webhook_secret: None,
-        runner_pool_capacities: RwLock::new(Vec::new()),
-        config_events_tx: tx.clone(),
-        shutdown: CancellationToken::new(),
-        ws_tracker: TaskTracker::new(),
-        ws_metrics: atc_server::ws::WsMetrics::register(),
-        auth: None,
-    });
+    let state = common::TestAppState::new(persist, clock)
+        .with_config_events_tx(tx.clone())
+        .build();
     (state, tx)
 }
 
