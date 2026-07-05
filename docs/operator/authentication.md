@@ -34,17 +34,26 @@ Two independent auth postures — composing them in one deployment is out of sco
 
 ### Coverage rule
 
-A repository is visible to a logged-in session only when **all three** are true:
+A repository is visible to a logged-in session when **either** of these holds:
 
 ```
-visible = (repos sending ATC webhooks) ∩ (repos the auth app is installed on) ∩ (repos the user can access)
+visible = (public repos among those already sending ATC webhooks)
+        ∪ [ (repos sending ATC webhooks)
+          ∩ (repos the auth app is installed on)
+          ∩ (repos the user can access) ]
 ```
 
-- Not sending webhooks → ATC has no data for it regardless of who's logged in.
-- Webhooks flowing but the auth app isn't installed on it → invisible to every session (it never enters any user's authorized repo set).
-- Auth app installed but the user has no GitHub access to it → invisible to that user specifically.
+**Public repos are a separate, wider path — not part of the three-way intersection.** Any repository GitHub reports as `visibility: "public"` is visible to every logged-in session once it's already sending ATC webhooks, regardless of whether the auth app is installed on it or the user has any GitHub relationship to it at all (not a contributor, not an org member). This is deliberate (ADR-0014, amended decision 2): a public repo is readable by anyone on GitHub already, so gating it behind app installation would just be friction with no security benefit.
 
-In practice: install the auth app everywhere you already have webhooks configured, and coverage reduces to "the repos a given user can already see on GitHub."
+For everything else (private/internal repos), all three of the following must be true:
+
+- **Sending webhooks.** Not sending webhooks → ATC has no data for it regardless of who's logged in or whether it's public.
+- **Auth app installed.** Webhooks flowing but the auth app isn't installed on it → invisible to every session (it never enters any user's authorized repo set) — unless it's public, per the rule above.
+- **User has GitHub access.** Auth app installed but the user has no GitHub access to it → invisible to that user specifically — again, unless it's public.
+
+In practice: install the auth app everywhere you already have webhooks configured, and coverage reduces to "every public repo you have data for, plus the private/internal repos a given user can already see on GitHub."
+
+**Operational note — per-replica, eventually consistent.** The public-repo set is computed by each replica independently (no shared cache in Postgres) and refreshed lazily, reusing `repo_auth_ttl` as its staleness window — there is no separate config knob for it. After a repo flips public ↔ private on GitHub, replicas can disagree on its visibility for up to one `repo_auth_ttl` window; this is the same accepted-staleness posture as per-user authorization, not a bug.
 
 ### Config reference
 
