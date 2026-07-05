@@ -295,6 +295,11 @@ async fn main() {
     // instrument-cache and one active-connection atomic.
     let ws_metrics = atc_server::ws::WsMetrics::register();
 
+    // Same startup slot as `ws_metrics` — after `init_otel`, before
+    // `AppState` construction. Registered unconditionally (see
+    // `AppState::auth_metrics`'s doc comment).
+    let auth_metrics = atc_server::auth::AuthMetrics::register();
+
     // Cloned out before `auth_runtime` moves into `AppState` — the shutdown
     // orchestration below needs its own handle to join the sweep task.
     let auth_sessions_for_shutdown = auth_runtime.as_ref().map(|a| Arc::clone(&a.sessions));
@@ -310,6 +315,7 @@ async fn main() {
         ws_tracker: ws_tracker.clone(),
         ws_metrics,
         auth: auth_runtime,
+        auth_metrics,
     });
 
     // Spawn the process-metrics observer (wraps `opentelemetry-system-metrics`).

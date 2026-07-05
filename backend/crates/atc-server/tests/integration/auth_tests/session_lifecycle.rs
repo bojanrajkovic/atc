@@ -4,6 +4,7 @@
 use super::*;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn existing_session_for_a_different_user_is_not_refreshed() {
     let (pool, _container, app) = setup_default().await;
 

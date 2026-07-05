@@ -111,7 +111,9 @@ For attribute-bearing instruments (`atc_pg_write_failures_total{kind=…}`, `atc
 
 Gauges use **`ObservableGauge<f64>`** instruments instead of sync `Gauge<f64>`. Each observable gauge's callback closes over an `Arc<AtomicI64>` (the same atomic the listener/drain already manipulate) and is invoked by the SDK on every collection cycle. The atomic update IS the metric update — production code never calls `record()` on these instruments. This avoids the delta-temporality footgun where a sync `Gauge` only surfaces on flushes that include a fresh `record()` call: an observable gauge re-reports its last-read value on every scrape, matching the semantics the OTel→Prometheus exporter expects for gauge-shaped metrics.
 
-The mechanical guard: the only sites that build OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new instrument built anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if genuinely new, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
+The mechanical guard for PG-mode instruments specifically: the only sites that build `atc_pg_*` OTel instruments live inside `atc-server::metrics` (`register_build_info`) and `atc-store-pg::metrics` (`PgMetrics::register_with_meter`). A new `atc_pg_*` instrument built anywhere else is a reintroduced inline emit and must be moved onto `PgMetrics` (or, if genuinely new, added to `PgMetrics::register_with_meter` and documented under [Operational metrics](#operational-metrics)).
+
+Non-PG surfaces follow the same cached-handle convention but register their own instruments in their own module, each holding a small dedicated struct rather than sharing `PgMetrics`: `ws::WsMetrics`, `auth::AuthMetrics` (both `atc-server`), and `session::SessionMetrics` (`atc-store-pg`, deliberately separate from `PgMetrics` — see that crate's `CLAUDE.md`, "`SessionStore` intentionally does not live inside `PgStore`"). A new metric on one of these surfaces is added to its owning struct's `register()`, not to `PgMetrics`.
 
 ### W3C trace context propagation
 
@@ -364,6 +366,46 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Attributes:** `kind` (`"run"` | `"job"`) — reuses the same attribute vocabulary and precomputed `KeyValue` slices as `atc_pg_notify_emitted_total`; `pod`, `instance` (injected)
 - **Measures:** Non-terminal runs/jobs force-completed with conclusion `Stale` by this replica's staleness sweep. PG mode only — the in-memory store's `sweep_stale` has no metrics surface (dev/test only, no OTel-backed dashboards). See [ADR-0013](../architecture-decisions/0013-staleness-sweep-synthetic-completion.md).
 
+### `atc_auth_logins_total`
+
+- **Name:** `atc_auth_logins_total`
+- **Type:** counter
+- **Attributes:** emitted `outcome` ∈ `{success, state_mismatch, missing_flow, exchange_failed, denied, session_error}`; injected `pod`, `instance`. The first five match the callback handler's login-outcome vocabulary one-to-one; `session_error` is an extra value covering a local `SessionStore` failure during the callback (consume/load/refresh/create), distinct from the GitHub-side outcomes. Built as a `KeyValue` slice per call (not pre-built per `WsMetrics`'s convention) — this is a per-HTTP-request emission, not a per-row hot path.
+- **Measures:** `auth.github` login attempts by outcome, one increment per exit from `callback_handler`.
+- **Per-replica vs cluster scope:** Per-replica (labels the replica that served the callback request).
+- **Aggregation guidance:** `sum by (outcome)` across replicas — logins are evenly distributed by the load balancer, not replica-sticky.
+- **Example PromQL:** `sum by (outcome) (rate(atc_auth_logins_total[5m]))`
+
+### `atc_auth_rejections_total`
+
+- **Name:** `atc_auth_rejections_total`
+- **Type:** counter
+- **Attributes:** emitted `surface` ∈ `{state, ws, me}`, `reason` ∈ `{auth_required, stale_authorization, origin_mismatch}` (not every surface × reason combination is reachable — `me` never produces `stale_authorization` since `/v1/auth/me` reports staleness in its body instead of rejecting, and only `ws` produces `origin_mismatch`); injected `pod`, `instance`.
+- **Measures:** Requests rejected by `AuthContext`'s extractor or WS pre-upgrade enforcement, labeled by which mounted route rejected and why. Recorded at the three call sites that produce a rejection (`AuthContext::from_request_parts`, `state_handler`, `ws_handler`) rather than inside `AuthRejection::IntoResponse`, which has no `AppState` to record a metric against.
+- **Per-replica vs cluster scope:** Per-replica.
+- **Aggregation guidance:** `sum by (surface, reason)` — a sustained nonzero `origin_mismatch` rate suggests a misconfigured `public_origin` or a client bypassing the intended origin.
+- **Example PromQL:** `sum by (surface, reason) (rate(atc_auth_rejections_total[5m]))`
+
+### `atc_auth_callback_duration_seconds`
+
+- **Name:** `atc_auth_callback_duration_seconds`
+- **Type:** histogram (base-2 exponential aggregation; see [Histogram aggregation](#histogram-aggregation))
+- **Attributes:** emitted `phase` ∈ `{exchange, repos}`; injected `pod`, `instance`. `phase="exchange"` times the token-exchange call; `phase="repos"` times the concurrent `get_user` + `get_authorized_repo_ids` block (the `try_join!` in `callback_handler`).
+- **Measures:** Wall time of the callback handler's GitHub round trips — the two spans an operator would otherwise have to sum manually from a trace.
+- **Per-replica vs cluster scope:** Per-replica (network path to GitHub can differ by replica placement).
+- **Aggregation guidance:** `histogram_quantile(0.99, ...)` per phase — GitHub-side latency, not something ATC controls, so p99 flags "GitHub is slow right now" rather than a regression to fix locally.
+- **Example PromQL:** `histogram_quantile(0.99, sum by (phase) (rate(atc_auth_callback_duration_seconds[5m])))`
+
+### `atc_auth_swept_total`
+
+- **Name:** `atc_auth_swept_total`
+- **Type:** counter
+- **Attributes:** `kind` (`"flow"` | `"session"`) — mirrors `atc_staleness_swept_total`'s `kind` vocabulary; `pod`, `instance` (injected)
+- **Measures:** Expired `auth_flows`/`auth_sessions` rows deleted by this replica's session-sweep task (`SessionStore`, `atc-store-pg`). Registered and owned independently of `PgMetrics` — `SessionStore` is not part of `PgStore` (see `atc-store-pg`'s `CLAUDE.md` "Sharp edges").
+- **Per-replica vs cluster scope:** Per-replica (no cross-replica coordination — an already-deleted row is a no-op for a second replica's sweep).
+- **Aggregation guidance:** `sum by (kind)` across replicas — every replica sweeps independently on the same interval.
+- **Example PromQL:** `sum by (kind) (rate(atc_auth_swept_total[30m]))`
+
 ## Span inventory
 
 Span names are stable identifiers — operators build dashboards and alerts that filter on them. Do not rename a span without coordinating with dashboard owners.
@@ -387,6 +429,10 @@ flowchart TD
     OS["outbox.sweep.tick\n(per-tick root)"]
     WC["ws.connection\n(connection-lifetime root)"]
     CR["config.reload\n(per-reload root)"]
+    AC["auth.callback"]
+    ACE["auth.callback.exchange"]
+    ACR["auth.callback.repos"]
+    ASS["auth.session_sweep.tick\n(per-tick root, PG mode only)"]
 
     WH --> WV
     WH --> WP
@@ -396,6 +442,8 @@ flowchart TD
     PAR --> PNE
     SS --> PRS
     DP --> DB
+    AC --> ACE
+    AC --> ACR
 ```
 
 ### State snapshot path
@@ -465,6 +513,20 @@ Per-query spans for every sqlx call land under the `sqlx-tracing` target — see
 | Span | Attributes |
 |---|---|
 | `ws.connection` — root span wrapping the entire connection lifetime from upgrade to disconnect. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). See [frontend-app.md](frontend-app.md) for the client-side instrumentation context. | `ws.close_reason` (`&'static str`; late-bound — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded on a lagged-eviction exit — paired with `atc_ws_lagged_evictions_total`). |
+
+### `auth.github` OAuth callback
+
+| Span | Attributes |
+|---|---|
+| `auth.callback` — root span wrapping the entire `callback_handler` body (manual `info_span!`, no incoming `traceparent` — an OAuth redirect from GitHub carries no W3C trace context). | `outcome` (`&'static str`; late-bound — `"success"`, `"state_mismatch"`, `"missing_flow"`, `"exchange_failed"`, `"denied"`, or `"session_error"`; the same value recorded on `atc_auth_logins_total`). `repo_count` (`usize`; late-bound, recorded only on the `"success"` exit). |
+| `auth.callback.exchange` — child span on `GitHubClient::exchange_code` (`#[tracing::instrument]`). | None beyond the default. |
+| `auth.callback.repos` — child span on `GitHubClient::get_authorized_repo_ids` (`#[tracing::instrument]`). | `pages` (`u32`; late-bound — total pages fetched across the installations list and every per-installation repositories list). |
+
+### Session sweep (`auth.github`, PG mode only)
+
+| Span | Attributes |
+|---|---|
+| `auth.session_sweep.tick` — per-tick root span for `SessionStore`'s sweep (`atc-store-pg::session::sweep_expired_impl`). No task-lifetime wrapper at the spawn site — same pattern as `outbox.sweep.tick`/`staleness.sweep.tick`. | `flows_deleted` (`u64`; late-bound), `sessions_deleted` (`u64`; late-bound). |
 
 ### Liveness + config-reload internals
 

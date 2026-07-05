@@ -29,11 +29,15 @@ async fn auth_context_disabled_mode_short_circuits_without_touching_store() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn auth_context_missing_cookie_rejects_with_auth_required() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(default_mock_config()).await;
     let (_app, app_state) = build_auth_test_app(pool, mock_base).await;
 
+    // `parts(None)` builds a request to `/v1/auth/me` — surface="me".
     let mut parts = parts(None);
     let err = AuthContext::from_request_parts(&mut parts, &app_state)
         .await
@@ -45,6 +49,20 @@ async fn auth_context_missing_cookie_rejects_with_auth_required() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json, json!({"reason": "auth_required"}));
+
+    let snapshot = common::snapshot_metrics();
+    assert_eq!(
+        common::counter_value(
+            &snapshot,
+            "atc_auth_rejections_total",
+            &[
+                opentelemetry::KeyValue::new("surface", "me"),
+                opentelemetry::KeyValue::new("reason", "auth_required"),
+            ],
+        ),
+        1,
+        "surface=me, reason=auth_required must increment atc_auth_rejections_total"
+    );
 }
 
 #[tokio::test]

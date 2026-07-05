@@ -103,9 +103,14 @@ async fn state_handler(ctx: AuthContext, State(state): State<Arc<AppState>>) -> 
         // store at all; `Disabled` (mode=none) passes through unchanged.
         // `auth_required` is already handled by the `AuthContext` extractor
         // itself — this only ever surfaces `stale_authorization`.
-        let ctx = match ctx.require_fresh(now) {
+        let ctx = match ctx.require_fresh(now, "state") {
             Ok(ctx) => ctx,
-            Err(rejection) => return rejection.into_response(),
+            Err(rejection) => {
+                state
+                    .auth_metrics
+                    .record_rejection("state", "stale_authorization");
+                return rejection.into_response();
+            }
         };
 
         // Compute the display-TTL cutoff once per request. The 60s startup

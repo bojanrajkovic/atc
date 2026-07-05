@@ -164,6 +164,47 @@ pub fn reset_spans() {
     h.span_exporter.reset();
 }
 
+// ---------------------------------------------------------------------------
+// Span-tree lookup helpers
+// ---------------------------------------------------------------------------
+//
+// Shared by every span-instrumentation test (webhook, eviction, auth) so a
+// future `SpanData`/attribute-representation change is fixed in one place
+// instead of drifting across per-file copies.
+
+pub fn span_named<'a>(
+    spans: &'a [opentelemetry_sdk::trace::SpanData],
+    name: &str,
+) -> Option<&'a opentelemetry_sdk::trace::SpanData> {
+    spans.iter().find(|s| s.name.as_ref() == name)
+}
+
+pub fn spans_named<'a>(
+    spans: &'a [opentelemetry_sdk::trace::SpanData],
+    name: &str,
+) -> Vec<&'a opentelemetry_sdk::trace::SpanData> {
+    spans.iter().filter(|s| s.name.as_ref() == name).collect()
+}
+
+pub fn parent_of<'a>(
+    spans: &'a [opentelemetry_sdk::trace::SpanData],
+    child: &opentelemetry_sdk::trace::SpanData,
+) -> Option<&'a opentelemetry_sdk::trace::SpanData> {
+    if !child.parent_span_id.to_bytes().iter().any(|b| *b != 0) {
+        return None;
+    }
+    spans
+        .iter()
+        .find(|s| s.span_context.span_id() == child.parent_span_id)
+}
+
+pub fn attribute_str(span: &opentelemetry_sdk::trace::SpanData, key: &str) -> Option<String> {
+    span.attributes
+        .iter()
+        .find(|kv| kv.key.as_str() == key)
+        .map(|kv| kv.value.to_string())
+}
+
 /// Backwards-compatible alias for tests that still use the span-only helper.
 pub fn ensure_span_exporter_installed() -> InMemorySpanExporter {
     ensure_recorder_installed().span_exporter.clone()
@@ -460,6 +501,7 @@ impl TestAppState {
             ws_tracker: self.ws_tracker,
             ws_metrics: atc_server::ws::WsMetrics::register(),
             auth: self.auth,
+            auth_metrics: atc_server::auth::AuthMetrics::register(),
         })
     }
 }

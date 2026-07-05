@@ -24,6 +24,7 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::common;
+use crate::common::spans_named;
 
 fn run_requested(run_id: i64) -> RunEventEnvelope {
     common::make_run_envelope(RunId(run_id), RunEvent::Requested)
@@ -43,10 +44,6 @@ fn job_completed(job_id: i64, run_id: i64) -> JobEventEnvelope {
             },
         )
     }
-}
-
-fn spans_named<'a>(spans: &'a [SpanData], name: &str) -> Vec<&'a SpanData> {
-    spans.iter().filter(|s| s.name.as_ref() == name).collect()
 }
 
 /// OpenTelemetry's `Value` enum has no unsigned-integer variant — the
