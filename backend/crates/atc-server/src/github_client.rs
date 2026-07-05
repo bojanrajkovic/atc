@@ -473,58 +473,16 @@ mod tests {
         assert!(debug.contains("REDACTED"));
     }
 
-    /// Mock `GET /repositories/{id}` — `1` and `2` are public, `3` is
-    /// private (404, matching GitHub's real behavior), anything else also
-    /// 404s (repo gone/unknown). Asserts Basic auth was sent so the rate-
-    /// ceiling claim in `is_repo_public`'s doc comment stays honest.
-    async fn spawn_mock_repos_server() -> String {
-        async fn handler(
-            axum::extract::Path(id): axum::extract::Path<i64>,
-            headers: axum::http::HeaderMap,
-        ) -> axum::response::Response {
-            use axum::response::IntoResponse;
-
-            let has_basic_auth = headers
-                .get(axum::http::header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .is_some_and(|v| v.starts_with("Basic "));
-            if !has_basic_auth {
-                return axum::http::StatusCode::UNAUTHORIZED.into_response();
-            }
-
-            match id {
-                1 | 2 => axum::Json(serde_json::json!({"id": id, "visibility": "public"}))
-                    .into_response(),
-                _ => axum::http::StatusCode::NOT_FOUND.into_response(),
-            }
-        }
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind mock repos listener");
-        let addr = listener.local_addr().expect("local_addr");
-        let app = axum::Router::new().route("/repositories/{id}", axum::routing::get(handler));
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("mock repos server");
-        });
-        format!("http://{addr}")
-    }
-
-    #[tokio::test]
-    async fn fetch_public_repo_ids_keeps_only_public_repos() {
-        let base = spawn_mock_repos_server().await;
-        let client = GitHubClient::with_base_urls(
-            "client-id".to_string(),
-            "client-secret".to_string(),
-            base.clone(),
-            base,
-        );
-
-        let public = client.fetch_public_repo_ids(&[1, 2, 3, 404]).await;
-
-        assert_eq!(public, HashSet::from([1, 2]));
-    }
-
+    // `fetch_public_repo_ids`'s HTTP-level behavior (public vs. 404,
+    // multi-repo batches, Basic auth) is covered by
+    // `auth_tests::public_repos` against the full auth flow's existing
+    // hand-rolled mock GitHub server — matching this crate's established
+    // convention of exercising `GitHubClient`'s HTTP behavior only through
+    // that mock, not a second one here (see `next_page_url` and
+    // `token_exchange_response_debug_redacts_access_token` above, the only
+    // other tests in this module, which test pure functions with no HTTP
+    // involved). Only the empty-input short-circuit is worth a unit test:
+    // it doesn't touch HTTP at all, so it doesn't need that mock.
     #[tokio::test]
     async fn fetch_public_repo_ids_empty_input_makes_no_calls() {
         let client = GitHubClient::with_base_urls(

@@ -197,7 +197,21 @@ async fn mock_get_repositories(Path(installation_id): Path<i64>) -> impl IntoRes
 async fn mock_get_repository_visibility(
     State(config): State<MockGitHubConfig>,
     Path(repo_id): Path<i64>,
+    headers: HeaderMap,
 ) -> Response {
+    // `PublicRepoCache`/`GitHubClient::is_repo_public` authenticate this
+    // call with Basic auth (client_id/client_secret) for the OAuth-app rate
+    // ceiling, never a bearer token — enforcing that here means every test
+    // that exercises this route also proves that wire-level detail, not
+    // just a dedicated test for it.
+    let has_basic_auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("Basic "));
+    if !has_basic_auth {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     if config.public_repo_ids.contains(&repo_id) {
         Json(json!({"id": repo_id, "visibility": "public"})).into_response()
     } else {

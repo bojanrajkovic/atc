@@ -55,6 +55,44 @@ async fn public_repo_with_run_history_is_unioned_into_session_repo_ids() {
 }
 
 #[tokio::test]
+async fn a_multi_repo_known_set_keeps_only_the_public_ones() {
+    let (pool, _container, _db_url) = common::start_pg().await;
+    let mock_base = spawn_mock_github(MockGitHubConfig {
+        public_repo_ids: vec![9999, 9998],
+        ..default_mock_config()
+    })
+    .await;
+    let (app, state) = build_auth_test_app(pool.clone(), mock_base).await;
+
+    // Four known repos, checked concurrently in one cache refresh: two
+    // public (9999, 9998), one private/gone (8888), and the one the user
+    // already has collaborator access to via installations (1001, seeded
+    // separately below by the login itself).
+    for (run_id, repo_id) in [(1, 9999), (2, 9998), (3, 8888)] {
+        state
+            .persist
+            .apply_run_event(run_event_for(run_id, repo_id))
+            .await
+            .expect("seed run");
+    }
+
+    login_and_get_session_cookie(&app).await;
+
+    let repo_ids: Vec<i64> = sqlx::query_scalar("SELECT repo_ids FROM auth_sessions")
+        .fetch_one(&pool)
+        .await
+        .expect("session row should exist");
+    let mut sorted = repo_ids;
+    sorted.sort_unstable();
+    assert_eq!(
+        sorted,
+        vec![1001, 9998, 9999],
+        "only the two public repos (9998, 9999) join the collaborator-accessible \
+         one (1001); the private/gone repo (8888) must not"
+    );
+}
+
+#[tokio::test]
 async fn known_repo_that_github_reports_as_not_public_is_not_unioned_in() {
     let (pool, _container, _db_url) = common::start_pg().await;
     // No `public_repo_ids` configured — the mock's `GET /repositories/{id}`
