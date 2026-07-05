@@ -212,9 +212,29 @@ async fn config_update_reaches_authenticated_clients_regardless_of_repo_set() {
     }
 }
 
+/// Assert `atc_auth_rejections_total{surface="ws", reason}` incremented by
+/// exactly 1 since the last `common::reset_metrics()`.
+fn assert_ws_rejection_recorded(reason: &str) {
+    let snapshot = common::snapshot_metrics();
+    assert_eq!(
+        common::counter_value(
+            &snapshot,
+            "atc_auth_rejections_total",
+            &[
+                opentelemetry::KeyValue::new("surface", "ws"),
+                opentelemetry::KeyValue::new("reason", reason.to_string()),
+            ],
+        ),
+        1,
+        "surface=ws, reason={reason} must increment atc_auth_rejections_total"
+    );
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn upgrade_rejected_for_cross_origin() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let (addr, _app_state, sessions) = common::spawn_auth_server(pool).await;
     let now = SystemClock.now();
@@ -227,11 +247,14 @@ async fn upgrade_rejected_for_cross_origin() {
     let req = ws_request(&ws_url, Some("http://evil.example.test"), Some(&session));
     let status = expect_http_rejection(tokio_tungstenite::connect_async(req).await);
     assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_ws_rejection_recorded("origin_mismatch");
 }
 
 #[tokio::test]
 #[serial_test::serial]
 async fn upgrade_rejected_for_missing_origin() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let (addr, _app_state, sessions) = common::spawn_auth_server(pool).await;
     let now = SystemClock.now();
@@ -244,11 +267,14 @@ async fn upgrade_rejected_for_missing_origin() {
     let req = ws_request(&ws_url, None, Some(&session));
     let status = expect_http_rejection(tokio_tungstenite::connect_async(req).await);
     assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_ws_rejection_recorded("origin_mismatch");
 }
 
 #[tokio::test]
 #[serial_test::serial]
 async fn upgrade_rejected_for_missing_session() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let (addr, _app_state, _sessions) = common::spawn_auth_server(pool).await;
 
@@ -256,11 +282,14 @@ async fn upgrade_rejected_for_missing_session() {
     let req = ws_request(&ws_url, Some(common::AUTH_TEST_PUBLIC_ORIGIN), None);
     let status = expect_http_rejection(tokio_tungstenite::connect_async(req).await);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_ws_rejection_recorded("auth_required");
 }
 
 #[tokio::test]
 #[serial_test::serial]
 async fn upgrade_rejected_for_stale_session() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let (addr, _app_state, sessions) = common::spawn_auth_server(pool.clone()).await;
     let now = SystemClock.now();
@@ -286,4 +315,5 @@ async fn upgrade_rejected_for_stale_session() {
     );
     let status = expect_http_rejection(tokio_tungstenite::connect_async(req).await);
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_ws_rejection_recorded("stale_authorization");
 }

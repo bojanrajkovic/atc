@@ -19,11 +19,50 @@ use atc_persist::join_with_timeout;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::Counter;
 use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::TracedPool;
+use crate::metrics::METER_SCOPE;
+
+/// OTel instrumentation for [`SessionStore`]'s sweep task. Deliberately
+/// separate from [`crate::metrics::PgMetrics`] — `SessionStore` is not part
+/// of `PgStore` (see this crate's `CLAUDE.md` "Sharp edges"), so its
+/// instruments are registered and owned independently.
+struct SessionMetrics {
+    /// `atc_auth_swept_total{kind="flow"|"session"}` — rows deleted by the
+    /// sweep task, by table. Mirrors the `atc_staleness_swept_total{kind}`
+    /// shape on `PgMetrics`.
+    swept: Counter<u64>,
+    attrs_flow: [KeyValue; 1],
+    attrs_session: [KeyValue; 1],
+}
+
+impl SessionMetrics {
+    fn register() -> Self {
+        let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
+        let swept = meter
+            .u64_counter("atc_auth_swept_total")
+            .with_description(
+                "Expired auth_flows/auth_sessions rows deleted by this replica's session \
+                 sweep task, by kind (flow or session).",
+            )
+            .build();
+        Self {
+            swept,
+            attrs_flow: [KeyValue::new("kind", "flow")],
+            attrs_session: [KeyValue::new("kind", "session")],
+        }
+    }
+
+    fn record(&self, flows_deleted: u64, sessions_deleted: u64) {
+        self.swept.add(flows_deleted, &self.attrs_flow);
+        self.swept.add(sessions_deleted, &self.attrs_session);
+    }
+}
 
 /// Pre-auth flow rows are single-use and always treated as expired 10
 /// minutes after `created_at`, regardless of whether the sweep has reaped
@@ -78,6 +117,7 @@ pub struct Session {
 pub struct SessionStore {
     pool: TracedPool,
     clock: Arc<dyn Clock>,
+    metrics: Arc<SessionMetrics>,
     handle: StdMutex<Option<JoinHandle<()>>>,
 }
 
@@ -95,10 +135,17 @@ impl SessionStore {
         clock: Arc<dyn Clock>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
-        let handle = spawn_sweep(pool.clone(), Arc::clone(&clock), shutdown);
+        let metrics = Arc::new(SessionMetrics::register());
+        let handle = spawn_sweep(
+            pool.clone(),
+            Arc::clone(&clock),
+            Arc::clone(&metrics),
+            shutdown,
+        );
         Arc::new(Self {
             pool,
             clock,
+            metrics,
             handle: StdMutex::new(Some(handle)),
         })
     }
@@ -300,7 +347,7 @@ impl SessionStore {
     /// in [`SessionStore::start`]; also directly callable (e.g. by tests
     /// that want a synchronous sweep instead of waiting on the interval).
     pub async fn sweep_expired(&self, now: DateTime<Utc>) -> Result<(u64, u64), sqlx::Error> {
-        sweep_expired_impl(&self.pool, now).await
+        sweep_expired_impl(&self.pool, now, &self.metrics).await
     }
 }
 
@@ -308,9 +355,23 @@ impl SessionStore {
 /// the task calls this directly over a cloned `pool` rather than through
 /// `&SessionStore`, so it never needs an `Arc<SessionStore>` back-reference
 /// (see [`SessionStore::start`]'s doc comment).
+///
+/// Per-tick root span — no task-lifetime wrapper at the spawn site, mirroring
+/// `outbox.sweep.tick`/`staleness.sweep.tick` (see
+/// `docs/architecture/metrics.md` § "Task-lifetime root spans are an
+/// anti-pattern").
+#[tracing::instrument(
+    name = "auth.session_sweep.tick",
+    skip_all,
+    fields(
+        flows_deleted = tracing::field::Empty,
+        sessions_deleted = tracing::field::Empty,
+    ),
+)]
 async fn sweep_expired_impl(
     pool: &TracedPool,
     now: DateTime<Utc>,
+    metrics: &SessionMetrics,
 ) -> Result<(u64, u64), sqlx::Error> {
     let flow_cutoff = now - flow_ttl_chrono();
 
@@ -330,6 +391,11 @@ async fn sweep_expired_impl(
         .await?
         .rows_affected();
 
+    metrics.record(flows_deleted, sessions_deleted);
+    let span = tracing::Span::current();
+    span.record("flows_deleted", flows_deleted);
+    span.record("sessions_deleted", sessions_deleted);
+
     Ok((flows_deleted, sessions_deleted))
 }
 
@@ -339,6 +405,7 @@ async fn sweep_expired_impl(
 fn spawn_sweep(
     pool: TracedPool,
     clock: Arc<dyn Clock>,
+    metrics: Arc<SessionMetrics>,
     shutdown: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -349,7 +416,7 @@ fn spawn_sweep(
             }
 
             let now = clock.now();
-            if let Err(e) = sweep_expired_impl(&pool, now).await {
+            if let Err(e) = sweep_expired_impl(&pool, now, &metrics).await {
                 tracing::warn!(error.message = %e, "session sweep tick failed");
             }
         }

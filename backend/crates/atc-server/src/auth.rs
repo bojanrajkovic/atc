@@ -26,7 +26,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Counter, Histogram};
 use sha2::{Digest, Sha256};
+use tracing::{Instrument, field, info_span};
 
 use atc_core::RepoId;
 use atc_store_pg::{Session, SessionStore};
@@ -34,6 +37,105 @@ use atc_store_pg::{Session, SessionStore};
 use crate::github_client::{GitHubClient, GitHubClientError};
 use crate::public_repo_cache::PublicRepoCache;
 use crate::state::AppState;
+
+/// Meter scope shared with [`crate::ws::WsMetrics`] and
+/// `atc_store_pg::metrics::PgMetrics`.
+const METER_SCOPE: &str = "atc";
+
+/// Which mounted route rejected the request — the label distinguishing
+/// otherwise-identical `auth_required`/`stale_authorization` rejections
+/// across `/v1/state`, `/v1/ws`, and `/v1/auth/me`.
+fn surface_for_path(path: &str) -> &'static str {
+    match path {
+        "/v1/state" => "state",
+        "/v1/ws" => "ws",
+        "/v1/auth/me" => "me",
+        _ => "unknown",
+    }
+}
+
+/// OTel instrumentation for `auth.github`: login outcomes, request
+/// rejections, and callback GitHub round-trip duration.
+///
+/// Mirrors the cached-instrument convention (`docs/architecture/metrics.md`
+/// § "Cached instrument convention") used by [`crate::ws::WsMetrics`] — the
+/// `Counter`/`Histogram` instruments are registered once and cached; unlike
+/// `WsMetrics`'s two fixed label combinations, the label sets here (5 login
+/// outcomes, a surface × reason cross product, 2 duration phases) are built
+/// as `KeyValue` slices per call rather than pre-built as struct fields —
+/// this surface sees at most one emit per HTTP request, not a per-row hot
+/// path, so the extra allocation is not worth the field-per-combination
+/// sprawl.
+pub struct AuthMetrics {
+    logins: Counter<u64>,
+    rejections: Counter<u64>,
+    callback_duration: Histogram<f64>,
+}
+
+impl AuthMetrics {
+    /// Register OTel instruments against the global meter. Must run after
+    /// `otel::init_otel`; safe under the no-op meter.
+    #[must_use]
+    pub fn register() -> Arc<Self> {
+        let meter = opentelemetry::global::meter_provider().meter(METER_SCOPE);
+
+        let logins = meter
+            .u64_counter("atc_auth_logins_total")
+            .with_description(
+                "auth.github login attempts by outcome: success, state_mismatch, \
+                 missing_flow, exchange_failed, denied, or session_error (a local \
+                 SessionStore failure, distinct from the GitHub-side outcomes).",
+            )
+            .build();
+        let rejections = meter
+            .u64_counter("atc_auth_rejections_total")
+            .with_description(
+                "Requests rejected by AuthContext/WS enforcement, labeled by surface \
+                 (state, ws, me) and reason (auth_required, stale_authorization, \
+                 origin_mismatch).",
+            )
+            .build();
+        let callback_duration = meter
+            .f64_histogram("atc_auth_callback_duration_seconds")
+            .with_description(
+                "Wall time of the callback handler's GitHub round trips, labeled by \
+                 phase (exchange = token exchange; repos = identity + authorized-repo-set \
+                 derivation).",
+            )
+            .build();
+
+        Arc::new(Self {
+            logins,
+            rejections,
+            callback_duration,
+        })
+    }
+
+    fn record_login(&self, outcome: &'static str) {
+        self.logins.add(1, &[KeyValue::new("outcome", outcome)]);
+    }
+
+    /// Increment `atc_auth_rejections_total{surface, reason}`. `surface` is
+    /// which mounted route rejected (`"state"` / `"ws"` / `"me"`); `reason`
+    /// is `"auth_required"` / `"stale_authorization"` / `"origin_mismatch"`.
+    /// Called from `routes::state_handler`, `ws::ws_handler`, and
+    /// `AuthContext::from_request_parts` — the three surfaces that can
+    /// produce a rejection.
+    pub(crate) fn record_rejection(&self, surface: &'static str, reason: &'static str) {
+        self.rejections.add(
+            1,
+            &[
+                KeyValue::new("surface", surface),
+                KeyValue::new("reason", reason),
+            ],
+        );
+    }
+
+    fn record_callback_duration(&self, phase: &'static str, seconds: f64) {
+        self.callback_duration
+            .record(seconds, &[KeyValue::new("phase", phase)]);
+    }
+}
 
 /// Random bytes in a `state`/PKCE-verifier token, before base64url encoding.
 /// Matches `atc-store-pg::session`'s token size (256 bits).
@@ -278,16 +380,16 @@ struct CallbackQuery {
 /// Log + build a `502 Bad Gateway` for a failed GitHub-side call. `what`
 /// names the call (e.g. `"token exchange"`) for both the log and the body.
 fn github_call_failed(e: &GitHubClientError, what: &str) -> Response {
-    tracing::warn!(class = "exchange_failed", error.message = %e, what, "auth.callback: GitHub call failed");
+    tracing::warn!(reason = "exchange_failed", error.message = %e, what, "auth.callback: GitHub call failed");
     (StatusCode::BAD_GATEWAY, format!("GitHub {what} failed")).into_response()
 }
 
 /// Log + build a `500` for a failed `SessionStore` operation. Kept as its
-/// own `class` (`session_error`), distinct from `exchange_failed` — an
-/// operator filtering logs by failure class needs to tell a GitHub-side
+/// own `reason` (`session_error`), distinct from `exchange_failed` — an
+/// operator filtering logs by failure reason needs to tell a GitHub-side
 /// outage apart from a local Postgres blip; they need different remediation.
 fn session_store_failed(e: impl std::fmt::Display, what: &str) -> Response {
-    tracing::warn!(class = "session_error", error.message = %e, what, "auth: session store operation failed");
+    tracing::warn!(reason = "session_error", error.message = %e, what, "auth: session store operation failed");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("failed to {what}"),
@@ -300,169 +402,222 @@ async fn callback_handler(
     Query(query): Query<CallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(auth) = state.auth.as_ref() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let names = cookie_names(&auth.public_origin);
+    let span = info_span!(
+        "auth.callback",
+        outcome = field::Empty,
+        repo_count = field::Empty,
+    );
+    async move {
+        let Some(auth) = state.auth.as_ref() else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        // Records both the span's `outcome` field and the
+        // `atc_auth_logins_total{outcome}` counter from one call site, so
+        // every exit from this handler reports the same value to both
+        // surfaces.
+        let record_outcome = |outcome: &'static str| {
+            tracing::Span::current().record("outcome", outcome);
+            state.auth_metrics.record_login(outcome);
+        };
+        let names = cookie_names(&auth.public_origin);
 
-    let Some(flow_cookie) = get_cookie(&headers, names.flow) else {
-        tracing::warn!(class = "missing_flow", "auth.callback: no flow cookie");
-        return (StatusCode::BAD_REQUEST, "missing or expired login attempt").into_response();
-    };
-
-    let flow = match auth.sessions.consume_flow(&flow_cookie).await {
-        Ok(Some(flow)) => flow,
-        Ok(None) => {
-            tracing::warn!(
-                class = "missing_flow",
-                "auth.callback: flow not found or expired"
-            );
+        let Some(flow_cookie) = get_cookie(&headers, names.flow) else {
+            record_outcome("missing_flow");
+            tracing::warn!(reason = "missing_flow", "auth.callback: no flow cookie");
             return (StatusCode::BAD_REQUEST, "missing or expired login attempt").into_response();
-        }
-        Err(e) => return session_store_failed(e, "consume login attempt"),
-    };
+        };
 
-    // A denied authorization carries `error` (commonly `access_denied`) and
-    // no `code` — home, not the deep-linked `return_to`, since there's
-    // nothing to resume.
-    if query.error.is_some() {
-        tracing::warn!(class = "denied", "auth.callback: user denied authorization");
-        return redirect_302("/?auth_error=denied");
-    }
-
-    if query.state.as_deref() != Some(flow.state.as_str()) {
-        tracing::warn!(
-            class = "state_mismatch",
-            "auth.callback: state parameter mismatch"
-        );
-        return (StatusCode::BAD_REQUEST, "invalid login attempt").into_response();
-    }
-
-    let Some(code) = query.code.as_deref() else {
-        tracing::warn!(class = "missing_flow", "auth.callback: no code parameter");
-        return (StatusCode::BAD_REQUEST, "missing authorization code").into_response();
-    };
-
-    let redirect_uri = format!("{}/v1/auth/github/callback", auth.public_origin);
-    let access_token = match auth
-        .github
-        .exchange_code(code, &redirect_uri, &flow.pkce_verifier)
-        .await
-    {
-        Ok(token) => token,
-        Err(e) => return github_call_failed(&e, "token exchange"),
-    };
-
-    // Identity and the repo-authorization set are independent — neither
-    // depends on the other — so they run concurrently rather than as two
-    // sequential round trips.
-    let user_call = async {
-        auth.github
-            .get_user(&access_token)
-            .await
-            .map_err(|e| ("identity lookup", e))
-    };
-    let repos_call = async {
-        auth.github
-            .get_authorized_repo_ids(&access_token)
-            .await
-            .map_err(|e| ("repository lookup", e))
-    };
-    let (user, repo_ids) = match tokio::try_join!(user_call, repos_call) {
-        Ok((user, repo_ids)) => (user, repo_ids),
-        Err((what, e)) => return github_call_failed(&e, what),
-    };
-    // `access_token` and the token-exchange response are not referenced
-    // again past this point — nothing GitHub-issued survives this handler.
-
-    let now = state.clock.now();
-
-    // Deliberately outside the `try_join!` above: a public-repo lookup
-    // failure (`PublicRepoCache::get` never errors — see its doc comment)
-    // must never block login the way a real `repos_call` failure does.
-    let public_repo_ids = auth.public_repos.get(now).await;
-    let repo_ids: Vec<i64> = repo_ids
-        .into_iter()
-        .chain(public_repo_ids.iter().copied())
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-
-    let existing_raw_id = get_cookie(&headers, names.session);
-    let existing_session = match &existing_raw_id {
-        Some(raw) => match auth.sessions.load_session(raw).await {
-            Ok(session) => session,
-            Err(e) => return session_store_failed(e, "load existing session"),
-        },
-        None => None,
-    };
-    // A session cookie present on this request but belonging to a DIFFERENT
-    // GitHub user (e.g. a shared browser, or a stale cookie from a prior
-    // account) must not be refreshed with the new user's repo set under the
-    // old identity — `refresh_session_repos` only ever touches
-    // `repo_ids`/`repos_refreshed_at`, never `github_user_id`, so refreshing
-    // it here would silently attribute the new user's repo access to the
-    // old session's identity. Treat a mismatch the same as no existing
-    // session: fall through to `create_session` below.
-    let existing_session = existing_session.filter(|s| s.github_user_id == user.id);
-
-    let (session_cookie_value, cookie_max_age_secs) = match existing_session {
-        Some(existing) => {
-            if let Err(e) = auth
-                .sessions
-                .refresh_session_repos(&existing.id_hash, &repo_ids, now)
-                .await
-            {
-                return session_store_failed(e, "update session");
+        let flow = match auth.sessions.consume_flow(&flow_cookie).await {
+            Ok(Some(flow)) => flow,
+            Ok(None) => {
+                record_outcome("missing_flow");
+                tracing::warn!(
+                    reason = "missing_flow",
+                    "auth.callback: flow not found or expired"
+                );
+                return (StatusCode::BAD_REQUEST, "missing or expired login attempt")
+                    .into_response();
             }
-            // `refresh_session_repos` never extends `expires_at` (it's the
-            // absolute session lifetime, independent of the repo-staleness
-            // clock it does update — see the design doc's "Data model"
-            // section) — so the cookie's Max-Age must reflect the time
-            // remaining until the DB row's real expiry, not a fresh
-            // `max_session_ttl`. Reissuing the full TTL here would tell the
-            // browser to keep a cookie alive well past when the server
-            // will actually reject it.
-            let remaining = (existing.expires_at - now).num_seconds().max(0);
-            let raw_id = existing_raw_id.expect("existing_session implies existing_raw_id is Some");
-            (raw_id, u64::try_from(remaining).unwrap_or(0))
+            Err(e) => {
+                record_outcome("session_error");
+                return session_store_failed(e, "consume login attempt");
+            }
+        };
+
+        // A denied authorization carries `error` (commonly `access_denied`) and
+        // no `code` — home, not the deep-linked `return_to`, since there's
+        // nothing to resume.
+        if query.error.is_some() {
+            record_outcome("denied");
+            tracing::warn!(
+                reason = "denied",
+                "auth.callback: user denied authorization"
+            );
+            return redirect_302("/?auth_error=denied");
         }
-        None => match auth
-            .sessions
-            .create_session(user.id, &user.login, &repo_ids, now, auth.max_session_ttl)
+
+        if query.state.as_deref() != Some(flow.state.as_str()) {
+            record_outcome("state_mismatch");
+            tracing::warn!(
+                reason = "state_mismatch",
+                "auth.callback: state parameter mismatch"
+            );
+            return (StatusCode::BAD_REQUEST, "invalid login attempt").into_response();
+        }
+
+        let Some(code) = query.code.as_deref() else {
+            record_outcome("missing_flow");
+            tracing::warn!(reason = "missing_flow", "auth.callback: no code parameter");
+            return (StatusCode::BAD_REQUEST, "missing authorization code").into_response();
+        };
+
+        let redirect_uri = format!("{}/v1/auth/github/callback", auth.public_origin);
+        let exchange_start = std::time::Instant::now();
+        let access_token = match auth
+            .github
+            .exchange_code(code, &redirect_uri, &flow.pkce_verifier)
             .await
         {
-            Ok(raw_id) => (raw_id, auth.max_session_ttl.as_secs()),
-            Err(e) => return session_store_failed(e, "create session"),
-        },
-    };
+            Ok(token) => token,
+            Err(e) => {
+                record_outcome("exchange_failed");
+                return github_call_failed(&e, "token exchange");
+            }
+        };
+        state
+            .auth_metrics
+            .record_callback_duration("exchange", exchange_start.elapsed().as_secs_f64());
 
-    tracing::info!(
-        user = %user.login,
-        user_id = user.id,
-        repo_count = repo_ids.len(),
-        "auth.callback: login succeeded",
-    );
-    tracing::debug!(repo_ids = ?repo_ids, "auth.callback: authorized repo set");
+        // Identity and the repo-authorization set are independent — neither
+        // depends on the other — so they run concurrently rather than as two
+        // sequential round trips.
+        let repos_start = std::time::Instant::now();
+        let user_call = async {
+            auth.github
+                .get_user(&access_token)
+                .await
+                .map_err(|e| ("identity lookup", e))
+        };
+        let repos_call = async {
+            auth.github
+                .get_authorized_repo_ids(&access_token)
+                .await
+                .map_err(|e| ("repository lookup", e))
+        };
+        let (user, repo_ids) = match tokio::try_join!(user_call, repos_call) {
+            Ok((user, repo_ids)) => (user, repo_ids),
+            Err((what, e)) => {
+                record_outcome("exchange_failed");
+                return github_call_failed(&e, what);
+            }
+        };
+        state
+            .auth_metrics
+            .record_callback_duration("repos", repos_start.elapsed().as_secs_f64());
+        // `access_token` and the token-exchange response are not referenced
+        // again past this point — nothing GitHub-issued survives this handler.
 
-    let session_cookie = set_cookie_header(
-        names.session,
-        &session_cookie_value,
-        cookie_max_age_secs,
-        names.secure,
-    );
+        let now = state.clock.now();
 
-    let response = if flow.popup {
-        (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            POPUP_CALLBACK_HTML,
-        )
-            .into_response()
-    } else {
-        redirect_302(&flow.return_to)
-    };
-    with_set_cookie(response, &session_cookie)
+        // Deliberately outside the `try_join!` above: a public-repo lookup
+        // failure (`PublicRepoCache::get` never errors — see its doc comment)
+        // must never block login the way a real `repos_call` failure does.
+        let public_repo_ids = auth.public_repos.get(now).await;
+        let repo_ids: Vec<i64> = repo_ids
+            .into_iter()
+            .chain(public_repo_ids.iter().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let existing_raw_id = get_cookie(&headers, names.session);
+        let existing_session = match &existing_raw_id {
+            Some(raw) => match auth.sessions.load_session(raw).await {
+                Ok(session) => session,
+                Err(e) => {
+                    record_outcome("session_error");
+                    return session_store_failed(e, "load existing session");
+                }
+            },
+            None => None,
+        };
+        // A session cookie present on this request but belonging to a DIFFERENT
+        // GitHub user (e.g. a shared browser, or a stale cookie from a prior
+        // account) must not be refreshed with the new user's repo set under the
+        // old identity — `refresh_session_repos` only ever touches
+        // `repo_ids`/`repos_refreshed_at`, never `github_user_id`, so refreshing
+        // it here would silently attribute the new user's repo access to the
+        // old session's identity. Treat a mismatch the same as no existing
+        // session: fall through to `create_session` below.
+        let existing_session = existing_session.filter(|s| s.github_user_id == user.id);
+
+        let (session_cookie_value, cookie_max_age_secs) = match existing_session {
+            Some(existing) => {
+                if let Err(e) = auth
+                    .sessions
+                    .refresh_session_repos(&existing.id_hash, &repo_ids, now)
+                    .await
+                {
+                    record_outcome("session_error");
+                    return session_store_failed(e, "update session");
+                }
+                // `refresh_session_repos` never extends `expires_at` (it's the
+                // absolute session lifetime, independent of the repo-staleness
+                // clock it does update — see the design doc's "Data model"
+                // section) — so the cookie's Max-Age must reflect the time
+                // remaining until the DB row's real expiry, not a fresh
+                // `max_session_ttl`. Reissuing the full TTL here would tell the
+                // browser to keep a cookie alive well past when the server
+                // will actually reject it.
+                let remaining = (existing.expires_at - now).num_seconds().max(0);
+                let raw_id =
+                    existing_raw_id.expect("existing_session implies existing_raw_id is Some");
+                (raw_id, u64::try_from(remaining).unwrap_or(0))
+            }
+            None => match auth
+                .sessions
+                .create_session(user.id, &user.login, &repo_ids, now, auth.max_session_ttl)
+                .await
+            {
+                Ok(raw_id) => (raw_id, auth.max_session_ttl.as_secs()),
+                Err(e) => {
+                    record_outcome("session_error");
+                    return session_store_failed(e, "create session");
+                }
+            },
+        };
+
+        record_outcome("success");
+        tracing::Span::current().record("repo_count", repo_ids.len());
+        tracing::info!(
+            user = %user.login,
+            user_id = user.id,
+            repo_count = repo_ids.len(),
+            "auth.callback: login succeeded",
+        );
+        tracing::debug!(repo_ids = ?repo_ids, "auth.callback: authorized repo set");
+
+        let session_cookie = set_cookie_header(
+            names.session,
+            &session_cookie_value,
+            cookie_max_age_secs,
+            names.secure,
+        );
+
+        let response = if flow.popup {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                POPUP_CALLBACK_HTML,
+            )
+                .into_response()
+        } else {
+            redirect_302(&flow.return_to)
+        };
+        with_set_cookie(response, &session_cookie)
+    }
+    .instrument(span)
+    .await
 }
 
 /// Popup-mode callback response. The `BroadcastChannel` name (`atc-auth`)
@@ -553,12 +708,17 @@ impl AuthContext {
     /// closed on staleness rather than reporting it the way
     /// `whoami_handler` does: `Disabled` passes through unchanged; a
     /// `Session` is rejected with `AuthRejection::Stale` once
-    /// `repos_refreshed_at + repo_auth_ttl` has elapsed.
-    pub fn require_fresh(self, now: chrono::DateTime<chrono::Utc>) -> Result<Self, AuthRejection> {
+    /// `repos_refreshed_at + repo_auth_ttl` has elapsed. `surface` names the
+    /// caller's route (`"state"` / `"ws"`) for the rejection's trace/metric.
+    pub fn require_fresh(
+        self,
+        now: chrono::DateTime<chrono::Utc>,
+        surface: &'static str,
+    ) -> Result<Self, AuthRejection> {
         if let Self::Session(identity) = &self
             && identity.is_stale(now)
         {
-            return Err(AuthRejection::Stale);
+            return Err(AuthRejection::Stale { surface });
         }
         Ok(self)
     }
@@ -590,10 +750,14 @@ impl SessionIdentity {
 pub enum AuthRejection {
     /// No/invalid/expired session. `had_cookie` distinguishes "no cookie
     /// sent" from "cookie sent but unknown/expired" for the trace event —
-    /// never reflected in the response body.
-    Required { had_cookie: bool },
+    /// never reflected in the response body. `surface` names the mounted
+    /// route that rejected (`"state"` / `"ws"` / `"me"`).
+    Required {
+        had_cookie: bool,
+        surface: &'static str,
+    },
     /// Valid session, but `repos_refreshed_at + repo_auth_ttl` elapsed.
-    Stale,
+    Stale { surface: &'static str },
     /// `SessionStore` failure while loading the session.
     StoreFailed,
 }
@@ -611,18 +775,23 @@ fn unauthorized(reason: &'static str) -> Response {
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> Response {
         match self {
-            Self::Required { had_cookie } => {
+            Self::Required {
+                had_cookie,
+                surface,
+            } => {
                 tracing::debug!(
                     reason = "auth_required",
                     had_cookie,
+                    surface,
                     "request rejected: no valid session"
                 );
                 unauthorized("auth_required")
             }
-            Self::Stale => {
+            Self::Stale { surface } => {
                 tracing::debug!(
                     reason = "stale_authorization",
                     had_cookie = true,
+                    surface,
                     "request rejected: stale authorization"
                 );
                 unauthorized("stale_authorization")
@@ -647,6 +816,7 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
         let Some(auth) = state.auth.as_ref() else {
             return Ok(Self::Disabled);
         };
+        let surface = surface_for_path(parts.uri.path());
 
         let names = cookie_names(&auth.public_origin);
         let raw_cookie = get_cookie(&parts.headers, names.session);
@@ -656,14 +826,23 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
             .await
             .map_err(|e| {
                 tracing::warn!(
-                    class = "session_error",
+                    reason = "session_error",
                     error.message = %e,
                     what = "load session",
+                    surface,
                     "auth: session store operation failed"
                 );
                 AuthRejection::StoreFailed
             })?
-            .ok_or(AuthRejection::Required { had_cookie })?;
+            .ok_or_else(|| {
+                state
+                    .auth_metrics
+                    .record_rejection(surface, "auth_required");
+                AuthRejection::Required {
+                    had_cookie,
+                    surface,
+                }
+            })?;
 
         Ok(Self::Session(SessionIdentity {
             github_login: session.github_login,
@@ -859,7 +1038,10 @@ mod tests {
     fn require_fresh_disabled_passes_through() {
         let ctx = AuthContext::Disabled;
         let now = chrono::DateTime::from_timestamp(0, 0).unwrap();
-        assert!(matches!(ctx.require_fresh(now), Ok(AuthContext::Disabled)));
+        assert!(matches!(
+            ctx.require_fresh(now, "state"),
+            Ok(AuthContext::Disabled)
+        ));
     }
 
     #[test]
@@ -868,7 +1050,7 @@ mod tests {
         let ctx = AuthContext::Session(test_identity(refreshed_at, Duration::from_secs(3600)));
         let now = refreshed_at + chrono::Duration::seconds(30);
         assert!(matches!(
-            ctx.require_fresh(now),
+            ctx.require_fresh(now, "state"),
             Ok(AuthContext::Session(_))
         ));
     }
@@ -878,12 +1060,19 @@ mod tests {
         let refreshed_at = chrono::DateTime::from_timestamp(1_000, 0).unwrap();
         let ctx = AuthContext::Session(test_identity(refreshed_at, Duration::from_secs(3600)));
         let now = refreshed_at + chrono::Duration::hours(2);
-        assert!(matches!(ctx.require_fresh(now), Err(AuthRejection::Stale)));
+        assert!(matches!(
+            ctx.require_fresh(now, "state"),
+            Err(AuthRejection::Stale { surface: "state" })
+        ));
     }
 
     #[tokio::test]
     async fn auth_rejection_required_body_is_exact() {
-        let resp = AuthRejection::Required { had_cookie: false }.into_response();
+        let resp = AuthRejection::Required {
+            had_cookie: false,
+            surface: "state",
+        }
+        .into_response();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
@@ -894,7 +1083,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_rejection_stale_body_is_exact() {
-        let resp = AuthRejection::Stale.into_response();
+        let resp = AuthRejection::Stale { surface: "state" }.into_response();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await

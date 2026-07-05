@@ -460,6 +460,7 @@ impl TestAppState {
             ws_tracker: self.ws_tracker,
             ws_metrics: atc_server::ws::WsMetrics::register(),
             auth: self.auth,
+            auth_metrics: atc_server::auth::AuthMetrics::register(),
         })
     }
 }

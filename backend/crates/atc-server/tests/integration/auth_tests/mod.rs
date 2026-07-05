@@ -17,6 +17,7 @@
 mod auth_context;
 mod login_callback;
 mod logout;
+mod observability;
 mod public_repos;
 mod session_lifecycle;
 mod whoami;

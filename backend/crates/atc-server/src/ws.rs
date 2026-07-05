@@ -245,6 +245,7 @@ pub async fn ws_handler(
                 origin = ?origin,
                 "WS upgrade rejected pre-upgrade"
             );
+            state.auth_metrics.record_rejection("ws", "origin_mismatch");
             return StatusCode::FORBIDDEN.into_response();
         }
     }
@@ -254,9 +255,14 @@ pub async fn ws_handler(
     // `AuthRejection::into_response` already traces this rejection (`reason
     // = "stale_authorization"`); no separate log here avoids double-logging
     // the same event.
-    let ctx = match ctx.require_fresh(state.clock.now()) {
+    let ctx = match ctx.require_fresh(state.clock.now(), "ws") {
         Ok(ctx) => ctx,
-        Err(rejection) => return rejection.into_response(),
+        Err(rejection) => {
+            state
+                .auth_metrics
+                .record_rejection("ws", "stale_authorization");
+            return rejection.into_response();
+        }
     };
 
     let committed_rx = state.persist.subscribe();

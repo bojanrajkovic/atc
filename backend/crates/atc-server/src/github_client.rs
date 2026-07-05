@@ -188,6 +188,7 @@ impl GitHubClient {
     /// token string; the response's `refresh_token` (if present — only
     /// expiring-token apps return one) is decoded, never propagated, and
     /// dropped when this function returns.
+    #[tracing::instrument(name = "auth.callback.exchange", skip_all)]
     pub async fn exchange_code(
         &self,
         code: &str,
@@ -238,11 +239,16 @@ impl GitHubClient {
     /// metadata-only auth app: every installation the app∩user intersection
     /// includes, across every page of both the installations list and each
     /// installation's repositories list.
+    #[tracing::instrument(
+        name = "auth.callback.repos",
+        skip_all,
+        fields(pages = tracing::field::Empty),
+    )]
     pub async fn get_authorized_repo_ids(
         &self,
         access_token: &str,
     ) -> Result<Vec<i64>, GitHubClientError> {
-        let installations: Vec<InstallationItem> = self
+        let (installations, mut pages): (Vec<InstallationItem>, u32) = self
             .fetch_all_pages(
                 format!("{}/user/installations?per_page=100", self.api_base),
                 access_token,
@@ -252,7 +258,7 @@ impl GitHubClient {
 
         let mut repo_ids = Vec::new();
         for installation in installations {
-            let repos: Vec<RepositoryItem> = self
+            let (repos, repo_pages): (Vec<RepositoryItem>, u32) = self
                 .fetch_all_pages(
                     format!(
                         "{}/user/installations/{}/repositories?per_page=100",
@@ -262,9 +268,11 @@ impl GitHubClient {
                     |page: RepositoriesResponse| page.repositories,
                 )
                 .await?;
+            pages += repo_pages;
             repo_ids.extend(repos.into_iter().map(|r| r.id));
         }
 
+        tracing::Span::current().record("pages", pages);
         Ok(repo_ids)
     }
 
@@ -368,26 +376,29 @@ impl GitHubClient {
     }
 
     /// Follow `Link: rel="next"` across every page of a REST list endpoint,
-    /// decoding each page as `R` and flattening via `extract`.
+    /// decoding each page as `R` and flattening via `extract`. Returns the
+    /// number of pages fetched alongside the flattened items, so callers can
+    /// record pagination depth on their own span (see
+    /// `auth.callback.repos`'s `pages` attribute).
     async fn fetch_all_pages<T, R, F>(
         &self,
         mut url: String,
         access_token: &str,
         extract: F,
-    ) -> Result<Vec<T>, GitHubClientError>
+    ) -> Result<(Vec<T>, u32), GitHubClientError>
     where
         R: serde::de::DeserializeOwned,
         F: Fn(R) -> Vec<T>,
     {
         let mut items = Vec::new();
-        for _ in 0..MAX_PAGES {
+        for page_num in 1..=MAX_PAGES {
             let resp = self.rest_get(&url, access_token).await?;
             let next = next_page_url(resp.headers());
             let page: R = resp.json().await.map_err(GitHubClientError::Http)?;
             items.extend(extract(page));
             match next {
                 Some(next_url) => url = next_url,
-                None => return Ok(items),
+                None => return Ok((items, page_num)),
             }
         }
         Err(GitHubClientError::TooManyPages)

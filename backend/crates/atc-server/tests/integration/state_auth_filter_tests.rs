@@ -374,7 +374,10 @@ async fn session_filtered_response_is_marked_uncacheable_but_mode_none_is_not() 
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn unauthenticated_request_to_state_returns_401_auth_required() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let (_none_app, auth_app, _sessions, _persist) = build_shared_persist_apps(pool).await;
 
@@ -385,10 +388,27 @@ async fn unauthenticated_request_to_state_returns_401_auth_required() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json, serde_json::json!({"reason": "auth_required"}));
+
+    let snapshot = common::snapshot_metrics();
+    assert_eq!(
+        common::counter_value(
+            &snapshot,
+            "atc_auth_rejections_total",
+            &[
+                opentelemetry::KeyValue::new("surface", "state"),
+                opentelemetry::KeyValue::new("reason", "auth_required"),
+            ],
+        ),
+        1,
+        "surface=state, reason=auth_required must increment atc_auth_rejections_total"
+    );
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn stale_session_request_to_state_returns_401_stale_authorization() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
     let (pool, _container, _db_url) = common::start_pg().await;
     let (_none_app, auth_app, sessions, _persist) = build_shared_persist_apps(pool.clone()).await;
 
@@ -414,4 +434,18 @@ async fn stale_session_request_to_state_returns_401_stale_authorization() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json, serde_json::json!({"reason": "stale_authorization"}));
+
+    let snapshot = common::snapshot_metrics();
+    assert_eq!(
+        common::counter_value(
+            &snapshot,
+            "atc_auth_rejections_total",
+            &[
+                opentelemetry::KeyValue::new("surface", "state"),
+                opentelemetry::KeyValue::new("reason", "stale_authorization"),
+            ],
+        ),
+        1,
+        "surface=state, reason=stale_authorization must increment atc_auth_rejections_total"
+    );
 }

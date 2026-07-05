@@ -7,7 +7,7 @@ use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
-use crate::auth::AuthRuntime;
+use crate::auth::{AuthMetrics, AuthRuntime};
 use crate::config_watcher::ConfigEvent;
 use crate::ws::WsMetrics;
 
@@ -88,4 +88,11 @@ pub struct AppState {
     /// origin, session TTL) — `None` when `auth.mode = "none"`. Constructed
     /// once in `main` from the validated `[auth.github]` config.
     pub auth: Option<AuthRuntime>,
+    /// OTel instruments for the `auth.github` surface (login outcomes,
+    /// rejections, callback round-trip duration). Registered unconditionally
+    /// — mirrors `ws_metrics` — so `AuthContext`'s extractor (shared by every
+    /// route) can always record a rejection regardless of `auth.mode`; under
+    /// `mode = "none"` `AuthContext` never produces a rejection, so the
+    /// instruments simply see no emits. See `auth::AuthMetrics`.
+    pub auth_metrics: Arc<AuthMetrics>,
 }
