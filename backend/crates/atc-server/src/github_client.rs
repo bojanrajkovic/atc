@@ -326,18 +326,22 @@ impl GitHubClient {
         public
     }
 
-    /// `GET /repositories/{repo_id}` using Basic auth (`client_id`/`client_secret`)
-    /// for the OAuth-app rate ceiling (5,000/hr) instead of the unauthenticated
-    /// 60/hr limit GitHub applies per source IP — see
-    /// <https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authenticating-to-the-rest-api-with-an-oauth-app>.
-    /// No user or installation token is involved. `Ok(false)` on 404 — GitHub
-    /// returns 404 (never 403) for both a private repo and one that no
-    /// longer exists, and the caller only needs "is it public", not which.
+    /// Unauthenticated `GET /repositories/{repo_id}` — deliberately no auth
+    /// header. The `client_id`/`client_secret` Basic-auth rate-limit boost
+    /// (5,000/hr instead of the unauthenticated 60/hr-per-IP limit) is an
+    /// OAuth-App-only mechanism; GitHub Apps have no equivalent and GitHub
+    /// rejects it with a flat 401 regardless of which repo is targeted. A
+    /// GitHub App installation token would authenticate correctly, but only
+    /// for repos the app is installed on — which defeats the point, since
+    /// this check exists precisely to catch public repos the app is *not*
+    /// installed on (ADR-0014, decision 2). So: no auth at all, same as any
+    /// anonymous caller. `Ok(false)` on 404 — GitHub returns 404 (never 403)
+    /// for both a private repo and one that no longer exists, and the caller
+    /// only needs "is it public", not which.
     async fn is_repo_public(&self, repo_id: i64) -> Result<bool, GitHubClientError> {
         let resp = self
             .http
             .get(format!("{}/repositories/{}", self.api_base, repo_id))
-            .basic_auth(&self.client_id, Some(&self.client_secret))
             .header(ACCEPT, "application/vnd.github+json")
             .header("X-GitHub-Api-Version", API_VERSION)
             .send()

@@ -200,18 +200,16 @@ async fn mock_get_repository_visibility(
     Path(repo_id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    // `PublicRepoCache`/`GitHubClient::is_repo_public` authenticate this
-    // call with Basic auth (client_id/client_secret) for the OAuth-app rate
-    // ceiling, never a bearer token — enforcing that here means every test
-    // that exercises this route also proves that wire-level detail, not
-    // just a dedicated test for it.
-    let has_basic_auth = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.starts_with("Basic "));
-    if !has_basic_auth {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
+    // `PublicRepoCache`/`GitHubClient::is_repo_public` deliberately send no
+    // Authorization header — GitHub Apps have no Basic-auth rate-limit-boost
+    // mechanism (that's OAuth-App-only), so an unauthenticated call is the
+    // correct one. Assert its absence here so a regression that re-adds a
+    // bad auth header is caught by every test exercising this route.
+    let has_auth_header = headers.get(header::AUTHORIZATION).is_some();
+    assert!(
+        !has_auth_header,
+        "is_repo_public must not send an Authorization header"
+    );
 
     if config.public_repo_ids.contains(&repo_id) {
         Json(json!({"id": repo_id, "visibility": "public"})).into_response()
