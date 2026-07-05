@@ -10,20 +10,10 @@
 //! in a trace/error context (ADR-0014).
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use reqwest::header::{ACCEPT, LINK};
-use tokio::sync::Semaphore;
 
 const API_VERSION: &str = "2022-11-28";
-
-/// Upper bound on concurrent `GET /repositories/{id}` calls a single
-/// [`GitHubClient::fetch_public_repo_ids`] sweep issues. GitHub's abuse-detection
-/// mechanism penalizes request bursts independent of the standard rate-limit
-/// counter; a handful of known repos (the common case) run fully parallel,
-/// while a much larger known-repo set still makes forward progress in
-/// bounded batches instead of firing hundreds of requests at once.
-const MAX_CONCURRENT_VISIBILITY_CHECKS: usize = 10;
 
 /// GitHub's REST API rejects any request with no `User-Agent` header (403
 /// Forbidden) — see
@@ -290,19 +280,15 @@ impl GitHubClient {
     /// Best-effort per repo: a failed check (network error, unexpected
     /// status) is logged and excluded from the result rather than failing
     /// the whole batch — one flaky repo must not suppress every other
-    /// repo's already-known public status this cycle. Checks run
-    /// concurrently, bounded by [`MAX_CONCURRENT_VISIBILITY_CHECKS`].
+    /// repo's already-known public status this cycle. Checks run fully
+    /// concurrently — bounded only by how many repos ATC has run data for,
+    /// which is realistically dozens, not the scale where GitHub's
+    /// abuse-detection would care about burst size.
     pub async fn fetch_public_repo_ids(&self, repo_ids: &[i64]) -> HashSet<i64> {
-        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_VISIBILITY_CHECKS));
         let mut handles = Vec::with_capacity(repo_ids.len());
         for &repo_id in repo_ids {
             let client = self.clone();
-            let semaphore = Arc::clone(&semaphore);
             handles.push(tokio::spawn(async move {
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .expect("semaphore is never closed");
                 (repo_id, client.is_repo_public(repo_id).await)
             }));
         }
