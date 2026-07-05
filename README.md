@@ -6,11 +6,11 @@ ATC ships as a single Rust binary that serves a Svelte 5 SPA, ingests GitHub web
 
 ## Operator note — authentication
 
-**ATC ships no built-in authentication by default.** Anyone who can reach the HTTP port can read every workflow run, job, and runner-pool view for every repository that has sent a webhook. The webhook endpoint validates HMAC-SHA256 signatures when a secret is configured; the SPA, the `GET /v1/state` snapshot, and the `GET /v1/ws` event stream do not.
+**By default, ATC ships no built-in authentication.** Anyone who can reach the HTTP port can read every workflow run, job, and runner-pool view for every repository that has sent a webhook. The webhook endpoint validates HMAC-SHA256 signatures when a secret is configured; the SPA, the `GET /v1/state` snapshot, and the `GET /v1/ws` event stream do not — unless you opt into `auth.mode: github`.
 
-Deploy ATC behind a trusted network surface — a private VPC, a corporate VPN, a Tailscale subnet — or behind an authenticating reverse proxy that gates the SPA and proxies the API + WebSocket through once a session is established. Treat the dashboard as if it were the GitHub Actions tab of every repository whose webhooks land on it. A first-party `auth.mode: github` opt-in also exists (see `docs/architecture/deployment.md` § Authentication) — as of this writing it covers login/session storage only, not request-time enforcement, so one of the above patterns is still required in front of the dashboard.
+Two ways to gate access: deploy ATC behind a trusted network surface or an authenticating reverse proxy (treat the dashboard as if it were the GitHub Actions tab of every repository whose webhooks land on it), **or** enable `auth.mode: github` for first-party GitHub OAuth login with per-repository authorization — users sign in with GitHub and see only the repos they can access there, no reverse proxy required.
 
-See [`docs/operator/authentication.md`](docs/operator/authentication.md) for the per-proxy recipes (Pomerium recommended; oauth2-proxy, Authelia + nginx/Caddy, and Cloudflare Access all work for the SPA + REST + WS), the path-split layout that lets `/v1/webhooks/github` bypass auth while the rest stays gated, and the cross-cutting gotchas (`Origin` not validated by `atc-server`, cookie `SameSite`, idle-timeout starvation on the long-lived WS).
+See [`docs/operator/authentication.md`](docs/operator/authentication.md) for the full setup guide: per-proxy recipes for the no-built-in-auth path (Pomerium recommended; oauth2-proxy, Authelia + nginx/Caddy, and Cloudflare Access all work for the SPA + REST + WS), the GitHub App registration + coverage rule for `auth.mode: github`, the path-split layout that lets `/v1/webhooks/github` bypass either mode, and the cross-cutting gotchas.
 
 ## Why it exists
 

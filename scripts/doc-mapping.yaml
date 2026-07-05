@@ -125,6 +125,17 @@ mappings:
       - docs/architecture/backend-server.md
       - docs/architecture/metrics.md
 
+  # auth.rs / ws.rs: the auth.github login/callback/logout/whoami endpoints
+  # and WS Origin/session enforcement are operator-facing behavior, not just
+  # internals — a change here can leave docs/operator/authentication.md's
+  # setup guide or coverage rule stale. Listed BEFORE the atc-server catch-all.
+  - patterns:
+      - backend/crates/atc-server/src/auth.rs
+      - backend/crates/atc-server/src/ws.rs
+    docs:
+      - docs/architecture/backend-server.md
+      - docs/operator/authentication.md
+
   # atc-server catch-all (after all specific atc-server entries above).
   - patterns:
       - backend/crates/atc-server/src/*
