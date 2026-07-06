@@ -3,6 +3,11 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "global": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Helm-injected global values, present when this chart is used as a subchart. Not consumed by any template."
+    },
     "replicaCount": {
       "type": "integer",
       "minimum": 1,

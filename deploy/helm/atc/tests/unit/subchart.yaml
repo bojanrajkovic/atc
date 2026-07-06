@@ -1,0 +1,11 @@
+suite: subchart usage — Helm-injected global values
+templates:
+  - deployment.yaml
+
+tests:
+  - it: renders cleanly when Helm injects .Values.global (chart used as a subchart)
+    set:
+      global.foo: bar
+    asserts:
+      - isKind:
+          of: Deployment
