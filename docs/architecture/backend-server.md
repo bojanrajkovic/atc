@@ -194,7 +194,7 @@ The resolved `AuthContext` is captured once, at upgrade time, and threaded into 
 
 ## Postgres schema
 
-Migrations live in `backend/crates/atc-store-pg/migrations/`, embedded in the binary at compile time via `sqlx::migrate!`. They run automatically on startup. The schema currently has:
+Migrations live in `backend/crates/atc-store-pg/migrations/`, embedded in the binary at compile time via `sqlx::migrate!`. They run automatically on startup. The pool is built with a 5-second `acquire_timeout` (sqlx default: 30 s) so that during a database outage handlers fail fast into the transient-failure 503 path instead of stalling for the full default timeout. The schema currently has:
 
 - `runs` and `jobs` tables: columns, FK, CHECK constraints, composite indexes for snapshot reads and TTL eviction.
 - `outbox` table: `BIGSERIAL seq` primary key (durable monotonic cursor), `kind`, run/job IDs, `payload JSONB` (domain event envelope — not the wire type), `inserted_at`, and a nullable `traceparent` column for cross-trace causal links.

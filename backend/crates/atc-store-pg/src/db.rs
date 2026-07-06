@@ -13,9 +13,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx::ConnectOptions;
-use sqlx::PgPool;
 use sqlx::migrate::Migrator;
-use sqlx::postgres::PgConnectOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 /// The embedded migrator, anchored on the four SQL files under
 /// `atc-store-pg/migrations/`. Exposed publicly so test fixtures can run
@@ -37,7 +36,7 @@ pub enum DbInitError {
     /// formatters and operator runbooks.
     Migrate(Box<sqlx::migrate::MigrateError>),
     /// Pool connect (or any other non-migration error path inside
-    /// [`PgPool::connect`]) failed.
+    /// [`sqlx::PgPool::connect`]) failed.
     Connect(sqlx::Error),
 }
 
@@ -69,7 +68,14 @@ impl Error for DbInitError {
 /// to `CARGO_MANIFEST_DIR` at compile time, so this anchor binds to the four
 /// SQL files co-located with this crate (`backend/crates/atc-store-pg/migrations/`).
 pub async fn init_pool(database_url: &str) -> Result<crate::TracedPool, DbInitError> {
-    let pool = PgPool::connect_with(connect_options(database_url)?)
+    let pool = PgPoolOptions::new()
+        // Fail fast when Postgres is unreachable: sqlx's default 30s
+        // acquire_timeout would stall every in-flight handler for 30s
+        // before the transient-failure 503 path fires. 5s is generous for
+        // a healthy in-cluster hop and short enough that an outage degrades
+        // to prompt 503s instead of piled-up handlers.
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_with(connect_options(database_url)?)
         .await
         .map_err(DbInitError::Connect)?;
     MIGRATOR
