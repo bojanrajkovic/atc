@@ -10,10 +10,11 @@
 //! that want to group the UPSERT-and-emit steps against a caller-managed
 //! transaction can reuse them.
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use atc_core::{
-    JobStatus, PersistError, RunStatus,
+    JobStatus, PersistError, RepoId, RunStatus,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 use atc_persist::{LivenessError, PersistentStore, join_with_timeout};
@@ -90,6 +91,11 @@ impl PersistentStore for PgStore {
         span.record("runs_count", snap.runs.len());
         span.record("jobs_count", snap.jobs.len());
         Ok(snap)
+    }
+
+    #[tracing::instrument(name = "persist.distinct_repo_ids", skip_all)]
+    async fn distinct_repo_ids(&self) -> Result<HashSet<RepoId>, PersistError> {
+        reads::distinct_repo_ids(&self.pool).await
     }
 
     fn subscribe(&self) -> broadcast::Receiver<CommittedEvent> {

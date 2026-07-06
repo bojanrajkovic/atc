@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use atc_core::{
-    JobConclusion, JobId, JobStatus, RunConclusion, RunId, RunStatus, SystemClock,
+    JobConclusion, JobId, JobStatus, RepoId, RunConclusion, RunId, RunStatus, SystemClock,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
     fixed_test_timestamp,
     job::{Step, StepStatus},
@@ -1132,6 +1132,49 @@ async fn read_snapshot_contains_all_runs_and_jobs() {
     assert_eq!(snapshot.runs.len(), 1);
     assert_eq!(snapshot.jobs.len(), 2);
     assert_eq!(snapshot.last_seq, 3); // 1 run + 2 jobs
+}
+
+/// `distinct_repo_ids` dedupes across runs sharing a repo_id and excludes
+/// runs with a NULL repo_id.
+#[tokio::test]
+async fn distinct_repo_ids_dedupes_and_excludes_null() {
+    let store = make_store();
+    let default_repo_id = make_run_event(RunId(700), RunEvent::Requested)
+        .repo_id
+        .expect("test envelope should carry a repo_id");
+
+    // 700 and 701 share the default repo_id; 702 overrides to a distinct
+    // repo_id; 703 has no repo_id and must not appear in the result.
+    store
+        .apply_run_event(make_run_event(RunId(700), RunEvent::Requested))
+        .await
+        .unwrap();
+    store
+        .apply_run_event(make_run_event(RunId(701), RunEvent::Requested))
+        .await
+        .unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            repo_id: Some(RepoId(42)),
+            ..make_run_event(RunId(702), RunEvent::Requested)
+        })
+        .await
+        .unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            repo_id: None,
+            ..make_run_event(RunId(703), RunEvent::Requested)
+        })
+        .await
+        .unwrap();
+
+    let repo_ids = store.distinct_repo_ids().await.expect("distinct_repo_ids");
+
+    assert_eq!(
+        repo_ids,
+        [default_repo_id, RepoId(42)].into_iter().collect(),
+        "expected the shared default repo_id and the RepoId(42) override, deduped, with the null-repo_id run excluded"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -164,6 +164,72 @@ async fn pg_run_repo_id_persisted_and_round_trips() {
     shutdown.cancel();
 }
 
+/// `distinct_repo_ids` dedupes across runs sharing a repo_id and excludes
+/// runs with a NULL repo_id, without pulling jobs or full run rows at all.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_distinct_repo_ids_dedupes_and_excludes_null() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // 1060 and 1061 share the default repo_id; 1062 overrides to a distinct
+    // one; 1063 has no repo_id and must not appear in the result.
+    store.apply_run_event(run_requested(1060)).await.unwrap();
+    store.apply_run_event(run_requested(1061)).await.unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            repo_id: Some(RepoId(42)),
+            ..run_requested(1062)
+        })
+        .await
+        .unwrap();
+    store
+        .apply_run_event(RunEventEnvelope {
+            repo_id: None,
+            ..run_requested(1063)
+        })
+        .await
+        .unwrap();
+
+    let repo_ids = store.distinct_repo_ids().await.expect("distinct_repo_ids");
+
+    assert!(repo_ids.contains(&RepoId(999_999_999)));
+    assert!(repo_ids.contains(&RepoId(42)));
+    assert_eq!(
+        repo_ids.len(),
+        2,
+        "expected the shared default repo_id and the RepoId(42) override, deduped: {repo_ids:?}"
+    );
+    shutdown.cancel();
+}
+
+/// A job-before-run FK stub's repo_id must not surface in `distinct_repo_ids`
+/// -- the run row is `placeholder = true` (no real run has landed), so it
+/// must be excluded the same way `read_all_runs` excludes it from `/v1/state`.
+#[tokio::test]
+#[serial_test::serial]
+async fn pg_distinct_repo_ids_excludes_placeholder_stub() {
+    let (pool, _c, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    // Job arrives before its run -- creates a placeholder=true stub run
+    // carrying the job envelope's repo_id, and no workflow_run event ever
+    // follows in this test.
+    let env = job_queued(8010, 9010);
+    let stub_repo_id = env.repo_id.expect("test envelope should carry a repo_id");
+    store.apply_job_event(env).await.unwrap();
+
+    let repo_ids = store.distinct_repo_ids().await.expect("distinct_repo_ids");
+
+    assert!(
+        !repo_ids.contains(&stub_repo_id),
+        "placeholder stub's repo_id must not appear in distinct_repo_ids: {repo_ids:?}"
+    );
+    shutdown.cancel();
+}
+
 /// A row seeded with a NULL repo_id (simulating a pre-migration row) is
 /// promoted to Some on the next run-event UPSERT -- the self-heal path.
 #[tokio::test]
