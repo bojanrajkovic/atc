@@ -660,6 +660,66 @@ pub fn fixture_workflow_job_completed() -> Vec<u8> {
 // Ephemeral PG container helpers
 // ---------------------------------------------------------------------------
 
+/// Age past which a `test_*` database is assumed to be an abandoned leftover
+/// from a prior `cargo nextest run`, not a sibling of the current one.
+///
+/// A full local workspace run takes well under an hour, so a `test_*`
+/// database's own embedded timestamp being older than this can only mean its
+/// creating process exited (crashed, `Ctrl-C`, or finished) without cleanup.
+const STALE_TEST_DB_AGE_NANOS: u64 = 60 * 60 * 1_000_000_000;
+
+/// Drop `test_*` databases from prior runs older than
+/// [`STALE_TEST_DB_AGE_NANOS`].
+///
+/// `start_pg` creates one database per test call and never drops it — see
+/// its doc comment. Left unchecked this accumulates without bound: a
+/// long-lived local `atc-test-pg` container was found holding 4,557 such
+/// databases (~40 GB) after a few days of local `cargo nextest run`s. Runs
+/// once per `start_pg` call, reusing the same admin connection, before that
+/// call's own `CREATE DATABASE` — so it can never race with or drop its own
+/// not-yet-created database. Best-effort: a failed drop (e.g. a sibling
+/// process reaping the same stale entry concurrently) is logged and
+/// skipped, never panics — this is disk-space hygiene, not correctness.
+async fn reap_stale_test_databases(admin_conn: &mut sqlx::PgConnection, now_nanos: u64) {
+    use sqlx::Row;
+
+    let rows = match sqlx::query(
+        "SELECT datname FROM pg_database WHERE datname ~ '^test_[0-9]+_[0-9]+_[0-9]+$'",
+    )
+    .fetch_all(&mut *admin_conn)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("[start_pg] reap: failed to list test databases: {e}");
+            return;
+        }
+    };
+
+    for row in rows {
+        let datname: String = row.get("datname");
+        // Format: test_<pid>_<nanos>_<counter> — nanos is the 3rd `_`-field.
+        let Some(db_nanos) = datname
+            .split('_')
+            .nth(2)
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if now_nanos.saturating_sub(db_nanos) < STALE_TEST_DB_AGE_NANOS {
+            continue;
+        }
+        if let Err(e) = sqlx::query(&format!(
+            "DROP DATABASE IF EXISTS \"{datname}\" WITH (FORCE)"
+        ))
+        .execute(&mut *admin_conn)
+        .await
+        {
+            eprintln!("[start_pg] reap: failed to drop {datname}: {e}");
+        }
+    }
+}
+
 /// Boot (or reuse) a Postgres container and return pool + guard + URL.
 ///
 /// The container is shared across nextest test processes via testcontainers'
@@ -670,8 +730,9 @@ pub fn fixture_workflow_job_completed() -> Vec<u8> {
 ///
 /// The container persists after `cargo nextest run` finishes; clean up with
 /// `docker rm -f atc-test-pg` (or wait for OrbStack/Docker GC). Per-test
-/// databases accumulate inside the container but are tiny; if they pile up
-/// beyond comfort, drop the container.
+/// databases are reaped automatically once they're over an hour old (see
+/// [`reap_stale_test_databases`]), so they no longer accumulate without
+/// bound across days of local runs.
 ///
 /// **Never `stop()` or `rm()` the returned container.** It is shared across
 /// every concurrently running nextest test process; stopping it kills
@@ -770,6 +831,7 @@ pub async fn start_pg() -> (
     };
     {
         let mut admin_conn = admin_conn;
+        reap_stale_test_databases(&mut admin_conn, nanos).await;
         sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
             .execute(&mut admin_conn)
             .await
