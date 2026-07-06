@@ -351,7 +351,27 @@ async fn transient_metric_increments_on_db_outage() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
-    let (pool, container, db_url) = common::start_pg().await;
+    // Private, non-reused container: this test stops its database, so it must
+    // NOT go through `common::start_pg()` — that returns the shared reused
+    // `atc-test-pg` container, and stopping it kills Postgres out from under
+    // every other test process running in parallel. `#[serial_test::serial]`
+    // does not protect against this: it is an in-process lock, and nextest
+    // runs each test in its own process.
+    use testcontainers::ImageExt;
+    use testcontainers::runners::AsyncRunner;
+    let container = testcontainers_modules::postgres::Postgres::default()
+        .with_tag("18-alpine")
+        .start()
+        .await
+        .expect("failed to start private postgres container");
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("failed to get port");
+    let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let pool = atc_store_pg::db::init_pool(&db_url)
+        .await
+        .expect("init_pool failed");
     let (app, state, _rx) = common::build_pg_app(pool.clone(), &db_url).await;
 
     // Stop the container to simulate the DB outage. We previously called
