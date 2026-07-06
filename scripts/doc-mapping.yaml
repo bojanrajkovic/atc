@@ -168,6 +168,7 @@ mappings:
 
   - patterns:
       - Dockerfile
+      - Dockerfile.release
       - .dockerignore
     docs:
       - docs/architecture/release-pipeline.md
