@@ -11,7 +11,7 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use atc_core::{
-    Clock, Job, JobConclusion, JobId, PersistError, RunConclusion, RunId, WorkflowRun,
+    Clock, Job, JobConclusion, JobId, PersistError, RepoId, RunConclusion, RunId, WorkflowRun,
     event::{JobEvent, JobEventEnvelope, RunEvent, RunEventEnvelope},
 };
 use atc_github::WebhookEvent;
@@ -644,6 +644,11 @@ impl PersistentStore for InMemoryStore {
         span.record("runs_count", snap.runs.len());
         span.record("jobs_count", snap.jobs.len());
         Ok(snap)
+    }
+
+    async fn distinct_repo_ids(&self) -> Result<HashSet<RepoId>, PersistError> {
+        let state = self.state.read().await;
+        Ok(state.runs.values().filter_map(|r| r.repo_id).collect())
     }
 
     /// Always returns `Ok(())` — the in-memory store is always live.

@@ -16,6 +16,9 @@
 //! store's `shutdown()` impl. Lifted from `atc-server::shutdown` so the two
 //! store crates can share a single canonical copy.
 
+use std::collections::HashSet;
+
+use atc_core::RepoId;
 use atc_core::event::{JobEventEnvelope, RunEventEnvelope};
 use chrono::{DateTime, Utc};
 use tokio::sync::broadcast;
@@ -108,6 +111,16 @@ pub trait PersistentStore: Send + Sync {
         &self,
         cutoff: Option<DateTime<Utc>>,
     ) -> Result<atc_wire::StateSnapshot, PersistError>;
+
+    /// Every distinct `repo_id` any run has ever recorded.
+    ///
+    /// Used by `PublicRepoCache::refresh` to bound the set of repos worth
+    /// checking against GitHub's public-visibility endpoint. Deliberately
+    /// narrower than `read_snapshot`: that call projects every run/job
+    /// column (including each job's `steps` payload) just to throw away
+    /// everything but one `i64` per run, which is what made the auth
+    /// callback's `PublicRepoCache::refresh` path slow in practice.
+    async fn distinct_repo_ids(&self) -> Result<HashSet<RepoId>, PersistError>;
 
     /// Check whether the store is live and healthy.
     ///

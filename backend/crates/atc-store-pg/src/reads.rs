@@ -4,11 +4,15 @@
 //! They are called by `PgStore::read_snapshot` (Phase 3) and by the
 //! current `routes::state_handler` PG path (until that phase lands).
 
+use std::collections::HashSet;
+
 use atc_core::{
     Job, JobConclusion, JobId, JobStatus, PersistError, RepoId, RunConclusion, RunId, RunStatus,
     RunnerInfo, Step, WorkflowRun,
 };
 use chrono::{DateTime, Utc};
+
+use crate::TracedPool;
 
 /// Parse a SQL CHECK constraint string back to [`RunStatus`].
 ///
@@ -255,6 +259,41 @@ pub(crate) async fn read_all_jobs(
         });
     }
     Ok(jobs)
+}
+
+/// Every distinct `repo_id` any *real* run has ever recorded, read directly
+/// off the pool (no transaction — this isn't part of `read_snapshot`'s
+/// REPEATABLE READ contract, just a narrow projection).
+///
+/// Deliberately does not go through [`read_all_runs`]: that projects every
+/// run column, which is the wide read `PublicRepoCache::refresh` used to do
+/// just to throw away everything but `repo_id`. It does, however, keep
+/// `read_all_runs`'s `placeholder = false` filter: a job-before-run FK stub
+/// (see `upsert_job_in_txn`) carries a real `repo_id` but no real run data,
+/// and `atc-store-mem` never creates an equivalent stub — including it here
+/// would both leak a repo with zero actual runs into the public-repo check
+/// and diverge from the in-memory backend for the same webhook sequence.
+///
+/// This is the first query to put `repo_id` in a `WHERE`/aggregation clause
+/// — migration `0011_runs_repo_id.sql`'s "no index" comment predates this
+/// caller. `EXPLAIN ANALYZE` against production (~10k runs, 12 distinct
+/// `repo_id`s) measured a plain Seq Scan + HashAggregate at ~7ms, already
+/// negligible next to the GitHub API round trips `PublicRepoCache::refresh`
+/// makes with the result.
+// ponytail: no index on runs.repo_id — add one (a partial btree, `WHERE
+// repo_id IS NOT NULL`) only if `runs` grows large enough that this scan
+// stops being noise.
+pub(crate) async fn distinct_repo_ids(pool: &TracedPool) -> Result<HashSet<RepoId>, PersistError> {
+    let rows = sqlx::query!(
+        "SELECT DISTINCT repo_id FROM runs WHERE repo_id IS NOT NULL AND placeholder = false"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| PersistError::Backend(Box::new(e)))?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| r.repo_id.map(RepoId))
+        .collect())
 }
 
 #[cfg(test)]

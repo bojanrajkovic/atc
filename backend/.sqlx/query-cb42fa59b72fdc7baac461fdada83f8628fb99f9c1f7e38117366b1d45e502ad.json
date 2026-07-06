@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT repo_id FROM runs WHERE repo_id IS NOT NULL AND placeholder = false",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "cb42fa59b72fdc7baac461fdada83f8628fb99f9c1f7e38117366b1d45e502ad"
+}

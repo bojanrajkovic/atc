@@ -31,7 +31,7 @@ struct CacheState {
 /// the same accepted-staleness posture `repo_auth_ttl` already carries for
 /// per-user authorization.
 ///
-/// Refresh failures (a `read_snapshot` error, or GitHub being unreachable)
+/// Refresh failures (a `distinct_repo_ids` error, or GitHub being unreachable)
 /// log a warning and leave the existing cached value in place (empty, if
 /// there's never been a successful refresh) — a public-repo lookup failure
 /// must never block login, so [`PublicRepoCache::get`] never returns an
@@ -95,13 +95,12 @@ impl PublicRepoCache {
     }
 
     async fn refresh(&self) -> Result<HashSet<i64>, atc_persist::PersistError> {
-        let snapshot = self.persist.read_snapshot(None).await?;
-        let repo_ids: Vec<i64> = snapshot
-            .runs
-            .iter()
-            .filter_map(|run| run.repo_id.map(|id| id.0))
-            .collect::<HashSet<_>>()
+        let repo_ids: Vec<i64> = self
+            .persist
+            .distinct_repo_ids()
+            .await?
             .into_iter()
+            .map(|id| id.0)
             .collect();
         Ok(self.github.fetch_public_repo_ids(&repo_ids).await)
     }
