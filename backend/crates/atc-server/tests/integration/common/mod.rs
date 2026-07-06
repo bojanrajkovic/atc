@@ -672,6 +672,13 @@ pub fn fixture_workflow_job_completed() -> Vec<u8> {
 /// `docker rm -f atc-test-pg` (or wait for OrbStack/Docker GC). Per-test
 /// databases accumulate inside the container but are tiny; if they pile up
 /// beyond comfort, drop the container.
+///
+/// **Never `stop()` or `rm()` the returned container.** It is shared across
+/// every concurrently running nextest test process; stopping it kills
+/// Postgres mid-query for all of them, and `#[serial_test::serial]` cannot
+/// prevent that (it is an in-process lock — nextest runs each test in its
+/// own process). A test that needs an unreachable database must boot its own
+/// private, unnamed, non-reused container instead — see `db_readyz_tests.rs`.
 pub async fn start_pg() -> (
     atc_store_pg::TracedPool,
     testcontainers::ContainerAsync<testcontainers_modules::postgres::Postgres>,

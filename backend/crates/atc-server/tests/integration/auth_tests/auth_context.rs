@@ -12,6 +12,7 @@ use atc_server::auth::AuthContext;
 use super::*;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn auth_context_disabled_mode_short_circuits_without_touching_store() {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let shutdown = CancellationToken::new();
@@ -66,6 +67,7 @@ async fn auth_context_missing_cookie_rejects_with_auth_required() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn auth_context_unknown_session_cookie_rejects_with_auth_required() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(default_mock_config()).await;
@@ -85,6 +87,7 @@ async fn auth_context_unknown_session_cookie_rejects_with_auth_required() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn auth_context_valid_session_extracts_identity_and_repo_ids() {
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(default_mock_config()).await;

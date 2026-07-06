@@ -9,6 +9,12 @@
 //! function like this one, and the full app-router fixture `start_pg`'s
 //! caller also builds in `atc-server` isn't needed here; only a migrated
 //! pool is.
+//!
+//! **Never `stop()` or `rm()` the returned container** — it is shared across
+//! every concurrently running nextest test process, and `#[serial]` cannot
+//! protect it (in-process lock; nextest runs one process per test). A test
+//! that needs an unreachable database must boot its own private, unnamed,
+//! non-reused container.
 
 use std::time::Duration;
 
