@@ -3,10 +3,14 @@
 //! Two concurrent webhooks for the SAME run entity are serialized by PG row
 //! locking. Both use `workflow_run.requested` (idempotent same-status replay),
 //! so both must succeed (status="accepted") and both must produce outbox rows.
-//! The drain broadcasts both in strictly increasing seq order. No rescan/dedup
-//! activity occurs because both commits complete before the watermark falls
-//! below either seq — `atc_pg_drain_duplicate_skipped_total` stays at baseline.
-//! The in-memory state store's seq counter must NOT be incremented (PG mode).
+//! The drain broadcasts both in strictly increasing seq order.
+//!
+//! Deliberately NOT asserted: that the gap-healing rescan never fires
+//! (`atc_pg_drain_duplicate_skipped_total` staying at zero). Under load a
+//! delayed NOTIFY can push processing past the rescan backstop, producing a
+//! legitimate duplicate skip without violating any ordering property — the
+//! dedup ring is what keeps the broadcast stream correct in that case. See
+//! #519 for the observed flake.
 //!
 //! Docker/OrbStack required.
 
@@ -18,15 +22,6 @@ use axum::http::StatusCode;
 use serial_test::serial;
 use tokio::time::timeout;
 
-// ---------------------------------------------------------------------------
-// OTel snapshot helper.
-// ---------------------------------------------------------------------------
-
-fn counter_unlabeled(name: &str) -> u64 {
-    let snapshot = common::snapshot_metrics();
-    common::counter_value(&snapshot, name, &[])
-}
-
 /// Two concurrent `workflow_run.requested` webhooks for the SAME run_id are
 /// serialized by PG row-level locking.
 ///
@@ -34,20 +29,17 @@ fn counter_unlabeled(name: &str) -> u64 {
 /// includes Queued itself, so the second committer performs an idempotent same-status
 /// replay — both transactions succeed and each writes an outbox row.
 ///
-/// The drain broadcasts both in durable outbox.seq order (strictly increasing). No
-/// NOTIFY arrives with a seq below the watermark at the time of processing (both
-/// commits land within the same drain window and are picked up in ORDER BY seq), so
-/// the dedup counter stays at baseline — proving that the PG row-lock argument from
-/// §D3 of the design plan holds: same-entity serialization prevents gap-healing rescans.
+/// The drain broadcasts both in durable outbox.seq order (strictly increasing),
+/// proving the PG row-lock argument from §D3 of the design plan: same-entity
+/// serialization yields ordered, exactly-once broadcasts. Whether the
+/// gap-healing rescan fires along the way is a load-dependent implementation
+/// detail (see the module doc) and is not asserted.
 #[tokio::test]
 #[serial]
 async fn concurrent_same_entity_commits_in_seq_order() {
     let (pool, _container, db_url) = common::start_pg().await;
     let fixture = common::build_app_with_pg_and_listener(pool.clone(), db_url).await;
     let mut rx = fixture.state.persist.subscribe();
-
-    common::ensure_recorder_installed();
-    common::reset_metrics();
 
     let router_a = fixture.router.clone();
     let router_b = fixture.router.clone();
@@ -120,14 +112,6 @@ async fn concurrent_same_entity_commits_in_seq_order() {
     assert_eq!(
         outbox_count, 2,
         "outbox must contain exactly 2 rows (one per accepted commit)"
-    );
-
-    // Dedup counter must NOT have incremented — same-entity row-lock means no
-    // out-of-order commits, so no backstop-driven rescan and no dedup activity.
-    assert_eq!(
-        counter_unlabeled("atc_pg_drain_duplicate_skipped_total"),
-        0,
-        "dedup counter must stay at zero (no rescan expected with row-lock serialization)",
     );
 
     // In PG mode the broadcast watermark advances via the drain, not in-memory.
