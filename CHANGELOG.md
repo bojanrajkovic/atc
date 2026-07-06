@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.3.0](https://github.com/bojanrajkovic/atc/compare/v0.2.0...v0.3.0) (2026-07-06)
+
+
+### Features
+
+* **core,wire:** carry repo_id on WorkflowRun incl. placeholder runs ([#477](https://github.com/bojanrajkovic/atc/issues/477)) ([8cb5976](https://github.com/bojanrajkovic/atc/commit/8cb59760eeacb8b48e0a7b2f4736fc9f529f8f22)), closes [#450](https://github.com/bojanrajkovic/atc/issues/450)
+* **frontend:** 401-aware connection states ([#494](https://github.com/bojanrajkovic/atc/issues/494)) ([706fd78](https://github.com/bojanrajkovic/atc/commit/706fd78706ebf61a111e5511afe2e3bacc3cae93)), closes [#462](https://github.com/bojanrajkovic/atc/issues/462)
+* **frontend:** login screen, identity chrome, logout ([#495](https://github.com/bojanrajkovic/atc/issues/495)) ([ebb858d](https://github.com/bojanrajkovic/atc/commit/ebb858db6fa8f8f1d8f0d61129210dc5095ae038)), closes [#463](https://github.com/bojanrajkovic/atc/issues/463)
+* **frontend:** popup-first staleness re-auth with redirect fallback ([#497](https://github.com/bojanrajkovic/atc/issues/497)) ([de5ecd7](https://github.com/bojanrajkovic/atc/commit/de5ecd7bd43b031409596ae3102c09153d8a391c)), closes [#464](https://github.com/bojanrajkovic/atc/issues/464)
+* **github,core:** parse repository.id and carry repo_id on event envelopes ([#474](https://github.com/bojanrajkovic/atc/issues/474)) ([f870c9b](https://github.com/bojanrajkovic/atc/commit/f870c9b50abb8f6de1d00b5e63e79aa1f4e5398c)), closes [#449](https://github.com/bojanrajkovic/atc/issues/449)
+* **helm:** auth.github values, secret ref, and template guards ([#484](https://github.com/bojanrajkovic/atc/issues/484)) ([87e6737](https://github.com/bojanrajkovic/atc/commit/87e6737f0e0859ae4ce0eda2062a1ed91d79158c)), closes [#466](https://github.com/bojanrajkovic/atc/issues/466)
+* log ping / parse-failure / state-transition webhook events ([#372](https://github.com/bojanrajkovic/atc/issues/372)) ([f0d485d](https://github.com/bojanrajkovic/atc/commit/f0d485d82d8efdcb83413185c85719831b37723b))
+* **observability:** auth flow spans and metrics ([#506](https://github.com/bojanrajkovic/atc/issues/506)) ([bd171d1](https://github.com/bojanrajkovic/atc/commit/bd171d16a8441fa76f63dbefef6748f03aab8ae5)), closes [#469](https://github.com/bojanrajkovic/atc/issues/469)
+* **server:** add AuthContext extractor and 401 reason contract ([#485](https://github.com/bojanrajkovic/atc/issues/485)) ([41c6def](https://github.com/bojanrajkovic/atc/commit/41c6def2a4a840fb6f029e9a82ea4cc01c8f08a2)), closes [#458](https://github.com/bojanrajkovic/atc/issues/458)
+* **server:** add GitHub OAuth login and callback endpoints ([#480](https://github.com/bojanrajkovic/atc/issues/480)) ([2a387f3](https://github.com/bojanrajkovic/atc/commit/2a387f3fb66c8c788c2e7387782e8dfc18c46ba9)), closes [#455](https://github.com/bojanrajkovic/atc/issues/455)
+* **server:** add logout and whoami endpoints ([#481](https://github.com/bojanrajkovic/atc/issues/481)) ([327af7d](https://github.com/bojanrajkovic/atc/commit/327af7d6c39c0e9d70e3191db190290f80fe2dfe)), closes [#456](https://github.com/bojanrajkovic/atc/issues/456)
+* **server:** add staleness sweep for stuck non-terminal runs/jobs ([#445](https://github.com/bojanrajkovic/atc/issues/445)) ([66f724c](https://github.com/bojanrajkovic/atc/commit/66f724cb33c0cbe1207aae9cc4537c4a6bb96b74))
+* **server:** auth config section + boot validation ([#476](https://github.com/bojanrajkovic/atc/issues/476)) ([5c1349a](https://github.com/bojanrajkovic/atc/commit/5c1349a72f6f47326da66583e938bb66dc0be697)), closes [#453](https://github.com/bojanrajkovic/atc/issues/453)
+* **server:** filter /v1/state by session repo set ([#490](https://github.com/bojanrajkovic/atc/issues/490)) ([20169f8](https://github.com/bojanrajkovic/atc/commit/20169f811e8dc195c978d53755e853f669ea4bc9)), closes [#459](https://github.com/bojanrajkovic/atc/issues/459)
+* **server:** widen ADR-0014 repo visibility to public GitHub repos ([#504](https://github.com/bojanrajkovic/atc/issues/504)) ([1c2936c](https://github.com/bojanrajkovic/atc/commit/1c2936c290b7b00ff648e0bcbc8715f2fa6eab76))
+* **store-pg:** persist repo_id on runs ([#479](https://github.com/bojanrajkovic/atc/issues/479)) ([806eb0d](https://github.com/bojanrajkovic/atc/commit/806eb0d7df075a5d889e1515ebf9229511b913fb)), closes [#451](https://github.com/bojanrajkovic/atc/issues/451)
+* **store-pg:** session and auth-flow storage ([#478](https://github.com/bojanrajkovic/atc/issues/478)) ([90b1783](https://github.com/bojanrajkovic/atc/commit/90b1783942359baed354670fcb773aedb3e4d93f)), closes [#454](https://github.com/bojanrajkovic/atc/issues/454)
+
+
+### Bug Fixes
+
+* **auth:** drop broken Basic-auth from public-repo visibility check ([#509](https://github.com/bojanrajkovic/atc/issues/509)) ([32bd29b](https://github.com/bojanrajkovic/atc/commit/32bd29bc35424c9890dec8a820b9506b3686f693))
+* **deps:** update rust crate chrono to v0.4.45 ([#348](https://github.com/bojanrajkovic/atc/issues/348)) ([3b197b0](https://github.com/bojanrajkovic/atc/commit/3b197b021cfdfffca518015447251d5ec350ceca))
+* **deps:** update rust crate http to v1.4.2 ([#361](https://github.com/bojanrajkovic/atc/issues/361)) ([af24385](https://github.com/bojanrajkovic/atc/commit/af243856073f2457e33ca2bcaac1b3a893411488))
+* **deps:** update rust crate uuid to v1.23.3 ([#376](https://github.com/bojanrajkovic/atc/issues/376)) ([26ca908](https://github.com/bojanrajkovic/atc/commit/26ca908292f1138bba71333c65ce1a6f5b9028b9))
+* **deps:** update rust crate uuid to v1.23.4 ([#420](https://github.com/bojanrajkovic/atc/issues/420)) ([3abccf0](https://github.com/bojanrajkovic/atc/commit/3abccf09b492c1d1b4939424e720f3ecce4d8ab0))
+* **deps:** update tower ecosystem to v0.7.0 ([#389](https://github.com/bojanrajkovic/atc/issues/389)) ([59f38d4](https://github.com/bojanrajkovic/atc/commit/59f38d42391fbb1725928b6f190017399f39deec))
+* **docs:** correct coverage rule to include public-repo visibility widening ([#508](https://github.com/bojanrajkovic/atc/issues/508)) ([917374d](https://github.com/bojanrajkovic/atc/commit/917374d94674221e51241bf6ec8d39ca7c1aa0be))
+* **frontend:** auto-attempt popup re-auth for auth_required, never disable the login link ([#499](https://github.com/bojanrajkovic/atc/issues/499)) ([891b401](https://github.com/bojanrajkovic/atc/commit/891b401e5d65ee7cf5cece65b5d1aaed68358aa2)), closes [#498](https://github.com/bojanrajkovic/atc/issues/498)
+* **helm:** permit Helm-injected global values in root schema ([#511](https://github.com/bojanrajkovic/atc/issues/511)) ([8876267](https://github.com/bojanrajkovic/atc/commit/887626759e73b829d287a00e243077a75d1b99ec)), closes [#342](https://github.com/bojanrajkovic/atc/issues/342)
+* **observability:** rename error tracing field to error.message ([#442](https://github.com/bojanrajkovic/atc/issues/442)) ([9b1cdb0](https://github.com/bojanrajkovic/atc/commit/9b1cdb051b4d45226ec687a30e463416a8a47765))
+* **server:** send a User-Agent header on GitHub API requests ([#483](https://github.com/bojanrajkovic/atc/issues/483)) ([add81d9](https://github.com/bojanrajkovic/atc/commit/add81d9cf8f6fc078085fe1b6c7d74c98a14035d))
+* **store:** thread repo_id through staleness-sweep completion envelopes ([#493](https://github.com/bojanrajkovic/atc/issues/493)) ([b84628d](https://github.com/bojanrajkovic/atc/commit/b84628d865882836b3b69de528040d4aeda262dc))
+
 ## [0.2.0](https://github.com/bojanrajkovic/atc/compare/v0.1.0...v0.2.0) (2026-06-04)
 
 First feature release of ATC — a real-time GitHub Actions dashboard with a Rust/Axum backend and a Svelte 5 frontend.
