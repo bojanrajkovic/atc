@@ -18,6 +18,56 @@
 
 use std::time::Duration;
 
+/// Age past which a `test_*` database is assumed to be an abandoned leftover
+/// from a prior `cargo nextest run`, not a sibling of the current one. See
+/// `reap_stale_test_databases`'s doc comment for the full rationale
+/// (identical logic to `atc-server`'s `common::reap_stale_test_databases`).
+const STALE_TEST_DB_AGE_NANOS: u64 = 60 * 60 * 1_000_000_000;
+
+/// Drop `test_*` databases from prior runs older than
+/// [`STALE_TEST_DB_AGE_NANOS`] -- `start_pg` creates one database per test
+/// call and never drops it, so left unchecked these accumulate without
+/// bound in the long-lived reused container. Best-effort: a failed drop is
+/// logged and skipped, never panics.
+async fn reap_stale_test_databases(admin_conn: &mut sqlx::PgConnection, now_nanos: u64) {
+    use sqlx::Row;
+
+    let rows = match sqlx::query(
+        "SELECT datname FROM pg_database WHERE datname ~ '^test_[0-9]+_[0-9]+_[0-9]+$'",
+    )
+    .fetch_all(&mut *admin_conn)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("[start_pg] reap: failed to list test databases: {e}");
+            return;
+        }
+    };
+
+    for row in rows {
+        let datname: String = row.get("datname");
+        let Some(db_nanos) = datname
+            .split('_')
+            .nth(2)
+            .and_then(|s| s.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if now_nanos.saturating_sub(db_nanos) < STALE_TEST_DB_AGE_NANOS {
+            continue;
+        }
+        if let Err(e) = sqlx::query(&format!(
+            "DROP DATABASE IF EXISTS \"{datname}\" WITH (FORCE)"
+        ))
+        .execute(&mut *admin_conn)
+        .await
+        {
+            eprintln!("[start_pg] reap: failed to drop {datname}: {e}");
+        }
+    }
+}
+
 pub async fn start_pg() -> (
     atc_store_pg::TracedPool,
     testcontainers::ContainerAsync<testcontainers_modules::postgres::Postgres>,
@@ -87,6 +137,7 @@ pub async fn start_pg() -> (
     };
     {
         let mut admin_conn = admin_conn;
+        reap_stale_test_databases(&mut admin_conn, nanos).await;
         sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
             .execute(&mut admin_conn)
             .await
