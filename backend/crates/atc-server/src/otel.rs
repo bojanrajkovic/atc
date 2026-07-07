@@ -7,7 +7,6 @@ use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{
     Aggregation, Instrument, InstrumentKind, PeriodicReader, SdkMeterProvider, Stream,
 };
-use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{
     BatchSpanProcessor, Sampler, SdkTracer, SdkTracerProvider, ShouldSample,
 };
@@ -102,7 +101,6 @@ pub fn init_otel(_cfg: &Config) -> Option<OtelHandles> {
 
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     opentelemetry::global::set_meter_provider(meter_provider.clone());
-    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     Some(OtelHandles {
         tracer_provider,

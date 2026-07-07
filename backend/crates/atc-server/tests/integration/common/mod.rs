@@ -23,7 +23,6 @@ use opentelemetry_sdk::metrics::{
     InMemoryMetricExporter, InMemoryMetricExporterBuilder, PeriodicReader, SdkMeterProvider,
     Temporality,
 };
-use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor};
 use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
@@ -87,7 +86,6 @@ fn install_test_otel() -> OtelTestHarness {
     let tracer = tracer_provider.tracer("atc-test");
     opentelemetry::global::set_tracer_provider(tracer_provider.clone());
     opentelemetry::global::set_meter_provider(meter_provider.clone());
-    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -378,9 +376,11 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     let app_state = TestAppState::new(persist, clock)
         .with_webhook_secret(secret)
         .build();
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = atc_server::routes::with_request_tracing(
+        atc_server::routes::api_routes(false)
+            .with_state(app_state.clone())
+            .fallback(atc_server::assets::fallback_handler()),
+    );
     (app, app_state)
 }
 
@@ -397,9 +397,11 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = TestAppState::new(persist, clock).build();
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = atc_server::routes::with_request_tracing(
+        atc_server::routes::api_routes(false)
+            .with_state(app_state.clone())
+            .fallback(atc_server::assets::fallback_handler()),
+    );
     (app, app_state)
 }
 
@@ -531,9 +533,11 @@ pub async fn spawn_in_memory_server_with_capacity(
         broadcast_capacity,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = TestAppState::new(persist, clock).build();
-    let router = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let router = atc_server::routes::with_request_tracing(
+        atc_server::routes::api_routes(false)
+            .with_state(app_state.clone())
+            .fallback(atc_server::assets::fallback_handler()),
+    );
     let addr = spawn_router(router).await;
     (addr, app_state)
 }

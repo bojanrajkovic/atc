@@ -40,6 +40,36 @@ async fn ws_upgrade_succeeds() {
     // keep the socket alive and receive frames. Here we just verify the upgrade succeeded.
 }
 
+/// The `on_upgrade` callback runs on a task axum spawns internally, decoupled
+/// from `ws_handler`'s own ambient span — so unlike `state.snapshot`, which
+/// nests under the blanket `http.request` span for free, `ws.connection`
+/// does NOT and must not: it's a deliberate connection-lifetime root (see
+/// docs/architecture/metrics.md § Span inventory), same rationale as
+/// `listener.recv`/`drain.pass` being per-tick roots rather than children of
+/// whatever spawned them.
+#[tokio::test]
+#[serial_test::serial]
+async fn ws_connection_span_remains_root_under_blanket_http_request_layer() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let (server_addr, _state) = common::spawn_in_memory_server().await;
+    let ws_url = format!("ws://{}/v1/ws", server_addr);
+    let (socket, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WS connection failed");
+    drop(socket);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let spans = common::read_finished_spans();
+    let connection =
+        common::span_named(&spans, "ws.connection").expect("ws.connection span must be exported");
+    assert!(
+        common::parent_of(&spans, connection).is_none(),
+        "ws.connection must remain a root span, not nest under http.request"
+    );
+}
+
 /// Connected client receives CommittedEvent after webhook ingestion
 #[tokio::test]
 #[serial_test::serial]

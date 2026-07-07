@@ -346,9 +346,11 @@ async fn main() {
     // open through shutdown orchestration — WS handlers see
     // `shutdown.cancelled()` and send Close(1001) rather than racing against
     // a `RecvError::Closed` from a prematurely-dropped store.
-    let app = routes::api_routes(auth_enabled)
-        .with_state(app_state.clone())
-        .fallback(assets::fallback_handler());
+    let app = routes::with_request_tracing(
+        routes::api_routes(auth_enabled)
+            .with_state(app_state.clone())
+            .fallback(assets::fallback_handler()),
+    );
 
     let main_listener = tokio::net::TcpListener::bind(cfg.http_addr)
         .await
