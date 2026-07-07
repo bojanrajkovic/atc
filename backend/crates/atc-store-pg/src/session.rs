@@ -24,6 +24,7 @@ use opentelemetry::metrics::Counter;
 use sha2::{Digest, Sha256};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 
 use crate::TracedPool;
 use crate::metrics::METER_SCOPE;
@@ -284,16 +285,27 @@ impl SessionStore {
             // session either way, so the cleanup delete doesn't need to
             // block this call — the periodic sweep would reap the row
             // regardless if this spawned task loses a race or the process
-            // exits first. Not awaited: this is very plausibly a
-            // per-request hot path once wired into auth middleware (#455),
-            // and an expired-cookie request shouldn't pay a second
-            // round-trip before it can be rejected.
+            // exits first. Not awaited: this is a per-request hot path
+            // (every `AuthContext` extraction calls `load_session`), and an
+            // expired-cookie request shouldn't pay a second round-trip
+            // before it can be rejected.
+            //
+            // `tokio::spawn` carries no ambient span of its own — carry the
+            // caller's span in explicitly via `.instrument()` so the
+            // `TracedPool`-instrumented DELETE nests under the request's
+            // span instead of exporting as a disconnected root (see
+            // docs/architecture/metrics.md § "Background-task boundaries").
             let pool = self.pool.clone();
-            tokio::spawn(async move {
-                let _ = sqlx::query!(r#"DELETE FROM auth_sessions WHERE id_hash = $1"#, id_hash)
-                    .execute(&pool)
-                    .await;
-            });
+            let span = tracing::Span::current();
+            tokio::spawn(
+                async move {
+                    let _ =
+                        sqlx::query!(r#"DELETE FROM auth_sessions WHERE id_hash = $1"#, id_hash)
+                            .execute(&pool)
+                            .await;
+                }
+                .instrument(span),
+            );
             return Ok(None);
         }
 

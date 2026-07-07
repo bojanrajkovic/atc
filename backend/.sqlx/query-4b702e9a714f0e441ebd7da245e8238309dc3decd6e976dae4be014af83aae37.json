@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE auth_sessions SET expires_at = now() - interval '1 minute' WHERE github_user_id = 42",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "4b702e9a714f0e441ebd7da245e8238309dc3decd6e976dae4be014af83aae37"
+}
