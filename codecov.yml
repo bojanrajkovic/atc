@@ -20,6 +20,43 @@ flag_management:
         - frontend/
       carryforward: true
 
+# Components slice the backend flag's combined report by crate for display,
+# so a hard-to-cover crate (e.g. atc-server's wiring/glue) doesn't visually
+# drown well-covered pure-logic crates like atc-core in the Codecov UI.
+# Frontend has no equivalent imbalance to surface here — the one path that
+# would create it (vendored shadcn-svelte primitives) is already excluded
+# from vitest's coverage instrumentation, not just hidden in the report.
+component_management:
+  individual_components:
+    - component_id: atc-core
+      name: atc-core (domain model)
+      paths:
+        - "^backend/crates/atc-core/.*"
+    - component_id: atc-github
+      name: atc-github (webhook parsing)
+      paths:
+        - "^backend/crates/atc-github/.*"
+    - component_id: atc-wire
+      name: atc-wire (wire types)
+      paths:
+        - "^backend/crates/atc-wire/.*"
+    - component_id: atc-persist
+      name: atc-persist (store trait)
+      paths:
+        - "^backend/crates/atc-persist/.*"
+    - component_id: atc-store-mem
+      name: atc-store-mem (in-memory store)
+      paths:
+        - "^backend/crates/atc-store-mem/.*"
+    - component_id: atc-store-pg
+      name: atc-store-pg (Postgres store)
+      paths:
+        - "^backend/crates/atc-store-pg/.*"
+    - component_id: atc-server
+      name: atc-server (Axum server)
+      paths:
+        - "^backend/crates/atc-server/.*"
+
 coverage:
   status:
     project:
