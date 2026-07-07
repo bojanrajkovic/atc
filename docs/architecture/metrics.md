@@ -35,7 +35,7 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, the SDK is never initialized: the O
 
 **Logs are not in the OTel pipeline.** All `tracing::{info,warn,error}!` events flow only to the JSON / pretty stderr subscriber registered in `main.rs`. There is no `LoggerProvider` and no OTLP log exporter — operators wanting logs in Loki or another OTel-aware store collect them through their container-log path (kubelet stdout/stderr → Fluent Bit / Vector / etc.).
 
-**OTel SDK init wiring.** `init_otel` installs a `W3CTraceContextPropagator` globally, registers `Base2ExponentialHistogram` as the aggregation view for every histogram instrument (see [Histogram aggregation](#histogram-aggregation)), and constructs both the tracer provider and the meter provider against the OTLP/HTTP exporter before returning `OtelHandles`. `OtelHandles` carries the two providers; `run_shutdown_orchestration` in `shutdown.rs` calls their shutdown methods after every emitter has joined. See [backend-server.md](backend-server.md) § "Supervision and shutdown" for the sequence diagram.
+**OTel SDK init wiring.** `init_otel` registers `Base2ExponentialHistogram` as the aggregation view for every histogram instrument (see [Histogram aggregation](#histogram-aggregation)), and constructs both the tracer provider and the meter provider against the OTLP/HTTP exporter before returning `OtelHandles`. `OtelHandles` carries the two providers; `run_shutdown_orchestration` in `shutdown.rs` calls their shutdown methods after every emitter has joined. See [backend-server.md](backend-server.md) § "Supervision and shutdown" for the sequence diagram.
 
 **Sampler.** The default SDK sampler (`OTEL_TRACES_SAMPLER` env, defaulting to `parentbased_always_on`) is used without override. Operators wishing to tail-sample pass a sampling collector in front of the OTLP endpoint.
 
@@ -97,7 +97,8 @@ ATC spans use a dotted hierarchy that names the boundary, not the implementation
 
 New instrumentation goes at one of these boundaries:
 
-- **API boundaries.** Every public HTTP route handler that performs work worth tracing (today: `webhook_handler`). The `axum-otel-metrics` middleware is the duration / status-code surface for *every* HTTP route automatically; per-route span instrumentation only needs to be added when the handler does enough work that the operator wants to see its internal structure.
+- **API boundaries.** `routes::with_request_tracing` wraps the whole app (API routes + asset fallback) in one `tower_http::TraceLayer`, giving every HTTP request an `http.request` root span (`http.route`, `http.request.method`, `http.response.status_code`) regardless of whether its handler does anything else worth tracing. Handlers that perform work worth its own operator-visible structure (`webhook_handler`, `state_handler`, `ws::ws_handler`, `auth::callback_handler`) additionally build their own hand-rolled span, which nests under `http.request` via tracing's ambient span stack — see [Span inventory](#span-inventory). The `axum-otel-metrics` middleware remains the duration/status-code *metrics* surface; `http.request` is the equivalent *trace* surface.
+- **Outbound client boundaries.** `GitHubClient`'s low-level GET helper (`rest_get`, shared by `get_user` and every `fetch_all_pages` page) and `is_repo_public` each carry their own span (`github.rest_get`, `github.repo_visibility`) with `http.request.method`/`http.response.status_code`, so an outgoing GitHub API call shows up in the local trace the same way an inbound request does. `is_repo_public`'s spawned per-repo checks (`fetch_public_repo_ids`) explicitly carry the caller's `Span::current()` into the `tokio::spawn`'d future — a bare spawn has no ambient span, so without this the spans would export as disconnected roots instead of nesting under `auth.callback`.
 - **Persist boundaries.** `PgStore::apply_*_event` and the in-transaction outbox / notify helpers under `atc-store-pg`. Internal SQL helpers nested inside an `apply_*` span inherit context via the default `#[instrument]` skip rules.
 - **Background-task boundaries.** Long-lived futures spawned with `tokio::spawn` do NOT take a task-lifetime root span. Decorate the per-tick handler function (`listener.recv`, `drain.pass`, `eviction.sweep`) with `#[tracing::instrument(...)]` directly, so each iteration emits its own root that exports on completion. A wrapper at the spawn site is an anti-pattern — see [Task-lifetime root spans are an anti-pattern](#task-lifetime-root-spans-are-an-anti-pattern) below.
 
@@ -115,11 +116,9 @@ The mechanical guard for PG-mode instruments specifically: the only sites that b
 
 Non-PG surfaces follow the same cached-handle convention but register their own instruments in their own module, each holding a small dedicated struct rather than sharing `PgMetrics`: `ws::WsMetrics`, `auth::AuthMetrics` (both `atc-server`), and `session::SessionMetrics` (`atc-store-pg`, deliberately separate from `PgMetrics` — see that crate's `CLAUDE.md`, "`SessionStore` intentionally does not live inside `PgStore`"). A new metric on one of these surfaces is added to its owning struct's `register()`, not to `PgMetrics`.
 
-### W3C trace context propagation
-
-`init_otel` installs a `TraceContextPropagator` globally. For inbound webhook requests, the handler extracts the incoming `traceparent` header before constructing the root span and calls `set_parent` to attach the incoming trace context. `set_parent` MUST be called between span construction and the first poll of the instrumented future — calling it from inside an `#[instrument]` body is wrong because the span has already been entered. When the header is absent or malformed, the resulting `webhook.handler` span is a fresh root with a new trace ID.
-
 ### Cross-trace causal link via outbox `traceparent`
+
+ATC does not extract an incoming W3C `traceparent` header on any inbound request — nothing sends one worth linking to (GitHub's webhook deliveries don't carry one, and there's no relay in front of the webhook endpoint that would either). Request-boundary spans root themselves the ordinary way instead: nested under the blanket `http.request` span (see [Span inventory](#span-inventory) — `ws.connection` is the one exception, for an unrelated mechanical reason). The mechanism below is unrelated to inbound header propagation entirely — it's a purely local, in-process trace link.
 
 The outbox table's `traceparent` column captures the W3C trace context of the `webhook.handler` span at INSERT time. When the drain task processes an outbox row, `drain.broadcast` receives an OTel span **link** (not a parent) to that webhook trace. This is the canonical cross-trace causal mechanism that lets operators follow the path from "webhook received" to "event broadcast to WebSocket" without stitching traces manually in Tempo.
 
@@ -412,6 +411,7 @@ Span names are stable identifiers — operators build dashboards and alerts that
 
 ```mermaid
 flowchart TD
+    HR["http.request\n(every route, via tower_http TraceLayer)"]
     WH["webhook.handler"]
     WV["webhook.verify"]
     WP["webhook.parse"]
@@ -433,7 +433,12 @@ flowchart TD
     ACE["auth.callback.exchange"]
     ACR["auth.callback.repos"]
     ASS["auth.session_sweep.tick\n(per-tick root, PG mode only)"]
+    GRG["github.rest_get"]
+    GRV["github.repo_visibility"]
 
+    HR --> SS
+    HR --> AC
+    HR --> WH
     WH --> WV
     WH --> WP
     WH --> PAR
@@ -444,20 +449,36 @@ flowchart TD
     DP --> DB
     AC --> ACE
     AC --> ACR
+    AC --> GRG
+    ACR --> GRG
+    AC --> GRV
 ```
+
+### Blanket HTTP request path
+
+| Span | Attributes |
+|---|---|
+| `http.request` — root span for every HTTP request (`routes::with_request_tracing`, a `tower_http::TraceLayer`). Covers routes with no hand-rolled span of their own (`healthz`, `readyz`, `logout`, `whoami`, static assets) as well as ones that do — `webhook.handler`, `state.snapshot`, and `auth.callback` all nest underneath via tracing's ambient span stack. `ws.connection` is the one exception, and not by any header-override mechanism: `WebSocketUpgrade::on_upgrade`'s callback runs on a task axum spawns internally, decoupled from `ws_handler`'s own ambient span the same way a bare `tokio::spawn` has none — so it remains a root regardless, matching its documented "connection-lifetime root" design. | `http.route` (the raw request path — every ATC route is path-parameter-free, so this always matches the templated route), `http.request.method`, `http.response.status_code` (u16; late-bound, recorded in `on_response`). |
+
+### GitHub client path
+
+| Span | Attributes |
+|---|---|
+| `github.rest_get` — `GitHubClient`'s shared low-level authenticated GET boundary; both `get_user` and every page `fetch_all_pages` follows route through it, so instrumenting it once covers all of them. | `http.request.method="GET"`, `http.response.status_code` (u16; late-bound). |
+| `github.repo_visibility` — the unauthenticated per-repo visibility check (`is_repo_public`), fanned out concurrently over `tokio::spawn` by `fetch_public_repo_ids`. The spawn site explicitly carries `Span::current()` into each spawned future (`.instrument(span)`) — a bare `tokio::spawn` has no ambient span, so without this every check would export as a disconnected root instead of nesting under whichever span called `fetch_public_repo_ids` (`auth.callback` during a login, via `PublicRepoCache::get`). | `http.request.method="GET"`, `http.response.status_code` (u16; late-bound). |
 
 ### State snapshot path
 
 | Span | Attributes |
 |---|---|
-| `state.snapshot` — root request span for `GET /v1/state`. Built manually (not via `#[instrument]`) so span fields can be recorded from the snapshot response before the handler returns. No `traceparent` extraction: `/v1/state` is a client-pull endpoint with no upstream trace context today. | `http.route="/v1/state"`, `snapshot.runs_count` (usize; late-bound), `snapshot.jobs_count` (usize; late-bound), `snapshot.last_seq` (u64; late-bound). |
+| `state.snapshot` — nests under `http.request` for `GET /v1/state`. Built manually (not via `#[instrument]`) so span fields can be recorded from the snapshot response before the handler returns. | `http.route="/v1/state"`, `snapshot.runs_count` (usize; late-bound), `snapshot.jobs_count` (usize; late-bound), `snapshot.last_seq` (u64; late-bound). |
 | `persist.read.snapshot` — child of `state.snapshot`; via `#[tracing::instrument]`. | `last_seq` (u64; late-bound), `runs_count` (usize; late-bound), `jobs_count` (usize; late-bound). |
 
 ### Webhook ingestion path
 
 | Span | Attributes |
 |---|---|
-| `webhook.handler` — root request span built in the handler body so `traceparent` extraction can attach the parent context before the span is entered. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"`, `http.response.status_code` (u16; late-bound), `webhook.delivery_id` (late-bound), `webhook.event_type` (late-bound). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
+| `webhook.handler` — nests under `http.request` like any other route's span; built manually (not via `#[instrument]`) so span fields can be recorded from parsed webhook fields before the handler returns. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"`, `http.response.status_code` (u16; late-bound), `webhook.delivery_id` (late-bound), `webhook.event_type` (late-bound). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
 | `webhook.verify` — atc-github HMAC verification boundary. | `webhook.signature.present` (bool), `webhook.signature.algorithm="sha256"`. Secret, body bytes, and the signature value are explicitly skipped. |
 | `webhook.parse` — atc-github parse boundary. | `webhook.event_type`, `webhook.action` (late-bound). Body bytes are skipped. |
 
@@ -512,14 +533,14 @@ Per-query spans for every sqlx call land under the `sqlx-tracing` target — see
 
 | Span | Attributes |
 |---|---|
-| `ws.connection` — root span wrapping the entire connection lifetime from upgrade to disconnect. No `traceparent` extraction: each WS connection is independently rooted (a session, not an RPC). See [frontend-app.md](frontend-app.md) for the client-side instrumentation context. | `ws.close_reason` (`&'static str`; late-bound — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded on a lagged-eviction exit — paired with `atc_ws_lagged_evictions_total`). |
+| `ws.connection` — root span wrapping the entire connection lifetime from upgrade to disconnect. Does NOT nest under the blanket `http.request` span (see [Blanket HTTP request path](#blanket-http-request-path)) — each WS connection is independently rooted (a session, not an RPC). See [frontend-app.md](frontend-app.md) for the client-side instrumentation context. | `ws.close_reason` (`&'static str`; late-bound — `"shutdown"`, `"client sent close"`, `"connection dropped"`, `"read error"`, `"lagged"`, `"config lagged"`, `"broadcast channel closed"`, `"config channel closed"`, or `"send failed"`). `ws.lagged_channel` (`"committed"` | `"config"`; late-bound, only recorded on a lagged-eviction exit — paired with `atc_ws_lagged_evictions_total`). |
 
 ### `auth.github` OAuth callback
 
 | Span | Attributes |
 |---|---|
-| `auth.callback` — root span wrapping the entire `callback_handler` body (manual `info_span!`, no incoming `traceparent` — an OAuth redirect from GitHub carries no W3C trace context). | `outcome` (`&'static str`; late-bound — `"success"`, `"state_mismatch"`, `"missing_flow"`, `"exchange_failed"`, `"denied"`, or `"session_error"`; the same value recorded on `atc_auth_logins_total`). `repo_count` (`usize`; late-bound, recorded only on the `"success"` exit). |
-| `auth.callback.exchange` — child span on `GitHubClient::exchange_code` (`#[tracing::instrument]`). | None beyond the default. |
+| `auth.callback` — nests under `http.request`; wraps the entire `callback_handler` body (manual `info_span!`). | `outcome` (`&'static str`; late-bound — `"success"`, `"state_mismatch"`, `"missing_flow"`, `"exchange_failed"`, `"denied"`, or `"session_error"`; the same value recorded on `atc_auth_logins_total`). `repo_count` (`usize`; late-bound, recorded only on the `"success"` exit). |
+| `auth.callback.exchange` — child span on `GitHubClient::exchange_code` (`#[tracing::instrument]`). | `http.request.method="POST"`, `http.response.status_code` (u16; late-bound). |
 | `auth.callback.repos` — child span on `GitHubClient::get_authorized_repo_ids` (`#[tracing::instrument]`). | `pages` (`u32`; late-bound — total pages fetched across the installations list and every per-installation repositories list). |
 
 ### Session sweep (`auth.github`, PG mode only)
