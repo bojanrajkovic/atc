@@ -25,6 +25,9 @@ fn run_event_for(run_id: i64, repo_id: i64) -> RunEventEnvelope {
 #[tokio::test]
 #[serial_test::serial]
 async fn public_repo_with_run_history_is_unioned_into_session_repo_ids() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
     let (pool, _container, _db_url) = common::start_pg().await;
     let mock_base = spawn_mock_github(MockGitHubConfig {
         public_repo_ids: vec![9999],
@@ -52,6 +55,23 @@ async fn public_repo_with_run_history_is_unioned_into_session_repo_ids() {
         vec![1001, 9999],
         "session repo_ids must include both the collaborator-accessible repo \
          (1001) and the public repo (9999) the user has no collaborator access to"
+    );
+
+    // `fetch_public_repo_ids` checks each known repo on its own spawned task
+    // — this is the regression case for the explicit `Span::current()`
+    // propagation into that `tokio::spawn` (a bare spawn carries no ambient
+    // span by default and would otherwise export as a disconnected root).
+    let spans = common::read_finished_spans();
+    let visibility = common::span_named(&spans, "github.repo_visibility")
+        .expect("github.repo_visibility span must export");
+    assert_eq!(
+        common::attribute_str(visibility, "http.response.status_code").as_deref(),
+        Some("200")
+    );
+    assert_eq!(
+        common::parent_of(&spans, visibility).map(|p| p.name.as_ref()),
+        Some("auth.callback"),
+        "github.repo_visibility must nest under auth.callback, not export as a root"
     );
 }
 
