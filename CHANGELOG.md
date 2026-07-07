@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0](https://github.com/bojanrajkovic/atc/compare/v0.3.0...v0.4.0) (2026-07-07)
+
+
+### Features
+
+* **ci:** add per-crate Codecov components for backend coverage display ([78d98bd](https://github.com/bojanrajkovic/atc/commit/78d98bd14ee2357ac0ef3d83b7411c54c6fcabb5))
+* **server:** trace HTTP requests, in both directions, through the OTel pipeline ([#521](https://github.com/bojanrajkovic/atc/issues/521)) ([df80636](https://github.com/bojanrajkovic/atc/commit/df80636a62c3e03790624d6c99a441ac5163bfd5))
+
+
+### Bug Fixes
+
+* **backend:** isolate the DB-outage test and cap pool acquire_timeout at 5s ([#517](https://github.com/bojanrajkovic/atc/issues/517)) ([f9fce38](https://github.com/bojanrajkovic/atc/commit/f9fce3805840a5170f02def17f2cd20e60dff4ba))
+* **server:** stop pulling a full state snapshot to list known repo IDs ([#515](https://github.com/bojanrajkovic/atc/issues/515)) ([757f1ef](https://github.com/bojanrajkovic/atc/commit/757f1ef50749d549e58df82b790dc230b2146b07))
+* **test:** reap stale per-test databases in reused PG containers ([#514](https://github.com/bojanrajkovic/atc/issues/514)) ([79a4a11](https://github.com/bojanrajkovic/atc/commit/79a4a11c789e0385fd717a71bab371789de19444))
+* **tests:** drop over-asserting dedup-counter check from row-lock test ([#520](https://github.com/bojanrajkovic/atc/issues/520)) ([1b1613c](https://github.com/bojanrajkovic/atc/commit/1b1613cf4803969c3cfa81d6ecbef4ca4db2c491)), closes [#519](https://github.com/bojanrajkovic/atc/issues/519)
+
+
+### Performance Improvements
+
+* **release:** reuse binary-matrix artifact instead of recompiling container ([#512](https://github.com/bojanrajkovic/atc/issues/512)) ([0db9a59](https://github.com/bojanrajkovic/atc/commit/0db9a5962a14467540d440caa01ee482ad3519c3))
+
 ## [0.3.0](https://github.com/bojanrajkovic/atc/compare/v0.2.0...v0.3.0) (2026-07-06)
 
 

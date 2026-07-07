@@ -6,7 +6,7 @@ resolver = "2"
 # Single source of truth for the workspace version. release-please bumps this
 # one field (via an extra-files TOML updater on $.workspace.package.version);
 # every crate inherits it with `version.workspace = true`. See ADR-0011.
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.94.0"
 
