@@ -15,7 +15,7 @@
 # backend/crates/atc-server/tests/integration/common/mod.rs) for dev/test parity.
 services:
   pg-dev:
-    image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
+    image: postgres:18-alpine@sha256:ecafd34249b5c248f3cb6ebe339584ee6448b36fad3f0a827ae5e8efbae6afda
     container_name: atc-pg-dev
     environment:
       POSTGRES_PASSWORD: postgres
