@@ -303,15 +303,17 @@ impl GitHubClient {
     /// abuse-detection would care about burst size.
     pub async fn fetch_public_repo_ids(&self, repo_ids: &[i64]) -> HashSet<i64> {
         let mut handles = Vec::with_capacity(repo_ids.len());
+        // `tokio::spawn` starts a new task with no ambient span of its own —
+        // carry the caller's span in explicitly so each `github.repo_visibility`
+        // span nests under it instead of exporting as a disconnected root.
+        // Read once: the loop has no `.await` between iterations, so the
+        // ambient span can't change mid-loop.
+        let span = tracing::Span::current();
         for &repo_id in repo_ids {
             let client = self.clone();
-            // `tokio::spawn` starts a new task with no ambient span of its
-            // own — carry the caller's span in explicitly so each
-            // `github.repo_visibility` span nests under it instead of
-            // exporting as a disconnected root.
-            let span = tracing::Span::current();
             handles.push(tokio::spawn(
-                async move { (repo_id, client.is_repo_public(repo_id).await) }.instrument(span),
+                async move { (repo_id, client.is_repo_public(repo_id).await) }
+                    .instrument(span.clone()),
             ));
         }
 

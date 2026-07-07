@@ -72,9 +72,7 @@ async fn snapshot_carries_runner_pool_capacities_from_app_state() {
         ])
         .build();
 
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = common::full_router(false, app_state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -133,9 +131,7 @@ async fn mutating_app_state_capacities_reflects_in_next_snapshot() {
 
     let app_state = common::TestAppState::new(persist, clock).build();
 
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = common::full_router(false, app_state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

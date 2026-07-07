@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use atc_core::SystemClock;
 use atc_server::config_watcher::ConfigEvent;
-use atc_server::routes;
 use atc_store_mem::InMemoryStore;
 use atc_wire::CommittedEvent;
 
@@ -518,9 +517,7 @@ async fn config_channel_lagged_closes_socket() {
         .with_config_events_tx(config_tx.clone())
         .build();
 
-    let router = routes::api_routes(false)
-        .with_state(state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let router = common::full_router(false, state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

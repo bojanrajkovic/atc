@@ -45,7 +45,7 @@ async fn metrics_endpoint_not_served_by_api_router() {
     // Use the bare API router (no SPA fallback) so this test reflects the
     // route table itself rather than the asset fallback.
     let (_full_app, app_state) = common::build_app_no_secret();
-    let app = atc_server::routes::api_routes(false).with_state(app_state);
+    let app = common::bare_api_router(false, app_state);
 
     let req = Request::builder()
         .method("GET")

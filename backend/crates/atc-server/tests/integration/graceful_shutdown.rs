@@ -29,7 +29,6 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use atc_server::metrics;
-use atc_server::routes;
 use atc_server::shutdown::{
     SHUTDOWN_TIMEOUT_METRICS, SHUTDOWN_TIMEOUT_SERVES, SHUTDOWN_TIMEOUT_WS,
     run_shutdown_orchestration,
@@ -64,9 +63,7 @@ async fn start_full_server(pool: atc_store_pg::TracedPool, db_url: String) -> Fu
     // Mirror main.rs: clone the Arc into the router so `state` itself stays
     // in this scope, keeping the store's broadcast sender open through
     // shutdown orchestration.
-    let app = routes::api_routes(false)
-        .with_state(state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = common::full_router(false, state.clone());
 
     // Bind to an ephemeral port so tests don't conflict.
     let main_listener = TcpListener::bind("127.0.0.1:0")

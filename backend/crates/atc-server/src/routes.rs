@@ -10,9 +10,12 @@ use axum::{
     routing::{get, post},
 };
 use axum_otel_metrics::HttpMetricsLayerBuilder;
+use opentelemetry::trace::TraceContextExt;
+use opentelemetry_http::HeaderExtractor;
 use serde::Serialize;
 use tower_http::trace::TraceLayer;
 use tracing::{Instrument, Span, field, info_span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use atc_core::{PersistError, RunId};
 use atc_github::{ParseResult, parse_webhook, verify_signature};
@@ -214,16 +217,30 @@ async fn removed_endpoint_404() -> StatusCode {
 /// inventory". Trivial routes (healthz, readyz, logout, whoami, static
 /// assets) had zero trace visibility before this — only the
 /// axum-otel-metrics duration histogram saw them.
-pub fn with_request_tracing<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S> {
+///
+/// Honors an incoming W3C `traceparent` header when present and valid (e.g.
+/// from a service-mesh sidecar with tracing enabled — see
+/// docs/architecture/metrics.md § "W3C trace context propagation"), attaching
+/// it as this span's parent so every route benefits uniformly rather than
+/// special-casing any one handler. Absent or malformed, the span roots itself
+/// normally.
+pub fn with_request_tracing(router: Router) -> Router {
     router.layer(
         TraceLayer::new_for_http()
             .make_span_with(|req: &axum::extract::Request| {
-                info_span!(
+                let span = info_span!(
                     "http.request",
                     http.request.method = %req.method(),
                     http.route = %req.uri().path(),
                     http.response.status_code = field::Empty,
-                )
+                );
+                let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
+                    prop.extract(&HeaderExtractor(req.headers()))
+                });
+                if parent_cx.span().span_context().is_valid() {
+                    let _ = span.set_parent(parent_cx);
+                }
+                span
             })
             .on_response(
                 |res: &axum::response::Response, _latency: std::time::Duration, span: &Span| {

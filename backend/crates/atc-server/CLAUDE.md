@@ -26,6 +26,8 @@ The only executable crate in the backend workspace. Wires the six library crates
 
 **`PublicRepoCache` is deliberately in-process and per-replica, not shared via Postgres.** Two replicas disagreeing on the public-repo set for up to one `repo_auth_ttl` window after a flip is an accepted tradeoff (ADR-0014), not a bug — don't "fix" it by adding a shared cache table without revisiting that decision.
 
+**A test asserting on the blanket `http.request` span (`routes::with_request_tracing`) must drain the response body, or the span never exports.** `tower_http::TraceLayer` wraps the response body to time the full transfer, not just the headers — production traffic always drains the body via the HTTP layer, but `tower::ServiceExt::oneshot()` in a test does not. Call `axum::body::to_bytes(response.into_body(), usize::MAX).await` before reading spans (see `routes_tests.rs`'s `healthz_emits_blanket_http_request_span` for the full explanation and the pattern every other span-asserting test in the suite follows).
+
 ## Key References
 
 - Architecture: `docs/architecture/backend-server.md`

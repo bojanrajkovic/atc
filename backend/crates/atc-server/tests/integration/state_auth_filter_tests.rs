@@ -56,7 +56,7 @@ async fn build_shared_persist_apps(
     let none_state = common::TestAppState::new(Arc::clone(&persist), Arc::clone(&clock))
         .with_shutdown(shutdown.clone())
         .build();
-    let none_app = atc_server::routes::api_routes(false).with_state(none_state);
+    let none_app = common::bare_api_router(false, none_state);
 
     let sessions = SessionStore::start(pool, Arc::clone(&clock), shutdown.clone());
     let github = Arc::new(GitHubClient::with_base_urls(
@@ -82,7 +82,7 @@ async fn build_shared_persist_apps(
         .with_shutdown(shutdown)
         .with_auth(Some(auth_runtime))
         .build();
-    let auth_app = atc_server::routes::api_routes(true).with_state(auth_state);
+    let auth_app = common::bare_api_router(true, auth_state);
 
     (none_app, auth_app, sessions, persist)
 }

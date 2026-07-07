@@ -464,9 +464,7 @@ async fn first_webhook_broadcasts_seq_1_not_seq_0() {
         .with_shutdown(shutdown)
         .build();
 
-    let main_router = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let main_router = common::full_router(false, app_state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
