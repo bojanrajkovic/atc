@@ -1,8 +1,7 @@
 //! Span-side instrumentation tests.
 //!
 //! Asserts that the webhook handler, persistence layer, and drain pipeline
-//! emit the boundary spans declared in the architecture-doc table, and that
-//! W3C `traceparent` headers propagate into the root request span. Spans flow
+//! emit the boundary spans declared in the architecture-doc table. Spans flow
 //! into an in-memory `InMemorySpanExporter` installed by the
 //! `ensure_span_exporter_installed()` helper in `common/mod.rs`.
 
@@ -14,9 +13,6 @@ use tokio::time::timeout;
 
 use crate::common;
 use crate::common::{attribute_str, parent_of, span_named, spans_named};
-
-const TRACEPARENT_TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
-const TRACEPARENT_HEADER: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 
 #[tokio::test]
 #[serial]
@@ -62,42 +58,15 @@ async fn webhook_post_emits_expected_span_hierarchy() {
             .unwrap_or(false),
         "persist.apply.run_event must be a child of webhook.handler",
     );
-}
 
-#[tokio::test]
-#[serial]
-async fn traceparent_header_propagates_to_root_span() {
-    common::ensure_span_exporter_installed();
-    common::reset_spans();
-
-    use axum::body::Body;
-    use axum::http::{Request, header};
-    use tower::ServiceExt;
-
-    let (app, _state) = common::build_app_no_secret();
-
-    let req = Request::builder()
-        .method("POST")
-        .uri("/v1/webhooks/github")
-        .header(header::CONTENT_TYPE, "application/json")
-        .header("x-github-event", "workflow_run")
-        .header("traceparent", TRACEPARENT_HEADER)
-        .body(Body::from(common::fixture_workflow_run_requested()))
-        .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let spans = common::read_finished_spans();
-    let handler =
-        span_named(&spans, "webhook.handler").expect("webhook.handler span must be exported");
-
-    let actual = format!(
-        "{:032x}",
-        u128::from_be_bytes(handler.span_context.trace_id().to_bytes())
-    );
+    // `webhook_handler` no longer extracts an incoming `traceparent` header
+    // (nothing sends one — GitHub doesn't, and there's no relay in front of
+    // it that would either), so it nests under the blanket `http.request`
+    // span like every other route instead of forcing itself to a fresh root.
     assert_eq!(
-        actual, TRACEPARENT_TRACE_ID,
-        "webhook.handler trace ID must match the incoming traceparent",
+        parent_of(&spans, handler).map(|p| p.name.as_ref()),
+        Some("http.request"),
+        "webhook.handler must be a child of the blanket http.request span"
     );
 }
 

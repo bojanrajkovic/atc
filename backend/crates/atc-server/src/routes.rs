@@ -10,8 +10,10 @@ use axum::{
     routing::{get, post},
 };
 use axum_otel_metrics::HttpMetricsLayerBuilder;
+use opentelemetry::trace::TraceContextExt;
 use opentelemetry_http::HeaderExtractor;
 use serde::Serialize;
+use tower_http::trace::TraceLayer;
 use tracing::{Instrument, Span, field, info_span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -207,6 +209,47 @@ async fn removed_endpoint_404() -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
+/// Blanket per-request root span for every route, including the asset
+/// fallback — apply this LAST, after `.fallback(...)`, so it wraps the whole
+/// app rather than just `api_routes`. Handler-authored spans (webhook.handler,
+/// state.snapshot, ws.connection, auth.callback) nest under it automatically
+/// via tracing's ambient span stack; see docs/architecture/metrics.md § "Span
+/// inventory". Trivial routes (healthz, readyz, logout, whoami, static
+/// assets) had zero trace visibility before this — only the
+/// axum-otel-metrics duration histogram saw them.
+///
+/// Honors an incoming W3C `traceparent` header when present and valid (e.g.
+/// from a service-mesh sidecar with tracing enabled — see
+/// docs/architecture/metrics.md § "W3C trace context propagation"), attaching
+/// it as this span's parent so every route benefits uniformly rather than
+/// special-casing any one handler. Absent or malformed, the span roots itself
+/// normally.
+pub fn with_request_tracing(router: Router) -> Router {
+    router.layer(
+        TraceLayer::new_for_http()
+            .make_span_with(|req: &axum::extract::Request| {
+                let span = info_span!(
+                    "http.request",
+                    http.request.method = %req.method(),
+                    http.route = %req.uri().path(),
+                    http.response.status_code = field::Empty,
+                );
+                let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
+                    prop.extract(&HeaderExtractor(req.headers()))
+                });
+                if parent_cx.span().span_context().is_valid() {
+                    let _ = span.set_parent(parent_cx);
+                }
+                span
+            })
+            .on_response(
+                |res: &axum::response::Response, _latency: std::time::Duration, span: &Span| {
+                    span.record("http.response.status_code", res.status().as_u16());
+                },
+            ),
+    )
+}
+
 /// API routes. Mount these before the asset fallback.
 ///
 /// The HTTP metrics layer (`axum-otel-metrics::HttpMetricsLayer`) reads from
@@ -258,14 +301,6 @@ async fn webhook_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Build the parent OTel context from incoming headers BEFORE the span
-    // exists. `set_parent` errors if called after the span has been entered;
-    // the only safe attachment point is between `info_span!` and the first
-    // poll of the instrumented future.
-    let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
-        prop.extract(&HeaderExtractor(&headers))
-    });
-
     let span = info_span!(
         "webhook.handler",
         http.route = "/v1/webhooks/github",
@@ -274,10 +309,6 @@ async fn webhook_handler(
         webhook.delivery_id = field::Empty,
         webhook.event_type = field::Empty,
     );
-    // Ignore `SetParentError`: the only reason this errors is when no OTel
-    // tracing layer is installed (default-disabled posture), in which case the
-    // request still runs as a no-op span.
-    let _ = span.set_parent(parent_cx);
 
     async move {
         let response: (StatusCode, Json<serde_json::Value>) = 'response: {

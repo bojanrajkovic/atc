@@ -367,6 +367,30 @@ pub fn compute_signature(secret: &[u8], body: &[u8]) -> String {
 /// leaked detached task would accumulate across tests until process exit.
 /// Tests that explicitly exercise eviction (`in_memory_store_tests.rs`)
 /// use their own helpers.
+/// The production router shape (mirrors `main.rs`): `api_routes` + the asset
+/// fallback + the blanket `with_request_tracing` layer. Every test fixture
+/// that needs a full-shaped router should route through this (or
+/// [`bare_api_router`]) instead of hand-composing the same three calls, so a
+/// future layer added to `main.rs`'s composition can't silently drift out of
+/// sync with the test fixtures exercising it.
+pub fn full_router(auth_enabled: bool, app_state: Arc<AppState>) -> axum::Router {
+    atc_server::routes::with_request_tracing(
+        atc_server::routes::api_routes(auth_enabled)
+            .with_state(app_state)
+            .fallback(atc_server::assets::fallback_handler()),
+    )
+}
+
+/// Like [`full_router`], but without the asset fallback — for tests that
+/// want to observe the bare API route table directly (e.g. asserting an
+/// unmounted route 404s instead of falling through to the SPA's
+/// `index.html`).
+pub fn bare_api_router(auth_enabled: bool, app_state: Arc<AppState>) -> axum::Router {
+    atc_server::routes::with_request_tracing(
+        atc_server::routes::api_routes(auth_enabled).with_state(app_state),
+    )
+}
+
 pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     ensure_recorder_installed();
     let clock: Arc<dyn atc_core::Clock> = Arc::new(SystemClock);
@@ -378,9 +402,7 @@ pub fn build_app_with_secret(secret: &str) -> (axum::Router, Arc<AppState>) {
     let app_state = TestAppState::new(persist, clock)
         .with_webhook_secret(secret)
         .build();
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = full_router(false, app_state.clone());
     (app, app_state)
 }
 
@@ -397,9 +419,7 @@ pub fn build_app_no_secret() -> (axum::Router, Arc<AppState>) {
         IN_MEMORY_TEST_BROADCAST_CAPACITY,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = TestAppState::new(persist, clock).build();
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = full_router(false, app_state.clone());
     (app, app_state)
 }
 
@@ -531,9 +551,7 @@ pub async fn spawn_in_memory_server_with_capacity(
         broadcast_capacity,
     ) as Arc<dyn atc_persist::PersistentStore>;
     let app_state = TestAppState::new(persist, clock).build();
-    let router = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let router = full_router(false, app_state.clone());
     let addr = spawn_router(router).await;
     (addr, app_state)
 }
@@ -584,9 +602,7 @@ pub async fn spawn_auth_server(
         .with_shutdown(shutdown)
         .with_auth(Some(auth))
         .build();
-    let router = atc_server::routes::api_routes(true)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let router = full_router(true, app_state.clone());
     let addr = spawn_router(router).await;
     (addr, app_state, sessions)
 }
@@ -963,9 +979,7 @@ async fn build_app_inner(
         .with_shutdown(shutdown.clone())
         .build();
 
-    let router = atc_server::routes::api_routes(false)
-        .with_state(state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let router = full_router(false, state.clone());
 
     // Wait for the first drain pass to complete so the fixture is stable.
     tokio::time::timeout(Duration::from_secs(5), drain_started.notified())
@@ -1112,9 +1126,7 @@ pub async fn build_pg_app(
     let app_state = TestAppState::new(persist, clock)
         .with_shutdown(shutdown)
         .build();
-    let app = atc_server::routes::api_routes(false)
-        .with_state(app_state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let app = full_router(false, app_state.clone());
     (app, app_state, rx)
 }
 

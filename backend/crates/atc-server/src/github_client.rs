@@ -12,6 +12,7 @@
 use std::collections::HashSet;
 
 use reqwest::header::{ACCEPT, LINK};
+use tracing::Instrument;
 
 const API_VERSION: &str = "2022-11-28";
 
@@ -188,7 +189,14 @@ impl GitHubClient {
     /// token string; the response's `refresh_token` (if present — only
     /// expiring-token apps return one) is decoded, never propagated, and
     /// dropped when this function returns.
-    #[tracing::instrument(name = "auth.callback.exchange", skip_all)]
+    #[tracing::instrument(
+        name = "auth.callback.exchange",
+        skip_all,
+        fields(
+            http.request.method = "POST",
+            http.response.status_code = tracing::field::Empty,
+        ),
+    )]
     pub async fn exchange_code(
         &self,
         code: &str,
@@ -209,6 +217,7 @@ impl GitHubClient {
             .send()
             .await
             .map_err(GitHubClientError::Http)?;
+        tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
 
         // GitHub returns 200 OK even for a rejected exchange (bad code,
         // mismatched redirect_uri, ...) — the failure shows up as an
@@ -294,11 +303,18 @@ impl GitHubClient {
     /// abuse-detection would care about burst size.
     pub async fn fetch_public_repo_ids(&self, repo_ids: &[i64]) -> HashSet<i64> {
         let mut handles = Vec::with_capacity(repo_ids.len());
+        // `tokio::spawn` starts a new task with no ambient span of its own —
+        // carry the caller's span in explicitly so each `github.repo_visibility`
+        // span nests under it instead of exporting as a disconnected root.
+        // Read once: the loop has no `.await` between iterations, so the
+        // ambient span can't change mid-loop.
+        let span = tracing::Span::current();
         for &repo_id in repo_ids {
             let client = self.clone();
-            handles.push(tokio::spawn(async move {
-                (repo_id, client.is_repo_public(repo_id).await)
-            }));
+            handles.push(tokio::spawn(
+                async move { (repo_id, client.is_repo_public(repo_id).await) }
+                    .instrument(span.clone()),
+            ));
         }
 
         let mut public = HashSet::new();
@@ -338,6 +354,14 @@ impl GitHubClient {
     /// anonymous caller. `Ok(false)` on 404 — GitHub returns 404 (never 403)
     /// for both a private repo and one that no longer exists, and the caller
     /// only needs "is it public", not which.
+    #[tracing::instrument(
+        name = "github.repo_visibility",
+        skip_all,
+        fields(
+            http.request.method = "GET",
+            http.response.status_code = tracing::field::Empty,
+        ),
+    )]
     async fn is_repo_public(&self, repo_id: i64) -> Result<bool, GitHubClientError> {
         let resp = self
             .http
@@ -347,6 +371,7 @@ impl GitHubClient {
             .send()
             .await
             .map_err(GitHubClientError::Http)?;
+        tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(false);
@@ -358,6 +383,17 @@ impl GitHubClient {
         Ok(body.visibility == "public")
     }
 
+    /// Shared low-level GET boundary — every authenticated REST call
+    /// (`get_user`, and each page `fetch_all_pages` follows) routes through
+    /// here, so instrumenting this one function covers all of them.
+    #[tracing::instrument(
+        name = "github.rest_get",
+        skip_all,
+        fields(
+            http.request.method = "GET",
+            http.response.status_code = tracing::field::Empty,
+        ),
+    )]
     async fn rest_get(
         &self,
         url: &str,
@@ -372,6 +408,7 @@ impl GitHubClient {
             .send()
             .await
             .map_err(GitHubClientError::Http)?;
+        tracing::Span::current().record("http.response.status_code", resp.status().as_u16());
 
         if !resp.status().is_success() {
             return Err(GitHubClientError::UnexpectedStatus(resp.status()));

@@ -12,7 +12,6 @@ use std::time::Duration;
 
 use atc_core::SystemClock;
 use atc_server::config_watcher::ConfigEvent;
-use atc_server::routes;
 use atc_store_mem::InMemoryStore;
 use atc_wire::CommittedEvent;
 
@@ -38,6 +37,36 @@ async fn ws_upgrade_succeeds() {
     let (mut _socket, _response) = result.unwrap();
     // Connection established successfully. In a real scenario, the client would
     // keep the socket alive and receive frames. Here we just verify the upgrade succeeded.
+}
+
+/// The `on_upgrade` callback runs on a task axum spawns internally, decoupled
+/// from `ws_handler`'s own ambient span — so unlike `state.snapshot`, which
+/// nests under the blanket `http.request` span for free, `ws.connection`
+/// does NOT and must not: it's a deliberate connection-lifetime root (see
+/// docs/architecture/metrics.md § Span inventory), same rationale as
+/// `listener.recv`/`drain.pass` being per-tick roots rather than children of
+/// whatever spawned them.
+#[tokio::test]
+#[serial_test::serial]
+async fn ws_connection_span_remains_root_under_blanket_http_request_layer() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let (server_addr, _state) = common::spawn_in_memory_server().await;
+    let ws_url = format!("ws://{}/v1/ws", server_addr);
+    let (socket, _) = tokio_tungstenite::connect_async(&ws_url)
+        .await
+        .expect("WS connection failed");
+    drop(socket);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let spans = common::read_finished_spans();
+    let connection =
+        common::span_named(&spans, "ws.connection").expect("ws.connection span must be exported");
+    assert!(
+        common::parent_of(&spans, connection).is_none(),
+        "ws.connection must remain a root span, not nest under http.request"
+    );
 }
 
 /// Connected client receives CommittedEvent after webhook ingestion
@@ -488,9 +517,7 @@ async fn config_channel_lagged_closes_socket() {
         .with_config_events_tx(config_tx.clone())
         .build();
 
-    let router = routes::api_routes(false)
-        .with_state(state.clone())
-        .fallback(atc_server::assets::fallback_handler());
+    let router = common::full_router(false, state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

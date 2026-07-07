@@ -293,7 +293,7 @@ async fn build_auth_test_app(
     });
 
     let app_state = build_app_state(persist, clock, shutdown, auth);
-    let app = atc_server::routes::api_routes(true).with_state(app_state.clone());
+    let app = common::bare_api_router(true, app_state.clone());
     (app, app_state)
 }
 

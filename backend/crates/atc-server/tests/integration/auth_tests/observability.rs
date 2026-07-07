@@ -45,6 +45,11 @@ async fn callback_success_emits_span_tree_and_login_metric() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::FOUND);
+    // Drain the body so the outer `tower_http::TraceLayer` span (`http.request`)
+    // actually closes and exports — its lifetime is tied to the response body,
+    // not just the handler returning (see routes_tests.rs's
+    // `healthz_emits_blanket_http_request_span` for the full explanation).
+    let _ = axum::body::to_bytes(resp.into_body(), usize::MAX).await;
 
     let spans = common::read_finished_spans();
     let callback = span_named(&spans, "auth.callback").expect("auth.callback span must export");
@@ -53,6 +58,11 @@ async fn callback_success_emits_span_tree_and_login_metric() {
         Some("success")
     );
     assert_eq!(attribute_str(callback, "repo_count").as_deref(), Some("1"));
+    assert_eq!(
+        parent_of(&spans, callback).map(|p| p.name.as_ref()),
+        Some("http.request"),
+        "auth.callback must nest under the blanket http.request span"
+    );
 
     let exchange = span_named(&spans, "auth.callback.exchange")
         .expect("auth.callback.exchange span must export");
@@ -61,6 +71,26 @@ async fn callback_success_emits_span_tree_and_login_metric() {
         Some("auth.callback"),
         "auth.callback.exchange must be a child of auth.callback"
     );
+    assert_eq!(
+        attribute_str(exchange, "http.request.method").as_deref(),
+        Some("POST")
+    );
+    assert_eq!(
+        attribute_str(exchange, "http.response.status_code").as_deref(),
+        Some("200")
+    );
+
+    let rest_gets = common::spans_named(&spans, "github.rest_get");
+    assert!(
+        !rest_gets.is_empty(),
+        "get_user/get_authorized_repo_ids must route through an instrumented github.rest_get call"
+    );
+    for rest_get in &rest_gets {
+        assert_eq!(
+            attribute_str(rest_get, "http.response.status_code").as_deref(),
+            Some("200")
+        );
+    }
 
     let repos =
         span_named(&spans, "auth.callback.repos").expect("auth.callback.repos span must export");

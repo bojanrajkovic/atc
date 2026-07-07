@@ -327,7 +327,7 @@ async fn mode_none_leaves_auth_routes_unmounted() {
     let shutdown = CancellationToken::new();
     let persist = test_persist(&clock, &shutdown);
     let app_state = build_app_state(persist, clock, shutdown, None);
-    let app = atc_server::routes::api_routes(false).with_state(app_state);
+    let app = common::bare_api_router(false, app_state);
 
     let (status, _headers) = do_login(&app, "").await;
     assert_eq!(

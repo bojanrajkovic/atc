@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::{attribute_str, parent_of, span_named};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
@@ -93,6 +94,120 @@ async fn readyz_returns_ok() {
             .get(header::CONTENT_TYPE)
             .map(|v| v.to_str().unwrap()),
         Some("application/json")
+    );
+}
+
+/// `healthz` has no hand-rolled span of its own — before the blanket
+/// `tower_http::TraceLayer` (`routes::with_request_tracing`), it had zero
+/// trace visibility. Asserts the layer covers it anyway.
+#[tokio::test]
+#[serial_test::serial]
+async fn healthz_emits_blanket_http_request_span() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // `TraceLayer`'s span stays open until the response body is fully
+    // consumed (it wraps the body to time the full transfer, not just
+    // headers) — production traffic always drains the body via the HTTP
+    // layer, but `oneshot()` in a test does not, so the span never closes
+    // (and never exports) unless the body is drained here too.
+    let _ = to_bytes(response.into_body(), usize::MAX).await;
+
+    let spans = common::read_finished_spans();
+    let root = span_named(&spans, "http.request").expect("http.request span must be exported");
+    assert_eq!(
+        attribute_str(root, "http.route").as_deref(),
+        Some("/healthz")
+    );
+    assert_eq!(
+        attribute_str(root, "http.response.status_code").as_deref(),
+        Some("200")
+    );
+}
+
+/// The blanket layer honors an incoming W3C `traceparent` on ANY route, not
+/// just the webhook endpoint — e.g. a service-mesh sidecar (Istio, Envoy
+/// Gateway) with tracing enabled stamps one on every request it forwards,
+/// including routes with an auth-bypass policy for the app itself. Using
+/// `/healthz` here proves the behavior lives in the blanket layer, not in
+/// any one handler.
+#[tokio::test]
+#[serial_test::serial]
+async fn incoming_traceparent_becomes_http_request_trace_id() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .header(
+                    "traceparent",
+                    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = to_bytes(response.into_body(), usize::MAX).await;
+
+    let spans = common::read_finished_spans();
+    let root = span_named(&spans, "http.request").expect("http.request span must be exported");
+    let trace_id = format!(
+        "{:032x}",
+        u128::from_be_bytes(root.span_context.trace_id().to_bytes())
+    );
+    assert_eq!(
+        trace_id, "0af7651916cd43dd8448eb211c80319c",
+        "http.request's trace ID must match the incoming traceparent header"
+    );
+}
+
+/// `state.snapshot` is a hand-rolled span (`state_handler`) — verifies it
+/// nests under the blanket `http.request` span rather than the two competing
+/// for root status.
+#[tokio::test]
+#[serial_test::serial]
+async fn state_snapshot_span_nests_under_blanket_http_request_span() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/state")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // Drain the body — see `healthz_emits_blanket_http_request_span` for why
+    // `TraceLayer`'s span won't export otherwise.
+    let _ = to_bytes(response.into_body(), usize::MAX).await;
+
+    let spans = common::read_finished_spans();
+    let snapshot =
+        span_named(&spans, "state.snapshot").expect("state.snapshot span must be exported");
+    assert_eq!(
+        parent_of(&spans, snapshot).map(|p| p.name.as_ref()),
+        Some("http.request"),
+        "state.snapshot must be a child of the blanket http.request span"
     );
 }
 
