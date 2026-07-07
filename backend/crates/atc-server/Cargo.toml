@@ -14,7 +14,12 @@ atc-store-pg = { path = "../atc-store-pg" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
 axum = { version = "=0.8.9", features = ["ws"] }
-axum-otel-metrics = "=0.13.0"
+# STOPGAP (issue #522): pinned to ttys3/axum-otel-metrics's main branch, not
+# a crates.io release — the opentelemetry-0.32 bump
+# (https://github.com/ttys3/axum-otel-metrics/pull/198) merged to main on
+# 2026-07-03 but no release has been cut since (crate metadata still shows
+# 0.13.0 as newest). Revert to a version pin once a new release ships.
+axum-otel-metrics = { git = "https://github.com/ttys3/axum-otel-metrics", rev = "49477dc286b771200d98574421eae49dcb9d1c50" }
 base64 = "=0.22.1"
 chrono = "=0.4.45"
 figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }
@@ -22,12 +27,17 @@ getrandom = "=0.4.3"
 http = "=1.4.2"
 humantime-serde = "=1.1.1"
 notify-debouncer-full = "=0.7.0"
-opentelemetry = { version = "=0.31.0", features = ["metrics", "trace"] }
-opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
-opentelemetry-otlp = { version = "=0.31.1", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls-webpki-roots", "metrics", "trace"] }
-opentelemetry-http = "=0.31.0"
-opentelemetry-semantic-conventions = "=0.31.0"
-opentelemetry-system-metrics = "=0.31.0"
+opentelemetry = { version = "=0.32.0", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
+opentelemetry-otlp = { version = "=0.32.0", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls", "metrics", "trace"] }
+opentelemetry-http = "=0.32.0"
+opentelemetry-semantic-conventions = "=0.32.1"
+# STOPGAP (issue #522): pinned to phil-opp's opentelemetry 0.32 branch, not a
+# crates.io release — haixuanTao/opentelemetry-system-metrics has no
+# published version compatible with opentelemetry 0.32 yet
+# (https://github.com/haixuanTao/opentelemetry-system-metrics/pull/16 is open,
+# green, unmerged). Revert to a version pin once that PR merges and releases.
+opentelemetry-system-metrics = { git = "https://github.com/phil-opp/opentelemetry-rust-system-metrics", rev = "2531fe1166a67e9011fb81ce0c4e167ef3fa880e" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["form", "json", "rustls"] }
 rust-embed = "=8.11.0"
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -38,7 +48,7 @@ tokio-util = { version = "=0.7.18", features = ["rt"] }
 tower-http = { version = "=0.7.0", features = ["cors", "trace"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
-tracing-opentelemetry = { version = "=0.32.1", features = ["metrics"] }
+tracing-opentelemetry = { version = "=0.33.0", features = ["metrics"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
 uuid = { version = "=1.23.4", features = ["v4", "fast-rng"] }
 
@@ -53,7 +63,7 @@ chrono = { version = "=0.4.45", features = ["serde"] }
 const-hex = "=1.19.1"
 futures-util = "=0.3.32"
 hmac = "=0.13.0"
-opentelemetry_sdk = { version = "=0.31.0", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
+opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
 serial_test = "=3.5.0"
 # sqlx remains a dev-dep for integration tests under tests/integration/ that
 # do ephemeral-DB CREATE/DROP and query helpers. Production sources no longer
