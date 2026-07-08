@@ -2,6 +2,20 @@ apiVersion: v1
 entries:
   atc:
   - apiVersion: v2
+    appVersion: 0.4.1
+    created: "2026-07-08T00:33:42.855910685Z"
+    description: Real-time GitHub Actions dashboard
+    digest: 998481d73214d0cfc499b77eda6ef61dd19b677873069cfac01429fdea6150cc
+    kubeVersion: '>=1.32.0-0'
+    maintainers:
+    - email: brajkovic@coderinserepeat.com
+      name: Bojan Rajkovic
+    name: atc
+    type: application
+    urls:
+    - https://github.com/bojanrajkovic/atc/releases/download/atc-0.4.1/atc-0.4.1.tgz
+    version: 0.4.1
+  - apiVersion: v2
     appVersion: 0.4.0
     created: "2026-07-07T23:28:26.025158956Z"
     description: Real-time GitHub Actions dashboard
@@ -43,4 +57,4 @@ entries:
     urls:
     - https://github.com/bojanrajkovic/atc/releases/download/atc-0.2.0/atc-0.2.0.tgz
     version: 0.2.0
-generated: "2026-07-07T23:28:26.025167892Z"
+generated: "2026-07-08T00:33:42.855925232Z"
