@@ -163,6 +163,8 @@ The cross-format implication: native and classic histograms have incompatible qu
 
 `version` deliberately mirrors `git_describe` rather than carrying `CARGO_PKG_VERSION`. The operator-facing identifier should track the git tag the image was built from — which is also what `org.opencontainers.image.version` and the `service.version` OTel resource attribute carry. Sourcing `version` from `Cargo.toml` instead lets the three identifiers drift apart on rc cycles where a tag is placed on a commit whose `Cargo.toml` was already bumped by release-please for the next stable release. The redundant column is left intact for any dashboards that already filter on `git_describe`.
 
+`build.rs` configures `vergen_gix`'s describe with `Gix::all().describe(true, false, None)` — the first argument turns on `--tags` matching (lightweight tags count, not only annotated ones). Plain `git describe` semantics (the crate's own default) match annotated tags only; this repo's tags are lightweight (created via release-please's API-driven tag push, `git cat-file -t <tag>` shows `commit` not `tag`), so the crate default silently pinned `VERGEN_GIT_DESCRIBE` to the one annotated tag in the repo's history (`v0.2.0`) no matter how far `main` moved past it.
+
 `main.rs` also emits an `atc-server starting` INFO log line at process startup carrying the same six fields. The log surfaces build metadata when the metrics endpoint isn't available — early startup crashes, OTel pipeline disabled, container logs as the only diagnostic surface.
 
 ## HTTP request duration
