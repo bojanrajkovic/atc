@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "atc-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "proptest",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "atc-github"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "atc-core",
  "chrono",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "atc-persist"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "atc-core",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "atc-server"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "atc-core",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "atc-store-mem"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "atc-core",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "atc-store-pg"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "atc-core",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "atc-wire"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "atc-core",
  "atc-github",
