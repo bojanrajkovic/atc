@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/bojanrajkovic/atc/compare/v0.4.0...v0.4.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **server:** match lightweight git tags in VERGEN_GIT_DESCRIBE ([c4bb40b](https://github.com/bojanrajkovic/atc/commit/c4bb40b858e27bf9c3cbfab768eaae4732362394))
+
 ## [0.4.0](https://github.com/bojanrajkovic/atc/compare/v0.3.0...v0.4.0) (2026-07-07)
 
 
