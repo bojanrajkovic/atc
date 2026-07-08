@@ -420,6 +420,7 @@ Span names are stable identifiers — operators build dashboards and alerts that
 ```mermaid
 flowchart TD
     HR["http.request\n(every route, via tower_http TraceLayer)"]
+    WBR["webhook.body_read"]
     WH["webhook.handler"]
     WV["webhook.verify"]
     WP["webhook.parse"]
@@ -446,6 +447,7 @@ flowchart TD
 
     HR --> SS
     HR --> AC
+    HR --> WBR
     HR --> WH
     WH --> WV
     WH --> WP
@@ -486,6 +488,7 @@ flowchart TD
 
 | Span | Attributes |
 |---|---|
+| `webhook.body_read` — nests under `http.request`, as a sibling of (and preceding) `webhook.handler`. Wraps the manual `axum::body::to_bytes` call that replaced the `Bytes` extractor in `webhook_handler`; the extractor form buffered the whole body before the handler function — and its own span — even started, so that time (substantial for large `workflow_run` deliveries) used to show up only as unattributed idle time on `http.request`. | `http.route="/v1/webhooks/github"`, `http.request.body.size` (usize; late-bound, recorded after a successful read; absent if the read errors, e.g. exceeding axum's 2 MiB `DefaultBodyLimit`). |
 | `webhook.handler` — nests under `http.request` like any other route's span; built manually (not via `#[instrument]`) so span fields can be recorded from parsed webhook fields before the handler returns. | `http.route="/v1/webhooks/github"`, `http.request.method="POST"`, `http.response.status_code` (u16; late-bound), `webhook.delivery_id` (late-bound), `webhook.event_type` (late-bound). The three late-bound fields are declared as `tracing::field::Empty` at construction. |
 | `webhook.verify` — atc-github HMAC verification boundary. | `webhook.signature.present` (bool), `webhook.signature.algorithm="sha256"`. Secret, body bytes, and the signature value are explicitly skipped. |
 | `webhook.parse` — atc-github parse boundary. | `webhook.event_type`, `webhook.action` (late-bound). Body bytes are skipped. |

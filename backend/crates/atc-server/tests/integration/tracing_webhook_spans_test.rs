@@ -42,6 +42,19 @@ async fn webhook_post_emits_expected_span_hierarchy() {
         handler.attributes,
     );
 
+    let body_read =
+        span_named(&spans, "webhook.body_read").expect("webhook.body_read span must be exported");
+    assert_eq!(
+        parent_of(&spans, body_read).map(|p| p.name.as_ref()),
+        Some("http.request"),
+        "webhook.body_read must be a child of the blanket http.request span"
+    );
+    assert_eq!(
+        attribute_str(body_read, "http.request.body.size"),
+        Some(common::fixture_workflow_run_requested().len().to_string()),
+        "webhook.body_read must record the actual body byte length"
+    );
+
     let verify = span_named(&spans, "webhook.parse").expect("webhook.parse span must be exported");
     assert!(
         parent_of(&spans, verify)

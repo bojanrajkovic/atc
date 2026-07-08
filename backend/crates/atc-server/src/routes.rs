@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    body::Bytes,
-    extract::State,
+    body::to_bytes,
+    extract::{Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -298,9 +298,44 @@ pub fn api_routes(auth_enabled: bool) -> Router<Arc<AppState>> {
 /// are emitted by the `PersistentStore` impl (not here).
 async fn webhook_handler(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    body: Bytes,
+    request: Request,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    // Read the body by hand (rather than via the `Bytes` extractor) so the
+    // read gets its own span with the byte count attached — the extractor
+    // form buffers the whole body before this function even starts, so that
+    // time (tens of ms for large `workflow_run` deliveries relayed through
+    // the homelab ingress chain) used to show up only as unattributed idle
+    // time on the outer `http.request` span. `usize::MAX` doesn't disable
+    // the size cap: axum's automatic `DefaultBodyLimit` (2 MiB) already wraps
+    // the body before this runs, so exceeding it surfaces as an `Err` below
+    // either way.
+    let (parts, body) = request.into_parts();
+    let headers: HeaderMap = parts.headers;
+    let body_span = info_span!(
+        "webhook.body_read",
+        http.route = "/v1/webhooks/github",
+        http.request.body.size = field::Empty,
+    );
+    let body = match async {
+        let result = to_bytes(body, usize::MAX).await;
+        if let Ok(ref b) = result {
+            Span::current().record("http.request.body.size", b.len());
+        }
+        result
+    }
+    .instrument(body_span)
+    .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to read webhook request body");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "failed to read request body"})),
+            );
+        }
+    };
+
     let span = info_span!(
         "webhook.handler",
         http.route = "/v1/webhooks/github",

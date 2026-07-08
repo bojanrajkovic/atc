@@ -50,7 +50,8 @@ A single GitHub webhook traverses this path end to end:
 
 ```mermaid
 flowchart TD
-    POST["HTTP POST /v1/webhooks/github"] --> HMAC["HMAC-SHA256 verify\natc-github"]
+    POST["HTTP POST /v1/webhooks/github"] --> READ["Read request body\n(own span)"]
+    READ --> HMAC["HMAC-SHA256 verify\natc-github"]
     HMAC -->|valid| PARSE["Parse webhook\natc-github"]
     HMAC -->|invalid| R401["401 Unauthorized"]
     PARSE -->|Parsed| APPLY["store.apply_event\natc-persist trait"]
@@ -66,6 +67,8 @@ flowchart TD
     MEM --> BCAST
     BCAST --> WS["WebSocket handlers\n→ connected clients"]
 ```
+
+`webhook_handler` reads the request body manually (`axum::body::to_bytes`) rather than via the `Bytes` extractor, so the read gets its own span (`webhook.body_read`) instead of disappearing into unattributed idle time on the blanket `http.request` span — see [metrics.md § Span inventory](metrics.md#span-inventory) for its attributes.
 
 `parse_webhook` (`atc-github`) returns one of three outcomes: `Parsed` (a
 `workflow_run` / `workflow_job` translated to a domain event), `Ping` (a GitHub
