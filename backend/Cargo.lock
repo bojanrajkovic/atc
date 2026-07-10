@@ -347,7 +347,7 @@ dependencies = [
 [[package]]
 name = "axum-otel-metrics"
 version = "0.13.0"
-source = "git+https://github.com/ttys3/axum-otel-metrics?rev=49477dc286b771200d98574421eae49dcb9d1c50#49477dc286b771200d98574421eae49dcb9d1c50"
+source = "git+https://github.com/ttys3/axum-otel-metrics?rev=911fda3a4474d5fb0f7f0707338009ff1a3a1439#911fda3a4474d5fb0f7f0707338009ff1a3a1439"
 dependencies = [
  "axum",
  "futures-util",
