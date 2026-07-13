@@ -4,7 +4,7 @@
 # keep the defaults in sync with the .mise.toml pins (grouped per-tool in
 # renovate.json).
 # renovate: datasource=docker depName=rust
-ARG RUST_VERSION=1.96.1
+ARG RUST_VERSION=1.97.0
 # renovate: datasource=docker depName=node
 ARG NODE_VERSION=25.9.0
 
