@@ -37,7 +37,7 @@ opentelemetry-semantic-conventions = "=0.32.1"
 # published version compatible with opentelemetry 0.32 yet
 # (https://github.com/haixuanTao/opentelemetry-system-metrics/pull/16 is open,
 # green, unmerged). Revert to a version pin once that PR merges and releases.
-opentelemetry-system-metrics = { git = "https://github.com/phil-opp/opentelemetry-rust-system-metrics", rev = "2531fe1166a67e9011fb81ce0c4e167ef3fa880e" }
+opentelemetry-system-metrics = { git = "https://github.com/phil-opp/opentelemetry-rust-system-metrics", rev = "c5aff027b4df3bc41bea270e8960fb146dac473b" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["form", "json", "rustls"] }
 rust-embed = "=8.12.0"
 serde = { version = "=1.0.228", features = ["derive"] }
