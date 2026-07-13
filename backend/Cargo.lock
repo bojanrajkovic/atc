@@ -346,16 +346,13 @@ dependencies = [
 
 [[package]]
 name = "axum-otel-metrics"
-version = "0.13.0"
-source = "git+https://github.com/ttys3/axum-otel-metrics?rev=911fda3a4474d5fb0f7f0707338009ff1a3a1439#911fda3a4474d5fb0f7f0707338009ff1a3a1439"
+version = "0.14.1"
+source = "git+https://github.com/ttys3/axum-otel-metrics?rev=91b40abbed1662b7577773fcad87c99d1ad46d3f#91b40abbed1662b7577773fcad87c99d1ad46d3f"
 dependencies = [
  "axum",
- "futures-util",
- "http",
  "http-body",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
  "pin-project-lite",
  "tower",
 ]

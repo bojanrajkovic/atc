@@ -19,7 +19,7 @@ axum = { version = "=0.8.9", features = ["ws"] }
 # (https://github.com/ttys3/axum-otel-metrics/pull/198) merged to main on
 # 2026-07-03 but no release has been cut since (crate metadata still shows
 # 0.13.0 as newest). Revert to a version pin once a new release ships.
-axum-otel-metrics = { git = "https://github.com/ttys3/axum-otel-metrics", rev = "911fda3a4474d5fb0f7f0707338009ff1a3a1439" }
+axum-otel-metrics = { git = "https://github.com/ttys3/axum-otel-metrics", rev = "91b40abbed1662b7577773fcad87c99d1ad46d3f" }
 base64 = "=0.22.1"
 chrono = "=0.4.45"
 figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }
