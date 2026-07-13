@@ -118,16 +118,17 @@ async fn http_middleware_records_request_duration_with_semconv_attributes() {
         "expected http.server.request.duration in snapshot",
     );
 
-    // axum-otel-metrics 0.13 records the duration histogram with
+    // axum-otel-metrics 0.14 records the duration histogram with
     // `http.request.method`, `http.route`, `http.response.status_code`,
-    // and `server.address`. The status_code attribute is a stringified status
-    // (e.g. "200") per the upstream implementation. `url.scheme` is recorded
-    // on the active-requests up/down counter, not on the duration histogram.
+    // `server.address`, and `url.scheme`. The status_code attribute is an
+    // int (e.g. 200), not a stringified status, per the upstream
+    // implementation aligning with the OTel HTTP semconv spec.
     let duration_attrs = vec![
         KeyValue::new("http.request.method", "GET"),
         KeyValue::new("http.route", "/healthz"),
-        KeyValue::new("http.response.status_code", "200"),
+        KeyValue::new("http.response.status_code", 200i64),
         KeyValue::new("server.address", "atc.test"),
+        KeyValue::new("url.scheme", "http"),
     ];
     let count = common::histogram_count(&snapshot, "http.server.request.duration", &duration_attrs);
     assert!(
@@ -136,8 +137,9 @@ async fn http_middleware_records_request_duration_with_semconv_attributes() {
          semantic-conventions attributes; got count={count}",
     );
 
-    // url.scheme appears on the active-requests up/down counter; verifying its
-    // presence here completes the AC-level coverage for HTTP semconv attrs.
+    // url.scheme also appears on the active-requests up/down counter;
+    // verifying its presence here completes the AC-level coverage for HTTP
+    // semconv attrs.
     assert!(
         common::metric_present(&snapshot, "http.server.active_requests"),
         "expected http.server.active_requests in snapshot",
