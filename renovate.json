@@ -187,6 +187,12 @@
       "automerge": false
     },
     {
+      "description": "mise + docker datasource (e.g. node, resolved via the docker registry for digest lookups): don't inherit the global rangeStrategy=pin. Plain `tool = \"version\"` TOML has no field to hold a digest the way a Dockerfile FROM line does, so a pin attempt finds the file unchanged and Renovate aborts the branch update outright (silent, no PR).",
+      "matchManagers": ["mise"],
+      "matchDatasources": ["docker"],
+      "rangeStrategy": "replace"
+    },
+    {
       "description": "mise minor / patch: automerge.",
       "matchManagers": ["mise"],
       "matchUpdateTypes": ["minor", "patch"],
