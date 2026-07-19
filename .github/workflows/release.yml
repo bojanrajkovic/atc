@@ -90,7 +90,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libatomic1
 
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
         with:
           install: false
           cache: false
@@ -453,7 +453,7 @@ jobs:
       # helm; full `mise install` would drag in Rust/Node/cargo-tools.
       # cache: false because publish-helm-chart runs once per release tag and
       # the saved cache wouldn't help downstream.
-      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+      - uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
         with:
           install: false
           cache: false
