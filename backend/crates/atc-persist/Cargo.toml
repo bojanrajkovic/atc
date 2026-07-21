@@ -14,5 +14,5 @@ async-trait = { workspace = true }
 # README still applies; chrono is a value-typed time crate consumed by
 # both stores and the snapshot reader.
 chrono = { version = "=0.4.45", features = ["serde"] }
-tokio = { version = "=1.52.4", features = ["sync", "time", "rt"] }
+tokio = { version = "=1.53.0", features = ["sync", "time", "rt"] }
 tracing = { workspace = true }

@@ -23,7 +23,7 @@ async-trait = { workspace = true }
 # `chrono` is used in `read_snapshot`'s cutoff filter — matches the trait
 # surface of `atc_persist::PersistentStore::read_snapshot`.
 chrono = { version = "=0.4.45" }
-tokio = { version = "=1.52.4", features = ["sync", "time", "rt", "macros"] }
+tokio = { version = "=1.53.0", features = ["sync", "time", "rt", "macros"] }
 tokio-util = { version = "=0.7.18", features = ["rt"] }
 tracing = { workspace = true }
 
