@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/bojanrajkovic/atc/compare/v0.4.1...v0.5.0) (2026-07-21)
+
+
+### Features
+
+* **server:** give webhook body reads their own span ([23b6824](https://github.com/bojanrajkovic/atc/commit/23b682419014e33eee723fded9f5103cd9112478))
+* **server:** record trace_id/span_id on the blanket http.request span ([#592](https://github.com/bojanrajkovic/atc/issues/592)) ([eacd098](https://github.com/bojanrajkovic/atc/commit/eacd0985ce740e7524bf615d1922965ae99f7bf3))
+
+
+### Bug Fixes
+
+* **deps:** update axum-otel-metrics digest to 911fda3 ([#536](https://github.com/bojanrajkovic/atc/issues/536)) ([1eaa701](https://github.com/bojanrajkovic/atc/commit/1eaa701d17f14c4a97bb59303c023802480dfdb9))
+* **deps:** update rust crate rust-embed to v8.12.0 ([#545](https://github.com/bojanrajkovic/atc/issues/545)) ([80726b4](https://github.com/bojanrajkovic/atc/commit/80726b4ae4e575b52977e49b13edf3457bfe2581))
+* **deps:** update rust crate tokio to v1.52.4 ([#588](https://github.com/bojanrajkovic/atc/issues/588)) ([94ed92d](https://github.com/bojanrajkovic/atc/commit/94ed92d4e405ad0d701a8720ae4e1f7c51193dd3))
+* **deps:** update rust crate tokio to v1.53.0 ([#595](https://github.com/bojanrajkovic/atc/issues/595)) ([c03b6ca](https://github.com/bojanrajkovic/atc/commit/c03b6ca10e4086b27e183ee4a37f46930efe1e51))
+* **deps:** update rust crate uuid to v1.23.5 ([#568](https://github.com/bojanrajkovic/atc/issues/568)) ([3d8fa9a](https://github.com/bojanrajkovic/atc/commit/3d8fa9a47435985921f766f2db90f4444d7bbd5a))
+* **deps:** update rust crate uuid to v1.24.0 ([#581](https://github.com/bojanrajkovic/atc/issues/581)) ([87b2b48](https://github.com/bojanrajkovic/atc/commit/87b2b4815f6493e74c81c8e4dee8844745bfac01))
+* **renovate:** don't pin digests for mise's docker-datasourced deps ([#576](https://github.com/bojanrajkovic/atc/issues/576)) ([fe88007](https://github.com/bojanrajkovic/atc/commit/fe880076691498723bc08ac2ffe7fb79259968ff))
+
 ## [0.4.1](https://github.com/bojanrajkovic/atc/compare/v0.4.0...v0.4.1) (2026-07-08)
 
 
