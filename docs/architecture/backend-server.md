@@ -137,7 +137,7 @@ Every timestamp column (`created_at`, `expires_at`, `repos_refreshed_at`) is bou
 
 ## OAuth login and callback (`auth.github`)
 
-`GET /v1/auth/github/login`, `GET /v1/auth/github/callback`, `POST /v1/auth/github/logout`, and `GET /v1/auth/me` (all `auth.rs`) are merged into the router only when `auth.mode = "github"` — `routes::api_routes` takes an `auth_enabled` flag and conditionally `.merge()`s them, so a disabled mode 404s the same way any unmounted path does rather than via a runtime check inside the handlers. `main.rs` wraps the fully composed app (API routes + asset fallback) in `routes::with_request_tracing` — a blanket `tower_http::TraceLayer` giving every request an `http.request` trace span, not just the routes with their own hand-rolled span; see [metrics.md § Span inventory](metrics.md#span-inventory).
+`GET /v1/auth/github/login`, `GET /v1/auth/github/callback`, `POST /v1/auth/github/logout`, and `GET /v1/auth/me` (all `auth.rs`) are merged into the router only when `auth.mode = "github"` — `routes::api_routes` takes an `auth_enabled` flag and conditionally `.merge()`s them, so a disabled mode 404s the same way any unmounted path does rather than via a runtime check inside the handlers. `main.rs` wraps the fully composed app (API routes + asset fallback) in `routes::with_request_tracing` — a blanket `tower_http::TraceLayer` giving every request an `http.request` trace span, not just the routes with their own hand-rolled span; see [metrics.md § Span inventory](metrics.md#span-inventory). That same span records its own `trace_id`/`span_id`, which JSON logging's `with_span_list(true)` then bubbles onto every log line nested under it — see [metrics.md § OTel pipeline](metrics.md#otel-pipeline).
 
 ```mermaid
 sequenceDiagram

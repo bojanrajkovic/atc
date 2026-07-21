@@ -177,6 +177,44 @@ async fn incoming_traceparent_becomes_http_request_trace_id() {
     );
 }
 
+/// `trace_id`/`span_id` are recorded onto `http.request` itself (not just
+/// carried by the OTel SDK's own span metadata) so JSON logs nested under it
+/// can be correlated with the trace — see `with_request_tracing`'s doc
+/// comment. Confirms the recorded values match the span's own OTel identity.
+#[tokio::test]
+#[serial_test::serial]
+async fn http_request_span_records_its_own_trace_and_span_id() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = to_bytes(response.into_body(), usize::MAX).await;
+
+    let spans = common::read_finished_spans();
+    let root = span_named(&spans, "http.request").expect("http.request span must be exported");
+
+    assert_eq!(
+        attribute_str(root, "trace_id").as_deref(),
+        Some(root.span_context.trace_id().to_string().as_str()),
+        "recorded trace_id field must match the span's own OTel trace ID"
+    );
+    assert_eq!(
+        attribute_str(root, "span_id").as_deref(),
+        Some(root.span_context.span_id().to_string().as_str()),
+        "recorded span_id field must match the span's own OTel span ID"
+    );
+}
+
 /// `state.snapshot` is a hand-rolled span (`state_handler`) — verifies it
 /// nests under the blanket `http.request` span rather than the two competing
 /// for root status.

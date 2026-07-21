@@ -224,6 +224,14 @@ async fn removed_endpoint_404() -> StatusCode {
 /// it as this span's parent so every route benefits uniformly rather than
 /// special-casing any one handler. Absent or malformed, the span roots itself
 /// normally.
+///
+/// Records `trace_id`/`span_id` (hex, matching OTel wire format) onto this
+/// span so every JSON log line nested under it — which is effectively every
+/// log ATC emits for request handling, since `with_span_list(true)` bubbles
+/// ancestor span fields onto descendant events — can be correlated with the
+/// matching trace in Tempo/Honeycomb. Fields stay empty (and are omitted
+/// from output) when OTel isn't configured, since `span.context()` then
+/// yields an invalid span context.
 pub fn with_request_tracing(router: Router) -> Router {
     router.layer(
         TraceLayer::new_for_http()
@@ -233,12 +241,19 @@ pub fn with_request_tracing(router: Router) -> Router {
                     http.request.method = %req.method(),
                     http.route = %req.uri().path(),
                     http.response.status_code = field::Empty,
+                    trace_id = field::Empty,
+                    span_id = field::Empty,
                 );
                 let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
                     prop.extract(&HeaderExtractor(req.headers()))
                 });
                 if parent_cx.span().span_context().is_valid() {
                     let _ = span.set_parent(parent_cx);
+                }
+                let span_context = span.context().span().span_context().clone();
+                if span_context.is_valid() {
+                    span.record("trace_id", span_context.trace_id().to_string());
+                    span.record("span_id", span_context.span_id().to_string());
                 }
                 span
             })
