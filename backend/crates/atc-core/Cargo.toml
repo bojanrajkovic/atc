@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 chrono = { version = "=0.4.45", features = ["serde"] }
-serde = { version = "=1.0.228", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 tracing = "=0.1.44"
 ts-rs = { workspace = true, features = ["serde-compat", "chrono-impl"] }
 
