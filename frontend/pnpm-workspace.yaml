@@ -20,7 +20,7 @@ catalog:
   eslint-plugin-svelte: 3.22.0
   jsdom: 29.1.1
   msw: 2.15.0
-  prettier: 3.9.5
+  prettier: 3.9.6
   prettier-plugin-svelte: 4.1.1
   'shadcn-svelte': 1.4.2
   svelte: 5.56.7
