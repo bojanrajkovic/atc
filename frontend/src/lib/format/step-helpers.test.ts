@@ -32,12 +32,13 @@ describe('computeStepStatusKey', () => {
       ['Stale', 'Stale'],
       ['Neutral', 'Neutral'],
       ['Skipped', 'Skipped'],
-    ] as const satisfies ReadonlyArray<
-      [JobConclusion, string]
-    >)('returns %s for conclusion=%s', (conclusion, expected) => {
-      const step = createMockStep({ status: 'Completed', conclusion })
-      expect(computeStepStatusKey(step)).toBe(expected)
-    })
+    ] as const satisfies ReadonlyArray<[JobConclusion, string]>)(
+      'returns %s for conclusion=%s',
+      (conclusion, expected) => {
+        const step = createMockStep({ status: 'Completed', conclusion })
+        expect(computeStepStatusKey(step)).toBe(expected)
+      },
+    )
 
     it('returns Cancelled for bare-Completed (null conclusion) — same fallback as job', () => {
       const step = createMockStep({ status: 'Completed', conclusion: null })

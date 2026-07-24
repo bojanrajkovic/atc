@@ -20,30 +20,31 @@ describe('StepItem', () => {
     ['Stale', 'var(--neutral)'],
     ['Neutral', 'var(--neutral)'],
     ['Skipped', 'var(--neutral)'],
-  ] as const satisfies ReadonlyArray<
-    [StatusKey, string]
-  >)('renders statusKey=%s with correct data-status-key, --status-color, name, and duration', (statusKey, expectedVar) => {
-    render(StepItem, {
-      props: {
-        statusKey,
-        name: 'Set up job',
-        durationText: '0:42',
-      },
-    })
+  ] as const satisfies ReadonlyArray<[StatusKey, string]>)(
+    'renders statusKey=%s with correct data-status-key, --status-color, name, and duration',
+    (statusKey, expectedVar) => {
+      render(StepItem, {
+        props: {
+          statusKey,
+          name: 'Set up job',
+          durationText: '0:42',
+        },
+      })
 
-    // 1. data-status-key attribute matches
-    const item = document.querySelector('[data-status-key]')
-    expect(item).not.toBeNull()
-    expect(item!.getAttribute('data-status-key')).toBe(statusKey)
+      // 1. data-status-key attribute matches
+      const item = document.querySelector('[data-status-key]')
+      expect(item).not.toBeNull()
+      expect(item!.getAttribute('data-status-key')).toBe(statusKey)
 
-    // 2. --status-color inline style matches the expected var(--token)
-    const style = (item as HTMLElement).getAttribute('style')
-    expect(style).toContain(`--status-color: ${expectedVar}`)
+      // 2. --status-color inline style matches the expected var(--token)
+      const style = (item as HTMLElement).getAttribute('style')
+      expect(style).toContain(`--status-color: ${expectedVar}`)
 
-    // 3. Name text renders
-    expect(screen.getByText('Set up job')).toBeTruthy()
+      // 3. Name text renders
+      expect(screen.getByText('Set up job')).toBeTruthy()
 
-    // 4. Duration text renders
-    expect(screen.getByText('0:42')).toBeTruthy()
-  })
+      // 4. Duration text renders
+      expect(screen.getByText('0:42')).toBeTruthy()
+    },
+  )
 })

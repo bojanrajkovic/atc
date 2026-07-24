@@ -20,25 +20,26 @@ describe('PanelHeader', () => {
     ['Stale', 'Stale', 'var(--neutral)'],
     ['Neutral', 'Neutral', 'var(--neutral)'],
     ['Skipped', 'Skipped', 'var(--neutral)'],
-  ] as const satisfies ReadonlyArray<
-    [StatusKey, string, string]
-  >)('renders statusKey=%s with correct data-status-key, eyebrow label, and --status-color token', (statusKey, statusLabel, expectedVar) => {
-    render(PanelHeader, {
-      props: { statusKey, statusLabel, title: 'My workflow run' },
-    })
+  ] as const satisfies ReadonlyArray<[StatusKey, string, string]>)(
+    'renders statusKey=%s with correct data-status-key, eyebrow label, and --status-color token',
+    (statusKey, statusLabel, expectedVar) => {
+      render(PanelHeader, {
+        props: { statusKey, statusLabel, title: 'My workflow run' },
+      })
 
-    // Assert data-status-key attribute on the header element
-    const header = document.querySelector('[data-status-key]')
-    expect(header).not.toBeNull()
-    expect(header!.getAttribute('data-status-key')).toBe(statusKey)
+      // Assert data-status-key attribute on the header element
+      const header = document.querySelector('[data-status-key]')
+      expect(header).not.toBeNull()
+      expect(header!.getAttribute('data-status-key')).toBe(statusKey)
 
-    // Assert the inline --status-color style contains the expected var(--token)
-    const style = (header as HTMLElement).getAttribute('style')
-    expect(style).toContain(`--status-color: ${expectedVar}`)
+      // Assert the inline --status-color style contains the expected var(--token)
+      const style = (header as HTMLElement).getAttribute('style')
+      expect(style).toContain(`--status-color: ${expectedVar}`)
 
-    // Assert the eyebrow statusLabel text renders (glyph/color shown)
-    expect(screen.getByText(statusLabel)).toBeTruthy()
-  })
+      // Assert the eyebrow statusLabel text renders (glyph/color shown)
+      expect(screen.getByText(statusLabel)).toBeTruthy()
+    },
+  )
 
   it('renders the run title as visible heading text', () => {
     render(PanelHeader, {
