@@ -150,54 +150,53 @@ describe('RunDetailPanel', () => {
     { key: 'Skipped', status: 'Completed', conclusion: 'Skipped' },
   ] as const
 
-  it.each(STATUS_KEY_FIXTURES)('PanelHeader has data-status-key="$key" for $key run', async ({
-    key,
-    status,
-    conclusion,
-  }) => {
-    const runId = RUN_ID + 1000n
+  it.each(STATUS_KEY_FIXTURES)(
+    'PanelHeader has data-status-key="$key" for $key run',
+    async ({ key, status, conclusion }) => {
+      const runId = RUN_ID + 1000n
 
-    // Use createMockRunEvent overrides directly to set status+conclusion.
-    // createMockRunEvent maps to action types, so we use applyRunEvent then
-    // directly set the conclusion on the stored WorkflowRun via re-applying
-    // a Completed event with the right conclusion.
-    if (status === 'Queued') {
-      runStore.applyRunEvent(createMockRunEvent({ runId, action: { type: 'Requested' } }))
-    } else if (status === 'InProgress') {
-      runStore.applyRunEvent(
-        createMockRunEvent({
-          runId,
-          action: { type: 'InProgress' },
-          runStartedAt: '2026-04-27T10:00:00Z',
-        }),
-      )
-    } else {
-      // Completed with a specific conclusion — conclusion is a narrowed
-      // string literal from the as-const fixture; cast to RunConclusion.
-      runStore.applyRunEvent(
-        createMockRunEvent({
-          runId,
-          action: {
-            type: 'Completed',
-            data: { conclusion: conclusion as RunConclusion },
-          },
-        }),
-      )
-    }
+      // Use createMockRunEvent overrides directly to set status+conclusion.
+      // createMockRunEvent maps to action types, so we use applyRunEvent then
+      // directly set the conclusion on the stored WorkflowRun via re-applying
+      // a Completed event with the right conclusion.
+      if (status === 'Queued') {
+        runStore.applyRunEvent(createMockRunEvent({ runId, action: { type: 'Requested' } }))
+      } else if (status === 'InProgress') {
+        runStore.applyRunEvent(
+          createMockRunEvent({
+            runId,
+            action: { type: 'InProgress' },
+            runStartedAt: '2026-04-27T10:00:00Z',
+          }),
+        )
+      } else {
+        // Completed with a specific conclusion — conclusion is a narrowed
+        // string literal from the as-const fixture; cast to RunConclusion.
+        runStore.applyRunEvent(
+          createMockRunEvent({
+            runId,
+            action: {
+              type: 'Completed',
+              data: { conclusion: conclusion as RunConclusion },
+            },
+          }),
+        )
+      }
 
-    render(RunDetailPanel)
-    uiStore.selectedRunId = runId
-    await tick()
+      render(RunDetailPanel)
+      uiStore.selectedRunId = runId
+      await tick()
 
-    const header = await waitFor(() => document.querySelector('.panel-header'))
-    expect(header).toBeTruthy()
-    expect(header!.getAttribute('data-status-key')).toBe(key)
+      const header = await waitFor(() => document.querySelector('.panel-header'))
+      expect(header).toBeTruthy()
+      expect(header!.getAttribute('data-status-key')).toBe(key)
 
-    // Teardown: close panel before next iteration
-    cleanup()
-    uiStore.selectedRunId = null
-    runStore.clear()
-  })
+      // Teardown: close panel before next iteration
+      cleanup()
+      uiStore.selectedRunId = null
+      runStore.clear()
+    },
+  )
 
   it('selectedRunId is cleared when referencing a run not in runStore', async () => {
     render(RunDetailPanel)
