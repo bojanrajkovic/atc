@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.1](https://github.com/bojanrajkovic/atc/compare/v0.5.0...v0.5.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate serde to v1.0.229 ([#599](https://github.com/bojanrajkovic/atc/issues/599)) ([f477130](https://github.com/bojanrajkovic/atc/commit/f4771309d1f587ee05ad99bd70aa6f5c56974d0b))
+* **deps:** update rust crate serde_json to v1.0.151 ([#605](https://github.com/bojanrajkovic/atc/issues/605)) ([b1fa362](https://github.com/bojanrajkovic/atc/commit/b1fa3622747b11047488538ccb2fc1f5593951ab))
+* **deps:** update rust crate thiserror to v2.0.19 ([#601](https://github.com/bojanrajkovic/atc/issues/601)) ([9843ce2](https://github.com/bojanrajkovic/atc/commit/9843ce2e570a107e6c2a2230a2c11e5e7018dd51))
+* **deps:** update rust crate tokio to v1.53.1 ([#609](https://github.com/bojanrajkovic/atc/issues/609)) ([a06cbd3](https://github.com/bojanrajkovic/atc/commit/a06cbd31076a7df8de5c8dab8145824b6af933c1))
+* **deps:** update rust crate tokio-util to v0.7.19 ([#615](https://github.com/bojanrajkovic/atc/issues/615)) ([d465785](https://github.com/bojanrajkovic/atc/commit/d46578579ecb5070223fdee9912f1415cb4551cc))
+
 ## [0.5.0](https://github.com/bojanrajkovic/atc/compare/v0.4.1...v0.5.0) (2026-07-21)
 
 
