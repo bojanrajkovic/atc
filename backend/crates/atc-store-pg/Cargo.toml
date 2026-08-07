@@ -17,7 +17,7 @@ atc-github = { path = "../atc-github" }
 atc-persist = { path = "../atc-persist" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
-base64 = "=0.22.1"
+base64 = "=0.23.1"
 chrono = "=0.4.45"
 const-hex = "=1.19.1"
 getrandom = "=0.4.3"
