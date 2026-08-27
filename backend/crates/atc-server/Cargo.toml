@@ -67,4 +67,4 @@ tokio-tungstenite = "=0.30.0"
 tower = "=0.5.3"
 
 [build-dependencies]
-vergen-gix = { version = "=10.0.1", features = ["build", "cargo", "si", "rustc"] }
+vergen-gix = { version = "=10.0.3", features = ["build", "cargo", "si", "rustc"] }
