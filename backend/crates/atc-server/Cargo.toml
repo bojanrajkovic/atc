@@ -19,7 +19,7 @@ base64 = "=0.22.1"
 chrono = "=0.4.45"
 figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }
 getrandom = "=0.4.3"
-http = "=1.4.2"
+http = "=1.5.0"
 humantime-serde = "=1.1.1"
 notify-debouncer-full = "=0.7.0"
 opentelemetry = { version = "=0.32.0", features = ["metrics", "trace"] }
