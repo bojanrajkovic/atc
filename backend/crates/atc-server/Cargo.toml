@@ -54,7 +54,7 @@ const-hex = "=1.19.1"
 futures-util = "=0.3.33"
 hmac = "=0.13.0"
 opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
-serial_test = "=3.5.0"
+serial_test = "=4.0.1"
 # sqlx remains a dev-dep for integration tests under tests/integration/ that
 # do ephemeral-DB CREATE/DROP and query helpers. Production sources no longer
 # name `sqlx::*` directly after the DbInitError abstraction landed (#169).
