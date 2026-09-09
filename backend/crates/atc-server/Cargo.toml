@@ -51,7 +51,7 @@ atc-store-mem = { path = "../atc-store-mem", features = ["test-support"] }
 atc-store-pg = { path = "../atc-store-pg", features = ["test-support"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
 const-hex = "=1.19.1"
-futures-util = "=0.3.33"
+futures-util = "=0.3.34"
 hmac = "=0.13.0"
 opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
 serial_test = "=3.5.0"
