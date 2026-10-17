@@ -179,8 +179,8 @@ mod tests {
             serde_json::from_str(json).expect("Should deserialize workflow_run_requested fixture");
 
         assert_eq!(payload.action, "requested");
-        assert!(!payload.workflow_run.head_sha.is_empty());
-        assert!(!payload.repository.name.is_empty());
+        assert_ne!(payload.workflow_run.head_sha, "");
+        assert_ne!(payload.repository.name, "");
         assert_eq!(payload.repository.id, 1_190_105_052);
     }
 
@@ -191,8 +191,8 @@ mod tests {
             .expect("Should deserialize workflow_run_in_progress fixture");
 
         assert_eq!(payload.action, "in_progress");
-        assert!(!payload.workflow_run.head_sha.is_empty());
-        assert!(!payload.repository.name.is_empty());
+        assert_ne!(payload.workflow_run.head_sha, "");
+        assert_ne!(payload.repository.name, "");
     }
 
     #[test]
@@ -202,8 +202,8 @@ mod tests {
             serde_json::from_str(json).expect("Should deserialize workflow_run_completed fixture");
 
         assert_eq!(payload.action, "completed");
-        assert!(!payload.workflow_run.head_sha.is_empty());
-        assert!(!payload.repository.name.is_empty());
+        assert_ne!(payload.workflow_run.head_sha, "");
+        assert_ne!(payload.repository.name, "");
     }
 
     #[test]
@@ -253,12 +253,12 @@ mod tests {
         let payload: WorkflowRunWebhook = serde_json::from_str(json).expect("Should deserialize");
 
         assert!(payload.workflow_run.id > 0);
-        assert!(!payload.workflow_run.status.is_empty());
-        assert!(!payload.workflow_run.head_sha.is_empty());
-        assert!(!payload.workflow_run.event.is_empty());
-        assert!(!payload.workflow_run.display_title.is_empty());
-        assert!(!payload.workflow_run.html_url.is_empty());
-        assert!(!payload.workflow_run.updated_at.to_rfc3339().is_empty());
+        assert_ne!(payload.workflow_run.status, "");
+        assert_ne!(payload.workflow_run.head_sha, "");
+        assert_ne!(payload.workflow_run.event, "");
+        assert_ne!(payload.workflow_run.display_title, "");
+        assert_ne!(payload.workflow_run.html_url, "");
+        assert_ne!(payload.workflow_run.updated_at.to_rfc3339(), "");
     }
 
     #[test]
