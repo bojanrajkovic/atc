@@ -212,7 +212,7 @@ fn test_translate_job_queued() {
     match result.action {
         JobEvent::Queued { labels, steps } => {
             assert_eq!(labels, vec!["ubuntu-latest"]);
-            assert!(steps.is_empty());
+            assert_eq!(steps, Vec::new());
         }
         _ => panic!("expected Queued variant"),
     }
@@ -226,7 +226,7 @@ fn test_translate_job_waiting() {
     match result.action {
         JobEvent::Waiting { labels, steps } => {
             assert_eq!(labels, vec!["ubuntu-latest"]);
-            assert!(steps.is_empty());
+            assert_eq!(steps, Vec::new());
         }
         _ => panic!("expected Waiting variant"),
     }
@@ -248,7 +248,7 @@ fn test_translate_job_in_progress_with_runner() {
             assert_eq!(runner_info.id, 1);
             assert_eq!(runner_info.name, "runner-1");
             assert_eq!(labels, vec!["ubuntu-latest"]);
-            assert!(steps.is_empty());
+            assert_eq!(steps, Vec::new());
         }
         _ => panic!("expected InProgress variant"),
     }
@@ -282,7 +282,7 @@ fn test_translate_job_completed() {
             assert_eq!(conclusion, JobConclusion::Success);
             assert!(runner.is_some());
             assert_eq!(labels, vec!["ubuntu-latest"]);
-            assert!(steps.is_empty());
+            assert_eq!(steps, Vec::new());
         }
         _ => panic!("expected Completed variant"),
     }
