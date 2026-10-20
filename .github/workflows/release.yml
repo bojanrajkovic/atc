@@ -19,7 +19,7 @@ concurrency:
 jobs:
   create-release:
     name: Create Release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
@@ -71,7 +71,7 @@ jobs:
   build-frontend:
     name: Build Frontend
     needs: create-release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     env:
@@ -355,7 +355,7 @@ jobs:
   merge-manifest:
     name: Merge Multi-Arch Manifest
     needs: build-container
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -436,7 +436,7 @@ jobs:
     name: Publish Helm Chart
     needs: [create-release, build-container, merge-manifest]
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -508,7 +508,7 @@ jobs:
     name: Publish Helm Chart to GitHub Pages
     needs: publish-helm-chart
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       # `contents: write` covers the gh-pages push and the per-chart GitHub
       # Release. Pages serves passively from the branch — no `pages: write`.

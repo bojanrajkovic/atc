@@ -13,7 +13,7 @@ concurrency:
 jobs:
   release-please:
     name: Release Please
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: release
     permissions: {}
     outputs:
@@ -52,7 +52,7 @@ jobs:
     name: Refresh Cargo.lock on Release PR
     needs: release-please
     if: needs.release-please.outputs.prs_created == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: release
     permissions: {}
     steps:

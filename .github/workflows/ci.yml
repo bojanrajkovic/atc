@@ -15,7 +15,7 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       pull-requests: read
@@ -54,7 +54,7 @@ jobs:
     name: Backend
     needs: changes
     if: needs.changes.outputs.backend == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: ci
     permissions:
       contents: read
@@ -202,7 +202,7 @@ jobs:
     name: Frontend
     needs: changes
     if: needs.changes.outputs.frontend == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     environment: ci
     permissions:
       contents: read
@@ -308,7 +308,7 @@ jobs:
     name: Helm Lint & Unit
     if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
     needs: changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -340,7 +340,7 @@ jobs:
     name: Helm Validate
     if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
     needs: changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -365,7 +365,7 @@ jobs:
     name: Helm Install (kind + ct)
     if: needs.changes.outputs.helm == 'true' || github.event_name == 'push'
     needs: changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     steps:
@@ -458,7 +458,7 @@ jobs:
   pr-checks:
     name: PR Checks
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       pull-requests: write
@@ -482,7 +482,7 @@ jobs:
     name: Backend Result
     needs: [changes, backend]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check results
         env:
@@ -504,7 +504,7 @@ jobs:
     name: Frontend Result
     needs: [changes, frontend]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check results
         env:
@@ -526,7 +526,7 @@ jobs:
     name: Helm Result
     needs: [changes, helm-lint, helm-validate, helm-install]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check results
         env:
