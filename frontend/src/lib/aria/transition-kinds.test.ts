@@ -180,9 +180,9 @@ describe('classifyEvent', () => {
     })
 
     it('returns null for lowercase "success" (canonical off-shape case)', () => {
-      // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
       const event = makeRunCommittedEvent({
         type: 'Completed',
+        // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input
         data: { conclusion: 'success' } as any,
       })
       const result = classifyEvent(event)
@@ -207,9 +207,9 @@ describe('classifyEvent', () => {
     })
 
     it('valid PascalCase conclusions still classify correctly (no regression)', () => {
-      // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input — cast needed for the test fixture
       const event = makeRunCommittedEvent({
         type: 'Completed',
+        // biome-ignore lint/suspicious/noExplicitAny: testing off-shape input — cast needed for the test fixture
         data: { conclusion: 'Success' } as any,
       })
       const result = classifyEvent(event)
