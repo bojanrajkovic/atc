@@ -12,7 +12,7 @@ Two observable-gauge metrics use a sentinel value that maps to `f64::NAN` in the
 
 ### `atc_pg_min_pending_seq`
 
-NaN means the drain is caught up: the `min_pending_seq` atomic holds `i64::MAX` (the value the drain swaps in once it has processed all seqs below the watermark). A non-NaN value is the lowest seq the drain knows is still pending below the watermark — the gap-healing pressure signal. NaN is preferred over rendering `i64::MAX as f64` (≈ 9.22e18), which would collapse the watermark signal on any dashboard that graphs both gauges together.
+No series means the drain is caught up: the `min_pending_seq` atomic holds `i64::MAX` (the value the drain swaps in once it has processed all seqs below the watermark), and the gauge makes no observation. A present value is the lowest seq the drain knows is still pending below the watermark — the gap-healing pressure signal. Omitting the series is preferred over rendering `i64::MAX as f64` (≈ 9.22e18), which would collapse the watermark signal on any dashboard that graphs both gauges together. The OpenTelemetry SDK drops NaN gauge values, so NaN is not an option.
 
 ### `atc_pg_outbox_min_replica_watermark`
 
@@ -157,7 +157,7 @@ When the post-shutdown count query fails or exceeds its 1-second timeout, the ob
 
 **Example PromQL:** `atc_pg_broadcast_watermark`
 
-Display alongside `atc_pg_min_pending_seq`. Filter NaN with `... unless on() (atc_pg_min_pending_seq != atc_pg_min_pending_seq)` if needed.
+Display alongside `atc_pg_min_pending_seq`. `atc_pg_min_pending_seq` has no series while the drain is caught up; use `absent(atc_pg_min_pending_seq)` to test for that state.
 
 ---
 

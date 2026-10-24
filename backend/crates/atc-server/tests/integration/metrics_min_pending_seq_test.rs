@@ -1,12 +1,12 @@
 //! `atc_pg_min_pending_seq` gauge.
 //!
 //! Asserts that the gauge mirrors the per-replica gap-healing backstop
-//! atomic when it holds a real registered seq, and that it returns to its
-//! `f64::NAN` sentinel after the drain swap captures the floor.
+//! atomic when it holds a real registered seq, and that it is absent (no
+//! data point) after the drain swap captures the floor.
 //!
 //! This test deliberately removes the drain task from the runtime
 //! (`drain_handle.abort()`) so the listener's `fetch_min` mirror is not
-//! racing the drain's swap-to-NaN. This trades the microseconds-fragile
+//! racing the drain's swap to idle. This trades the microseconds-fragile
 //! "scrape during gap-healing" approach for a deterministic
 //! manufacture-the-gauge-state pattern.
 //!
@@ -25,7 +25,7 @@ const METRIC: &str = "atc_pg_min_pending_seq";
 const WATERMARK_METRIC: &str = "atc_pg_broadcast_watermark";
 
 /// Drive the broadcast watermark forward, then abort the drain task so its
-/// swap-to-NaN can't fire. A subsequent `pg_notify` for an earlier seq drives
+/// swap to idle can't fire. A subsequent `pg_notify` for an earlier seq drives
 /// the listener's `fetch_min` mirror, leaving the gauge at a finite numeric
 /// value below `broadcast_watermark`.
 #[tokio::test]
@@ -127,12 +127,13 @@ async fn metrics_min_pending_seq_mirrors_finite_seq_when_drain_idle() {
     fixture.shutdown.cancel();
 }
 
-/// In a steady-state fixture (no in-flight gap-healing), the gauge is `NaN`:
-/// the drain swap-to-NaN runs at the start of every pass, and after the listener
-/// has caught up there is no pending fetch_min to mirror.
+/// In a steady-state fixture (no in-flight gap-healing), the gauge is absent:
+/// the drain swaps the atomic to idle at the start of every pass, and after the
+/// listener has caught up there is no pending fetch_min to mirror, so the
+/// callback makes no observation.
 #[tokio::test]
 #[serial]
-async fn metrics_min_pending_seq_is_nan_in_steady_state() {
+async fn metrics_min_pending_seq_is_absent_in_steady_state() {
     common::ensure_recorder_installed();
     common::reset_metrics();
 
@@ -148,11 +149,10 @@ async fn metrics_min_pending_seq_is_nan_in_steady_state() {
         assert_eq!(status, StatusCode::OK);
     }
 
-    // Wait for steady state: the drain has caught up (broadcast_watermark
-    // matches MAX(seq) in the outbox) AND the gauge has reached its NaN
-    // sentinel. Polling the gauge directly avoids fixed-sleep flake — every
-    // drain pass swaps min_pending_seq to MAX and emits NaN, so once the
-    // drain has processed all pending rows the gauge MUST settle at NaN.
+    // Wait for steady state: a drain pass has run since the webhooks were
+    // posted AND the gauge has no data point. Polling directly avoids
+    // fixed-sleep flake: every drain pass swaps min_pending_seq to idle, so
+    // once the drain has processed all pending rows the gauge MUST disappear.
     let mut last_gauge = None;
     let result = timeout(Duration::from_secs(10), async {
         loop {
@@ -163,7 +163,7 @@ async fn metrics_min_pending_seq_is_nan_in_steady_state() {
             let snapshot = common::snapshot_metrics();
             let gauge = common::gauge_value(&snapshot, METRIC, &[]);
             last_gauge = gauge;
-            if gauge.map(f64::is_nan).unwrap_or(false) {
+            if gauge.is_none() {
                 return;
             }
         }
@@ -171,17 +171,15 @@ async fn metrics_min_pending_seq_is_nan_in_steady_state() {
     .await;
     assert!(
         result.is_ok(),
-        "min_pending_seq gauge did not reach NaN steady-state within 10s; \
+        "min_pending_seq gauge did not disappear in steady state within 10s; \
          last observed: {last_gauge:?}"
     );
 
     let snapshot = common::snapshot_metrics();
-    let gauge = common::gauge_value(&snapshot, METRIC, &[])
-        .expect("atc_pg_min_pending_seq must be present (sentinel state)");
-
+    let gauge = common::gauge_value(&snapshot, METRIC, &[]);
     assert!(
-        gauge.is_nan(),
-        "min_pending_seq gauge must be NaN in steady state (drain caught up); got {gauge}"
+        gauge.is_none(),
+        "min_pending_seq gauge must be absent in steady state (drain caught up); got {gauge:?}"
     );
 
     fixture.shutdown.cancel();

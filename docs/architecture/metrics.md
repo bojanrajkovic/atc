@@ -313,7 +313,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_min_pending_seq`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Maps `i64::MAX` (the sentinel the drain swaps in once caught up) to `f64::NAN`.
+- **Measures:** Lowest pending NOTIFY seq below the watermark (the gap-healing pressure signal). Not reported while the drain is caught up (the `i64::MAX` the drain swaps in once caught up makes the callback skip its observation), so the series is absent rather than NaN.
 
 ### `atc_pg_outbox_rows_deleted_total`
 

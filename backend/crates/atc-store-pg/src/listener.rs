@@ -143,7 +143,7 @@ fn handle_listener_notification(
         Ok(seq) => {
             tracing::Span::current().record("notify.payload.seq", seq);
             // The observable `atc_pg_min_pending_seq` gauge reads this atomic
-            // on every collection cycle (NaN when MAX, raw seq otherwise), so
+            // on every collection cycle (not reported when MAX, raw seq otherwise), so
             // no separate gauge update is needed here.
             min_pending_seq.fetch_min(seq, Ordering::Release);
         }

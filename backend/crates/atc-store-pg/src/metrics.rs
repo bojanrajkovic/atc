@@ -301,19 +301,19 @@ impl PgMetrics {
         let _min_pending_seq = meter
             .f64_observable_gauge("atc_pg_min_pending_seq")
             .with_description(
-                "Lowest pending NOTIFY seq registered with the gap-healing backstop, \
-                 or NaN when the drain has caught up (sentinel)",
+                "Lowest pending NOTIFY seq registered with the gap-healing backstop; \
+                 not reported when the drain has caught up",
             )
             .with_callback(move |observer| {
                 if let Some(atomic) = min_pending_observer.upgrade() {
+                    // `i64::MAX` means nothing is pending. Skip the observation
+                    // rather than emit NaN: the SDK drops non-finite gauge
+                    // values anyway, and an absent series is the explicit signal.
                     let raw = atomic.load(Ordering::Acquire);
-                    #[allow(clippy::cast_precision_loss)]
-                    let value = if raw == i64::MAX {
-                        f64::NAN
-                    } else {
-                        raw as f64
-                    };
-                    observer.observe(value, &[]);
+                    if raw != i64::MAX {
+                        #[allow(clippy::cast_precision_loss)]
+                        observer.observe(raw as f64, &[]);
+                    }
                 }
             })
             .build();

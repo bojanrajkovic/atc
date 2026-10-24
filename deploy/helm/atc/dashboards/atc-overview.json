@@ -1832,7 +1832,7 @@
       "id": 27,
       "type": "timeseries",
       "title": "Watermark vs min_pending_seq (per pod)",
-      "description": "atc_pg_broadcast_watermark (solid) — highest seq this replica has broadcast — overlaid with atc_pg_min_pending_seq (dashed) — lowest pending NOTIFY seq below the watermark. Divergence (dashed < solid) = gap-healing rescan in flight. NaN renders as gaps (sentinel for caught-up state).",
+      "description": "atc_pg_broadcast_watermark (solid) — highest seq this replica has broadcast — overlaid with atc_pg_min_pending_seq (dashed) — lowest pending NOTIFY seq below the watermark. Divergence (dashed < solid) = gap-healing rescan in flight. No min_pending_seq series while the drain is caught up.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
