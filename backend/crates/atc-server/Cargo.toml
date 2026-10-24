@@ -27,7 +27,7 @@ opentelemetry_sdk = { version = "=0.33.1", features = ["metrics", "trace", "spec
 opentelemetry-otlp = { version = "=0.33.1", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls", "metrics", "trace"] }
 opentelemetry-http = "=0.33.1"
 opentelemetry-semantic-conventions = "=0.33.1"
-opentelemetry-system-metrics = "=0.32.0"
+opentelemetry-system-metrics = { path = "../../vendor/opentelemetry-system-metrics" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["form", "json", "rustls"] }
 rust-embed = "=8.13.0"
 serde = { version = "=1.0.229", features = ["derive"] }

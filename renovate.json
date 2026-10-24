@@ -4,6 +4,7 @@
     "config:best-practices",
     "customManagers:dockerfileVersions"
   ],
+  "ignorePaths": ["backend/vendor/**"],
   "timezone": "America/New_York",
   "prHourlyLimit": 3,
   "prConcurrentLimit": 6,

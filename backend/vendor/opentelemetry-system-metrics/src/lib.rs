@@ -12,7 +12,7 @@
 //! To use this crate, add the following to your `Cargo.toml`:
 //! ```toml
 //! [dependencies]
-//! opentelemetry = "0.32"
+//! opentelemetry = "0.33"
 //! opentelemetry-system-metrics = "0.4"
 //! tokio = { version = "1", features = ["full"] }
 //! sysinfo = "0.34"
@@ -166,7 +166,7 @@ async fn register_metrics(
 
     let common_attributes = if let Some(process) = sys.process(pid) {
         [
-            KeyValue::new(PROCESS_PID, pid.as_u32().clone() as i64),
+            KeyValue::new(PROCESS_PID, pid.as_u32() as i64),
             KeyValue::new(
                 PROCESS_EXECUTABLE_NAME,
                 process
