@@ -57,9 +57,9 @@ async fn reap_stale_test_databases(admin_conn: &mut sqlx::PgConnection, now_nano
         if now_nanos.saturating_sub(db_nanos) < STALE_TEST_DB_AGE_NANOS {
             continue;
         }
-        if let Err(e) = sqlx::query(&format!(
+        if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE IF EXISTS \"{datname}\" WITH (FORCE)"
-        ))
+        )))
         .execute(&mut *admin_conn)
         .await
         {
@@ -138,10 +138,12 @@ pub async fn start_pg() -> (
     {
         let mut admin_conn = admin_conn;
         reap_stale_test_databases(&mut admin_conn, nanos).await;
-        sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
-            .execute(&mut admin_conn)
-            .await
-            .expect("CREATE DATABASE failed");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE \"{db_name}\""
+        )))
+        .execute(&mut admin_conn)
+        .await
+        .expect("CREATE DATABASE failed");
     }
 
     let db_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/{db_name}");
