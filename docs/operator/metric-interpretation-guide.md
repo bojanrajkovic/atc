@@ -2,13 +2,13 @@
 
 Last verified: 2026-05-23
 
-This guide is for an operator triaging an ATC alert or running ATC in production. It covers what a metric's value *means*, what sustained rates suggest, NaN-sentinel semantics, cross-replica aggregation guidance, and example queries. Canonical per-metric metadata (Name, Type, Attributes, Measures) lives in [`../architecture/metrics.md`](../architecture/metrics.md).
+This guide is for an operator triaging an ATC alert or running ATC in production. It covers what a metric's value *means*, what sustained rates suggest, idle-state (absent series) semantics, cross-replica aggregation guidance, and example queries. Canonical per-metric metadata (Name, Type, Attributes, Measures) lives in [`../architecture/metrics.md`](../architecture/metrics.md).
 
 ---
 
-## NaN-sentinel meanings
+## Idle-state meanings
 
-Two observable-gauge metrics use a sentinel value that maps to `f64::NAN` in the collection callback. Grafana renders NaN as gaps in time-series panels — a gap means the sentinel is active, not a missing scrape. A third, `atc_pg_min_pending_seq`, omits its series instead (below).
+Three observable-gauge metrics have an idle state in which they report nothing. The collection callback skips the observation, so the series is absent and Grafana draws a gap in time-series panels. A gap means the idle state is active, not a missing scrape. (The OpenTelemetry SDK drops NaN gauge values, so NaN is not used.)
 
 ### `atc_pg_min_pending_seq`
 
@@ -16,7 +16,7 @@ No series means the drain is caught up: the `min_pending_seq` atomic holds `i64:
 
 ### `atc_pg_outbox_min_replica_watermark`
 
-NaN (sentinel: `-1`) covers two states:
+No series (internal sentinel: `-1`) covers two states:
 - **Just-started replica** — the heartbeat task has not run yet; the atomic initializes to `-1` and the first heartbeat tick overwrites it.
 - **No live replicas recently** — either a cluster partition or a full shutdown; no replica has heartbeated within the staleness window.
 
@@ -24,7 +24,7 @@ All replicas should read the same value (the cluster-wide `MIN(broadcast_waterma
 
 ### `atc_pg_outbox_oldest_row_age_seconds`
 
-NaN (sentinel: `-1`) means the outbox is empty — `MIN(inserted_at)` returned NULL. Under healthy steady state the value oscillates near the configured `outbox_retention` window and the rate-of-change tracks the sweep rate. A monotonically rising value past `outbox_retention` indicates the sweep is not deleting rows (verify `atc_pg_outbox_rows_deleted_total` rate; check for sub-floor retention misconfiguration or absent heartbeats).
+No series (internal sentinel: `-1`) means the outbox is empty — `MIN(inserted_at)` returned NULL. Under healthy steady state the value oscillates near the configured `outbox_retention` window and the rate-of-change tracks the sweep rate. A monotonically rising value past `outbox_retention` indicates the sweep is not deleting rows (verify `atc_pg_outbox_rows_deleted_total` rate; check for sub-floor retention misconfiguration or absent heartbeats).
 
 ---
 
@@ -175,7 +175,7 @@ Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica co
 
 **Aggregation:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` for the cluster-wide signal; per-pod comparison surfaces stalled replicas.
 
-**Example PromQL:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` (Grafana renders NaN as gaps)
+**Example PromQL:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` (Grafana shows a gap when no series exists)
 
 ---
 

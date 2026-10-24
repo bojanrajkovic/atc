@@ -322,22 +322,24 @@ impl PgMetrics {
         // the writer; the observable-gauge callbacks read synchronously from
         // `Weak<AtomicI64>` so callbacks belonging to dropped stores
         // short-circuit to no-ops once the active store's heartbeat task
-        // joins. -1 in the underlying atomic is the NaN sentinel; rendered
-        // as NaN on dashboards.
+        // joins. -1 in the underlying atomic means "no value": the callback
+        // makes no observation, so the series is absent. (The SDK drops NaN
+        // gauge values, so NaN is not a usable sentinel.)
         let min_replica_observer = min_replica_watermark;
         let _min_replica_watermark = meter
             .f64_observable_gauge("atc_pg_outbox_min_replica_watermark")
             .with_description(
                 "MIN(broadcast_watermark) across non-stale replicas (cluster-wide outbox \
-                 retention floor). NaN when no live replicas have heartbeated yet. \
-                 Refreshed every 30 s by the outbox heartbeat task.",
+                 retention floor). Not reported when no live replicas have heartbeated \
+                 yet. Refreshed every 30 s by the outbox heartbeat task.",
             )
             .with_callback(move |observer| {
                 if let Some(atomic) = min_replica_observer.upgrade() {
                     let raw = atomic.load(Ordering::Acquire);
-                    #[allow(clippy::cast_precision_loss)]
-                    let value = if raw < 0 { f64::NAN } else { raw as f64 };
-                    observer.observe(value, &[]);
+                    if raw >= 0 {
+                        #[allow(clippy::cast_precision_loss)]
+                        observer.observe(raw as f64, &[]);
+                    }
                 }
             })
             .build();
@@ -346,15 +348,16 @@ impl PgMetrics {
         let _oldest_row_age = meter
             .f64_observable_gauge("atc_pg_outbox_oldest_row_age_seconds")
             .with_description(
-                "Age in seconds of the oldest outbox row (clock-bound). NaN when the \
-                 outbox is empty. Refreshed every 30 s by the outbox heartbeat task.",
+                "Age in seconds of the oldest outbox row (clock-bound). Not reported when \
+                 the outbox is empty. Refreshed every 30 s by the outbox heartbeat task.",
             )
             .with_callback(move |observer| {
                 if let Some(atomic) = oldest_row_age_observer.upgrade() {
                     let raw = atomic.load(Ordering::Acquire);
-                    #[allow(clippy::cast_precision_loss)]
-                    let value = if raw < 0 { f64::NAN } else { raw as f64 };
-                    observer.observe(value, &[]);
+                    if raw >= 0 {
+                        #[allow(clippy::cast_precision_loss)]
+                        observer.observe(raw as f64, &[]);
+                    }
                 }
             })
             .build();

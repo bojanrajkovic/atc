@@ -82,11 +82,15 @@ async fn heartbeat_upserts_replica_row_on_startup() {
 
 /// Running the heartbeat tick a second time keeps the row at one (UPSERT
 /// semantics) and bumps `updated_at`. The retention gauge atomics are
-/// populated (no longer the `-1` NaN sentinel) once a real heartbeat has
-/// observed the cluster state.
+/// populated (no longer the `-1` "no value" sentinel) once a real heartbeat
+/// has observed the cluster state; an empty outbox leaves the
+/// oldest-row-age gauge absent.
 #[tokio::test]
 #[serial]
 async fn heartbeat_upsert_refreshes_existing_row() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
     let (pool, _container, db_url) = common::start_pg().await;
     let shutdown = CancellationToken::new();
     let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
@@ -104,7 +108,7 @@ async fn heartbeat_upsert_refreshes_existing_row() {
     assert_eq!(n, 1, "UPSERT semantics keep the row count at one");
 
     // After at least one real heartbeat, the gauge atomics are no longer
-    // the `-1` NaN sentinel: min-replica-watermark sees the cluster floor
+    // the `-1` sentinel: min-replica-watermark sees the cluster floor
     // (0 on an empty outbox), oldest-row-age sees NULL → -1 because the
     // outbox is empty. The first is observable here; the second matches
     // the empty-outbox sentinel and stays at -1 which is correct.
@@ -118,8 +122,51 @@ async fn heartbeat_upsert_refreshes_existing_row() {
             .oldest_row_age_seconds_atomic()
             .load(Ordering::Acquire),
         -1,
-        "empty outbox → oldest-row-age atomic carries the NaN sentinel",
+        "empty outbox → oldest-row-age atomic carries the no-value sentinel",
     );
+
+    // The gauges mirror the atomics: a value is reported, the sentinel is not.
+    let snapshot = common::snapshot_metrics();
+    assert_eq!(
+        common::gauge_value(&snapshot, "atc_pg_outbox_min_replica_watermark", &[]),
+        Some(0.0),
+        "min-replica-watermark gauge must report the cluster floor",
+    );
+    assert_eq!(
+        common::gauge_value(&snapshot, "atc_pg_outbox_oldest_row_age_seconds", &[]),
+        None,
+        "oldest-row-age gauge must be absent when the outbox is empty",
+    );
+
+    shutdown.cancel();
+    timeout(Duration::from_secs(8), store.shutdown())
+        .await
+        .expect("shutdown");
+}
+
+/// With a row in the outbox, the heartbeat populates the oldest-row-age atomic
+/// and the gauge reports it.
+#[tokio::test]
+#[serial]
+async fn oldest_row_age_gauge_reports_value_when_outbox_has_rows() {
+    common::ensure_recorder_installed();
+    common::reset_metrics();
+
+    let (pool, _container, db_url) = common::start_pg().await;
+    let shutdown = CancellationToken::new();
+    let store = common::start_pg_store_for_test(pool.clone(), &db_url, shutdown.clone()).await;
+
+    let an_hour_ago = SystemClock.now() - chrono::Duration::hours(1);
+    insert_outbox_at(&pool, 10_001, an_hour_ago).await;
+    store
+        .outbox_heartbeat_once()
+        .await
+        .expect("outbox_heartbeat_once");
+
+    let snapshot = common::snapshot_metrics();
+    let age = common::gauge_value(&snapshot, "atc_pg_outbox_oldest_row_age_seconds", &[])
+        .expect("oldest-row-age gauge must be present when the outbox has rows");
+    assert!(age >= 3600.0, "expected age >= 3600 s, got {age}");
 
     shutdown.cancel();
     timeout(Duration::from_secs(8), store.shutdown())

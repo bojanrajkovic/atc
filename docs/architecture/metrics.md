@@ -8,7 +8,7 @@ Last verified: 2026-05-23
 
 This document is the canonical home for ATC's metric and span contract. Every metric ATC emits is documented here with the seven-element authoring block defined under [Metric and span authoring contract](#metric-and-span-authoring-contract). Every span boundary is enumerated under [Span inventory](#span-inventory). Cross-references from other docs (backend-server architecture, deployment runbooks, dashboard descriptions, alert rules) link here rather than duplicating per-metric or per-span prose.
 
-For operator interpretation — NaN-sentinel meanings, sustained-rate heuristics, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
+For operator interpretation — idle-state meanings, sustained-rate heuristics, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
 
 ## OTel pipeline
 
@@ -206,7 +206,7 @@ The observer's loop runs forever — there is no cooperative shutdown surface on
 
 All `atc_pg_*` metrics are emitted unlabeled per-process. Replica identity is added at ingest — the exact label name depends on the collector path (see [Metric attribute conventions](#metric-attribute-conventions)). Dashboard queries use `k8s_pod_name` (OTLP path via Grafana Alloy with `resource_to_telemetry_conversion`); substitute `pod` for scrape-discovery stacks.
 
-For operator interpretation — NaN-sentinel meanings, what sustained rates suggest, per-channel eviction severity, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
+For operator interpretation — idle-state meanings, what sustained rates suggest, per-channel eviction severity, cross-replica aggregation guidance, and example queries — see [`../operator/metric-interpretation-guide.md`](../operator/metric-interpretation-guide.md).
 
 The blocks below are listed in roughly the order an event traverses the pipeline: webhook write → outbox row → NOTIFY emission → listener receipt → drain pass → broadcast → snapshot cursor → drain shutdown.
 
@@ -327,7 +327,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_outbox_min_replica_watermark`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Maps `-1` to `f64::NAN`. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence.
+- **Measures:** `MIN(broadcast_watermark)` across non-stale replicas — the cluster-wide multi-replica safety floor that the sweep statement uses to bound deletions. Not reported (series absent) when no live replicas have heartbeated. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained relative to OTel collection cadence.
 
 ### `atc_config_reload_total`
 
@@ -366,7 +366,7 @@ The blocks below are listed in roughly the order an event traverses the pipeline
 - **Name:** `atc_pg_outbox_oldest_row_age_seconds`
 - **Type:** gauge
 - **Attributes:** none emitted; `pod`, `instance` (injected)
-- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Maps `-1` to `f64::NAN` (the empty-outbox sentinel). **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained.
+- **Measures:** Age in seconds of the oldest outbox row, computed Rust-side as `clock.now() - MIN(inserted_at)`. Not reported (series absent) when the outbox is empty. **Refreshed every 30 s by the outbox heartbeat task** — coarse-grained.
 
 ### `atc_staleness_swept_total`
 
