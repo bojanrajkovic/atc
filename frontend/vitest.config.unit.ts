@@ -23,6 +23,8 @@ export default defineConfig({
     // run at full tilt.
     minWorkers: process.env.CI ? 2 : undefined,
     maxWorkers: process.env.CI ? 2 : undefined,
+    // msw 3 ships ESM-only; jsdom's browser export condition nulls @mswjs/interceptors/ClientRequest unless inlined.
+    server: { deps: { inline: [/msw/, /@mswjs\/interceptors/] } },
     setupFiles: ['./vitest.setup.unit.ts'],
     include: ['src/**/*.test.ts'],
     exclude: ['src/**/*.browser.test.ts', 'e2e/**'],
