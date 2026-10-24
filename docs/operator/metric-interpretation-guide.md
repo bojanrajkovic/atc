@@ -8,7 +8,7 @@ This guide is for an operator triaging an ATC alert or running ATC in production
 
 ## NaN-sentinel meanings
 
-Three observable-gauge metrics use a sentinel value that maps to `f64::NAN` in the collection callback. Grafana renders NaN as gaps in time-series panels — a gap means the sentinel is active, not a missing scrape.
+Two observable-gauge metrics use a sentinel value that maps to `f64::NAN` in the collection callback. Grafana renders NaN as gaps in time-series panels — a gap means the sentinel is active, not a missing scrape. A third, `atc_pg_min_pending_seq`, omits its series instead (below).
 
 ### `atc_pg_min_pending_seq`
 
