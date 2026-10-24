@@ -1,0 +1,26 @@
+[package]
+name = "opentelemetry-system-metrics"
+version = "0.32.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "System metric export through Opentelemetry"
+repository = "https://github.com/haixuanTao/opentelemetry-system-metrics"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+gpu = ["nvml-wrapper"]
+
+[dependencies]
+opentelemetry = { version = "0.33", features = ["metrics"] }
+sysinfo = "0.35"
+nvml-wrapper = { version = "0.11.0", optional = true }
+eyre = "0.6.12"
+tracing = "0.1.41"
+tokio = { version = "1.44.2", features = [
+    "rt",
+    "rt-multi-thread",
+    "time",
+    "macros",
+] }

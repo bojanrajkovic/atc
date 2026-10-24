@@ -14,7 +14,7 @@ atc-store-pg = { path = "../atc-store-pg" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
 axum = { version = "=0.8.9", features = ["ws"] }
-axum-otel-metrics = "=0.14.1"
+axum-otel-metrics = { path = "../../vendor/axum-otel-metrics" }
 base64 = "=0.23.1"
 chrono = "=0.4.45"
 figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }
@@ -22,12 +22,12 @@ getrandom = "=0.4.3"
 http = "=1.5.0"
 humantime-serde = "=1.1.1"
 notify-debouncer-full = "=0.7.0"
-opentelemetry = { version = "=0.32.0", features = ["metrics", "trace"] }
-opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
-opentelemetry-otlp = { version = "=0.32.0", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls", "metrics", "trace"] }
-opentelemetry-http = "=0.32.0"
-opentelemetry-semantic-conventions = "=0.32.1"
-opentelemetry-system-metrics = "=0.32.0"
+opentelemetry = { version = "=0.33.1", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "=0.33.1", features = ["metrics", "trace", "spec_unstable_metrics_views", "rt-tokio"] }
+opentelemetry-otlp = { version = "=0.33.1", features = ["http-proto", "reqwest-blocking-client", "reqwest-rustls", "metrics", "trace"] }
+opentelemetry-http = "=0.33.1"
+opentelemetry-semantic-conventions = "=0.33.1"
+opentelemetry-system-metrics = { path = "../../vendor/opentelemetry-system-metrics" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["form", "json", "rustls"] }
 rust-embed = "=8.13.0"
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -38,7 +38,7 @@ tokio-util = { version = "=0.7.20", features = ["rt"] }
 tower-http = { version = "=0.7.1", features = ["cors", "trace"] }
 tracing = { workspace = true }
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
-tracing-opentelemetry = { version = "=0.33.0", features = ["metrics"] }
+tracing-opentelemetry = { version = "=0.34.0", features = ["metrics"] }
 ts-rs = { workspace = true, features = ["serde-compat"] }
 uuid = { version = "=1.28.0", features = ["v4", "fast-rng"] }
 
@@ -53,7 +53,7 @@ chrono = { version = "=0.4.45", features = ["serde"] }
 const-hex = "=1.19.3"
 futures-util = "=0.3.34"
 hmac = "=0.13.0"
-opentelemetry_sdk = { version = "=0.32.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
+opentelemetry_sdk = { version = "=0.33.1", features = ["metrics", "trace", "testing", "spec_unstable_metrics_views"] }
 serial_test = "=4.0.1"
 # sqlx remains a dev-dep for integration tests under tests/integration/ that
 # do ephemeral-DB CREATE/DROP and query helpers. Production sources no longer

@@ -1832,7 +1832,7 @@
       "id": 27,
       "type": "timeseries",
       "title": "Watermark vs min_pending_seq (per pod)",
-      "description": "atc_pg_broadcast_watermark (solid) — highest seq this replica has broadcast — overlaid with atc_pg_min_pending_seq (dashed) — lowest pending NOTIFY seq below the watermark. Divergence (dashed < solid) = gap-healing rescan in flight. NaN renders as gaps (sentinel for caught-up state).",
+      "description": "atc_pg_broadcast_watermark (solid) — highest seq this replica has broadcast — overlaid with atc_pg_min_pending_seq (dashed) — lowest pending NOTIFY seq below the watermark. Divergence (dashed < solid) = gap-healing rescan in flight. No min_pending_seq series while the drain is caught up.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1950,7 +1950,7 @@
       "id": 28,
       "type": "timeseries",
       "title": "Cluster floor — atc_pg_outbox_min_replica_watermark",
-      "description": "MIN(broadcast_watermark) across non-stale replicas — the safety floor the retention sweep uses to bound deletions. Refreshed every 30 s by the outbox heartbeat task. NaN = no live replicas heartbeated recently (cluster partition / shutdown).",
+      "description": "MIN(broadcast_watermark) across non-stale replicas — the safety floor the retention sweep uses to bound deletions. Refreshed every 30 s by the outbox heartbeat task. No series = no live replicas heartbeated recently (cluster partition / shutdown).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -2038,7 +2038,7 @@
       "id": 29,
       "type": "timeseries",
       "title": "Oldest outbox row age",
-      "description": "atc_pg_outbox_oldest_row_age_seconds — age of MIN(inserted_at). Healthy steady state oscillates near outbox_retention. Monotonic climb past retention = sweep not deleting (check atc_pg_outbox_rows_deleted_total rate; verify heartbeats).",
+      "description": "atc_pg_outbox_oldest_row_age_seconds — age of MIN(inserted_at). No series when the outbox is empty. Healthy steady state oscillates near outbox_retention. Monotonic climb past retention = sweep not deleting (check atc_pg_outbox_rows_deleted_total rate; verify heartbeats).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"

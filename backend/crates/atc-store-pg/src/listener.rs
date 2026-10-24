@@ -143,7 +143,7 @@ fn handle_listener_notification(
         Ok(seq) => {
             tracing::Span::current().record("notify.payload.seq", seq);
             // The observable `atc_pg_min_pending_seq` gauge reads this atomic
-            // on every collection cycle (NaN when MAX, raw seq otherwise), so
+            // on every collection cycle (not reported when MAX, raw seq otherwise), so
             // no separate gauge update is needed here.
             min_pending_seq.fetch_min(seq, Ordering::Release);
         }
@@ -243,8 +243,8 @@ pub fn spawn_drain_task(
             // Capture the gap-healing backstop and reset the atomic. AcqRel
             // pairs with the listener's Release fetch_min so any registration
             // visible before this swap is observed here. The post-swap
-            // sentinel (`i64::MAX`) is rendered as NaN by the
-            // `atc_pg_min_pending_seq` observable gauge's callback so
+            // sentinel (`i64::MAX`) makes the
+            // `atc_pg_min_pending_seq` observable gauge's callback skip its observation so
             // dashboards distinguish "no pending NOTIFY below watermark"
             // from "pending NOTIFY at seq 0".
             let backstop = min_pending_seq.swap(i64::MAX, Ordering::AcqRel);

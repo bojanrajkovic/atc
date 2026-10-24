@@ -312,9 +312,9 @@ pub struct PgStore {
     /// Atomic mirror of `MIN(broadcast_watermark)` across non-stale replicas.
     /// Refreshed by the heartbeat task on every tick; read by the
     /// `atc_pg_outbox_min_replica_watermark` observable gauge callback via a
-    /// `Weak<AtomicI64>` registered with the meter. `-1` is the NaN sentinel
-    /// — rendered as NaN by the gauge so dashboards distinguish "no live
-    /// replicas seen" from "min watermark is 0". Production keeps the
+    /// `Weak<AtomicI64>` registered with the meter. `-1` means "no live
+    /// replicas seen": the gauge makes no observation, so the series is
+    /// absent and dashboards distinguish that from "min watermark is 0". Production keeps the
     /// strong reference alive through the heartbeat task's spawn-time
     /// Arc::clone; this field is read directly by the cfg-gated test
     /// accessors.
@@ -323,8 +323,8 @@ pub struct PgStore {
     /// Atomic mirror of `clock.now() - MIN(inserted_at) FROM outbox`, in
     /// seconds. Refreshed by the heartbeat task on every tick; read by the
     /// `atc_pg_outbox_oldest_row_age_seconds` observable gauge callback via
-    /// a `Weak<AtomicI64>`. `-1` is the NaN sentinel — rendered as NaN by
-    /// the gauge when the outbox is empty.
+    /// a `Weak<AtomicI64>`. `-1` means the outbox is empty: the gauge makes
+    /// no observation, so the series is absent.
     #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub(crate) oldest_row_age_seconds_atomic: Arc<AtomicI64>,
 }
@@ -412,9 +412,9 @@ impl PgStore {
         let drain_in_flight = Arc::new(AtomicBool::new(false));
         let drain_notify = Arc::new(Notify::new());
 
-        // Retention gauge atomics. Initialised to -1 (the NaN sentinel) so
+        // Retention gauge atomics. Initialised to -1 (the no-value sentinel) so
         // the period between store construction and the first heartbeat tick
-        // renders as NaN on dashboards instead of a misleading 0. The
+        // is absent on dashboards instead of a misleading 0. The
         // heartbeat task populates real values on its first iteration (which
         // runs unconditionally, mirroring the drain task's first-iter
         // pattern).

@@ -136,8 +136,8 @@ pub(crate) async fn outbox_heartbeat_tick(
 
     // (2) Refresh min-replica-watermark gauge atomic. Stale cutoff is
     // Rust-bound. `MIN(...)` returns NULL when no fresh rows match → store -1
-    // (NaN sentinel) so dashboards distinguish "no live replicas" from
-    // "min watermark is 0".
+    // (the gauge then reports nothing) so dashboards distinguish "no live
+    // replicas" from "min watermark is 0".
     let stale_cutoff = now
         - chrono::Duration::from_std(OUTBOX_STALE_THRESHOLD)
             .expect("OUTBOX_STALE_THRESHOLD fits chrono::Duration");
