@@ -14,7 +14,7 @@ atc-store-pg = { path = "../atc-store-pg" }
 atc-wire = { path = "../atc-wire" }
 async-trait = { workspace = true }
 axum = { version = "=0.8.9", features = ["ws"] }
-axum-otel-metrics = "=0.14.1"
+axum-otel-metrics = { path = "../../vendor/axum-otel-metrics" }
 base64 = "=0.23.1"
 chrono = "=0.4.45"
 figment = { version = "=0.10.19", features = ["env", "toml", "yaml"] }

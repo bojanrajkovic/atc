@@ -1,5 +1,8 @@
 [workspace]
 members = ["crates/*"]
+# Vendored upstream code keeps its own formatting; excluding it also skips its
+# in-crate tests, which need dev-dependencies we dropped. See its VENDORED.md.
+exclude = ["vendor/axum-otel-metrics"]
 resolver = "2"
 
 [workspace.package]
