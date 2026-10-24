@@ -78,10 +78,12 @@ async fn insert_completed_run(pool: &atc_store_pg::TracedPool, run_id: i64) {
 
 /// Count rows in a table.
 async fn count_rows(pool: &atc_store_pg::TracedPool, table: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*)::bigint FROM {table}"))
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*)::bigint FROM {table}"
+    )))
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 /// Count outbox rows by kind.
@@ -95,9 +97,9 @@ async fn count_outbox_by_kind(pool: &atc_store_pg::TracedPool, kind: &str) -> i6
 
 /// Count rows matching an integer id filter.
 async fn count_by_id(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!(
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*)::bigint FROM {table} WHERE id = $1"
-    ))
+    )))
     .bind(id)
     .fetch_one(pool)
     .await
@@ -106,11 +108,13 @@ async fn count_by_id(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> i
 
 /// Fetch status string from a table by id.
 async fn fetch_status(pool: &atc_store_pg::TracedPool, table: &str, id: i64) -> String {
-    sqlx::query_scalar::<_, String>(&format!("SELECT status FROM {table} WHERE id = $1"))
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+        "SELECT status FROM {table} WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 // ---------------------------------------------------------------------------
