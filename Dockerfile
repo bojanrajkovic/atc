@@ -38,6 +38,9 @@ COPY backend/crates/atc-server/Cargo.toml crates/atc-server/Cargo.toml
 COPY backend/crates/atc-store-mem/Cargo.toml crates/atc-store-mem/Cargo.toml
 COPY backend/crates/atc-store-pg/Cargo.toml crates/atc-store-pg/Cargo.toml
 COPY backend/crates/atc-wire/Cargo.toml crates/atc-wire/Cargo.toml
+# Vendored path dependencies (see backend/vendor/*/VENDORED.md) must exist for
+# `cargo metadata` and `cargo chef cook`.
+COPY backend/vendor/ vendor/
 RUN mkdir -p crates/atc-core/src crates/atc-github/src crates/atc-persist/src \
         crates/atc-server/src crates/atc-store-mem/src crates/atc-store-pg/src \
         crates/atc-wire/src \
@@ -54,6 +57,7 @@ FROM rust:${RUST_VERSION}-slim AS deps
 COPY --from=planner /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
 WORKDIR /app/backend
 COPY --from=planner /app/recipe.json /app/recipe.json
+COPY backend/vendor/ vendor/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git/db \
     cargo chef cook --release --locked --recipe-path /app/recipe.json
