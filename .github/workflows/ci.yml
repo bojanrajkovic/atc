@@ -90,7 +90,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mold cmake pkg-config perl
 
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install: false
 
@@ -211,7 +211,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install: false
 
@@ -320,7 +320,7 @@ jobs:
       # drag in Rust/Node/cargo-tools it never uses. With `install: true` the
       # action runs `mise install` which compiles the cargo: tools from
       # source — minutes of overhead for a job that only needs `helm`.
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install: false
 
@@ -351,7 +351,7 @@ jobs:
       # mise install: false + explicit subset so this job doesn't drag in
       # Rust/Node/cargo-tools it never uses. See the helm-lint job above
       # for the rationale.
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install: false
 
@@ -377,7 +377,7 @@ jobs:
       # Rust/Node/cargo-tools (Rust comes from the inline image build via
       # the Dockerfile's own toolchain). See the helm-lint job above for
       # the broader rationale.
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
         with:
           install: false
 
