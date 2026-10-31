@@ -124,7 +124,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "atc_build_info{k8s_pod_name=~\"$pod\"}",
+          "expr": "atc_build_info{job=\"$job\",k8s_pod_name=~\"$pod\"}",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -187,7 +187,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(histogram_count(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "sum(histogram_count(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "req/s",
           "range": true,
           "refId": "A"
@@ -258,7 +258,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(histogram_count(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_response_status_code=~\"5..\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "sum(histogram_count(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_response_status_code=~\"5..\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "5xx/s",
           "range": true,
           "refId": "A"
@@ -329,7 +329,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p99",
           "range": true,
           "refId": "A"
@@ -392,7 +392,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max(atc_config_runner_pools)",
+          "expr": "max(atc_config_runner_pools{job=\"$job\"})",
           "legendFormat": "pools",
           "range": true,
           "refId": "A"
@@ -493,7 +493,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (http_route, http_request_method) (histogram_count(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "sum by (http_route, http_request_method) (histogram_count(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "{{http_request_method}} {{http_route}}",
           "range": true,
           "refId": "A"
@@ -581,7 +581,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (http_response_status_code) (histogram_count(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "sum by (http_response_status_code) (histogram_count(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "{{http_response_status_code}}",
           "range": true,
           "refId": "A"
@@ -669,7 +669,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p50 {{http_route}}",
           "range": true,
           "refId": "A"
@@ -680,7 +680,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p95 {{http_route}}",
           "range": true,
           "refId": "B"
@@ -691,7 +691,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p99 {{http_route}}",
           "range": true,
           "refId": "C"
@@ -779,7 +779,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (http_route) (histogram_count(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_response_status_code=~\"5..\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "sum by (http_route) (histogram_count(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_response_status_code=~\"5..\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "{{http_route}}",
           "range": true,
           "refId": "A"
@@ -860,7 +860,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval]))",
+          "expr": "sum(rate(http_server_request_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval]))",
           "legendFormat": "",
           "range": true,
           "refId": "A"
@@ -961,7 +961,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (kind) (rate(atc_pg_notify_emitted_total{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (kind) (rate(atc_pg_notify_emitted_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "{{kind}}",
           "range": true,
           "refId": "A"
@@ -1053,7 +1053,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (kind) (rate(atc_pg_write_failures_total{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (kind) (rate(atc_pg_write_failures_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "{{kind}}",
           "range": true,
           "refId": "A"
@@ -1154,7 +1154,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "rate(atc_pg_notify_received_total{k8s_pod_name=~\"$pod\"}[$__rate_interval])",
+          "expr": "rate(atc_pg_notify_received_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])",
           "legendFormat": "notify {{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1165,7 +1165,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "rate(atc_pg_drain_passes_total{k8s_pod_name=~\"$pod\"}[$__rate_interval])",
+          "expr": "rate(atc_pg_drain_passes_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])",
           "legendFormat": "pass {{k8s_pod_name}}",
           "range": true,
           "refId": "B"
@@ -1253,7 +1253,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_pass_duration_seconds{k8s_pod_name=~\"$pod\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_pass_duration_seconds{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1349,7 +1349,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_outbox_lag_seconds{k8s_pod_name=~\"$pod\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_outbox_lag_seconds{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])))",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1437,7 +1437,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "rate(atc_pg_wake_coalesced_total{k8s_pod_name=~\"$pod\"}[$__rate_interval])",
+          "expr": "rate(atc_pg_wake_coalesced_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1525,7 +1525,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (k8s_pod_name) (rate(atc_pg_drain_rows_total{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (k8s_pod_name) (rate(atc_pg_drain_rows_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "rows/s {{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1536,7 +1536,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (k8s_pod_name) (rate(atc_pg_drain_passes_total{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (k8s_pod_name) (rate(atc_pg_drain_passes_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "passes/s {{k8s_pod_name}}",
           "range": true,
           "refId": "B"
@@ -1624,7 +1624,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "rate(atc_pg_drain_duplicate_skipped_total{k8s_pod_name=~\"$pod\"}[$__rate_interval])",
+          "expr": "rate(atc_pg_drain_duplicate_skipped_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1716,7 +1716,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(increase(atc_pg_drain_unknown_kind_total[1h]))",
+          "expr": "sum(increase(atc_pg_drain_unknown_kind_total{job=\"$job\"}[1h]))",
           "legendFormat": "cluster (1h)",
           "range": true,
           "refId": "A"
@@ -1808,7 +1808,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "rate(atc_pg_listener_recv_errors_total{k8s_pod_name=~\"$pod\"}[$__rate_interval])",
+          "expr": "rate(atc_pg_listener_recv_errors_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval])",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1928,7 +1928,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "atc_pg_broadcast_watermark{k8s_pod_name=~\"$pod\"}",
+          "expr": "atc_pg_broadcast_watermark{job=\"$job\",k8s_pod_name=~\"$pod\"}",
           "legendFormat": "watermark {{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -1939,7 +1939,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "atc_pg_min_pending_seq{k8s_pod_name=~\"$pod\"}",
+          "expr": "atc_pg_min_pending_seq{job=\"$job\",k8s_pod_name=~\"$pod\"}",
           "legendFormat": "min_pending_seq {{k8s_pod_name}}",
           "range": true,
           "refId": "B"
@@ -2027,7 +2027,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "min(atc_pg_outbox_min_replica_watermark)",
+          "expr": "min(atc_pg_outbox_min_replica_watermark{job=\"$job\"})",
           "legendFormat": "cluster floor",
           "range": true,
           "refId": "A"
@@ -2123,7 +2123,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max(atc_pg_outbox_oldest_row_age_seconds)",
+          "expr": "max(atc_pg_outbox_oldest_row_age_seconds{job=\"$job\"})",
           "legendFormat": "oldest age (s)",
           "range": true,
           "refId": "A"
@@ -2211,7 +2211,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(atc_pg_outbox_rows_deleted_total[$__rate_interval]))",
+          "expr": "sum(rate(atc_pg_outbox_rows_deleted_total{job=\"$job\"}[$__rate_interval]))",
           "legendFormat": "rows deleted/s",
           "range": true,
           "refId": "A"
@@ -2311,7 +2311,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_startup_seconds{k8s_pod_name=~\"$pod\"}[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_startup_seconds{job=\"$job\",k8s_pod_name=~\"$pod\"}[1h])))",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -2406,7 +2406,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_shutdown_remaining_rows{k8s_pod_name=~\"$pod\"}[24h])))",
+          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_shutdown_remaining_rows{job=\"$job\",k8s_pod_name=~\"$pod\"}[24h])))",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -2507,7 +2507,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max by (k8s_pod_name) (process_cpu_usage_percent{k8s_pod_name=~\"$pod\"})",
+          "expr": "max by (k8s_pod_name) (process_cpu_usage_percent{job=\"$job\",k8s_pod_name=~\"$pod\"})",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -2595,7 +2595,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max by (k8s_pod_name) (process_memory_usage_byte{k8s_pod_name=~\"$pod\"})",
+          "expr": "max by (k8s_pod_name) (process_memory_usage_byte{job=\"$job\",k8s_pod_name=~\"$pod\"})",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -2683,7 +2683,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max by (k8s_pod_name) (process_memory_virtual_byte{k8s_pod_name=~\"$pod\"})",
+          "expr": "max by (k8s_pod_name) (process_memory_virtual_byte{job=\"$job\",k8s_pod_name=~\"$pod\"})",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -2771,7 +2771,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (k8s_pod_name, direction) (rate(process_disk_io_byte{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (k8s_pod_name, direction) (rate(process_disk_io_byte{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "{{direction}} {{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -2872,7 +2872,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (result, reason) (rate(atc_config_reload_total{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (result, reason) (rate(atc_config_reload_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "{{result}} / {{reason}}",
           "range": true,
           "refId": "A"
@@ -2960,7 +2960,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max(atc_config_runner_pools)",
+          "expr": "max(atc_config_runner_pools{job=\"$job\"})",
           "legendFormat": "pools",
           "range": true,
           "refId": "A"
@@ -3047,7 +3047,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_request_body_size_bytes{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_request_body_size_bytes{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p50 {{http_route}}",
           "range": true,
           "refId": "A"
@@ -3058,7 +3058,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_request_body_size_bytes{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_request_body_size_bytes{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p95 {{http_route}}",
           "range": true,
           "refId": "B"
@@ -3069,7 +3069,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_request_body_size_bytes{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_request_body_size_bytes{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p99 {{http_route}}",
           "range": true,
           "refId": "C"
@@ -3144,7 +3144,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_response_body_size_bytes{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (http_route) (rate(http_server_response_body_size_bytes{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p50 {{http_route}}",
           "range": true,
           "refId": "A"
@@ -3155,7 +3155,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_response_body_size_bytes{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (http_route) (rate(http_server_response_body_size_bytes{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p95 {{http_route}}",
           "range": true,
           "refId": "B"
@@ -3166,7 +3166,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_response_body_size_bytes{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (http_route) (rate(http_server_response_body_size_bytes{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}[$__rate_interval])))",
           "legendFormat": "p99 {{http_route}}",
           "range": true,
           "refId": "C"
@@ -3241,7 +3241,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "http_server_active_requests{k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}",
+          "expr": "http_server_active_requests{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -3252,7 +3252,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(http_server_active_requests{http_route!~\"/healthz|/readyz\"})",
+          "expr": "sum(http_server_active_requests{job=\"$job\",http_route!~\"/healthz|/readyz\"})",
           "legendFormat": "cluster",
           "range": true,
           "refId": "B"
@@ -3339,7 +3339,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "atc_ws_connections_active{k8s_pod_name=~\"$pod\"}",
+          "expr": "atc_ws_connections_active{job=\"$job\",k8s_pod_name=~\"$pod\"}",
           "legendFormat": "{{k8s_pod_name}}",
           "range": true,
           "refId": "A"
@@ -3350,7 +3350,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum(atc_ws_connections_active)",
+          "expr": "sum(atc_ws_connections_active{job=\"$job\"})",
           "legendFormat": "cluster",
           "range": true,
           "refId": "B"
@@ -3432,7 +3432,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (channel) (rate(atc_ws_lagged_evictions_total{k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
+          "expr": "sum by (channel) (rate(atc_ws_lagged_evictions_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__rate_interval]))",
           "legendFormat": "{{channel}}",
           "range": true,
           "refId": "A"
@@ -3469,6 +3469,33 @@
       },
       {
         "current": {
+          "selected": false,
+          "text": "atc",
+          "value": "atc"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(atc_build_info, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Service",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(atc_build_info, job)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
           "selected": true,
           "text": "All",
           "value": "$__all"
@@ -3477,7 +3504,7 @@
           "type": "prometheus",
           "uid": "${datasource}"
         },
-        "definition": "label_values(atc_build_info, k8s_pod_name)",
+        "definition": "label_values(atc_build_info{job=\"$job\"}, k8s_pod_name)",
         "hide": 0,
         "includeAll": true,
         "label": "Pod",
@@ -3485,7 +3512,7 @@
         "name": "pod",
         "options": [],
         "query": {
-          "query": "label_values(atc_build_info, k8s_pod_name)",
+          "query": "label_values(atc_build_info{job=\"$job\"}, k8s_pod_name)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,
