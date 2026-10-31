@@ -80,7 +80,7 @@ The seven elements:
 2. **Type** — counter / gauge / histogram.
 3. **Attributes** — every emitted attribute name AND its source. Distinguish *emitted* attributes (added by the application) from *injected* attributes (e.g., `pod`, `instance`, added by the collector at ingest).
 4. **Measures** — one sentence stating what the metric value means in operational terms (not implementation terms).
-5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (k8s_pod_name)` or `without (k8s_pod_name)` (OTLP path; substitute `pod` for scrape-discovery stacks).
+5. **Per-replica vs cluster scope** — is the value a property of one replica's process state, or a cluster-wide invariant? This determines whether dashboards aggregate `by (k8s_pod_name)` (OTLP path; substitute `pod` for scrape-discovery stacks) or with a plain `sum`, `max` or `min`. OTLP series carry more identity labels than the pod, so excluding only the pod label doesn't aggregate them.
 6. **Aggregation guidance** — recommended cross-replica aggregator (`avg`/`max`/`sum`/`p99`) with one-sentence rationale.
 7. **Example PromQL** — one canonical query an operator can paste into Grafana to see meaningful data. Queries assume the OTLP→Prometheus path (the collector translates OTel exponential histograms into Prometheus native histograms; see [Histogram aggregation](#histogram-aggregation) for the cross-format note on `*_bucket` series). Keep this element only when the query shape is non-obvious; standard forms (`rate(...)`, `sum by (...) (rate(...))`) are described in the operator guide and not repeated here.
 

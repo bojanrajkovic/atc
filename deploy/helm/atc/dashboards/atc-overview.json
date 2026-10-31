@@ -392,7 +392,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max without (k8s_pod_name, instance) (atc_config_runner_pools)",
+          "expr": "max(atc_config_runner_pools)",
           "legendFormat": "pools",
           "range": true,
           "refId": "A"
@@ -1716,7 +1716,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum without (k8s_pod_name, instance) (increase(atc_pg_drain_unknown_kind_total[1h]))",
+          "expr": "sum(increase(atc_pg_drain_unknown_kind_total[1h]))",
           "legendFormat": "cluster (1h)",
           "range": true,
           "refId": "A"
@@ -2027,7 +2027,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "min without (k8s_pod_name, instance) (atc_pg_outbox_min_replica_watermark)",
+          "expr": "min(atc_pg_outbox_min_replica_watermark)",
           "legendFormat": "cluster floor",
           "range": true,
           "refId": "A"
@@ -2123,7 +2123,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max without (k8s_pod_name, instance) (atc_pg_outbox_oldest_row_age_seconds)",
+          "expr": "max(atc_pg_outbox_oldest_row_age_seconds)",
           "legendFormat": "oldest age (s)",
           "range": true,
           "refId": "A"
@@ -2211,7 +2211,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum without (k8s_pod_name, instance) (rate(atc_pg_outbox_rows_deleted_total[$__rate_interval]))",
+          "expr": "sum(rate(atc_pg_outbox_rows_deleted_total[$__rate_interval]))",
           "legendFormat": "rows deleted/s",
           "range": true,
           "refId": "A"
@@ -2960,7 +2960,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max without (k8s_pod_name, instance) (atc_config_runner_pools)",
+          "expr": "max(atc_config_runner_pools)",
           "legendFormat": "pools",
           "range": true,
           "refId": "A"
@@ -3252,7 +3252,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum without (k8s_pod_name, instance) (http_server_active_requests{http_route!~\"/healthz|/readyz\"})",
+          "expr": "sum(http_server_active_requests{http_route!~\"/healthz|/readyz\"})",
           "legendFormat": "cluster",
           "range": true,
           "refId": "B"
@@ -3350,7 +3350,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum without (k8s_pod_name, instance) (atc_ws_connections_active)",
+          "expr": "sum(atc_ws_connections_active)",
           "legendFormat": "cluster",
           "range": true,
           "refId": "B"
