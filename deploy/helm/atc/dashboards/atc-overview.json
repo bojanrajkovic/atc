@@ -2233,9 +2233,9 @@
     },
     {
       "id": 32,
-      "type": "timeseries",
-      "title": "Drain startup latency p99 (1h)",
-      "description": "atc_pg_drain_startup_seconds p99 — wall time from initial COALESCE(MAX(seq),0) watermark seed through first drain pass exit. One observation per process lifetime. Panel mostly empty between deploys.",
+      "type": "bargauge",
+      "title": "Drain startup latency by pod",
+      "description": "atc_pg_drain_startup_seconds — wall time from initial COALESCE(MAX(seq),0) watermark seed through first drain pass exit, for each pod in the dashboard time range. Each process records one observation, so the histogram sum is that observation.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -2249,32 +2249,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "mode": "thresholds"
           },
           "mappings": [],
           "thresholds": {
@@ -2291,17 +2266,15 @@
         "overrides": []
       },
       "options": {
-        "legend": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
           "calcs": [
-            "max"
+            "lastNotNull"
           ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+          "fields": "",
+          "values": false
         }
       },
       "targets": [
@@ -2311,18 +2284,19 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_startup_seconds{job=\"$job\",k8s_pod_name=~\"$pod\"}[1h])))",
+          "expr": "max by (k8s_pod_name) (histogram_sum(last_over_time(atc_pg_drain_startup_seconds{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__range])))",
           "legendFormat": "{{k8s_pod_name}}",
-          "range": true,
-          "refId": "A"
+          "range": false,
+          "refId": "A",
+          "instant": true
         }
       ]
     },
     {
       "id": 33,
-      "type": "timeseries",
-      "title": "Drain shutdown remaining rows p99 (24h)",
-      "description": "atc_pg_drain_shutdown_remaining_rows p99 — outbox rows above this replica's watermark at drain task exit time. Sustained > DRAIN_BATCH_SIZE (500) prompts a drain-pass tuning review or longer terminationGracePeriodSeconds.",
+      "type": "bargauge",
+      "title": "Drain shutdown remaining rows by pod",
+      "description": "atc_pg_drain_shutdown_remaining_rows — outbox rows above the watermark when the drain task exited, for each pod in the dashboard time range. Each process records one observation, so the histogram sum is that observation. Yellow above one drain batch (500).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -2336,32 +2310,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "line"
-            }
+            "mode": "thresholds"
           },
           "mappings": [],
           "thresholds": {
@@ -2374,29 +2323,23 @@
               {
                 "color": "yellow",
                 "value": 500
-              },
-              {
-                "color": "red",
-                "value": 5000
               }
             ]
           },
-          "unit": "none"
+          "unit": "short"
         },
         "overrides": []
       },
       "options": {
-        "legend": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
           "calcs": [
-            "max"
+            "lastNotNull"
           ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
+          "fields": "",
+          "values": false
         }
       },
       "targets": [
@@ -2406,10 +2349,11 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (k8s_pod_name) (rate(atc_pg_drain_shutdown_remaining_rows{job=\"$job\",k8s_pod_name=~\"$pod\"}[24h])))",
+          "expr": "max by (k8s_pod_name) (histogram_sum(last_over_time(atc_pg_drain_shutdown_remaining_rows{job=\"$job\",k8s_pod_name=~\"$pod\"}[$__range])))",
           "legendFormat": "{{k8s_pod_name}}",
-          "range": true,
-          "refId": "A"
+          "range": false,
+          "refId": "A",
+          "instant": true
         }
       ]
     },

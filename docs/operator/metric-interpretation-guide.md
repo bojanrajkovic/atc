@@ -131,9 +131,9 @@ Counts NOTIFY arrivals observed by the listener while a drain pass was in flight
 
 `atc_pg_drain_startup_seconds` is one observation per process lifetime. Per the restart-recovery contract there is no historical replay; this measures startup readiness, not catch-up backlog.
 
-**Aggregation:** `max by (pod)` over a window covering recent deploys (1h) — the slowest replica's startup is the operational signal.
+**Aggregation:** `max by (pod)` of the last recorded sum over a window covering recent deploys. `rate()` needs two samples that differ, so it returns nothing for a process that records once.
 
-**Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_startup_seconds_bucket[1h])) by (le, pod))`
+**Example PromQL:** `max by (pod) (histogram_sum(last_over_time(atc_pg_drain_startup_seconds[7d])))`
 
 ---
 
@@ -145,9 +145,9 @@ The drain task completes the in-flight pass (if any) and stops, on the assumptio
 
 When the post-shutdown count query fails or exceeds its 1-second timeout, the observation is skipped (logged as a warning) rather than recorded as zero — `_count` only advances on successful observations. A flat zero on a pod that recently restarted indicates the count query failed at shutdown; check the application log for warnings.
 
-**Aggregation:** `histogram_quantile(0.99, ...)` `by (pod)` over a multi-deploy window (e.g. 24h) — the slowest replica's tail at shutdown is the actionable signal. `max by (pod) (rate(atc_pg_drain_shutdown_remaining_rows_count[24h]))` confirms each replica is recording observations across rollouts.
+**Aggregation:** `max by (pod)` of the last recorded sum over a multi-deploy window. Each process records once, so the sum is that pod's tail at shutdown and `rate()` returns nothing. `histogram_count(...)` in place of `histogram_sum(...)` confirms a pod recorded its observation.
 
-**Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_shutdown_remaining_rows_bucket[24h])) by (le, pod))`
+**Example PromQL:** `max by (pod) (histogram_sum(last_over_time(atc_pg_drain_shutdown_remaining_rows[7d])))`
 
 ---
 
