@@ -347,7 +347,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 12,
+        "w": 3,
         "x": 12,
         "y": 5
       },
@@ -394,6 +394,204 @@
           "editorMode": "code",
           "expr": "max(atc_config_runner_pools{job=\"$job\"})",
           "legendFormat": "pools",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 70,
+      "type": "stat",
+      "title": "NOTIFY received (1h)",
+      "description": "atc_pg_notify_received_total increase over 1h, per pod. Every replica receives every NOTIFY, so pods should match. A pod that falls behind has a stuck listener.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (k8s_pod_name) (increase(atc_pg_notify_received_total{job=\"$job\",k8s_pod_name=~\"$pod\"}[1h]))",
+          "legendFormat": "{{k8s_pod_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 71,
+      "type": "stat",
+      "title": "Parity rejections (1h)",
+      "description": "atc_pg_write_failures_total{kind=\"parity\"} increase over 1h. A sustained nonzero value means PG and the in-memory state machine have diverged. The series appears on the first rejection, and increase() cannot count that first sample.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(atc_pg_write_failures_total{job=\"$job\",k8s_pod_name=~\"$pod\",kind=\"parity\"}[1h])) or vector(0)",
+          "legendFormat": "rejections",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 72,
+      "type": "stat",
+      "title": "Oldest outbox row age",
+      "description": "atc_pg_outbox_oldest_row_age_seconds. No data when the outbox is empty. Healthy steady state stays near outbox_retention; a climb past it means the sweep is not deleting rows. Yellow past 8 days, red past 14, assuming the default 7-day retention.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 691200
+              },
+              {
+                "color": "red",
+                "value": 1209600
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "expr": "max(atc_pg_outbox_oldest_row_age_seconds{job=\"$job\"})",
+          "legendFormat": "oldest age",
           "range": true,
           "refId": "A"
         }
@@ -834,7 +1032,7 @@
           "color": "rgba(255,0,255,0.7)"
         },
         "filterValues": {
-          "le": 1e-09
+          "le": 1E-9
         },
         "legend": {
           "show": true
