@@ -2914,7 +2914,7 @@
     {
       "id": 50,
       "type": "row",
-      "title": "HTTP request/response sizes + in-flight",
+      "title": "HTTP request/response sizes",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -3118,92 +3118,6 @@
       ]
     },
     {
-      "id": 53,
-      "type": "timeseries",
-      "title": "HTTP in-flight requests",
-      "description": "http_server_active_requests — in-flight HTTP request count from axum-otel-metrics. Per-pod and cluster-wide.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 139
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 2,
-            "pointSize": 5,
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "editorMode": "code",
-          "expr": "http_server_active_requests{job=\"$job\",k8s_pod_name=~\"$pod\",http_route!~\"/healthz|/readyz\"}",
-          "legendFormat": "{{k8s_pod_name}}",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "editorMode": "code",
-          "expr": "sum(http_server_active_requests{job=\"$job\",http_route!~\"/healthz|/readyz\"})",
-          "legendFormat": "cluster",
-          "range": true,
-          "refId": "B"
-        }
-      ]
-    },
-    {
       "id": 60,
       "type": "row",
       "title": "WebSocket clients",
@@ -3212,7 +3126,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 145
+        "y": 139
       }
     },
     {
@@ -3228,7 +3142,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 146
+        "y": 140
       },
       "fieldConfig": {
         "defaults": {
@@ -3314,7 +3228,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 146
+        "y": 140
       },
       "fieldConfig": {
         "defaults": {
