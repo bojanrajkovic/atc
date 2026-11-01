@@ -29,6 +29,16 @@ tests:
           path: data["atc-overview.json"]
           pattern: '"uid"[[:space:]]*:[[:space:]]*"atc-overview"'
 
+  # OTLP series carry k8s_pod_uid, k8s_node_name, atc_git_sha and service_version,
+  # so excluding only the pod and instance labels aggregates nothing.
+  - it: aggregates cluster series without a "without" clause
+    set:
+      grafanaDashboard.enabled: true
+    asserts:
+      - notMatchRegex:
+          path: data["atc-overview.json"]
+          pattern: ' without \('
+
   - it: lands the ConfigMap in the override namespace when grafanaDashboard.namespace is set
     set:
       grafanaDashboard.enabled: true

@@ -93,7 +93,7 @@ Nonzero rate is the gap-healing rescan signal: the drain re-fetched a range of s
 
 The set of legal outbox `kind` values is fixed by a CHECK constraint, so this counter should be flat zero in any healthy deployment. A nonzero value is either a deploy-skew signal (an older replica writing a kind a newer replica does not understand) or a schema invariant violation. Alert on first observation.
 
-**Aggregation:** `sum without (pod, instance) (increase(...))` over a multi-hour window for the alert rule.
+**Aggregation:** `sum(increase(...))` over a multi-hour window for the alert rule.
 
 **Example PromQL:** `increase(atc_pg_drain_unknown_kind_total[1h])`
 
@@ -131,9 +131,9 @@ Counts NOTIFY arrivals observed by the listener while a drain pass was in flight
 
 `atc_pg_drain_startup_seconds` is one observation per process lifetime. Per the restart-recovery contract there is no historical replay; this measures startup readiness, not catch-up backlog.
 
-**Aggregation:** `max by (pod)` over a window covering recent deploys (1h) — the slowest replica's startup is the operational signal.
+**Aggregation:** `max by (pod)` of the last recorded sum over a window covering recent deploys. `rate()` needs two samples that differ, so it returns nothing for a process that records once.
 
-**Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_startup_seconds_bucket[1h])) by (le, pod))`
+**Example PromQL:** `max by (pod) (histogram_sum(last_over_time(atc_pg_drain_startup_seconds[7d])))`
 
 ---
 
@@ -145,15 +145,15 @@ The drain task completes the in-flight pass (if any) and stops, on the assumptio
 
 When the post-shutdown count query fails or exceeds its 1-second timeout, the observation is skipped (logged as a warning) rather than recorded as zero — `_count` only advances on successful observations. A flat zero on a pod that recently restarted indicates the count query failed at shutdown; check the application log for warnings.
 
-**Aggregation:** `histogram_quantile(0.99, ...)` `by (pod)` over a multi-deploy window (e.g. 24h) — the slowest replica's tail at shutdown is the actionable signal. `max by (pod) (rate(atc_pg_drain_shutdown_remaining_rows_count[24h]))` confirms each replica is recording observations across rollouts.
+**Aggregation:** `max by (pod)` of the last recorded sum over a multi-deploy window. Each process records once, so the sum is that pod's tail at shutdown and `rate()` returns nothing. `histogram_count(...)` in place of `histogram_sum(...)` confirms a pod recorded its observation.
 
-**Example PromQL:** `histogram_quantile(0.99, sum(rate(atc_pg_drain_shutdown_remaining_rows_bucket[24h])) by (le, pod))`
+**Example PromQL:** `max by (pod) (histogram_sum(last_over_time(atc_pg_drain_shutdown_remaining_rows[7d])))`
 
 ---
 
 ## Broadcast watermark and cluster-laggiest-replica signal
 
-`atc_pg_broadcast_watermark` is the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Display per pod; for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)` (or equivalently `min without (pod, instance)`).
+`atc_pg_broadcast_watermark` is the commit-order cursor read by `state_handler` as `lastSeq` in PG mode. Display per pod; for a single cluster-wide "laggiest replica" series, use `min(atc_pg_broadcast_watermark)`.
 
 **Example PromQL:** `atc_pg_broadcast_watermark`
 
@@ -167,15 +167,15 @@ Display alongside `atc_pg_min_pending_seq`. `atc_pg_min_pending_seq` has no seri
 
 Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica count. A sustained-zero rate after at least one full retention window indicates either the sweep predicate is rejecting everything (sub-floor retention misconfigured, no fresh heartbeats — verify `atc_pg_outbox_min_replica_watermark`) or the outbox is not growing (no incoming webhooks).
 
-**Aggregation:** `sum without (pod, instance) (rate(atc_pg_outbox_rows_deleted_total[5m]))` for cluster-wide rate; `rate(atc_pg_outbox_rows_deleted_total[5m])` per pod to compare contention shares.
+**Aggregation:** `sum(rate(atc_pg_outbox_rows_deleted_total[5m]))` for cluster-wide rate; `rate(atc_pg_outbox_rows_deleted_total[5m])` per pod to compare contention shares.
 
-**Example PromQL:** `sum without (pod, instance) (rate(atc_pg_outbox_rows_deleted_total[5m]))`
+**Example PromQL:** `sum(rate(atc_pg_outbox_rows_deleted_total[5m]))`
 
 `atc_pg_outbox_min_replica_watermark` is refreshed every 30 s by the outbox heartbeat task (coarse-grained relative to OTel collection cadence). All replicas should observe the same value within the heartbeat skew; divergence surfaces a stalled heartbeat task.
 
-**Aggregation:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` for the cluster-wide signal; per-pod comparison surfaces stalled replicas.
+**Aggregation:** `min(atc_pg_outbox_min_replica_watermark)` for the cluster-wide signal; per-pod comparison surfaces stalled replicas.
 
-**Example PromQL:** `min without (pod, instance) (atc_pg_outbox_min_replica_watermark)` (Grafana shows a gap when no series exists)
+**Example PromQL:** `min(atc_pg_outbox_min_replica_watermark)` (Grafana shows a gap when no series exists)
 
 ---
 
@@ -183,7 +183,7 @@ Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica co
 
 `atc_config_reload_total` distinguishes `result="success"` (`reason="applied"` or `reason="noop"`) from `result="failure"` (`reason="read"` | `"parse"` | `"validate"`). A sustained non-zero `reason="failure"` rate indicates the operator's most-recent YAML edit is invalid and the cluster is running on the previous good config.
 
-**Aggregation:** `sum without (pod, instance) (rate(atc_config_reload_total[5m]))` for cluster-wide reload rate; per-reason breakdown surfaces failure spikes.
+**Aggregation:** `sum(rate(atc_config_reload_total[5m]))` for cluster-wide reload rate; per-reason breakdown surfaces failure spikes.
 
 **Example PromQL:** `sum by (reason) (rate(atc_config_reload_total[5m]))`
 
@@ -193,9 +193,9 @@ Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica co
 
 `atc_config_runner_pools` reflects the startup-loaded count until the first applied reload, then tracks the latest applied reload's pool count. All replicas mount the same ConfigMap so values should match within the kubelet sync window; divergence (~60 s skew) is normal during a rolling ConfigMap update.
 
-**Aggregation:** `max without (pod, instance) (atc_config_runner_pools)` for the cluster-wide pool count; per-pod divergence during a rolling reload is expected.
+**Aggregation:** `max(atc_config_runner_pools)` for the cluster-wide pool count; per-pod divergence during a rolling reload is expected.
 
-**Example PromQL:** `max without (pod, instance) (atc_config_runner_pools)`
+**Example PromQL:** `max(atc_config_runner_pools)`
 
 ---
 
@@ -203,9 +203,9 @@ Healthy at steady state: `rate(...)` ≈ outbox write rate divided by replica co
 
 `atc_ws_connections_active` counts in-flight `handle_socket` tasks per replica. Cluster-wide value is the sum across pods.
 
-**Aggregation:** `sum without (pod, instance) (atc_ws_connections_active)`.
+**Aggregation:** `sum(atc_ws_connections_active)`.
 
-**Example PromQL:** `sum without (pod, instance) (atc_ws_connections_active)`
+**Example PromQL:** `sum(atc_ws_connections_active)`
 
 ---
 

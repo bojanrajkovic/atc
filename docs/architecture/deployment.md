@@ -179,6 +179,8 @@ The chart ships an opt-in Grafana dashboard at `deploy/helm/atc/dashboards/atc-o
 
 Both can be enabled simultaneously when transitioning between discovery mechanisms or running both in parallel.
 
+Every query filters on a `job` dashboard variable because `http_server_*` names are shared with other OTel services. The variable lists the `job` values of `atc_build_info`, so the dashboard keeps working when `otel.serviceName` or a `service.namespace` resource attribute changes the label.
+
 Key knobs: `grafanaDashboard.namespace` (override ConfigMap namespace; empty renders in release namespace), `grafanaDashboard.annotations` (common: `grafana_folder: "ATC"`, `k8s-sidecar-target-directory`), `grafanaDashboard.grafanaOperator.folderRef`, `grafanaDashboard.grafanaOperator.resyncPeriod`.
 
 Every panel's datasource reference uses a `${datasource}` template variable of type `datasource` with `query: prometheus`, so Grafana resolves it against whichever Prometheus datasource(s) the operator has configured — no chart-side string substitution. Panel queries use the native histogram form (`Base2ExponentialHistogram`); operators running collectors that emit only classic histograms must translate to the classic `_bucket`-based form. See `docs/architecture/metrics.md` § Histogram aggregation.
