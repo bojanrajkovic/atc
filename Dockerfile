@@ -6,7 +6,7 @@
 # renovate: datasource=docker depName=rust
 ARG RUST_VERSION=1.99.1
 # renovate: datasource=docker depName=node
-ARG NODE_VERSION=25.9.0
+ARG NODE_VERSION=26.13.0
 
 # ---- Stage 1: Frontend ----
 # Build Svelte SPA with Vite. Output: /app/frontend/dist/
