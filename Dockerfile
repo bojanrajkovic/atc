@@ -79,7 +79,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Distroless minimal image (~32 MB). No shell, no package manager.
 # Mirrored in Dockerfile.release (the release pipeline's prebuilt-binary path)
 # — keep the base digest, USER, EXPOSE, and ENTRYPOINT in sync with that file.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1
 COPY --from=builder /app/backend/target/release/atc-server /atc-server
 USER 65532:65532
 EXPOSE 8080
