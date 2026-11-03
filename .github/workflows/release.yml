@@ -541,7 +541,7 @@ jobs:
       # .mise.toml — keeps local dry-runs and CI on the same `cr` binary.
       - uses: helm/chart-releaser-action@df287104677278f869ca5480bd260358397cc3f9 # v1.8.0
         with:
-          version: v1.9.0
+          version: v1.10.1
           charts_dir: deploy/helm
           config: deploy/helm/cr.yaml
           pages_branch: gh-pages
