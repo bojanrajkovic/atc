@@ -13,7 +13,7 @@ catalog:
   '@vitest/browser-playwright': 5.0.5
   '@vitest/coverage-v8': 5.0.5
   '@lucide/svelte': 1.66.0
-  'bits-ui': 2.20.2
+  'bits-ui': 2.20.3
   clsx: 2.1.1
   'command-score': 0.1.2
   eslint: 10.14.0
