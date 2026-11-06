@@ -231,8 +231,8 @@ catalogs:
       specifier: 4.1.1
       version: 4.1.1
     shadcn-svelte:
-      specifier: 1.7.2
-      version: 1.7.2
+      specifier: 1.8.0
+      version: 1.8.0
     svelte:
       specifier: 5.57.3
       version: 5.57.3
@@ -273,7 +273,7 @@ importers:
         version: 0.1.2
       shadcn-svelte:
         specifier: 'catalog:'
-        version: 1.7.2(svelte@5.57.3(@typescript-eslint/types@8.72.1))
+        version: 1.8.0(svelte@5.57.3(@typescript-eslint/types@8.72.1))
       svelte:
         specifier: 'catalog:'
         version: 5.57.3(@typescript-eslint/types@8.72.1)
@@ -1833,8 +1833,8 @@ packages:
   set-cookie-parser@3.2.2:
     resolution: {integrity: sha512-df017qMeYuXo4emL09nlyMpi2i2MtEIKS/6jtXH3vmjFgIRsOi852/5RmhJ4EkvN3ZF8jXadM/EkTPXgc8yPIw==}
 
-  shadcn-svelte@1.7.2:
-    resolution: {integrity: sha512-VcFgfCupRK58kVuNrobWz+Smv0wryxW1bNZYvrMqYbm7gOfTEIb/Jy7C6y0N8Ry3/d0oAzvTRPzFu2V8u0nhMA==}
+  shadcn-svelte@1.8.0:
+    resolution: {integrity: sha512-B9EEH85xYUdLP12Dyf6raqMbtOGLeg47wnSd7+dTCmWibO6jHZg85alBo0pQsJkAiQ8IolNU/5RBjyOxNl//HQ==}
     hasBin: true
     peerDependencies:
       svelte: ^5.0.0
@@ -3506,7 +3506,7 @@ snapshots:
 
   set-cookie-parser@3.2.2: {}
 
-  shadcn-svelte@1.7.2(svelte@5.57.3(@typescript-eslint/types@8.72.1)):
+  shadcn-svelte@1.8.0(svelte@5.57.3(@typescript-eslint/types@8.72.1)):
     dependencies:
       cn: 0.3.3
       commander: 14.0.3
