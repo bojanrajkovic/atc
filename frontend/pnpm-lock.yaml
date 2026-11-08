@@ -204,8 +204,8 @@ catalogs:
       specifier: 5.1.0
       version: 5.1.0
     bits-ui:
-      specifier: 2.20.5
-      version: 2.20.5
+      specifier: 2.20.6
+      version: 2.20.6
     clsx:
       specifier: 2.1.1
       version: 2.1.1
@@ -322,7 +322,7 @@ importers:
         version: 5.1.0(@vitest/browser@5.1.0)(vitest@5.1.0)
       bits-ui:
         specifier: 'catalog:'
-        version: 2.20.5(@internationalized/date@3.12.4)(svelte@5.57.3(@typescript-eslint/types@8.72.1))
+        version: 2.20.6(@internationalized/date@3.12.4)(svelte@5.57.3(@typescript-eslint/types@8.72.1))
       eslint:
         specifier: 'catalog:'
         version: 10.14.0(jiti@2.7.0)(supports-color@7.2.0)
@@ -1096,8 +1096,8 @@ packages:
   bidi-js@1.1.0:
     resolution: {integrity: sha512-fX1Onk0tdVPC7obPWB5EbJ1z7NVhLq4m2xZLq2YXBkxzMXIGRpNMU88n0EPgWseKl12J7zXs7qrDxPK4sRs2fg==}
 
-  bits-ui@2.20.5:
-    resolution: {integrity: sha512-8NFzjKKVyU8oLyKGmum+sYYQXI8T/aq8XogS5zUPMddqgRAVFbyZ7qDIpK9RTpiJF5E7CyOVEWUzlcDwrTf5ZA==}
+  bits-ui@2.20.6:
+    resolution: {integrity: sha512-V4fgaFAtw+d8xS+3SBuLqouDsAo06991oJnW3hdEx0O1O/sl+BGLKKdZ0i4ZI1mgqT0JXJJ+6avI750OkvgZrA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@internationalized/date': ^3.8.1
@@ -1898,8 +1898,8 @@ packages:
       svelte:
         optional: true
 
-  svelte-toolbelt@0.10.6:
-    resolution: {integrity: sha512-YWuX+RE+CnWYx09yseAe4ZVMM7e7GRFZM6OYWpBKOb++s+SQ8RBIMMe+Bs/CznBMc0QPLjr+vDBxTAkozXsFXQ==}
+  svelte-toolbelt@0.10.7:
+    resolution: {integrity: sha512-gjuUVEEpo38UJCeI1ssE3NxG31tYENczPTcTGTXf4338qAQNdR9I1oAEbQY0KQFmbdUojNIhHuRNix7ThwFNxQ==}
     engines: {node: '>=18', pnpm: '>=8.7.0'}
     peerDependencies:
       svelte: ^5.30.2
@@ -2833,7 +2833,7 @@ snapshots:
     dependencies:
       require-from-string: 2.0.2
 
-  bits-ui@2.20.5(@internationalized/date@3.12.4)(svelte@5.57.3(@typescript-eslint/types@8.72.1)):
+  bits-ui@2.20.6(@internationalized/date@3.12.4)(svelte@5.57.3(@typescript-eslint/types@8.72.1)):
     dependencies:
       '@floating-ui/core': 1.8.0
       '@floating-ui/dom': 1.8.0
@@ -2841,7 +2841,7 @@ snapshots:
       esm-env: 1.2.2
       runed: 0.35.1(svelte@5.57.3(@typescript-eslint/types@8.72.1))
       svelte: 5.57.3(@typescript-eslint/types@8.72.1)
-      svelte-toolbelt: 0.10.6(svelte@5.57.3(@typescript-eslint/types@8.72.1))
+      svelte-toolbelt: 0.10.7(svelte@5.57.3(@typescript-eslint/types@8.72.1))
       tabbable: 6.5.1
     transitivePeerDependencies:
       - '@sveltejs/kit'
@@ -3580,7 +3580,7 @@ snapshots:
     optionalDependencies:
       svelte: 5.57.3(@typescript-eslint/types@8.72.1)
 
-  svelte-toolbelt@0.10.6(svelte@5.57.3(@typescript-eslint/types@8.72.1)):
+  svelte-toolbelt@0.10.7(svelte@5.57.3(@typescript-eslint/types@8.72.1)):
     dependencies:
       clsx: 2.1.1
       runed: 0.35.1(svelte@5.57.3(@typescript-eslint/types@8.72.1))
