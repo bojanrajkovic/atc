@@ -30,7 +30,7 @@ catalog:
   'tailwind-variants': 4.0.1
   tailwindcss: 4.3.4
   typescript: 6.0.3
-  vite: 8.3.5
+  vite: 8.3.6
   vitest: 5.1.0
 allowBuilds:
   msw: true
