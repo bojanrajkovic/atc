@@ -509,11 +509,20 @@ jobs:
     needs: publish-helm-chart
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-26.04
-    permissions:
-      # `contents: write` covers the gh-pages push and the per-chart GitHub
-      # Release. Pages serves passively from the branch — no `pages: write`.
-      contents: write
+    # The releaser bot's private key is a secret of this environment.
+    environment: release
+    permissions: {}
     steps:
+      # chart-releaser creates the `atc-<version>` tag. The tag ruleset lets
+      # only admins and the releaser bot create tags, and GITHUB_TOKEN is
+      # neither. `contents: write` also covers the gh-pages push.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASER_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASER_BOT_PRIVATE_KEY }}
+          permission-contents: write
+
       # fetch-depth: 0 — chart-releaser diffs the chart against prior tags to
       # decide what's new. Shallow clones make it think nothing changed and
       # silently no-op.
@@ -548,4 +557,4 @@ jobs:
           mark_as_latest: false
           skip_existing: true
         env:
-          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CR_TOKEN: ${{ steps.app-token.outputs.token }}
