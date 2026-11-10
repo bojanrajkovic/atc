@@ -80,15 +80,15 @@ server-side string check, so the handler's match stays exhaustive.
 
 Every webhook outcome emits exactly one boundary log line so an operator can tell
 "webhook never arrived" from "arrived but unhandled" from "handled but rejected"
-at the default `info` filter. The level policy and the rationale for emitting
-skipped/ping at INFO live in [metrics.md](metrics.md) § "Webhook boundary logs";
-the lines are:
+at the default `info` filter. A committed transition is the exception: it logs at
+DEBUG, and the `webhook.handler` span records it. The level policy and its
+rationale live in [metrics.md](metrics.md) § "Webhook boundary logs"; the lines are:
 
 | Outcome | Level | Message | Fields |
 |---------|-------|---------|--------|
 | Ping | INFO | `ping received` | `event_type`, `delivery_id` |
 | Skipped (unhandled type) | INFO | `event skipped` | `event_type`, `delivery_id` |
-| State transition committed | INFO | `event accepted` | `event_type`, `seq`, `run_id`, `job_id` (jobs), `delivery_id` |
+| State transition committed | DEBUG | `event accepted` | `event_type`, `seq`, `run_id`, `job_id` (jobs), `delivery_id` |
 | Invalid transition (rejected) | WARN | `transition invalid; rejecting` | `event_type`, `run_id`, `job_id` (jobs), `delivery_id` |
 | Missing signature header | WARN | `missing X-Hub-Signature-256 header` | `delivery_id` |
 | Signature verification failed | WARN | `HMAC verification failed` | `delivery_id` |
@@ -137,7 +137,7 @@ Every timestamp column (`created_at`, `expires_at`, `repos_refreshed_at`) is bou
 
 ## OAuth login and callback (`auth.github`)
 
-`GET /v1/auth/github/login`, `GET /v1/auth/github/callback`, `POST /v1/auth/github/logout`, and `GET /v1/auth/me` (all `auth.rs`) are merged into the router only when `auth.mode = "github"` — `routes::api_routes` takes an `auth_enabled` flag and conditionally `.merge()`s them, so a disabled mode 404s the same way any unmounted path does rather than via a runtime check inside the handlers. `main.rs` wraps the fully composed app (API routes + asset fallback) in `routes::with_request_tracing` — a blanket `tower_http::TraceLayer` giving every request an `http.request` trace span, not just the routes with their own hand-rolled span; see [metrics.md § Span inventory](metrics.md#span-inventory). That same span records its own `trace_id`/`span_id`, which JSON logging's `with_span_list(true)` then bubbles onto every log line nested under it — see [metrics.md § OTel pipeline](metrics.md#otel-pipeline).
+`GET /v1/auth/github/login`, `GET /v1/auth/github/callback`, `POST /v1/auth/github/logout`, and `GET /v1/auth/me` (all `auth.rs`) are merged into the router only when `auth.mode = "github"` — `routes::api_routes` takes an `auth_enabled` flag and conditionally `.merge()`s them, so a disabled mode 404s the same way any unmounted path does rather than via a runtime check inside the handlers. `main.rs` wraps the fully composed app (API routes + asset fallback) in `routes::with_request_tracing` — a blanket `tower_http::TraceLayer` giving every request an `http.request` trace span, not just the routes with their own hand-rolled span; see [metrics.md § Span inventory](metrics.md#span-inventory). That same span records its own `trace_id`/`span_id`, which JSON logging's `with_span_list(true)` then puts in the `spans` list of every log line nested under it — see [metrics.md § OTel pipeline](metrics.md#otel-pipeline).
 
 ```mermaid
 sequenceDiagram

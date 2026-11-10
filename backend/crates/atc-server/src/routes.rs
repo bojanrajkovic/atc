@@ -239,11 +239,16 @@ pub fn with_request_tracing(router: Router) -> Router {
                 let span = info_span!(
                     "http.request",
                     http.request.method = %req.method(),
-                    http.route = %req.uri().path(),
+                    http.route = field::Empty,
                     http.response.status_code = field::Empty,
                     trace_id = field::Empty,
                     span_id = field::Empty,
                 );
+                // A request that matches no route (the asset fallback) has no
+                // template, and the raw path is unbounded, so the field stays unset.
+                if let Some(path) = req.extensions().get::<axum::extract::MatchedPath>() {
+                    span.record("http.route", path.as_str());
+                }
                 let parent_cx = opentelemetry::global::get_text_map_propagator(|prop| {
                     prop.extract(&HeaderExtractor(req.headers()))
                 });
@@ -443,7 +448,7 @@ async fn webhook_handler(
                         Ok(seq) => {
                             match &event {
                                 atc_github::WebhookEvent::Run(env) => {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         event_type,
                                         seq,
                                         run_id = env.run_id.0,
@@ -452,7 +457,7 @@ async fn webhook_handler(
                                     );
                                 }
                                 atc_github::WebhookEvent::Job(env) => {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         event_type,
                                         seq,
                                         run_id = env.run_id.0,

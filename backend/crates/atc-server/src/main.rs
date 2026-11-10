@@ -69,6 +69,8 @@ fn init_tracing_subscriber(cfg: &config::Config, otel_handles: Option<&OtelHandl
     if matches!(cfg.log_format, config::LogFormat::Json) {
         let fmt_layer = tracing_subscriber::fmt::layer()
             .json()
+            .flatten_event(true)
+            .with_current_span(false)
             .with_span_list(true)
             .boxed();
         tracing_subscriber::registry()

@@ -136,6 +136,32 @@ async fn healthz_emits_blanket_http_request_span() {
     );
 }
 
+/// A path that matches no route reaches the asset fallback, which has no
+/// route template. `http.route` stays unset instead of taking the raw path,
+/// whose values are unbounded.
+#[tokio::test]
+#[serial_test::serial]
+async fn unmatched_path_leaves_http_route_unset() {
+    common::ensure_recorder_installed();
+    common::reset_spans();
+
+    let app = build_full_app();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/no/such/route.php")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let _ = to_bytes(response.into_body(), usize::MAX).await;
+
+    let spans = common::read_finished_spans();
+    let root = span_named(&spans, "http.request").expect("http.request span must be exported");
+    assert_eq!(attribute_str(root, "http.route"), None);
+}
+
 /// The blanket layer honors an incoming W3C `traceparent` on ANY route, not
 /// just the webhook endpoint — e.g. a service-mesh sidecar (Istio, Envoy
 /// Gateway) with tracing enabled stamps one on every request it forwards,
