@@ -196,7 +196,8 @@ fn parse_job_conclusion(s: &str) -> Result<JobConclusion, ParseError> {
 
 fn parse_step_status(s: &str, step_name: &str) -> Result<StepStatus, ParseError> {
     match s {
-        "queued" => Ok(StepStatus::Queued),
+        // GitHub reports a step that hasn't started as `pending` on in-progress jobs.
+        "queued" | "pending" => Ok(StepStatus::Queued),
         "in_progress" => Ok(StepStatus::InProgress),
         "completed" => Ok(StepStatus::Completed),
         other => Err(ParseError::UnknownStatus {

@@ -433,6 +433,48 @@ fn test_unknown_conclusion_workflow_job() {
 }
 
 #[test]
+fn test_pending_step_status_is_queued() {
+    let steps = vec![StepData {
+        number: 1,
+        name: "Setup".to_string(),
+        status: "pending".to_string(),
+        conclusion: None,
+        started_at: None,
+        completed_at: None,
+    }];
+
+    let webhook_job = WorkflowJobData {
+        id: 987_654,
+        run_id: 123_456,
+        name: "test-job".to_string(),
+        status: "in_progress".to_string(),
+        conclusion: None,
+        created_at: fixed_test_timestamp(),
+        started_at: Some(fixed_test_timestamp()),
+        completed_at: None,
+        steps,
+        labels: vec![],
+        run_attempt: 1,
+        runner_id: None,
+        runner_name: None,
+        runner_group_name: None,
+    };
+
+    let webhook = WorkflowJobWebhook {
+        action: "in_progress".to_string(),
+        workflow_job: webhook_job,
+        repository: test_repository(),
+    };
+
+    let result = translate_job(webhook).expect("should translate");
+
+    match result.action {
+        JobEvent::InProgress { steps, .. } => assert_eq!(steps[0].status, StepStatus::Queued),
+        _ => panic!("expected InProgress variant"),
+    }
+}
+
+#[test]
 fn test_unknown_step_status() {
     let steps = vec![StepData {
         number: 1,
