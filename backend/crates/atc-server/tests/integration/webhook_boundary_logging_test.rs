@@ -176,7 +176,7 @@ async fn skipped_event_logs_at_info_with_delivery_id() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn accepted_run_logs_with_run_id() {
+async fn accepted_run_logs_at_debug_with_run_id() {
     let events = capture_webhook_logs(
         "workflow_run",
         "d-run-1",
@@ -187,7 +187,7 @@ async fn accepted_run_logs_with_run_id() {
     assert_eq!(status_of(&events), 200, "accepted returns 200");
 
     let line = find(&events, "event accepted");
-    assert_eq!(line.level, Level::INFO, "accepted must log at INFO");
+    assert_eq!(line.level, Level::DEBUG, "accepted must log at DEBUG");
     assert!(
         line.fields.contains_key("seq"),
         "accepted line must carry seq"
