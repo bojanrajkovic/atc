@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/bojanrajkovic/atc/compare/v0.6.0...v0.6.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **github:** accept the pending step status on workflow_job webhooks ([#837](https://github.com/bojanrajkovic/atc/issues/837)) ([3a16e86](https://github.com/bojanrajkovic/atc/commit/3a16e865e316f078a787277e99d38aa6ef1c0582))
+
 ## [0.6.0](https://github.com/bojanrajkovic/atc/compare/v0.5.1...v0.6.0) (2026-11-10)
 
 
