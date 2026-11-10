@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/bojanrajkovic/atc/compare/v0.5.1...v0.6.0) (2026-11-10)
+
+
+### Features
+
+* **server:** flatten JSON logs, record the route template, log accepted events at debug ([#833](https://github.com/bojanrajkovic/atc/issues/833)) ([63ee1d7](https://github.com/bojanrajkovic/atc/commit/63ee1d72ff33380813cf3de5dae3ec25403ded76))
+
+
+### Bug Fixes
+
+* **deps:** update rust crate uuid to v1.29.1 ([#830](https://github.com/bojanrajkovic/atc/issues/830)) ([0eb7a81](https://github.com/bojanrajkovic/atc/commit/0eb7a81e21f7dd3ea27e9fdc8a9303487aed72b4))
+
 ## [0.5.1](https://github.com/bojanrajkovic/atc/compare/v0.5.0...v0.5.1) (2026-11-01)
 
 
