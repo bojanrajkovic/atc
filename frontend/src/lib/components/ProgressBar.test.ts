@@ -21,7 +21,7 @@ describe('ProgressBar', () => {
     it('applies transform-origin 0 50% for left-edge fill growth', () => {
       const { container } = render(ProgressBar, { props: { completed: 3, total: 5 } })
       const fill = container.querySelector('.progress-fill')
-      expect(fill?.getAttribute('style')).toContain('transform-origin: 0 50%')
+      expect(fill?.getAttribute('style')).toMatch(/transform-origin: 0(px)? 50%/)
     })
   })
 
