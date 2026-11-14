@@ -54,6 +54,7 @@ just build    # Production build
   - `backend/crates/atc-store-pg/` — Postgres `PersistentStore` implementation: writes + outbox + drain + retention + snapshot reads + `PgMetrics` + embedded migrations.
   - `backend/crates/atc-server/` — Axum HTTP server: routes, WS handler, config + hot-reload watcher, OTel init, shutdown orchestration, asset serving with dev-proxy fallback. The only executable crate.
 - `frontend/` — Svelte 5 + Vite SPA with Tailwind v4 OKLCH design system
+- `menubar/` — macOS menu bar app (Swift package, no Xcode project) that lists the latest jobs from an ATC server
 - `deploy/helm/` — Helm chart at `deploy/helm/atc/`
 - `.impeccable.md` — Design system config (brand, color tokens, type scale, accessibility)
 - `Dockerfile` — Multi-stage container build (cargo-chef caching, distroless runtime)
@@ -74,6 +75,7 @@ just build    # Production build
 | Architecture docs (why + what) | `docs/architecture/` (created per feature) |
 | Operator runbooks (how) | `docs/operator/` (auth-proxy recipes, integration patterns) |
 | Deployment architecture | `docs/architecture/deployment.md` |
+| Menubar app (macOS) | `docs/architecture/menubar-app.md` |
 | Observability (metrics + spans + OTel pipeline) | `docs/architecture/metrics.md` |
 | Architecture decisions (ADRs) | `docs/architecture-decisions/` |
 | Design plans | `docs/design-plans/` |

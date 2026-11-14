@@ -44,7 +44,7 @@
 #                                        (enforced via the path-prefix bypass
 #                                        in check-docs.sh)
 #   - directory-level CLAUDE.md / AGENTS.md files under backend/crates/*/,
-#     frontend/, deploy/helm/atc/, .github/ — they're derived from the
+#     frontend/, menubar/, deploy/helm/atc/, .github/ — they're derived from the
 #     architecture docs they point at
 #
 # Changes to anything in the list above pass the gate silently. If a file
@@ -225,3 +225,13 @@ mappings:
       - renovate.json
     docs:
       - docs/architecture/ci-pipeline.md
+
+  # menubar: macOS menu bar app (Swift package)
+  - patterns:
+      - menubar/Sources/*
+      - menubar/Package.swift
+      - menubar/build.sh
+      - menubar/Makefile
+      - menubar/Resources/*
+    docs:
+      - docs/architecture/menubar-app.md
