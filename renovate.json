@@ -16,17 +16,14 @@
   "automerge": false,
   "platformAutomerge": true,
   "automergeStrategy": "squash",
-  "minimumReleaseAge": "3 days",
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "enabled": true,
-    "schedule": ["at any time"],
     "labels": ["security"]
   },
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true,
-    "schedule": ["before 5am on sunday"]
+    "automerge": true
   },
   "packageRules": [
     {
@@ -48,10 +45,9 @@
       "automerge": false
     },
     {
-      "description": "Pin and digest updates: automerge with no release-age delay (mechanical changes).",
+      "description": "Pin and digest updates: automerge (mechanical changes).",
       "matchUpdateTypes": ["pin", "digest", "pinDigest"],
-      "automerge": true,
-      "minimumReleaseAge": "0 days"
+      "automerge": true
     },
     {
       "description": "Never manage our own first-party image in the chart's default values. image.tag is intentionally empty so the deployment template resolves it to .Chart.AppVersion; digest-pinning it appends @sha256 to an empty tag and renders a malformed `repo:@sha256:...` reference (InvalidImageName). appVersion already tracks the release.",
@@ -241,16 +237,14 @@
       "automerge": false
     },
     {
-      "description": "Security advisories: bypass schedule and release-age; automerge non-major. Both schedule and automergeSchedule are needed: the former gates branch/PR creation, the latter gates Renovate's automerge poll.",
-      "matchCategories": ["security"],
-      "automerge": true,
-      "minimumReleaseAge": null,
-      "schedule": ["at any time"],
-      "automergeSchedule": ["at any time"]
+      "description": "Vulnerability fixes: automerge non-major, overriding the per-package no-automerge rules above. vulnerabilityAlerts already skips the release age and schedule. Kept here, not in vulnerabilityAlerts.automerge: vulnerabilityAlerts is applied as a forced override that no packageRule can undo, so majors couldn't stay manual. After the per-package rules, so it wins.",
+      "matchJsonata": ["isVulnerabilityAlert"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
     },
     {
-      "description": "Major security advisories: manual review. Overrides the catch-all security automerge above.",
-      "matchCategories": ["security"],
+      "description": "Vulnerability fixes that need a major: manual review.",
+      "matchJsonata": ["isVulnerabilityAlert"],
       "matchUpdateTypes": ["major"],
       "automerge": false
     }
