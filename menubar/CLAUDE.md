@@ -14,4 +14,5 @@ macOS menu bar app that lists the latest jobs from an ATC server. A Swift packag
 make build    # Debug build into build/ATCMenubar.app
 make run      # Build and launch
 make test     # ATCKit tests
+make dist TEAM_ID=XXXXXXXXXX   # Signed, notarized zip in dist/
 ```

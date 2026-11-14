@@ -8,7 +8,9 @@
 # bundles and signs. Xcode is only the toolchain provider.
 #
 # Environment:
-#   SIGN_IDENTITY  codesign identity. Defaults to ad-hoc ("-").
+#   SIGN_IDENTITY  codesign identity. Defaults to ad-hoc ("-"). A real
+#                  identity also gets the hardened runtime and a secure
+#                  timestamp, which notarization requires.
 #   VERSION        CFBundleShortVersionString to stamp (default 0.0.0).
 #
 set -euo pipefail
@@ -39,6 +41,10 @@ sed -e "s/__SHORT_VERSION__/$VERSION/g" \
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "→ codesign ($SIGN_IDENTITY)"
-codesign --force --sign "$SIGN_IDENTITY" "$APP"
+sign_args=(--force --sign "$SIGN_IDENTITY")
+if [ "$SIGN_IDENTITY" != "-" ]; then
+	sign_args+=(--options runtime --timestamp)
+fi
+codesign "${sign_args[@]}" "$APP"
 codesign --verify --verbose=1 "$APP"
 echo "✓ built $APP"

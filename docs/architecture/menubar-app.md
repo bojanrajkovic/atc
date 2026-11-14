@@ -18,9 +18,20 @@ cd menubar
 make run       # debug build, then launch
 make test      # ATCKit tests
 make install   # release build into /Applications
+make dist TEAM_ID=XXXXXXXXXX   # signed, notarized zip in dist/
 ```
 
 On first launch the popover asks for the server's URL, such as `https://atc.example.com`. The gear button edits it later. The URL is stored in the app's user defaults under `server`.
+
+### Open at login
+
+A copy in `/Applications` registers itself as a login item on its first launch, through `SMAppService`. It registers only once, so turning it off sticks. The **Open at login** checkbox behind the gear button, or System Settings → General → Login Items, changes it. A build run from `build/` never registers itself.
+
+### Signed release
+
+`make dist` signs the release build with the team's Developer ID certificate, the hardened runtime, and a secure timestamp. It then submits a zip to Apple's notary service, staples the ticket to the app, and writes `dist/ATCMenubar-<version>-macos.zip`.
+
+It needs two things in the keychain: the Developer ID Application certificate for `TEAM_ID`, and notary credentials stored under the profile named by `NOTARY_PROFILE`. The app needs no entitlements.
 
 ## Data flow
 

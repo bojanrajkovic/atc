@@ -1,4 +1,5 @@
 import ATCKit
+import ServiceManagement
 import SwiftUI
 
 struct JobsView: View {
@@ -6,13 +7,14 @@ struct JobsView: View {
     /// The server URL being typed. Saved on Return, so a half-typed URL is never stored.
     @State private var draft = UserDefaults.standard.string(forKey: Feed.serverKey) ?? ""
     @State private var editingServer = false
+    @State private var opensAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             if feed.rows.isEmpty { emptyState } else { jobList }
-            if editingServer || feed.phase == .needsServer { serverField }
+            if editingServer || feed.phase == .needsServer { settings }
             Divider()
             footer
         }
@@ -87,18 +89,30 @@ struct JobsView: View {
         }
     }
 
-    private var serverField: some View {
-        TextField("https://atc.example.com", text: $draft)
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 12))
-            .onSubmit {
-                UserDefaults.standard.set(draft.trimmingCharacters(in: .whitespaces), forKey: Feed.serverKey)
-                editingServer = false
-                feed.start()
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
-            .accessibilityLabel("ATC server URL")
+    private var settings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("https://atc.example.com", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    UserDefaults.standard.set(draft.trimmingCharacters(in: .whitespaces), forKey: Feed.serverKey)
+                    editingServer = false
+                    feed.start()
+                }
+                .accessibilityLabel("ATC server URL")
+            Toggle("Open at login", isOn: $opensAtLogin)
+                .toggleStyle(.checkbox)
+                .onChange(of: opensAtLogin) { _, enabled in
+                    do {
+                        if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                    } catch {
+                        // macOS refused, for example for an unsigned build; show the real state.
+                        opensAtLogin = SMAppService.mainApp.status == .enabled
+                    }
+                }
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
     }
 
     private var footer: some View {
@@ -118,7 +132,7 @@ struct JobsView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
             }
-            IconButton(symbol: "gearshape", label: "Server") {
+            IconButton(symbol: "gearshape", label: "Settings") {
                 withAnimation(.snappy(duration: 0.2)) { editingServer.toggle() }
             }
             IconButton(symbol: "power", label: "Quit ATC") { NSApp.terminate(nil) }
