@@ -154,7 +154,7 @@ Renovate manages dependency updates with conventional-commit prefixes that coope
 - `fix(deps):` — runtime dependency bump (release-please publishes a patch release).
 - `chore(deps):` — dev/tooling dependency bump (no release).
 
-Minor/patch updates auto-merge after a 3-day release-age delay; major updates require manual review. Security advisories bypass the delay. The full policy lives in `renovate.json`.
+Minor/patch updates auto-merge after a 3-day release-age delay, set in the self-hosted Renovate's global config; major updates require manual review. Security advisories bypass the delay and auto-merge unless the fix needs a major update. The rest of the policy lives in `renovate.json`.
 
 ### Dependency Philosophy
 
