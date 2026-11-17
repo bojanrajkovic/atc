@@ -16,7 +16,7 @@ catalog:
   'bits-ui': 2.21.0
   clsx: 2.1.1
   'command-score': 0.1.2
-  eslint: 10.14.0
+  eslint: 10.15.0
   eslint-plugin-svelte: 3.24.1
   jsdom: 31.0.1
   msw: 3.0.5
