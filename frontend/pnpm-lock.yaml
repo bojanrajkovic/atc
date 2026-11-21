@@ -183,8 +183,8 @@ catalogs:
       specifier: 3.12.4
       version: 3.12.4
     '@lucide/svelte':
-      specifier: 1.74.0
-      version: 1.74.0
+      specifier: 1.75.0
+      version: 1.75.0
     '@playwright/test':
       specifier: 1.65.1
       version: 1.65.1
@@ -301,7 +301,7 @@ importers:
         version: 3.12.4
       '@lucide/svelte':
         specifier: 'catalog:'
-        version: 1.74.0(svelte@5.57.3(@typescript-eslint/types@8.73.0))
+        version: 1.75.0(svelte@5.57.3(@typescript-eslint/types@8.73.0))
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.65.1
@@ -632,8 +632,8 @@ packages:
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
 
-  '@lucide/svelte@1.74.0':
-    resolution: {integrity: sha512-J9kteBGbntyvE+xIcpoqOcoOfuat0tFnGzOx+aj0NbydQlt5x+/ayRSwEK0iqaY3RTGavpthEx/l7PQiqT+crg==}
+  '@lucide/svelte@1.75.0':
+    resolution: {integrity: sha512-iGFP2m718jy26FrCXMxSbzz8WCDL4kx5lWN2jeXg1jzM0GcSLoQ9ygzDF++bpUjw5WHXNVCw90lBh0mvTAih+Q==}
     peerDependencies:
       svelte: ^5
 
@@ -2405,7 +2405,7 @@ snapshots:
 
   '@keyv/serialize@1.1.1': {}
 
-  '@lucide/svelte@1.74.0(svelte@5.57.3(@typescript-eslint/types@8.73.0))':
+  '@lucide/svelte@1.75.0(svelte@5.57.3(@typescript-eslint/types@8.73.0))':
     dependencies:
       svelte: 5.57.3(@typescript-eslint/types@8.73.0)
 
