@@ -93,9 +93,9 @@
   ></span>
 
   <!-- Pool label: truncates to 12ch at <md, unconstrained at md+ -->
-  <span class="truncate max-w-[12ch] md:max-w-none" style="color: var(--text-dim);"
-    >{pool.label}</span
-  >
+  <span class="truncate max-w-[12ch] md:max-w-none" style="color: var(--text-dim);">
+    {pool.label}
+  </span>
 
   <!-- Capacity bar (Bounded variant only) -->
   {#if view.showBar && view.barTotal !== null}

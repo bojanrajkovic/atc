@@ -65,11 +65,14 @@
       class="icon"
       data-banner-glyph
       data-banner-motion={reduceMotion ? undefined : ''}
-      aria-hidden="true">✗</span
+      aria-hidden="true"
     >
+      ✗
+    </span>
     <span class="copy">
-      Config reload failed on server: <span class="reason">{connectionStore.configReloadError}</span
-      >
+      Config reload failed on server: <span class="reason">
+        {connectionStore.configReloadError}
+      </span>
     </span>
     <Button
       size="icon-sm"
