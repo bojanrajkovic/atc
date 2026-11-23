@@ -67,13 +67,17 @@ class ConnectionStore {
   private tick = $state(0)
   private tickInterval: ReturnType<typeof setInterval> | null = null
 
-  isStale = $derived(
-    // Reference this.tick so $derived re-evaluates when tick changes
-    this.tick >= 0 &&
+  // A getter, not $derived: Date.now() isn't tracked, so a $derived would
+  // cache its value between reads. Reading this.tick keeps effects and
+  // templates reactive; plain reads always compute against the current time.
+  get isStale(): boolean {
+    return (
+      this.tick >= 0 &&
       this.status === 'connected' &&
       this.lastEventAt !== null &&
-      Date.now() - this.lastEventAt > STALE_THRESHOLD_MS,
-  )
+      Date.now() - this.lastEventAt > STALE_THRESHOLD_MS
+    )
+  }
 
   constructor() {
     this.tickInterval = setInterval(() => {
