@@ -90,7 +90,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mold cmake pkg-config perl
 
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install: false
 
@@ -152,7 +152,7 @@ jobs:
           }
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+        uses: taiki-e/install-action@25f51f6b1bf4e18876107cece836f4f77ac17c8c # v2.90.7
         with:
           tool: cargo-llvm-cov
 
@@ -211,7 +211,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install: false
 
@@ -320,7 +320,7 @@ jobs:
       # drag in Rust/Node/cargo-tools it never uses. With `install: true` the
       # action runs `mise install` which compiles the cargo: tools from
       # source — minutes of overhead for a job that only needs `helm`.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install: false
 
@@ -351,7 +351,7 @@ jobs:
       # mise install: false + explicit subset so this job doesn't drag in
       # Rust/Node/cargo-tools it never uses. See the helm-lint job above
       # for the rationale.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install: false
 
@@ -377,7 +377,7 @@ jobs:
       # Rust/Node/cargo-tools (Rust comes from the inline image build via
       # the Dockerfile's own toolchain). See the helm-lint job above for
       # the broader rationale.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install: false
 
