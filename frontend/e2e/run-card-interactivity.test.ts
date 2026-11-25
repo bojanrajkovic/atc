@@ -205,7 +205,8 @@ test.describe('RunCard interactivity', () => {
 
     await card.locator('.run-card-activate').click()
 
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 })
+    // bits-ui 2.22 keeps the closing popover (also role=dialog) mounted during its exit animation.
+    await expect(page.locator('[data-slot="sheet-content"]')).toBeVisible({ timeout: 5_000 })
     await expect(page.locator('.hover-peek-popover')).toBeHidden({ timeout: 2_000 })
   })
 })
