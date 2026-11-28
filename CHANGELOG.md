@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.0](https://github.com/bojanrajkovic/atc/compare/v0.6.1...v0.7.0) (2026-11-28)
+
+
+### Features
+
+* **menubar:** add macOS menu bar app ([#851](https://github.com/bojanrajkovic/atc/issues/851)) ([e57aa3b](https://github.com/bojanrajkovic/atc/commit/e57aa3b198ab9e51b88092040f7d838fc7ba2f71))
+
+
+### Bug Fixes
+
+* **deps:** update rust crate notify-debouncer-full to v0.8.0 ([#917](https://github.com/bojanrajkovic/atc/issues/917)) ([83caa0d](https://github.com/bojanrajkovic/atc/commit/83caa0da7bbebd325205f9b14aa606273343e95c))
+* **deps:** update rust crate rust-embed to v8.14.0 ([#857](https://github.com/bojanrajkovic/atc/issues/857)) ([9efbf3f](https://github.com/bojanrajkovic/atc/commit/9efbf3f47bfe97c50fe65ca3019def2d60526f09))
+* **deps:** update rust crate uuid to v1.29.2 ([#841](https://github.com/bojanrajkovic/atc/issues/841)) ([71dddf4](https://github.com/bojanrajkovic/atc/commit/71dddf4f15bde4d643a7b89add09b55d96963b21))
+* **deps:** update rust crate uuid to v1.29.3 ([#890](https://github.com/bojanrajkovic/atc/issues/890)) ([8279380](https://github.com/bojanrajkovic/atc/commit/82793803d753d6781bb1c4637690f10fa010b5bd))
+
 ## [0.6.1](https://github.com/bojanrajkovic/atc/compare/v0.6.0...v0.6.1) (2026-11-10)
 
 
